@@ -278,30 +278,36 @@ function esc(s: string): string {
  * re-processed as emphasis or links.
  */
 function renderInline(text: string): string {
-  const codeSpans: string[] = []
-  // 1. Pull out `code` spans, replacing with a placeholder unlikely to collide.
-  let work = text.replace(/`([^`]+)`/g, (_m, code: string) => {
-    const idx = codeSpans.push(`<code>${esc(code)}</code>`) - 1
-    return ` CODE${idx} `
-  })
-  // 2. Escape everything else.
-  work = esc(work)
-  // 3. Markdown links [label](href) — href restricted to http(s)/relative.
-  work = work.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]*)\)/g,
-    (_m, label: string, href: string) => `<a href="${href}" rel="noopener">${label}</a>`,
-  )
-  // 4. Bare URLs (not already inside an <a>).
-  work = work.replace(
-    /(^|[\s(])(https?:\/\/[^\s<>"')]+)/g,
-    (_m, pre: string, url: string) => `${pre}<a href="${url}" rel="noopener">${url}</a>`,
-  )
-  // 5. Bold then italic.
-  work = work.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-  work = work.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-  // 6. Restore code spans.
-  work = work.replace(/ CODE(\d+) /g, (_m, idx: string) => codeSpans[Number(idx)] ?? "")
-  return work
+  // Split on `code` spans so their contents are never re-processed as emphasis
+  // or links, and are HTML-escaped independently. Splitting with a capture group
+  // keeps the delimiters: even indices are prose, odd indices are raw code. This
+  // is structurally leak-proof — there is no placeholder token that could survive
+  // to the output (an earlier placeholder scheme corrupted into NUL bytes and
+  // leaked `CODE0` markers into rendered pages).
+  const parts = text.split(/`([^`]+)`/g)
+  const out: string[] = []
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) {
+      out.push(`<code>${esc(parts[i])}</code>`)
+      continue
+    }
+    let seg = esc(parts[i])
+    // Markdown links [label](href) — href restricted to http(s)/relative.
+    seg = seg.replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]*)\)/g,
+      (_m, label: string, href: string) => `<a href="${href}" rel="noopener">${label}</a>`,
+    )
+    // Bare URLs (not already inside an <a>).
+    seg = seg.replace(
+      /(^|[\s(])(https?:\/\/[^\s<>"')]+)/g,
+      (_m, pre: string, url: string) => `${pre}<a href="${url}" rel="noopener">${url}</a>`,
+    )
+    // Bold then italic.
+    seg = seg.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    seg = seg.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+    out.push(seg)
+  }
+  return out.join("")
 }
 
 /**

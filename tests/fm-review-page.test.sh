@@ -171,6 +171,41 @@ t_artifacts() {
 }
 
 # ===========================================================================
+# (j) REGRESSION: a code-span-heavy body must render every `code` span and leak
+# NO placeholder marker. A prior implementation used a text placeholder that
+# corrupted into NUL bytes and leaked bare "CODE0" tokens into rendered pages.
+# This pins the split-based renderer against that whole class of leak.
+# ===========================================================================
+t_codespan_no_leak() {
+  local case_dir="$TMP_ROOT/codespan"
+  local fakebin="$case_dir/bin" out="$case_dir/out"
+  local items="$case_dir/items.json" log="$case_dir/calls.log"
+  mkdir -p "$case_dir"
+  # A single item whose body is dense with adjacent code spans, em-dashes, and a
+  # multi-span list line — the exact shape that leaked before.
+  cat > "$items" <<'JSON'
+[{"id":"review-code","title":"Code heavy","description":"A generator for firstmate — `bin/fm-groom.sh` — that grooms the `ideas` store.\n\n- Branch `feat/fm-groom` (4 files: `bin/fm-groom.sh`, `bin/fm-groom-lib.sh`, `bin/fm-groom-json-field.sh`, `tests/fm-groom.test.sh`).\n- Full write-up: brain doc `brain-m8bxn`.\n\nRails: OFF by default (dry-run unless `FM_GROOM_ENABLED=1`); rate-limited (`FM_GROOM_MAX_IN_FLIGHT`, default 2).","status":"open","priority":1,"created_at":"2026-07-14T07:47:19Z","updated_at":"2026-07-14T07:47:19Z","metadata":{}}]
+JSON
+  install_fake_review "$fakebin" "$items" "$log"
+
+  run_tool "$fakebin" "$out" "$items" "$log" --all
+  expect_code 0 "$RC" "codespan: exit 0"
+
+  local page="$out/review-code/index.html"
+  # NO placeholder leak of any kind.
+  assert_no_grep "CODE0" "$page" "codespan: no CODE0 placeholder leak"
+  assert_no_grep "CODE1" "$page" "codespan: no CODE1 placeholder leak"
+  # Every code span actually rendered as <code>.
+  assert_grep "<code>bin/fm-groom.sh</code>" "$page" "codespan: first span rendered"
+  assert_grep "<code>ideas</code>" "$page" "codespan: adjacent span rendered"
+  assert_grep "<code>feat/fm-groom</code>" "$page" "codespan: list-line span rendered"
+  assert_grep "<code>FM_GROOM_ENABLED=1</code>" "$page" "codespan: parenthesized span rendered"
+  assert_grep "<code>brain-m8bxn</code>" "$page" "codespan: doc-id span rendered"
+
+  pass "fm-review-page: code-span-heavy body renders every span with no placeholder leak"
+}
+
+# ===========================================================================
 # (a) single-id render produces a page + printed URL.
 # ===========================================================================
 t_single() {
@@ -285,6 +320,7 @@ t_no_args() {
 
 t_all_sweep
 t_artifacts
+t_codespan_no_leak
 t_single
 t_idempotent
 t_empty
