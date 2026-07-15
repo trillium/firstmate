@@ -43,6 +43,7 @@
  *                                <system_prompt> <user_prompt>; must print JSON on
  *                                stdout (default: bun Inference.ts --json --level <tier>)
  *   FM_IDEA_MINE_INFER_TIER      fast|standard|smart for the default infer cmd (default standard)
+ *   FM_IDEA_MINE_INFER_TIMEOUT_MS  --timeout passed to the default Inference.ts cmd (default 150000)
  *   FM_IDEA_MINE_IDEAS_CMD       ideas store CLI (default: ideas)
  *   FM_IDEA_MINE_REVIEW_CMD      review store CLI (default: review)
  *   FM_IDEA_MINE_STATE_DIR       marker dir (default: <fm-home>/state, else ~/.cache/fm-idea-mine)
@@ -109,7 +110,19 @@ function defaultStateDir(): string {
 
 function defaultInferCmd(): string[] {
   const tier = process.env.FM_IDEA_MINE_INFER_TIER || "standard";
-  return ["bun", join(homedir(), ".claude", "PAI", "TOOLS", "Inference.ts"), "--json", "--level", tier];
+  // Inference.ts defaults to a 30s internal timeout, which is too short for a
+  // ~40k-token mined tail on the standard tier. Give it a generous ceiling; the
+  // spawnSync wall-clock timeout in runInference is the real outer bound.
+  const timeout = process.env.FM_IDEA_MINE_INFER_TIMEOUT_MS || "150000";
+  return [
+    "bun",
+    join(homedir(), ".claude", "PAI", "TOOLS", "Inference.ts"),
+    "--json",
+    "--level",
+    tier,
+    "--timeout",
+    timeout,
+  ];
 }
 
 /**
