@@ -1,14 +1,31 @@
 #!/usr/bin/env bun
 /**
- * fm-review-page.ts — give every review-store item a visitable page.
+ * fm-review-page.ts — give every review-store item an INTERACTIVE decision page.
  *
- * The captain's morning review should be *visiting pages*, not reading terse
- * chat. Anything filed into the `review` federated store (the "requires the
- * captain's eyes" queue) gets a self-contained, phone-readable HTML page under
- * ~/pulse-pages/review/<id>/index.html, served by Pulse at
+ * The captain's morning review should be *visiting pages* and *acting on them*,
+ * not reading terse chat. Anything filed into the `review` federated store (the
+ * "requires the captain's eyes" queue) gets a self-contained, phone-readable
+ * HTML page under ~/pulse-pages/review/<id>/index.html, served by Pulse at
  * http://localhost:31337/review/<id>/ (and 100.74.138.74:31337/review/<id>/
  * over Tailscale). An index at ~/pulse-pages/review/index.html lists every open
  * item, reachable one click from /status/ (one-URL rule).
+ *
+ * INTERACTIVE DECISION LOOP (endpoint → wake-queue → drain → firstmate acts):
+ *   Each page carries a decision panel — Approve / Decline buttons and a Comment
+ *   textarea — plus a structured What / Why / Stakes / Recommendation / Artifact
+ *   breakdown parsed from the body so the decision is answerable in place. The
+ *   panel's inline JS POSTs { id, verdict, comment? } same-origin to
+ *   POST /api/review/decision (PAI/PULSE, lib/review-decision.ts). That endpoint
+ *   validates the id via `review show`, then shells to bin/fm-review-decision.sh
+ *   (resolved via FM_HOME), which durably enqueues a `check`-kind wake into
+ *   firstmate's state/.wake-queue (drained by bin/fm-wake-drain.sh), annotates
+ *   the item via `review note`, and appends a JSONL audit record. So when the
+ *   captain clicks Approve on /review/<id>/, firstmate is woken with an
+ *   actionable `check: review-decision:<id>` wake on its next supervision cycle.
+ *   A decision already recorded (parsed from the item's `Captain decision:`
+ *   notes) renders as a standing-decision banner on the page. Fail-loud
+ *   throughout: an unknown id or an undeliverable wake is a non-2xx error, never
+ *   a false-positive ok (robots-5l8).
  *
  * SURFACE CHOICE — Pulse static pages, not lavish:
  *   lavish (~/.local/bin/lavish -> parlay) is a live, interactive review
@@ -72,6 +89,8 @@ interface RawReviewItem {
   id: string
   title?: string
   description?: string
+  /** Appended notes (carries `Captain decision:` lines once a decision lands). */
+  notes?: string
   status?: string
   priority?: number
   issue_type?: string
@@ -86,6 +105,7 @@ interface ReviewItem {
   id: string
   title: string
   description: string
+  notes: string
   status: string
   priority: number | null
   issueType: string
@@ -94,6 +114,13 @@ interface ReviewItem {
   updatedAt: string
   /** Any existing page_url already wired back (used to keep notes idempotent). */
   existingPageUrl: string
+}
+
+/** The most recent captain decision already recorded on the item, if any. */
+interface RecordedDecision {
+  verdict: string
+  comment: string
+  ts: string
 }
 
 /** An artifact link extracted from the body (URL, brain id, git branch). */
@@ -152,6 +179,7 @@ function normalize(raw: RawReviewItem): ReviewItem {
     id: raw.id,
     title: (raw.title ?? "").trim() || raw.id,
     description: raw.description ?? "",
+    notes: raw.notes ?? "",
     status: (raw.status ?? "open").trim(),
     priority: typeof raw.priority === "number" ? raw.priority : null,
     issueType: (raw.issue_type ?? "").trim(),
@@ -160,6 +188,27 @@ function normalize(raw: RawReviewItem): ReviewItem {
     updatedAt: (raw.updated_at ?? "").trim(),
     existingPageUrl: pageUrl,
   }
+}
+
+/**
+ * Extract the most recent recorded captain decision from the item's notes.
+ * fm-review-decision.sh appends lines shaped:
+ *   `Captain decision: <verdict> - <comment> @ <ts>`
+ *   `Captain decision: <verdict> @ <ts>`           (no comment)
+ * Returns the LAST such line (the standing decision), or null if none.
+ */
+function extractRecordedDecision(notes: string): RecordedDecision | null {
+  if (!notes) return null
+  const re = /Captain decision:\s*(approve|decline|comment)\s*(?:-\s*([\s\S]*?))?\s*@\s*(\S+)/gi
+  let last: RecordedDecision | null = null
+  for (const m of notes.matchAll(re)) {
+    last = {
+      verdict: m[1].toLowerCase(),
+      comment: (m[2] ?? "").trim(),
+      ts: (m[3] ?? "").trim(),
+    }
+  }
+  return last
 }
 
 /** Fetch every OPEN review item (the `--all` set). */
@@ -468,6 +517,76 @@ function extractStakes(body: string): string {
   return inline ? inline[1].trim() : ""
 }
 
+/** One extracted decision-context field, in the fixed What→Why→…→Artifact order. */
+interface ContextField {
+  label: string
+  /** Rendered inline-markdown HTML for the field's prose. */
+  html: string
+}
+
+/**
+ * Break the body into a skimmable What / Why / Stakes / Recommendation /
+ * Artifact breakdown so the decision is answerable on the page. Review bodies
+ * carry these signals in two shapes: markdown headings (`## What`, `## Stakes`)
+ * or inline uppercase labels (`ARTIFACT: ...`, `STAKES: ...`). Each field is
+ * matched by a set of synonyms and rendered with inline markdown. Returns [] if
+ * NONE of the fields are found, so the caller can fall back to the flat body.
+ */
+function extractContextFields(body: string): ContextField[] {
+  // label -> matcher synonyms (case-insensitive), in display order.
+  const spec: { label: string; keys: string[] }[] = [
+    { label: "What", keys: ["what", "summary", "proposal", "decide", "decision"] },
+    { label: "Why", keys: ["why", "rationale", "context", "background"] },
+    { label: "Stakes", keys: ["stakes", "risk", "risks", "impact"] },
+    { label: "Recommendation", keys: ["recommendation", "recommended action", "recommended", "action"] },
+    { label: "Artifact", keys: ["artifact", "artifacts", "evidence", "branch", "pr"] },
+  ]
+
+  const found: ContextField[] = []
+  const usedRanges: [number, number][] = []
+
+  const claim = (start: number, end: number): boolean => {
+    // Reject a match that overlaps a field we already claimed (so "action"
+    // inside a Stakes block can't be re-extracted as Recommendation).
+    for (const [s, e] of usedRanges) {
+      if (start < e && end > s) return false
+    }
+    usedRanges.push([start, end])
+    return true
+  }
+
+  for (const { label, keys } of spec) {
+    let picked = ""
+    for (const key of keys) {
+      const esc = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      // (1) Heading form: `## What\n...` up to the next heading, a blank-line
+      // paragraph break, or end of body. Stopping at a blank line keeps the last
+      // heading section from swallowing a following inline-label line (e.g. a
+      // trailing `ARTIFACT: ...`).
+      const headRe = new RegExp(
+        `(?:^|\\n)#{1,6}\\s*${esc}\\b[:\\s]*\\n([\\s\\S]*?)(?=\\n#{1,6}\\s|\\n\\s*\\n|$)`,
+        "i",
+      )
+      const hm = body.match(headRe)
+      if (hm && hm[1].trim() && claim(hm.index ?? 0, (hm.index ?? 0) + hm[0].length)) {
+        picked = hm[1].trim()
+        break
+      }
+      // (2) Inline label form: `ARTIFACT: ...` to end of line (or paragraph for
+      // the last field). Kept to a single line so it doesn't swallow the body.
+      const inlineRe = new RegExp(`(?:^|\\n)\\s*${esc}\\s*:\\s*([^\\n]+)`, "i")
+      const im = body.match(inlineRe)
+      if (im && im[1].trim() && claim(im.index ?? 0, (im.index ?? 0) + im[0].length)) {
+        picked = im[1].trim()
+        break
+      }
+    }
+    if (picked) found.push({ label, html: renderInline(picked) })
+  }
+
+  return found
+}
+
 // ─── Page rendering ──────────────────────────────────────────────────────────
 
 /** Shared CSS — GitHub-dark house palette matching ~/pulse-pages/brain style. */
@@ -540,6 +659,49 @@ h1.item-title { font-size: 1.5rem; line-height: 1.25; font-weight: 700; margin-b
 
 .meta-foot { margin-top: 2.2rem; padding-top: 1rem; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 11px; color: var(--muted); display: flex; flex-direction: column; gap: .3rem; }
 
+/* Structured decision-context breakdown (What / Why / Stakes / …). */
+.context { margin: 1.2rem 0; display: flex; flex-direction: column; gap: .1rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.context .field { padding: .7rem .9rem; border-top: 1px solid var(--border); }
+.context .field:first-child { border-top: none; }
+.context .field .k { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--blue); display: block; margin-bottom: .3rem; }
+.context .field .v { font-size: .95rem; line-height: 1.5; }
+.context .field.stakes .k { color: var(--amber); }
+.context .field.stakes { background: color-mix(in srgb, var(--amber) 6%, var(--surf)); }
+
+/* Interactive decision panel — the loop-closer. */
+.decision { margin: 1.6rem 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surf); padding: 1rem 1rem 1.1rem; }
+.decision .dlabel { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: .7rem; }
+.decision .buttons { display: flex; gap: .6rem; flex-wrap: wrap; }
+.decision button {
+  flex: 1 1 auto; min-height: 48px; min-width: 120px; font-size: 1rem; font-weight: 600;
+  font-family: var(--sans); border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surf2); color: var(--body); cursor: pointer; padding: .6rem 1rem;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation; transition: filter .12s, opacity .12s;
+}
+.decision button:hover:not(:disabled) { filter: brightness(1.15); }
+.decision button:active:not(:disabled) { filter: brightness(.92); }
+.decision button:disabled { opacity: .45; cursor: default; }
+.decision button.approve { border-color: color-mix(in srgb, var(--green) 60%, var(--border)); color: var(--green); }
+.decision button.decline { border-color: color-mix(in srgb, var(--red) 60%, var(--border)); color: var(--red); }
+.decision button.comment { border-color: color-mix(in srgb, var(--blue) 55%, var(--border)); color: var(--blue); }
+.decision .comment-box { margin-top: .8rem; }
+.decision textarea {
+  width: 100%; min-height: 84px; resize: vertical; font-family: var(--sans); font-size: 1rem;
+  line-height: 1.5; color: var(--body); background: var(--ink); border: 1px solid var(--border);
+  border-radius: 6px; padding: .6rem .7rem;
+}
+.decision textarea:focus { outline: none; border-color: var(--blue); }
+.decision .hint { font-size: .82rem; color: var(--muted); margin-top: .45rem; }
+.decision .feedback { margin-top: .85rem; padding: .65rem .8rem; border-radius: 6px; font-size: .92rem; line-height: 1.45; display: none; }
+.decision .feedback.show { display: block; }
+.decision .feedback.ok { border: 1px solid color-mix(in srgb, var(--green) 45%, var(--border)); background: color-mix(in srgb, var(--green) 8%, var(--surf)); color: var(--green); }
+.decision .feedback.err { border: 1px solid color-mix(in srgb, var(--red) 50%, var(--border)); background: color-mix(in srgb, var(--red) 8%, var(--surf)); color: var(--red); }
+.decision .feedback.pending { border: 1px solid var(--border); color: var(--muted); }
+.decision .recorded { margin-top: .85rem; padding: .65rem .8rem; border-radius: 6px; font-size: .9rem; border: 1px solid color-mix(in srgb, var(--green) 40%, var(--border)); background: color-mix(in srgb, var(--green) 7%, var(--surf)); color: var(--body); }
+.decision .recorded .rv { font-family: var(--mono); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--green); }
+.decision .recorded.decline .rv { color: var(--red); }
+.decision .recorded .rc { display: block; margin-top: .3rem; color: var(--muted); }
+
 /* Index page. */
 .index-head { margin-bottom: 1.4rem; }
 .index-head h1 { font-size: 1.35rem; font-weight: 700; }
@@ -563,12 +725,135 @@ function ageTier(days: number): { cls: string; label: string } {
   return { cls: "", label: "today" }
 }
 
+/** Render the structured What/Why/Stakes/Recommendation/Artifact breakdown. */
+function renderContext(fields: ContextField[]): string {
+  if (!fields.length) return ""
+  const rows = fields
+    .map((f) => {
+      const cls = f.label.toLowerCase() === "stakes" ? " stakes" : ""
+      return `<div class="field${cls}"><span class="k">${esc(f.label)}</span><div class="v">${f.html}</div></div>`
+    })
+    .join("\n      ")
+  return `\n    <div class="context">
+      ${rows}
+    </div>`
+}
+
+/**
+ * Render the interactive decision panel: Approve / Decline buttons, a Comment
+ * textarea + submit, in-page feedback, and — when a decision was already
+ * recorded — a standing-decision banner. The inline JS POSTs same-origin to
+ * /api/review/decision and reflects success/failure without a page reload. The
+ * item id is embedded as a data attribute (JSON-encoded) so no server value is
+ * interpolated into a JS string.
+ */
+function renderDecisionPanel(item: ReviewItem, recorded: RecordedDecision | null): string {
+  const idJson = JSON.stringify(item.id)
+  const recordedHtml = recorded
+    ? `\n      <div class="recorded ${recorded.verdict === "decline" ? "decline" : ""}" id="recorded">
+        Standing decision: <span class="rv">${esc(recorded.verdict)}</span>${
+          recorded.ts ? ` · ${esc(recorded.ts)}` : ""
+        }${recorded.comment ? `<span class="rc">“${esc(recorded.comment)}”</span>` : ""}
+      </div>`
+    : `\n      <div class="recorded" id="recorded" style="display:none"></div>`
+
+  // The inline script is self-contained (CSP-safe, no external fetch host) and
+  // idempotent-friendly: after a successful decision it disables the buttons so
+  // the captain doesn't double-submit, and re-enables on error so a transient
+  // failure is retryable.
+  return `
+    <div class="decision" data-review-id='${esc(idJson)}'>
+      <span class="dlabel">Your decision</span>
+      <div class="buttons">
+        <button type="button" class="approve" data-verdict="approve">Approve</button>
+        <button type="button" class="decline" data-verdict="decline">Decline</button>
+        <button type="button" class="comment" data-verdict="comment">Comment</button>
+      </div>
+      <div class="comment-box">
+        <textarea id="comment" placeholder="Optional note for Approve/Decline — required to Comment"></textarea>
+        <div class="hint">Approve and Decline may include a note. Comment sends the note without deciding.</div>
+      </div>
+      <div class="feedback" id="feedback" role="status" aria-live="polite"></div>${recordedHtml}
+    </div>
+    <script>
+    (function () {
+      var panel = document.querySelector('.decision');
+      if (!panel) return;
+      var reviewId = JSON.parse(panel.getAttribute('data-review-id'));
+      var buttons = panel.querySelectorAll('button[data-verdict]');
+      var textarea = panel.querySelector('#comment');
+      var feedback = panel.querySelector('#feedback');
+      var recorded = panel.querySelector('#recorded');
+
+      function setFeedback(kind, msg) {
+        feedback.className = 'feedback show ' + kind;
+        feedback.textContent = msg;
+      }
+      function setButtons(disabled) {
+        buttons.forEach(function (b) { b.disabled = disabled; });
+      }
+      function lockAfterDecision(verdict, comment, ts) {
+        setButtons(true);
+        recorded.style.display = 'block';
+        recorded.className = 'recorded' + (verdict === 'decline' ? ' decline' : '');
+        var html = 'Standing decision: <span class="rv"></span>';
+        recorded.innerHTML = html;
+        recorded.querySelector('.rv').textContent = verdict;
+        if (ts) { recorded.appendChild(document.createTextNode(' · ' + ts)); }
+        if (comment) {
+          var rc = document.createElement('span');
+          rc.className = 'rc';
+          rc.textContent = '\\u201c' + comment + '\\u201d';
+          recorded.appendChild(rc);
+        }
+      }
+
+      function submit(verdict) {
+        var comment = (textarea.value || '').trim();
+        if (verdict === 'comment' && !comment) {
+          setFeedback('err', 'A comment needs some text before you send it.');
+          textarea.focus();
+          return;
+        }
+        setButtons(true);
+        setFeedback('pending', 'Recording your ' + verdict + '\\u2026');
+        fetch('/api/review/decision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: reviewId, verdict: verdict, comment: comment })
+        }).then(function (res) {
+          return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+        }).then(function (r) {
+          if (r.ok && r.data && r.data.ok) {
+            setFeedback('ok', 'Recorded — the first mate has been notified.');
+            var ts = new Date().toISOString().replace(/\\.\\d+Z$/, 'Z');
+            lockAfterDecision(verdict, comment, ts);
+          } else {
+            var err = (r.data && r.data.error) ? r.data.error : ('request failed (' + '' + ')');
+            setFeedback('err', 'Could not record that: ' + err);
+            setButtons(false);
+          }
+        }).catch(function (e) {
+          setFeedback('err', 'Network error — could not reach the first mate. ' + (e && e.message ? e.message : ''));
+          setButtons(false);
+        });
+      }
+
+      buttons.forEach(function (b) {
+        b.addEventListener('click', function () { submit(b.getAttribute('data-verdict')); });
+      });
+    })();
+    </script>`
+}
+
 /** Full self-contained HTML document for one review item. */
 function renderItemPage(item: ReviewItem): string {
   const days = ageDays(item.createdAt)
   const tier = ageTier(days)
   const stakes = extractStakes(item.description)
   const artifacts = extractArtifacts(item.description)
+  const contextFields = extractContextFields(item.description)
+  const recorded = extractRecordedDecision(item.notes)
   const bodyHtml = item.description.trim()
     ? renderMarkdown(item.description)
     : `<p class="empty">No description was filed with this item.</p>`
@@ -613,6 +898,12 @@ function renderItemPage(item: ReviewItem): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Opt out of the Pulse portal shell injection. These pages are fully self-
+     contained (their own single top bar + dark theme), exactly like the /status
+     and /plans pages render one nav themselves. Without opting out, portal's
+     shell injection would add a SECOND global nav bar plus the chat widget on
+     top of this page's own .topbar — two stacked bars. One page, one bar. -->
+<meta name="pulse-shell" content="off">
 <title>Review · ${esc(item.title)}</title>
 <style>
 ${PAGE_CSS}
@@ -627,7 +918,7 @@ ${PAGE_CSS}
     <h1 class="item-title">${esc(item.title)}</h1>
     <div class="badges">
       ${badges}
-    </div>${calloutHtml}${artifactsHtml}
+    </div>${calloutHtml}${renderContext(contextFields)}${renderDecisionPanel(item, recorded)}${artifactsHtml}
     <div class="body">
 ${bodyHtml}
     </div>
@@ -681,6 +972,12 @@ function renderIndexPage(items: ReviewItem[]): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Opt out of the Pulse portal shell injection. These pages are fully self-
+     contained (their own single top bar + dark theme), exactly like the /status
+     and /plans pages render one nav themselves. Without opting out, portal's
+     shell injection would add a SECOND global nav bar plus the chat widget on
+     top of this page's own .topbar — two stacked bars. One page, one bar. -->
+<meta name="pulse-shell" content="off">
 <title>Review queue · needs your eyes</title>
 <style>
 ${PAGE_CSS}

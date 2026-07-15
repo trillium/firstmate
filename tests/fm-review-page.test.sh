@@ -318,6 +318,150 @@ t_no_args() {
   pass "fm-review-page: no args is a usage error (exit 2)"
 }
 
+# ===========================================================================
+# (o) SINGLE TOP BAR: the page opts out of Pulse portal shell injection
+# (<meta name="pulse-shell" content="off">) and renders exactly one top bar of
+# its own — no second injected global nav. Regression for the double-nav-bar bug
+# where portal's injectShell stacked /_pulse/nav.js on top of this page's
+# .topbar. Both the item page and the index opt out.
+# ===========================================================================
+t_single_topbar() {
+  local case_dir="$TMP_ROOT/topbar"
+  local fakebin="$case_dir/bin" out="$case_dir/out"
+  local items="$case_dir/items.json" log="$case_dir/calls.log"
+  mkdir -p "$case_dir"
+  write_items_json "$items"
+  install_fake_review "$fakebin" "$items" "$log"
+
+  run_tool "$fakebin" "$out" "$items" "$log" --all
+  expect_code 0 "$RC" "topbar: exit 0"
+  local page="$out/review-aaa/index.html"
+
+  # Opt-out meta present on item page AND index.
+  assert_grep 'name="pulse-shell" content="off"' "$page" "topbar: item page opts out of shell injection"
+  assert_grep 'name="pulse-shell" content="off"' "$out/index.html" "topbar: index opts out of shell injection"
+  # The page never emits the injected shell scripts itself (no manual double).
+  assert_no_grep '/_pulse/nav.js' "$page" "topbar: no injected nav.js in the page"
+  assert_no_grep '/annotate/pulse-agent.js' "$page" "topbar: no chat-panel script in the page"
+  # Exactly one top bar (its own .topbar), rendered once.
+  local topbars
+  topbars=$(grep -c 'class="topbar"' "$page")
+  [ "$topbars" = "1" ] || fail "topbar: expected exactly 1 .topbar, got $topbars"
+
+  pass "fm-review-page: opts out of shell injection and renders exactly one top bar"
+}
+
+# ===========================================================================
+# (k) DECISION PANEL: every rendered item carries an interactive decision panel
+# with Approve/Decline/Comment controls that POST to /api/review/decision, and
+# the item id is embedded for the same-origin fetch.
+# ===========================================================================
+t_decision_panel() {
+  local case_dir="$TMP_ROOT/panel"
+  local fakebin="$case_dir/bin" out="$case_dir/out"
+  local items="$case_dir/items.json" log="$case_dir/calls.log"
+  mkdir -p "$case_dir"
+  cat > "$items" <<'JSON'
+[{"id":"review-znt","title":"Merge the bridge","description":"## What\nMerge it.\n\n## Stakes\nLOW.","status":"open","priority":1,"created_at":"2026-07-14T07:47:19Z","updated_at":"2026-07-14T07:47:19Z","metadata":{}}]
+JSON
+  install_fake_review "$fakebin" "$items" "$log"
+
+  run_tool "$fakebin" "$out" "$items" "$log" review-znt
+  expect_code 0 "$RC" "panel: exit 0"
+  local page="$out/review-znt/index.html"
+
+  assert_grep 'class="decision"' "$page" "panel: decision panel present"
+  assert_grep 'data-verdict="approve"' "$page" "panel: approve button present"
+  assert_grep 'data-verdict="decline"' "$page" "panel: decline button present"
+  assert_grep 'data-verdict="comment"' "$page" "panel: comment button present"
+  assert_grep '<textarea' "$page" "panel: comment textarea present"
+  assert_grep "/api/review/decision" "$page" "panel: posts to the decision endpoint"
+  # id embedded for the fetch payload (JSON-encoded).
+  assert_grep 'data-review-id' "$page" "panel: item id embedded for fetch"
+  assert_grep 'review-znt' "$page" "panel: item id value present"
+
+  pass "fm-review-page: every item renders an interactive decision panel"
+}
+
+# ===========================================================================
+# (l) STRUCTURED BREAKDOWN: What/Why/Stakes/Recommendation/Artifact fields are
+# parsed from the body and rendered as a skimmable context block, not just a
+# flat body dump.
+# ===========================================================================
+t_context_breakdown() {
+  local case_dir="$TMP_ROOT/context"
+  local fakebin="$case_dir/bin" out="$case_dir/out"
+  local items="$case_dir/items.json" log="$case_dir/calls.log"
+  mkdir -p "$case_dir"
+  cat > "$items" <<'JSON'
+[{"id":"review-ctx","title":"Bridge decision","description":"## What\nMerge the NightShift bridge.\n\n## Why\nIt unblocks the auto-dole queue.\n\n## Stakes\nTouches the live inference DB.\n\n## Recommendation\nMerge after a dry run.\n\nARTIFACT: branch feat/nightshift-tasks-bridge; brain-k0zr4.","status":"open","priority":1,"created_at":"2026-07-14T07:47:19Z","updated_at":"2026-07-14T07:47:19Z","metadata":{}}]
+JSON
+  install_fake_review "$fakebin" "$items" "$log"
+
+  run_tool "$fakebin" "$out" "$items" "$log" review-ctx
+  local page="$out/review-ctx/index.html"
+
+  assert_grep 'class="context"' "$page" "context: structured block present"
+  assert_grep '>What<' "$page" "context: What field labelled"
+  assert_grep '>Why<' "$page" "context: Why field labelled"
+  assert_grep '>Stakes<' "$page" "context: Stakes field labelled"
+  assert_grep '>Recommendation<' "$page" "context: Recommendation field labelled"
+  assert_grep '>Artifact<' "$page" "context: Artifact field labelled"
+  assert_grep 'It unblocks the auto-dole queue.' "$page" "context: Why prose rendered"
+  assert_grep 'Merge after a dry run.' "$page" "context: Recommendation prose rendered"
+
+  pass "fm-review-page: body parsed into a What/Why/Stakes/Recommendation/Artifact breakdown"
+}
+
+# ===========================================================================
+# (m) RECORDED DECISION: a Captain decision already in the item's notes renders
+# as a standing-decision banner (so the page reflects that a decision landed).
+# ===========================================================================
+t_recorded_decision() {
+  local case_dir="$TMP_ROOT/recorded"
+  local fakebin="$case_dir/bin" out="$case_dir/out"
+  local items="$case_dir/items.json" log="$case_dir/calls.log"
+  mkdir -p "$case_dir"
+  cat > "$items" <<'JSON'
+[{"id":"review-done","title":"Already decided","description":"body","notes":"Page: http://x/\nCaptain decision: approve - ship it after dry run @ 2026-07-15T10:00:00Z","status":"open","priority":1,"created_at":"2026-07-14T07:47:19Z","updated_at":"2026-07-15T10:00:00Z","metadata":{}}]
+JSON
+  install_fake_review "$fakebin" "$items" "$log"
+
+  run_tool "$fakebin" "$out" "$items" "$log" review-done
+  local page="$out/review-done/index.html"
+
+  assert_grep 'Standing decision:' "$page" "recorded: standing-decision banner present"
+  assert_grep '>approve<' "$page" "recorded: verdict shown"
+  assert_grep 'ship it after dry run' "$page" "recorded: recorded comment shown"
+
+  pass "fm-review-page: an already-recorded decision renders as a standing-decision banner"
+}
+
+# ===========================================================================
+# (n) NO CONTEXT FIELDS: a plain body with none of the labelled sections still
+# renders (falls back to the flat body) — the context block is simply absent.
+# ===========================================================================
+t_no_context_fields() {
+  local case_dir="$TMP_ROOT/nocontext"
+  local fakebin="$case_dir/bin" out="$case_dir/out"
+  local items="$case_dir/items.json" log="$case_dir/calls.log"
+  mkdir -p "$case_dir"
+  cat > "$items" <<'JSON'
+[{"id":"review-flat","title":"Flat body","description":"Just a plain paragraph with no labelled sections at all.","status":"open","priority":2,"created_at":"2026-07-14T07:47:19Z","updated_at":"2026-07-14T07:47:19Z","metadata":{}}]
+JSON
+  install_fake_review "$fakebin" "$items" "$log"
+
+  run_tool "$fakebin" "$out" "$items" "$log" review-flat
+  expect_code 0 "$RC" "nocontext: exit 0"
+  local page="$out/review-flat/index.html"
+  # Panel still present (always), body still rendered, context block absent.
+  assert_grep 'class="decision"' "$page" "nocontext: decision panel still present"
+  assert_grep 'Just a plain paragraph' "$page" "nocontext: flat body still rendered"
+  assert_no_grep 'class="context"' "$page" "nocontext: no empty context block"
+
+  pass "fm-review-page: a body with no labelled sections renders flat (panel still present)"
+}
+
 t_all_sweep
 t_artifacts
 t_codespan_no_leak
@@ -326,3 +470,8 @@ t_idempotent
 t_empty
 t_unknown_id
 t_no_args
+t_decision_panel
+t_context_breakdown
+t_recorded_decision
+t_no_context_fields
+t_single_topbar
