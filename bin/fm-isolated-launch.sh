@@ -103,6 +103,51 @@ if [ ! -f "$ISOLATED_HOME/.claude/.credentials.json" ] && command -v security >/
   fi
 fi
 
+# Force bypass-permissions (YOLO) mode every launch, matching the same
+# `claude --dangerously-skip-permissions` autonomy fm-spawn.sh already uses to
+# launch ordinary crewmates (bin/fm-spawn.sh:319) - an isolated firstmate
+# session should run just as autonomously as a normal one, not stop for a tool
+# approval dialog on every command. Two things are required together or the
+# very first bypass-mode activation shows an interactive "are you sure?"
+# safety confirm that defaults to "No, exit" on a bare Enter (same gotcha
+# documented for danny-coach, brain-ow1w0): settings.json's
+# skipDangerousModePermissionPrompt suppresses that confirm, and
+# permissions.defaultMode actually puts the session in bypass mode. Re-applied
+# on every launch (not just first-run) so a stray settings.json edit can't
+# silently regress this. Preserves any other existing settings.json keys.
+if command -v python3 >/dev/null 2>&1; then
+  python3 - "$ISOLATED_HOME/.claude/settings.json" <<'PY'
+import json, sys, os
+path = sys.argv[1]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+if not isinstance(data.get("permissions"), dict):
+    data["permissions"] = {}
+data["permissions"]["defaultMode"] = "bypassPermissions"
+data["skipDangerousModePermissionPrompt"] = True
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+PY
+  if [ -f "$ISOLATED_HOME/.claude.json" ]; then
+    python3 - "$ISOLATED_HOME/.claude.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+data["bypassPermissionsModeAccepted"] = True
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+PY
+  fi
+else
+  echo "fm-isolated-launch: python3 not found - could not seed bypass-permissions settings, the isolated session may prompt for tool approval" >&2
+fi
+
 if [ ! -f "$ISOLATED_HOME/.claude.json" ] && [ ! -f "$ISOLATED_HOME/.claude/.credentials.json" ]; then
   echo "fm-isolated-launch: first run under this isolated home - no credential could be extracted from the real macOS Keychain, you will need to log in again." >&2
 fi
@@ -129,4 +174,4 @@ if ! sync_isolated_worktree; then
 fi
 
 cd "$ISOLATED_CWD" || exit 1
-exec env HOME="$ISOLATED_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" claude "$@"
+exec env HOME="$ISOLATED_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" claude --dangerously-skip-permissions "$@"
