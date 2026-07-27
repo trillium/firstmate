@@ -68,6 +68,7 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_HOME="$HOME"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 ISOLATED_HOME="${FM_ISOLATED_HOME:-$FM_ROOT/.fm-isolated-home}"
 ISOLATED_CWD="${FM_ISOLATED_CWD:-/private/tmp/fm-isolated-worktree}"
@@ -86,6 +87,24 @@ esac
 if ! mkdir -p "$ISOLATED_HOME/.claude"; then
   echo "fm-isolated-launch: failed to create isolated home at $ISOLATED_HOME" >&2
   exit 1
+fi
+
+# Federated bd store access (root-caused 2026-07-27): the PAI-wide store
+# wrapper scripts (~/.local/bin/brain, /robots, /task, /decisions, ...) all
+# hardcode `export BEADS_DIR="$HOME/data/<store>/.beads"` at *runtime*, keyed
+# off whatever $HOME the process actually has - not a path baked in at
+# install time. Because this session overrides HOME for the child `claude`
+# process, every one of those ~18 wrappers would silently resolve to a
+# nonexistent `$ISOLATED_HOME/data/<store>/.beads` instead of the real
+# federated stores under $REAL_HOME/data, and fail. This is a distinct gap
+# from firstmate's own repo having no local bd database (that's correct -
+# firstmate tracks its own backlog via tasks-axi/data/backlog.md, not bd; see
+# CLAUDE.md section 10). Fix: symlink the isolated home's `data` straight at
+# the real one. This exposes only the Dolt-backed store data the wrappers
+# read/write - no PAI CLAUDE.md, hooks, skills, or agent config leaks in,
+# since none of that lives under data/.
+if [ ! -e "$ISOLATED_HOME/data" ] && [ -d "$REAL_HOME/data" ]; then
+  ln -s "$REAL_HOME/data" "$ISOLATED_HOME/data"
 fi
 
 # Seed the OAuth credential from the real, already-unlocked macOS Keychain the
