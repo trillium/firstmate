@@ -130,6 +130,17 @@ The preference persists for the effective Firstmate home, and toggling it off re
 
 Setup guides for tmux (the default) and every other supported backend (herdr, zellij, Orca, cmux) are linked in [Documentation](#documentation) below.
 
+### Isolated launch
+
+To run firstmate with none of your global harness config (no global CLAUDE.md, hooks, skills/agents, or auto-memory) - useful for testing this repo in isolation or running a clean persona - launch through `bin/fm-isolated-launch.sh` instead of the harness binary directly:
+
+```sh
+bin/fm-isolated-launch.sh
+```
+
+This repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load normally.
+First run under a fresh isolated home requires logging in again - no auth carries over from the real `~/.claude.json`.
+
 ## How It Works
 
 ```

@@ -172,6 +172,11 @@ The full zellij home label also includes a short hash of the resolved `FM_ROOT` 
 For the cmux backend, `FM_CONFIG_OVERRIDE` overrides where `config/cmux-socket-password` is read from, while `FM_HOME` determines the default config path and readable home prefix embedded in workspace titles.
 The full cmux home label also includes a short hash of the resolved `FM_ROOT` path, and there is no per-home container split.
 
+## Isolated launch (bin/fm-isolated-launch.sh)
+
+`bin/fm-isolated-launch.sh` launches `claude` with `HOME` redirected to a fresh `$FM_ROOT/.fm-isolated-home` (override with `FM_ISOLATED_HOME`), so the session gets none of the operator's global `~/.claude/` layer - no global CLAUDE.md @-imports, hooks, skills/agents, or auto-memory - while this repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load normally, since those resolve relative to cwd, not `HOME`.
+First launch under a fresh isolated home requires logging into Claude Code again, since no auth or session state is copied from the real `~/.claude.json`; later launches against the same isolated home reuse whatever that login produced.
+
 ## Harness support
 
 claude, codex, opencode, pi, pi-signed, grok, and kimi are empirically verified for crewmate and secondmate launches; [README requirements](../README.md#requirements) own the set supported for the primary session.
