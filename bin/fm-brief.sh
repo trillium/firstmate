@@ -9,6 +9,14 @@
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
+#   --beads <id> links the task to a beads issue and is passed to every hook in
+#   fm-brief-hooks.d/ as FM_HOOK_BEADS_ID; the beads.sh hook there owns the
+#   resulting brief content. Applies to ship and scout briefs only.
+#   Before the Brief section is written, every executable in fm-brief-hooks.d/
+#   runs (via `.`, in a subshell) with FM_HOOK_BEADS_ID and FM_HOOK_TASK_ID set;
+#   each hook's captured stdout is prepended to the brief as its own section.
+#   Absent or empty fm-brief-hooks.d/ is a no-op. This is the extension point
+#   for out-of-tree brief content so this file stays a pure addition target.
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
 #   --secondmate writes a persistent secondmate charter. The project list
@@ -133,6 +141,7 @@ for a in "$@"; do
     --yolo|--yolo=*) echo "error: --yolo is not a brief input; pass it to bin/fm-spawn.sh, which records the task's approval posture" >&2; exit 1 ;;
     *) POS+=("$a") ;;
   esac
+  shift
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 
@@ -156,6 +165,16 @@ elif [ "$MODE_SET" -eq 1 ]; then
 fi
 ID=${POS[0]}
 
+case "$BEADS_ID" in
+  ''|*[!A-Za-z0-9._-]*)
+    [ -z "$BEADS_ID" ] || { echo "error: invalid --beads id" >&2; exit 1; }
+    ;;
+esac
+if [ -n "$BEADS_ID" ] && [ "$KIND" = secondmate ]; then
+  echo "error: --beads applies only to crewmate ship or scout briefs" >&2
+  exit 1
+fi
+
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to crewmate ship or scout briefs" >&2
   exit 1
@@ -177,6 +196,27 @@ shell_quote() {
 }
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
+
+# Pre-brief extension point: source every executable in fm-brief-hooks.d/ that
+# can emit additional brief sections, so out-of-tree features (for example
+# beads dispatch tracking) can extend the brief without patching this file.
+# Each hook's captured stdout is prepended to the brief. Absent or empty dir
+# is a no-op. Each hook runs in a subshell so a hook's own `exit` never
+# terminates fm-brief.sh, keeping every hook fail-open by construction.
+HOOK_SECTION=""
+BRIEF_HOOKS_DIR="$SCRIPT_DIR/fm-brief-hooks.d"
+if [ -d "$BRIEF_HOOKS_DIR" ]; then
+  for hook in "$BRIEF_HOOKS_DIR"/*; do
+    [ -f "$hook" ] && [ -x "$hook" ] || continue
+    hook_out=$(
+      export FM_HOOK_BEADS_ID=$BEADS_ID
+      export FM_HOOK_TASK_ID=$ID
+      # shellcheck disable=SC1090
+      . "$hook"
+    ) || { echo "warning: brief hook $hook exited non-zero" >&2; continue; }
+    [ -z "$hook_out" ] || HOOK_SECTION="${HOOK_SECTION}${HOOK_SECTION:+$'\n\n'}${hook_out}"
+  done
+fi
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -301,6 +341,8 @@ if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
+$HOOK_SECTION
+
 # Task
 {TASK}
 
@@ -409,6 +451,8 @@ DOD=${DOD%$'\n'}
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+
+$HOOK_SECTION
 
 # Task
 {TASK}
