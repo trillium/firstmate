@@ -204,7 +204,7 @@ STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 # is a no-op. Each hook runs in a subshell so a hook's own `exit` never
 # terminates fm-brief.sh, keeping every hook fail-open by construction.
 HOOK_SECTION=""
-BRIEF_HOOKS_DIR="$SCRIPT_DIR/fm-brief-hooks.d"
+BRIEF_HOOKS_DIR="$FM_ROOT/bin/fm-brief-hooks.d"
 if [ -d "$BRIEF_HOOKS_DIR" ]; then
   for hook in "$BRIEF_HOOKS_DIR"/*; do
     [ -f "$hook" ] && [ -x "$hook" ] || continue
