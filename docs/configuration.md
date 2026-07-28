@@ -241,6 +241,24 @@ The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
+## Multi-account Claude Code (bin/claude-account.sh, --account)
+
+A captain with more than one paid Claude subscription can have claude-harness crewmates draw from a second account's quota instead of competing with the primary session's own account.
+[`bin/claude-account.sh <N> [args...]`](../bin/claude-account.sh) is a standalone launcher (it works with no firstmate checkout on `PATH`) that sets `CLAUDE_CONFIG_DIR` to `~/.claude-homes/account<N>/.claude`, symlinks shared config (`commands`, `hooks`, `skills`, `mcp-configs`, `settings.json`, `settings.local.json`, `rules`, `agents`) in from `~/.claude/` idempotently, and pre-accepts the onboarding and trust-dialog prompts so a headless session doesn't hang.
+`.credentials.json` and `.claude.json` are never symlinked - they stay per-account real files, or OAuth tokens leak across accounts.
+`bin/claude-1.sh` and `bin/claude-2.sh` are one-line direct launchers (`claude-1.sh <args>` == `claude-account.sh 1 <args>`) for a human or an orchestrator to call.
+
+Seed an account's credentials once before first use:
+
+```
+CLAUDE_CONFIG_DIR=~/.claude-homes/account1/.claude claude /login
+```
+
+`fm-spawn.sh --account <N>` wires a ship or scout claude-harness spawn to a specific account: it records `account=N` in the task's `state/<id>.meta`, sets `CLAUDE_TRUST_DIR` to the task's worktree in the crewmate's launch environment so the correct directory gets pre-trusted, and launches through `bin/claude-account.sh N` instead of the plain `claude` binary.
+`--account` requires the claude harness and is strictly optional; absent means current behavior (plain `claude`, no account isolation).
+
+Full pattern, rationale, verification steps, and a capacity-aware routing reference: <https://gist.github.com/sjarmak/61e22d3625ecaac2279e8564d1b1b68f>.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
