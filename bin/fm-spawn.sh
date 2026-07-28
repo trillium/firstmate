@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--scout]
+# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--scout] [--beads <id>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
@@ -110,6 +110,14 @@
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<backend-target> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md for ship/scout tasks;
 # secondmate spawns record mode=secondmate, yolo=off, home=, and projects=.
+# --beads <id> links the spawn to a beads issue; meta records beads_id= when set.
+# Applies only to ship/scout spawns, not --secondmate.
+# After a successful spawn, every executable in bin/fm-spawn-hooks.d/ is sourced
+# (in its own subshell, so a hook's own exit cannot end this script) with
+# FM_HOOK_ID, FM_HOOK_HARNESS, FM_HOOK_BEADS_ID, FM_HOOK_WINDOW, FM_HOOK_STATE,
+# and FM_HOOK_ROOT set. Absent or empty fm-spawn-hooks.d/ is a no-op. This is
+# the extension point for out-of-tree post-spawn behavior (for example beads
+# dispatch tracking) so this file stays a pure addition target.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -152,6 +160,7 @@ HARNESS_ARG=
 MODEL=
 EFFORT=
 BACKEND_ARG=
+BEADS_ID=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -168,6 +177,7 @@ for a in "$@"; do
       model) MODEL=$a; MODEL_SET=1 ;;
       effort) EFFORT=$a; EFFORT_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
+      beads) BEADS_ID=$a ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -184,6 +194,8 @@ for a in "$@"; do
     --effort=*) EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
     --backend) want_value=backend ;;
     --backend=*) BACKEND_ARG=${a#--backend=}; BACKEND_SET=1 ;;
+    --beads) want_value=beads ;;
+    --beads=*) BEADS_ID=${a#--beads=} ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -192,6 +204,10 @@ done
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
+case "$BEADS_ID" in
+  ''|*[!A-Za-z0-9._-]*) [ -z "$BEADS_ID" ] || { echo "error: invalid --beads id" >&2; exit 1; } ;;
+esac
+[ -z "$BEADS_ID" ] || [ "$KIND" != secondmate ] || { echo "error: --beads applies only to crewmate ship or scout tasks" >&2; exit 1; }
 case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
@@ -1471,6 +1487,7 @@ META_WINDOW=$T
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
+  [ -z "$BEADS_ID" ] || echo "beads_id=$BEADS_ID"
 } > "$STATE/$ID.meta"
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
@@ -1541,3 +1558,25 @@ if [ "$KIND" = secondmate ]; then
 fi
 
 echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$META_WINDOW worktree=$WT"
+
+# Post-spawn extension point: source every executable in fm-spawn-hooks.d/ so
+# out-of-tree features (for example beads dispatch tracking) can react to a
+# successful spawn without patching this file. Absent or empty dir is a no-op.
+# Each hook runs in a subshell so a hook's own `exit` never terminates fm-spawn.sh,
+# keeping every hook fail-open by construction.
+SPAWN_HOOKS_DIR="$FM_ROOT/bin/fm-spawn-hooks.d"
+if [ -d "$SPAWN_HOOKS_DIR" ]; then
+  for hook in "$SPAWN_HOOKS_DIR"/*; do
+    [ -f "$hook" ] && [ -x "$hook" ] || continue
+    (
+      export FM_HOOK_ID=$ID
+      export FM_HOOK_HARNESS=$HARNESS
+      export FM_HOOK_BEADS_ID=$BEADS_ID
+      export FM_HOOK_WINDOW=$META_WINDOW
+      export FM_HOOK_STATE=$STATE
+      export FM_HOOK_ROOT=$FM_ROOT
+      # shellcheck disable=SC1090
+      . "$hook"
+    ) || echo "warning: spawn hook $hook exited non-zero" >&2
+  done
+fi
