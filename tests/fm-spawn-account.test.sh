@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# Behavior tests for fm-spawn.sh's --account flag (per-account Claude Code
+# isolation; docs/configuration.md "Multi-account Claude Code").
+#
+# Like fm-spawn-dispatch-profile.test.sh, these drive fm-spawn through meta
+# writing and launch construction with a fake tmux pane and a real isolated
+# git worktree, capturing the literal launch command sent with
+# `tmux send-keys -l` so assertions pin the exact command firstmate would run.
+set -u
+
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+SPAWN="$ROOT/bin/fm-spawn.sh"
+TMP_ROOT=$(fm_test_tmproot fm-spawn-account)
+
+make_spawn_fakebin() {
+  local dir=$1 fakebin
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+esac
+case "${1:-}" in
+  display-message) printf 'firstmate\n'; exit 0 ;;
+  list-windows) exit 0 ;;
+  has-session|new-session|new-window|kill-window) exit 0 ;;
+  send-keys)
+    if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
+      prev=
+      for a in "$@"; do
+        if [ "$prev" = "-l" ]; then
+          printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG"
+        fi
+        prev=$a
+      done
+    fi
+    exit 0
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/tmux"
+  fm_fake_exit0 "$fakebin" treehouse pi-signed
+  printf '%s\n' "$fakebin"
+}
+
+make_spawn_case() {
+  local name=$1 harness=$2 case_dir home proj wt fakebin launchlog id
+  shift 2
+  case_dir="$TMP_ROOT/$name"
+  home="$case_dir/home"
+  proj="$case_dir/project"
+  wt="$case_dir/wt"
+  launchlog="$case_dir/launch.log"
+  fakebin=$(make_spawn_fakebin "$case_dir/fake")
+  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
+  printf '%s\n' "$harness" > "$home/config/crew-harness"
+  fm_git_worktree "$proj" "$wt" "wt-$name"
+  touch "$home/state/.last-watcher-beat"
+  for id in "$@"; do
+    mkdir -p "$home/data/$id"
+    printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  done
+  printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$launchlog"
+}
+
+run_spawn() {
+  local home=$1 wt=$2 fakebin=$3 launchlog=$4
+  shift 4
+  : > "$launchlog"
+  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
+    "$SPAWN" "$@" 2>&1
+}
+
+read_case_record() {
+  IFS='|' read -r _ HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG <<EOF
+$1
+EOF
+}
+
+test_account_flag_records_meta_and_uses_account_launcher() {
+  local rec id out status launch expected
+  id=account-one-z1
+  rec=$(make_spawn_case account-one claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude --account 1)
+  status=$?
+  expect_code 0 "$status" "claude spawn with --account 1 should succeed"
+  assert_contains "$out" "spawned $id harness=claude" "spawn did not report claude harness"
+  assert_grep "account=1" "$HOME_DIR/state/$id.meta" "meta missing account=1"
+
+  launch=$(cat "$LAUNCH_LOG")
+  expected="CLAUDE_TRUST_DIR='$WT_DIR' CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '${ROOT}/bin/claude-account.sh' 1 --dangerously-skip-permissions \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "account launch did not use claude-account.sh with CLAUDE_TRUST_DIR"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  pass "--account 1 records account=1 in meta and launches through claude-account.sh with CLAUDE_TRUST_DIR set"
+}
+
+test_account_flag_defaults_to_absent_meta_and_plain_claude() {
+  local rec id out status launch expected
+  id=account-off-z2
+  rec=$(make_spawn_case account-off claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude)
+  status=$?
+  expect_code 0 "$status" "claude spawn without --account should succeed"
+  assert_no_grep "account=" "$HOME_DIR/state/$id.meta" "meta should not record account= when --account is absent"
+
+  launch=$(cat "$LAUNCH_LOG")
+  expected="CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "no-account launch should be byte-identical to current behavior"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  pass "absent --account leaves meta and the launch command unchanged"
+}
+
+test_account_flag_requires_claude_harness() {
+  local rec id out status
+  id=account-wrong-harness-z3
+  rec=$(make_spawn_case account-wrong-harness codex "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --account 1)
+  status=$?
+  expect_code 1 "$status" "--account with a non-claude harness should refuse"
+  assert_contains "$out" "error: --account requires the claude harness" \
+    "refusal did not explain the claude-harness requirement"
+  assert_absent "$HOME_DIR/state/$id.meta" "harness refusal should happen before meta is written"
+  pass "--account refuses a non-claude harness before meta or launch"
+}
+
+test_account_flag_rejects_non_positive_integer() {
+  local rec id out status
+  id=account-bad-value-z4
+  rec=$(make_spawn_case account-bad-value claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude --account 0)
+  status=$?
+  expect_code 1 "$status" "--account 0 should refuse"
+  assert_contains "$out" "error: --account requires a positive integer" \
+    "refusal did not explain the positive-integer requirement"
+  assert_absent "$HOME_DIR/state/$id.meta" "bad --account value should refuse before meta is written"
+  pass "--account rejects a non-positive-integer value"
+}
+
+test_account_flag_records_meta_and_uses_account_launcher
+test_account_flag_defaults_to_absent_meta_and_plain_claude
+test_account_flag_requires_claude_harness
+test_account_flag_rejects_non_positive_integer
+
+echo "# all fm-spawn-account tests passed"
