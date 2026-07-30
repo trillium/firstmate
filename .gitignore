@@ -20,3 +20,4 @@ config/cmux-socket-password
 config/wedge-alarm
 config/herdr-presentation-spaces
 CHANGELOG.md
+/.fm-isolated-home/.treehouse
