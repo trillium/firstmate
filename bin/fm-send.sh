@@ -315,5 +315,31 @@ else
   # turn before its busy footer shows. Pause so an immediate peek catches the
   # crewmate actually working instead of the stale idle pane. FM_SEND_SETTLE=0
   # disables it. Scoped to this path only, never the shared submit core.
+  if [ "${FM_SEND_VERIFY_TRANSITION:-0}" != 0 ]; then
+    # Optional post-submit transition verification: confirm the turn actually
+    # started, not just that the composer cleared. This uses the backend's own
+    # transition-wait primitives to verify idle→working transition.
+    local verify_budget=${FM_SEND_VERIFY_TIMEOUT:-0.6}
+    local verify_result
+    verify_result=$(fm_backend_wait_for_working "$TARGET_BACKEND" "$T" "$verify_budget")
+    case "$verify_result" in
+      working)
+        : # Turn confirmed started, proceed normally
+        ;;
+      idle)
+        echo "error: SEND DID NOT LAND - text was submitted to $T but the turn did not start (remains idle; tried $RESOLUTION_TRIED)" >&2
+        exit 1
+        ;;
+      unknown)
+        # Could not verify, but composer cleared. Proceed with warning in verbose mode only.
+        [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: text was submitted to $T but turn start could not be verified (tried $RESOLUTION_TRIED)" >&2
+        ;;
+      error)
+        # Backend error during verification, but text was submitted. Proceed cautiously.
+        [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: SEND DID NOT LAND - text was submitted to $T but turn-start verification failed (backend error; tried $RESOLUTION_TRIED)" >&2
+        exit 1
+        ;;
+    esac
+  fi
   [ "${FM_SEND_SETTLE:-1}" = 0 ] || sleep "${FM_SEND_SETTLE:-1}"
 fi

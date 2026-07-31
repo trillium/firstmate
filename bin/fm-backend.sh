@@ -818,6 +818,26 @@ fm_backend_composer_state() {  # <backend> <target> -> empty|pending|pending-unp
   esac
 }
 
+# fm_backend_wait_for_working: optional post-submit assertion. Polls <target>'s
+# agent state up to <budget_secs> to confirm the submitted message drove a turn.
+# Returns 0 and echoes "working" if the agent status transitioned to a working
+# state (confirming the turn started); returns 0 and echoes "idle" if the target
+# remained idle across the full budget (message may have been queued or
+# dropped); returns 0 and echoes "unknown" on read failures (cannot verify).
+# On error return (1), echoes "error" and an error message to stderr.
+# This is an optional add-on confirmation for callers that need explicit proof
+# a submission actually drove execution, distinct from composer-state verification.
+fm_backend_wait_for_working() {  # <backend> <target> <budget_secs>
+  local backend=$1
+  shift
+  fm_backend_source "$backend" || { printf 'error'; return 0; }
+  case "$backend" in
+    herdr) fm_backend_herdr_wait_for_working_submit "$@" ;;
+    tmux) fm_backend_tmux_wait_for_working_submit "$@" ;;
+    *) printf 'unknown'; return 0 ;;
+  esac
+}
+
 # fm_backend_target_exists: cheap, READ-ONLY existence check - does the
 # recorded TARGET endpoint still exist on BACKEND? Never starts a server or
 # session: for herdr this deliberately queries the pane directly instead of

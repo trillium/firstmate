@@ -2223,6 +2223,24 @@ fm_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <p
   fi
 }
 
+# fm_backend_herdr_wait_for_working_submit: optional post-submit transition
+# confirmation. Uses the same native agent-state polling as the send-submit
+# path: poll <target>'s agent status for up to <budget_secs> to confirm the
+# message drove a turn. Returns 0 and echoes "working" if the agent status went
+# to working; returns 0 and echoes "idle" if idle throughout; returns 0 and
+# echoes "unknown" on read failures. Errors return 0 and echo "error".
+fm_backend_herdr_wait_for_working_submit() {  # <target> <budget_secs>
+  local target=$1 budget=${2:-0.6}
+  fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
+  local session=$FM_BACKEND_HERDR_SESSION pane_id=$FM_BACKEND_HERDR_PANE
+  local result
+  result=$(fm_backend_herdr_wait_for_working "$session" "$pane_id" "$budget" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
+  case "$result" in
+    busy) printf 'working'; return 0 ;;
+    *) printf '%s' "$result"; return 0 ;;
+  esac
+}
+
 # fm_backend_herdr_pane_for_tab: the root pane id for <tab_id> in <workspace_id>
 # of <session>, via one pane list call filtered by tab_id (never assumes a
 # tab-number/pane-number correspondence - herdr numbers them independently).

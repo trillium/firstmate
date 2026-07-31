@@ -54,6 +54,31 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
   fm_tmux_submit_core "$@"
 }
 
+# fm_backend_tmux_wait_for_working_submit: optional post-submit transition
+# confirmation. Polls <target>'s busy state (via pane output scan) for up to
+# <budget_secs> to confirm the message drove a turn. Returns 0 and echoes
+# "working" if the pane shows busy output; returns 0 and echoes "idle" if the
+# pane remains quiet; returns 0 and echoes "unknown" on read failures.
+# Errors return 0 and echo "error".
+fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
+  local target=$1 budget=${2:-0.6} start_time current_time elapsed poll_interval=200
+  start_time=$(date +%s%N 2>/dev/null || date +%s0000000)
+  budget=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
+  while :; do
+    if fm_pane_is_busy "$target" 2>/dev/null; then
+      printf 'working'
+      return 0
+    fi
+    current_time=$(date +%s%N 2>/dev/null || date +%s0000000)
+    elapsed=$((current_time - start_time))
+    if [ "$elapsed" -ge "$budget" ] 2>/dev/null; then
+      printf 'idle'
+      return 0
+    fi
+    sleep 0.2
+  done
+}
+
 # fm_backend_tmux_container_ensure: reuse the current tmux session when
 # firstmate itself runs inside tmux, else ensure a dedicated detached
 # "firstmate" session exists. Mirrors fm-spawn.sh's container-ensure block;
