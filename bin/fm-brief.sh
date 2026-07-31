@@ -26,6 +26,12 @@
 #   The flag must be explicit because {TASK} is filled after scaffolding and the
 #   caller-supplied repo string cannot reliably identify this repo. Briefs made
 #   without it carry a loud declaration so an omitted contract cannot be silent.
+# Hook system: when environment variables like FM_HOOK_BEADS_ID are set, executable
+# scripts in fm-brief-hooks.d/ are sourced in a subshell during scaffolding, and their
+# stdout is prepended to the generated brief. The beads hook (fm-brief-hooks.d/beads.sh)
+# is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt and
+# Bead Closure sections that ask the worker to confirm dispatch/lifecycle state changes
+# and close the bead on completion.
 # For ship tasks, the definition of done is shaped by the project's delivery mode
 # (data/projects.md via fm-project-mode.sh; see the project-management skill
 # and AGENTS.md task lifecycle):
