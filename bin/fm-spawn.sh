@@ -40,6 +40,11 @@
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
+#   --label <string> overrides the default tab/window label for the spawned task.
+#   Without --label, the window is named by the task ID in the form fm-<task-id>.
+#   With --label, the window is named fm-<label> instead. Task meta conditionally
+#   records label= only when --label was passed at spawn; an absent label= means
+#   the default task-ID-derived label was used.
 #   A herdr crewmate or scout is placed in the exact workspace of the firstmate
 #   or secondmate process launching it, resolved from that process's own herdr
 #   pane rather than from a workspace label (herdr enforces no label uniqueness,
@@ -1370,7 +1375,11 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
   esac
 }
 
-W="fm-$ID"
+if [ -n "$LABEL_ARG" ]; then
+  W="fm-$LABEL_ARG"
+else
+  W="fm-$ID"
+fi
 case "$BACKEND" in
   tmux)
     SES=$(fm_backend_tmux_container_ensure)
