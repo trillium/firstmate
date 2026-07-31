@@ -145,7 +145,7 @@ print_backlog_pointer() {
       printf 'Full task bodies remain available on demand: task show <id> (beads task store), or data/backlog.md.\n'
       ;;
     manual)
-      printf 'Full task bodies remain available on demand: inspect data/backlog.md.\n'
+      printf 'Full task bodies remain available on demand: or data/backlog.md.\n'
       ;;
     *)
       printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
