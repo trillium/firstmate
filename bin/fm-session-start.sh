@@ -142,7 +142,7 @@ print_backlog_pointer() {
   backend=$(fm_backlog_backend_value "$CONFIG")
   case "$backend" in
     beads)
-      printf 'Full task bodies remain available on demand: task show <id> (beads task store).\n'
+      printf 'Full task bodies remain available on demand: task show <id> (beads task store), or data/backlog.md.\n'
       ;;
     manual)
       printf 'Full task bodies remain available on demand: inspect data/backlog.md.\n'
