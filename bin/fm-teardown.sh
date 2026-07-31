@@ -312,6 +312,15 @@ deregister_parlay_agent() {
   fi
 }
 
+retire_busy_state() {
+  local state_dir=$1 id=$2 gen=${3:-}
+  if [ -n "$gen" ]; then
+    "$SCRIPT_DIR/fm-busy-event.sh" retire "$state_dir" "$id" --gen "$gen"
+  elif [ -f "$state_dir/$id.busy-gen" ]; then
+    "$SCRIPT_DIR/fm-busy-event.sh" retire "$state_dir" "$id" --current-gen
+  fi
+}
+
 validate_pr_poll_cleanup() {
   local state_dir=$1 id=$2 quarantine state_device artifact has_artifact=0
   fm_task_id_path_safe "$id" || return 0
