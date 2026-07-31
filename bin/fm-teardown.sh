@@ -550,6 +550,8 @@ backlog_refresh_reminder() {
         ;;
     esac
     printf '%s\n' "Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+  elif fm_beads_backend_available "$CONFIG"; then
+    printf '%s\n' "Backlog: $ID just finished. Update beads task store: task set-state $ID closed, then task list --label status:ready to find next work whose blockers are cleared and date gates have passed."
   else
     printf '%s\n' "Backlog: $ID just finished. Update data/backlog.md - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
   fi
