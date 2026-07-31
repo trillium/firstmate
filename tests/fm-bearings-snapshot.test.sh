@@ -1917,6 +1917,7 @@ test_chat_contract_four_sections() {
   assert_contains "$body" "report path or link" "file mode must link the report from inside the digest"
   pass "the /bearings skill states the four-section chat contract in order, with empty-states and the At Anchor exclusion"
 }
+test_chat_contract_four_sections
 test_domain_alpha_stale_parent_event_does_not_become_current_work
 test_gnu_stat_uses_file_formats_without_bsd_fallback_pollution
 test_parent_activity_evidence_is_bounded_and_disclosed
