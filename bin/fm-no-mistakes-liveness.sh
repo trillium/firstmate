@@ -223,17 +223,35 @@ get_active_step() {  # <run_output>
   return 1
 }
 
+# Extract last_activity time from active_steps table (e.g., "2s ago: log: message")
+# Returns seconds elapsed, or 0 if cannot parse
+parse_active_steps_time() {  # <active_steps_line>
+  local line=$1
+  # Look for patterns like "2s ago:" or "30m ago:"
+  if [[ "$line" =~ ([0-9]+)(s|m|h)\ ago: ]]; then
+    local value="${BASH_REMATCH[1]}"
+    local unit="${BASH_REMATCH[2]}"
+    case "$unit" in
+      s) printf '%d' "$value" ;;
+      m) printf '%d' "$((value * 60))" ;;
+      h) printf '%d' "$((value * 3600))" ;;
+      *) printf '0' ;;
+    esac
+  else
+    printf '0'
+  fi
+}
+
 # Check a single run's liveness by reading step activity
 # Returns elapsed seconds (> 0) and exit code 0 for live, 1 for hung
 check_run_liveness() {  # <run-id>
   local run_id=$1
-  local run_out status outcome awaiting_msg elapsed
+  local run_out outcome awaiting_msg elapsed
 
   run_out=$(nm_run axi status --run "$run_id")
   [ -n "$run_out" ] || return 1
 
   # Parse run info
-  status=$(strip_quotes "$(nm_field "$run_out" status)")
   outcome=$(strip_quotes "$(nm_field "$run_out" outcome)")
 
   # Terminal outcomes are not hung
@@ -250,9 +268,40 @@ check_run_liveness() {  # <run-id>
     return 0
   fi
 
-  # Get the active step
+  # Check active_steps table for real-time last_activity
+  # This section appears after the header 'active_steps[N]{...}:'
+  local active_steps_section active_step_line last_activity_field
+  active_steps_section=$(printf '%s\n' "$run_out" | sed -n '/^[[:space:]]*active_steps\[/,/^[^[:space:]]/p')
+
+  if [ -n "$active_steps_section" ]; then
+    # Get the data rows (skip the header line that ends with ':')
+    active_step_line=$(printf '%s\n' "$active_steps_section" | grep -E '^[[:space:]]*[^,]+,(running|fixing),' | head -1 | sed 's/^[[:space:]]*//')
+
+    if [ -n "$active_step_line" ]; then
+      # Found an active running/fixing step in active_steps. Extract last_activity.
+      # Format: step,status,active_for,"time ago: message","pid",round
+      # Extract the quoted field after active_for
+      if [[ "$active_step_line" =~ ^[^,]*,[^,]*,[^,]*,\"([^\"]*) ]]; then
+        last_activity_field="${BASH_REMATCH[1]}"
+        if [ -n "$last_activity_field" ]; then
+          elapsed=$(parse_active_steps_time "$last_activity_field")
+          if [ "$elapsed" -gt "$STALE_THRESHOLD" ]; then
+            printf '%d' "$elapsed"
+            return 1  # Hung
+          fi
+          printf '%d' "$elapsed"
+          return 0  # Live
+        fi
+      fi
+    fi
+  fi
+
+  # Fallback to steps table if no active_steps
   local active_step step_info step_status duration
-  active_step=$(get_active_step "$run_out") || return 0
+  active_step=$(get_active_step "$run_out") || {
+    printf '0'
+    return 0
+  }
 
   # Get step info (name|status|duration_ms)
   step_info=$(get_step_info "$run_out" "$active_step")
@@ -266,51 +315,21 @@ check_run_liveness() {  # <run-id>
   step_status="${step_status%|*}"
   duration="${step_info##*|}"
 
-  # Ensure duration is numeric
+  # Use step duration only as fallback; it's less accurate than active_steps
   case "$duration" in ''|*[!0-9]*)
-    # Check log for timestamps instead
-    local log_tail last_update
-    log_tail=$(nm_run axi logs --step "$active_step" --run "$run_id" 2>/dev/null || true)
-    if [ -z "$log_tail" ]; then
-      printf '0'
-      return 0
-    fi
-
-    # Get the date from the last non-empty line in the log
-    last_update=$(printf '%s\n' "$log_tail" | grep -v '^[[:space:]]*$' | tail -1)
-    if [ -z "$last_update" ]; then
-      printf '0'
-      return 0
-    fi
-
-    # Try to extract timestamp - if we can't, assume live
-    local ts now
-    ts=$(parse_log_timestamp "$last_update")
-    if [ "$ts" -eq 0 ]; then
-      printf '0'
-      return 0
-    fi
-    now=$(get_timestamp)
-    elapsed=$((now - ts))
+    printf '0'
+    return 0
     ;;
   *)
     # Convert milliseconds to seconds
     elapsed=$((duration / 1000))
+    # Step duration alone isn't reliable (includes all time at gate)
+    # Only report hung if duration is extremely large (> 30 min) and still running
+    if [ "$step_status" = "fixing" ] && [ "$elapsed" -gt 1800 ]; then
+      printf '%d' "$elapsed"
+      return 1  # Suspicious
+    fi
     ;;
-  esac
-
-  # Step is only hung if it's running/fixing and has been inactive for > threshold
-  case "$step_status" in
-    running|fixing)
-      if [ "$elapsed" -gt "$STALE_THRESHOLD" ]; then
-        printf '%d' "$elapsed"
-        return 1  # Hung
-      fi
-      ;;
-    pending|completed)
-      # Not actively running
-      elapsed=0
-      ;;
   esac
 
   printf '%d' "$elapsed"
