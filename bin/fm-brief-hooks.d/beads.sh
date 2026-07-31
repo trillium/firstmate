@@ -13,6 +13,7 @@ This task is linked to bead \`$FM_HOOK_BEADS_ID\`.
 Before anything else - your first action, before the setup below - prove you received and read this brief:
 \`\`\`
 task set-state $FM_HOOK_BEADS_ID dispatch=claimed --reason 'brief read and accepted'
+task set-state $FM_HOOK_BEADS_ID lifecycle=claimed --reason 'brief read and accepted'
 \`\`\`
 
 # Bead Closure
