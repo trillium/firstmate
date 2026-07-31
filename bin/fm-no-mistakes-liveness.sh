@@ -90,37 +90,6 @@ nm_field() {  # <output> <key>
   printf '%s\n' "$output" | sed -n "s/^[[:space:]]*$key:[[:space:]]*\(.*\)/\1/p" | head -1
 }
 
-# Get current time in seconds since epoch
-get_timestamp() {
-  if command -v gdate >/dev/null 2>&1; then
-    gdate +%s
-  else
-    date +%s
-  fi
-}
-
-# Parse timestamp from log line (common formats: "2026-07-31 09:22:15", "2026-07-31 09:22")
-parse_log_timestamp() {
-  local line=$1
-  # Try to extract ISO-like timestamp from log line
-  if [[ $line =~ ([0-9]{4})-([0-9]{2})-([0-9]{2})\ ([0-9]{2}):([0-9]{2}) ]]; then
-    local year="${BASH_REMATCH[1]}"
-    local month="${BASH_REMATCH[2]}"
-    local day="${BASH_REMATCH[3]}"
-    local hour="${BASH_REMATCH[4]}"
-    local min="${BASH_REMATCH[5]}"
-
-    # Convert to epoch seconds using date
-    if command -v gdate >/dev/null 2>&1; then
-      gdate -d "$year-$month-$day $hour:$min" +%s 2>/dev/null || echo 0
-    else
-      date -j -f "%Y-%m-%d %H:%M" "$year-$month-$day $hour:$min" +%s 2>/dev/null || echo 0
-    fi
-  else
-    echo 0
-  fi
-}
-
 # Check if a run is owned by a task by matching branch names
 # Also checks secondmate homes and project homes
 find_task_for_branch() {  # <branch>
@@ -249,7 +218,10 @@ check_run_liveness() {  # <run-id>
   local run_out outcome awaiting_msg elapsed
 
   run_out=$(nm_run axi status --run "$run_id")
-  [ -n "$run_out" ] || return 1
+  if [ -z "$run_out" ]; then
+    printf '0'
+    return 1
+  fi
 
   # Parse run info
   outcome=$(strip_quotes "$(nm_field "$run_out" outcome)")
@@ -446,7 +418,7 @@ check_task_run() {  # <task-id>
       # Found a run for this task's branch
       # Get full run details via axi status
       local axi_out run_id
-      axi_out=$(nm_run axi status 2>/dev/null || true)
+      axi_out=$(cd "$worktree" && nm_run axi status 2>/dev/null || true)
       run_id=$(strip_quotes "$(nm_field "$axi_out" id)")
 
       [ -n "$run_id" ] || die "Could not get run ID"
@@ -470,16 +442,18 @@ check_task_run() {  # <task-id>
 
 # --- main --------------------------------------------------------------------
 
-case "${1:-}" in
-  --help|-h) usage ;;
-  --all) check_all_runs ;;
-  --*) die "unknown option: $1" ;;
-  '')
-    # Default: check all running runs
-    check_all_runs
-    ;;
-  *)
-    # Check specific task
-    check_task_run "$1"
-    ;;
-esac
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  case "${1:-}" in
+    --help|-h) usage ;;
+    --all) check_all_runs ;;
+    --*) die "unknown option: $1" ;;
+    '')
+      # Default: check all running runs
+      check_all_runs
+      ;;
+    *)
+      # Check specific task
+      check_task_run "$1"
+      ;;
+  esac
+fi

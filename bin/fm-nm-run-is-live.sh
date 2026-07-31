@@ -15,64 +15,9 @@
 #
 set -u
 
-# Timeouts for CLI calls (consistent with fm-no-mistakes-liveness.sh)
-NM_TIMEOUT=${FM_NM_LIVENESS_TIMEOUT:-15}
-case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=15 ;; esac
-
-STALE_THRESHOLD=${FM_NM_LIVENESS_STALE:-300}
-case "$STALE_THRESHOLD" in ''|*[!0-9]*) STALE_THRESHOLD=300 ;; esac
-
-# Bounded no-mistakes call; stdout only, never fails the script.
-HAVE_TIMEOUT=none
-if command -v timeout >/dev/null 2>&1; then HAVE_TIMEOUT=timeout
-elif command -v gtimeout >/dev/null 2>&1; then HAVE_TIMEOUT=gtimeout
-elif command -v perl >/dev/null 2>&1; then HAVE_TIMEOUT=perl
-fi
-nm_run() {  # <args...>
-  case "$HAVE_TIMEOUT" in
-    timeout)  timeout "$NM_TIMEOUT" no-mistakes "$@" 2>/dev/null || true ;;
-    gtimeout) gtimeout "$NM_TIMEOUT" no-mistakes "$@" 2>/dev/null || true ;;
-    perl)     perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$NM_TIMEOUT" no-mistakes "$@" 2>/dev/null || true ;;
-    *)        true ;;
-  esac
-}
-
-trim() {
-  local s=${1:-}
-  s="${s#"${s%%[![:space:]]*}"}"
-  s="${s%"${s##*[![:space:]]}"}"
-  printf '%s' "$s"
-}
-
-strip_quotes() {
-  local s
-  s=$(trim "${1:-}")
-  case "$s" in
-    \"*\") s=${s#\"}; s=${s%\"} ;;
-  esac
-  trim "$s"
-}
-
-nm_field() {  # <output> <key>
-  local output=$1 key=$2
-  printf '%s\n' "$output" | sed -n "s/^[[:space:]]*$key:[[:space:]]*\(.*\)/\1/p" | head -1
-}
-
-parse_active_steps_time() {  # <active_steps_line>
-  local line=$1
-  if [[ "$line" =~ ([0-9]+)(s|m|h)\ ago: ]]; then
-    local value="${BASH_REMATCH[1]}"
-    local unit="${BASH_REMATCH[2]}"
-    case "$unit" in
-      s) printf '%d' "$value" ;;
-      m) printf '%d' "$((value * 60))" ;;
-      h) printf '%d' "$((value * 3600))" ;;
-      *) printf '0' ;;
-    esac
-  else
-    printf '0'
-  fi
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/fm-no-mistakes-liveness.sh
+. "$SCRIPT_DIR/fm-no-mistakes-liveness.sh"
 
 # Check if a run is live (not hung) - simplified version for single-run checks
 check_run_liveness() {  # <run-id>
