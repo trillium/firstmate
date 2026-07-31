@@ -10,7 +10,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-session-start.sh`    | Compose lock, bootstrap, and wake drain into the single ordered session-start digest |
 | `fm-sessionstart-nudge.sh` | Print the native session-start hook nudge when the primary has not already run the digest |
 | `fm-operational-input.sh` | Construct and parse the canonical cross-language operational-input protocol |
-| `fm-isolated-launch.sh`  | Launch `claude` with `HOME` redirected to a fresh isolated home, stripped of global harness config |
 | `fm-bootstrap.sh`        | Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools |
 | `fm-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
 | `fm-fleet-snapshot.sh`   | Print the read-only structured fleet snapshot JSON (schema `fm-fleet-snapshot.v1`)   |
@@ -47,8 +46,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-remote-home-seed.sh` | Register and provision a whole secondmate home on an SSH-reachable host              |
 | `fm-remote-readiness-lib.sh` | Shared remote second-mate readiness gate: check and, when needed, repair then re-check through `fm-remote-doctor.sh` |
 | `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend |
-| `fm-bead-stamp.sh`       | Fail-open beads dispatch stamp: set `dispatch=sent` and assign a linked bead after spawn |
-| `fm-spawn-hooks.d/beads.sh` | Post-spawn extension: stamp a `--beads` task's bead and register its bead-close watcher check |
 | `fm-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |
 | `fm-backend-hometag-lib.sh` | Shared per-installation home-tag derivation for zellij tab and cmux workspace titles |
 | `fm-composer-lib.sh`     | Single fleet-wide owner of composer-content classification for all backends          |
@@ -81,7 +78,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-ff-lib.sh`           | Shared guarded fast-forward helper for origin pulls and local secondmate syncs       |
 | `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
 | `fm-config-inherit-lib.sh` | Shared primary-to-secondmate inherited local-material propagation and config-reread delivery |
-| `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
+| `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector (tasks-axi/beads/manual) and `tasks-axi` compatibility probe |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor for the bootstrap diagnostic                  |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Atomically drain queued watcher wakes, emit bounded best-effort status-event annotations and a fleet-wide OPEN DECISIONS section, then assert supervision health |

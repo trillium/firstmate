@@ -142,7 +142,19 @@ print_file_or_absent() {
 }
 
 print_backlog_pointer() {
-  printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
+  local backend
+  backend=$(fm_backlog_backend_value "$CONFIG")
+  case "$backend" in
+    beads)
+      printf 'Full task bodies remain available on demand: task show <id> (beads task store), or data/backlog.md.\n'
+      ;;
+    manual)
+      printf 'Full task bodies remain available on demand: inspect data/backlog.md directly, or data/backlog.md via tasks-axi when available.\n'
+      ;;
+    *)
+      printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
+      ;;
+  esac
 }
 
 print_backlog_manual_compact() {
@@ -198,10 +210,29 @@ print_backlog_tasks_axi_compact() {
   fi
 }
 
+print_backlog_beads_compact() {
+  local path=$1 out rc
+  printf 'compact backlog listing (beads task store; max %s item(s))\n' "$BACKLOG_LIMIT"
+  out=$(task list --label "status:ready" --limit "$BACKLOG_LIMIT" 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$out"
+  else
+    printf 'beads task listing failed; falling back to title-line rendering.\n'
+    printf '%s\n' "$out"
+    if [ -f "$path" ]; then
+      print_backlog_manual_compact "$path" "fallback"
+    fi
+  fi
+}
+
 print_backlog_compact() {
   local path=$1 label=$2
   subsection "$label"
-  if [ -f "$path" ]; then
+  if fm_beads_backend_available "$CONFIG"; then
+    print_backlog_beads_compact "$path"
+    print_backlog_pointer
+  elif [ -f "$path" ]; then
     if [ -s "$path" ]; then
       if fm_tasks_axi_backend_available "$CONFIG"; then
         print_backlog_tasks_axi_compact "$path"

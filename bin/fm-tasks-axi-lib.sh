@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Shared tasks-axi backend selection and compatibility probe for bootstrap,
-# teardown, and secondmate backlog handoff.
+# Shared backlog backend selection (tasks-axi, beads, or manual) and tasks-axi
+# compatibility probe for bootstrap, teardown, and secondmate backlog handoff.
 # Usage: . bin/fm-tasks-axi-lib.sh
 #
 # Compatible means tasks-axi --version reports FM_TASKS_AXI_MIN or newer,
@@ -84,5 +84,13 @@ fm_backlog_backend_manual() {
 fm_tasks_axi_backend_available() {
   local config_dir=$1
   fm_backlog_backend_manual "$config_dir" && return 1
+  [ "$(fm_backlog_backend_value "$config_dir")" = beads ] && return 1
   fm_tasks_axi_compatible
+}
+
+fm_beads_backend_available() {
+  local config_dir=$1
+  [ "$(fm_backlog_backend_value "$config_dir")" = beads ] || return 1
+  command -v task >/dev/null 2>&1 || return 1
+  task list --limit 1 >/dev/null 2>&1
 }

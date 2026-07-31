@@ -22,19 +22,11 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
-#   --account <N> is the optional per-account Claude Code isolation index (see
-#   docs/configuration.md "Multi-account Claude Code"). It requires the claude
-#   harness, records account=N in the task's meta, sets CLAUDE_TRUST_DIR to the
-#   task's worktree in the crewmate's launch environment, and launches through
-#   bin/claude-account.sh N instead of the plain claude binary. Absent means
-#   current behavior: plain claude, no account isolation.
 #   --backend <name> is the explicit runtime session-provider backend for this
-#   exact task only (docs/configuration.md "Runtime backend" owns when that flag
-#   is authorized). Without it, the script resolves FM_BACKEND, then
-#   config/backend, then runtime auto-detection from the runtime firstmate's
-#   environment: $TMUX, HERDR_ENV=1, or cmux runtime signals (via
-#   bin/fm-backend.sh's fm_backend_detect, with cmux fallback details in
-#   docs/cmux-backend.md),
+#   spawn. Without it, the script resolves FM_BACKEND, then config/backend, then
+#   runtime auto-detection (the runtime firstmate itself is executing inside -
+#   $TMUX, HERDR_ENV=1, or cmux runtime signals; bin/fm-backend.sh's
+#   fm_backend_detect, with cmux fallback details in docs/cmux-backend.md),
 #   then tmux.
 #   Spawn-capable backends are the reference tmux adapter and experimental
 #   herdr, zellij, orca, and cmux. Orca owns both the task worktree and
@@ -303,12 +295,6 @@ case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
-if [ "$ACCOUNT_SET" -eq 1 ]; then
-  case "$ACCOUNT" in
-    ''|*[!0-9]*) echo "error: --account requires a positive integer" >&2; exit 1 ;;
-    0) echo "error: --account requires a positive integer" >&2; exit 1 ;;
-  esac
-fi
 
 # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
 # firstmate's per-task decision, so they are required and closed-set validated
@@ -832,7 +818,7 @@ launch_template() {
     # does NOT suppress the interactive ghost text (verified empirically), so the env
     # var is the correct control. The dim-aware composer reader in fm-tmux-lib.sh is
     # the defense-in-depth backstop for any pane this flag cannot reach.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false __CLAUDEBIN__ --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -904,11 +890,6 @@ esac
 case "$HARNESS" in
   pi|pi-signed) LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH" ;;
 esac
-
-if [ -n "$ACCOUNT" ] && [ "$HARNESS" != claude ]; then
-  echo "error: --account requires the claude harness (got '$HARNESS')" >&2
-  exit 1
-fi
 
 # pi-signed is an explicitly selected executable identity, not an alias that may
 # silently fall back to pi. Resolve it from PATH before creating an endpoint and
@@ -2090,7 +2071,6 @@ META_WINDOW=$T
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
-  [ -z "$BEADS_ID" ] || echo "beads_id=$BEADS_ID"
 } > "$STATE/$ID.meta"
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
@@ -2102,8 +2082,6 @@ sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
-CLAUDEBIN=claude
-[ -z "$ACCOUNT" ] || CLAUDEBIN="$(shell_quote "$FM_ROOT/bin/claude-account.sh") $ACCOUNT"
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}

@@ -35,22 +35,27 @@ This preference is local to each Firstmate home and is not part of secondmate in
 
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
 When the default backend is selected and compatible `tasks-axi` is on `PATH`, firstmate uses its verbs for routine backlog mutations.
-Secondmate handoffs are separate and unconditional: `fm-backlog-handoff.sh` keeps only its own fleet-level validation and always delegates the item move to `tasks-axi mv`, the single owner of the backlog format.
+Secondmate handoffs are separate and unconditional for the tasks-axi backend: `fm-backlog-handoff.sh` keeps only its own fleet-level validation and always delegates the item move to `tasks-axi mv`, the single owner of the backlog format for tasks-axi.
 It moves in-scope `## Queued` items only and refuses `## In flight` and historical `## Done` records, which stay with their home for pruning or archiving.
 Handoff item bodies must use at least two leading spaces, and the helper refuses a selected item with a single-space or tab-indented continuation rather than risk orphaning it.
+Handoff with the beads backend is not yet supported and requires a different mechanism; secondmates using the beads backend remain without handoff support until that mechanism is implemented.
 Because bootstrap requires `tasks-axi` on `PATH` on every profile, that delegation works fleet-wide, and the `config/backlog-backend=manual` knob governs firstmate's own hand-editing of its backlog, not this validated helper.
 Compatible means the installed build passes the shared version and feature probe owned by [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), including the atomic multi-ID move required by handoff delegation.
 Bootstrap requires compatible `tasks-axi` on every profile; see "Toolchain" below for missing-tool reporting and silent default-backend behavior.
+Set the local, gitignored `config/backlog-backend` file to `beads` to use the beads federated `task` store as the queue source; session-start's digest will list items with `status:ready` label from the beads store instead of `data/backlog.md`.
+Beads requires the `task` CLI on `PATH` and access to the active beads store.
+Bootstrap validates the beads backend and reports a `MISSING:` line if the CLI is absent or the store is unreachable.
 Set the local, gitignored `config/backlog-backend` file to `manual` to force manual backlog editing and suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not missing-tool reporting.
 Absent or `tasks-axi` selects the default tasks-axi backend.
-The file format is unchanged in both modes; tasks-axi and manual edits produce the same `## In flight`, `## Queued`, and `## Done` sections.
+The file format is unchanged in tasks-axi and manual modes; both produce the same `## In flight`, `## Queued`, and `## Done` sections in `data/backlog.md`.
+The beads backend does not use `data/backlog.md`; all backlog state lives in the beads store and is queried dynamically at session start.
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
 For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.
 `tmux` is the verified reference backend (see [`docs/tmux-backend.md`](tmux-backend.md)); `herdr`, `zellij`, `orca`, and `cmux` are experimental spawn backends (see [`docs/herdr-backend.md`](herdr-backend.md), [`docs/zellij-backend.md`](zellij-backend.md), [`docs/orca-backend.md`](orca-backend.md), and [`docs/cmux-backend.md`](cmux-backend.md)).
 Treehouse remains the worktree provider for tmux, herdr, zellij, and cmux, since herdr, zellij, and cmux are session providers only; Orca provides both the task worktree and terminal endpoint.
-New spawns choose the backend in this order: an explicit `--backend` flag that current authority for that exact task alone has authorized (a present captain instruction or the task's own accepted brief; never later-task precedent by analogy), then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX`, `HERDR_ENV=1`, or cmux runtime signals, then default `tmux`.
+New spawns choose the backend in this order: an explicit `--backend` flag firstmate passes when it spawns a task, then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX`, `HERDR_ENV=1`, or cmux runtime signals, then default `tmux`.
 If more than one runtime marker is present, detection resolves innermost-first: `$TMUX` is checked before `HERDR_ENV=1`, which is checked before cmux's primary `CMUX_WORKSPACE_ID` marker and its documented fallback signals - tmux or herdr started from inside a cmux terminal is the innermost, currently-executing layer, while cmux itself (a terminal application, not a nestable multiplexer) is always checked last.
 See [`docs/cmux-backend.md`](cmux-backend.md#runtime-detection) for why cmux can be selected when `CMUX_WORKSPACE_ID` is absent.
 Auto-detected herdr or cmux prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve existing default behavior.
@@ -203,11 +208,6 @@ The full zellij home label also includes a short hash of the resolved `FM_ROOT` 
 For the cmux backend, `FM_CONFIG_OVERRIDE` overrides where `config/cmux-socket-password` is read from, while `FM_HOME` determines the default config path and readable home prefix embedded in workspace titles.
 The full cmux home label also includes a short hash of the resolved `FM_ROOT` path, and there is no per-home container split.
 
-## Isolated launch (bin/fm-isolated-launch.sh)
-
-`bin/fm-isolated-launch.sh` launches `claude` with `HOME` redirected to a fresh `$FM_ROOT/.fm-isolated-home` (override with `FM_ISOLATED_HOME`), so the session gets none of the operator's global `~/.claude/` layer - no global CLAUDE.md @-imports, hooks, skills/agents, or auto-memory - while this repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load normally, since those resolve relative to cwd, not `HOME`.
-First launch under a fresh isolated home requires logging into Claude Code again, since no auth or session state is copied from the real `~/.claude.json`; later launches against the same isolated home reuse whatever that login produced.
-
 ## Harness support
 
 claude, codex, opencode, pi, pi-signed, grok, and kimi are empirically verified for crewmate and secondmate launches; [README requirements](../README.md#requirements) own the set supported for the primary session.
@@ -241,24 +241,6 @@ The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
-## Multi-account Claude Code (bin/claude-account.sh, --account)
-
-A captain with more than one paid Claude subscription can have claude-harness crewmates draw from a second account's quota instead of competing with the primary session's own account.
-[`bin/claude-account.sh <N> [args...]`](../bin/claude-account.sh) is a standalone launcher (it works with no firstmate checkout on `PATH`) that sets `CLAUDE_CONFIG_DIR` to `~/.claude-homes/account<N>/.claude`, symlinks shared config (`commands`, `hooks`, `skills`, `mcp-configs`, `settings.json`, `settings.local.json`, `rules`, `agents`) in from `~/.claude/` idempotently, and pre-accepts the onboarding and trust-dialog prompts so a headless session doesn't hang.
-`.credentials.json` and `.claude.json` are never symlinked - they stay per-account real files, or OAuth tokens leak across accounts.
-`bin/claude-1.sh` and `bin/claude-2.sh` are one-line direct launchers (`claude-1.sh <args>` == `claude-account.sh 1 <args>`) for a human or an orchestrator to call.
-
-Seed an account's credentials once before first use:
-
-```
-CLAUDE_CONFIG_DIR=~/.claude-homes/account1/.claude claude /login
-```
-
-`fm-spawn.sh --account <N>` wires a ship or scout claude-harness spawn to a specific account: it records `account=N` in the task's `state/<id>.meta`, sets `CLAUDE_TRUST_DIR` to the task's worktree in the crewmate's launch environment so the correct directory gets pre-trusted, and launches through `bin/claude-account.sh N` instead of the plain `claude` binary.
-`--account` requires the claude harness and is strictly optional; absent means current behavior (plain `claude`, no account isolation).
-
-Full pattern, rationale, verification steps, and a capacity-aware routing reference: <https://gist.github.com/sjarmak/61e22d3625ecaac2279e8564d1b1b68f>.
-
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
@@ -267,7 +249,7 @@ When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate 
 Batch spawns satisfy the same requirement with a shared `--harness`.
 Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
 This section is the single owner of the canonical schema and its per-field semantics.
-`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the completion-aware profile-array selection procedure.
+`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the pace-aware profile-array selection procedure.
 
 ```json
 {
