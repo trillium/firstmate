@@ -259,6 +259,7 @@ Write the task-specific brief under section 11 before spawning.
 Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in section 4.
 The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.
 After spawning, confirm the worker is processing the brief, handle any trust dialog through `harness-adapters`, and record ship or scout work as under way.
+When spawning with `--beads <id>`, the task is linked to an external bead item for progress tracking on `mg` or similar tools; `fm-bead-stamp.sh` stamps the bead's `dispatch=sent` and `lifecycle=sent` state dimensions, and the generated brief includes instructions for the worker to confirm `dispatch=claimed` and `lifecycle=claimed` after reading, and to close the bead on completion.
 A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
 
 Steer a worker with short single-line messages through fail-closed `fm-send`; put long instructions in a file.
@@ -455,6 +456,7 @@ Every ship brief must retain the worktree-isolation assertion and stop if launch
 If a ship task touches firstmate's shared tracked material, explicitly require `firstmate-coding-guidelines` before editing.
 If a task will drive Herdr lifecycle behavior, scaffold with `--herdr-lab`; if that need appears after an unguarded scaffold, stop and regenerate rather than adding commands by hand.
 The generated Herdr contract must use a named non-`default` isolated lab and its guarded helper for every lifecycle action.
+When a task is linked to an external bead (via `--beads <id>` at spawn), set `FM_HOOK_BEADS_ID=<id>` before scaffolding so the brief receives Bead Receipt and Bead Closure sections that guide the worker's interaction with the tracking system.
 
 Load `secondmate-provisioning` before creating or using a charter brief and preserve its idle-by-default and marked-return-channel contracts.
 Status appends are sparse supervisor-actionable events, not routine progress; `bin/fm-classify-lib.sh` owns keyed open and resolved semantics.
