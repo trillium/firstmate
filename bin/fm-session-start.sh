@@ -207,14 +207,18 @@ print_backlog_tasks_axi_compact() {
 }
 
 print_backlog_beads_compact() {
-  local out rc
+  local path=$1 out rc
   printf 'compact backlog listing (beads task store; max %s item(s))\n' "$BACKLOG_LIMIT"
   out=$(task list --label "status:ready" --limit "$BACKLOG_LIMIT" 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ]; then
     printf '%s\n' "$out"
   else
-    printf 'beads task listing failed: %s\n' "$out"
+    printf 'beads task listing failed; falling back to title-line rendering.\n'
+    printf '%s\n' "$out"
+    if [ -f "$path" ]; then
+      print_backlog_manual_compact "$path" "fallback"
+    fi
   fi
 }
 
@@ -222,7 +226,7 @@ print_backlog_compact() {
   local path=$1 label=$2
   subsection "$label"
   if fm_beads_backend_available "$CONFIG"; then
-    print_backlog_beads_compact
+    print_backlog_beads_compact "$path"
     print_backlog_pointer
   elif [ -f "$path" ]; then
     if [ -s "$path" ]; then
