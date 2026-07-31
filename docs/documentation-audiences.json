@@ -320,6 +320,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/no-mistakes-run-liveness.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
     }
