@@ -21,7 +21,7 @@ Deterministic shell owns only schema, configuration, and version validation plus
 ## Collect facts
 
 Run `quota-axi --json` once per intake and reuse that snapshot for every candidate.
-Do not take a second snapshot to settle a candidate, and read `quota-axi auth --json` when a candidate's credential surface is in question.
+Do not take a second snapshot to settle a candidate.
 For each candidate, preserve explicit `harness`, `model`, and `provider`; `harness-adapters` owns identity, and model/provider never infer harness:
 
 - task/profile fit and required reasoning class
@@ -99,5 +99,6 @@ Never use pace or raw headroom to silently replace that reasoning class.
    Report duplicate concrete profiles as a configuration error.
 
 Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation, applicable quota and authentication facts, remaining uncertainty, fit and reasoning class, and pace and headroom.
+After selecting, check auth only through that tuple's surface; another harness CLI cannot block it.
 A blocked credential report must name `harness`, `model`, authentication surface, and concrete failure evidence; never emit a bare `Grok unauthenticated` statement.
 Never conclude with an unexplained "best quota" label.
