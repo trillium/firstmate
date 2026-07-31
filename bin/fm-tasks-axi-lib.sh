@@ -1,15 +1,16 @@
 # shellcheck shell=bash
-# Shared tasks-axi backend selection and compatibility probe for bootstrap,
-# teardown, and secondmate backlog handoff.
+# Shared backlog backend selection (tasks-axi, beads, or manual) and tasks-axi
+# compatibility probe for bootstrap, teardown, and secondmate backlog handoff.
 # Usage: . bin/fm-tasks-axi-lib.sh
-# Compatible means tasks-axi --version reports 0.1.1 or newer,
+# Compatible tasks-axi means --version reports 0.1.1 or newer,
 # `tasks-axi update --help` exposes --archive-body for recoverable note rewrites,
 # and `tasks-axi mv --help` exposes [<id>...] for atomic multi-ID moves required
 # by secondmate handoffs (introduced in tasks-axi 0.2.2).
 # `config/backlog-backend=manual` opts out of tasks-axi for routine firstmate
-# backlog mutations, but validated secondmate handoffs always use `tasks-axi mv`.
-# Absent or any other value keeps the default tasks-axi backend path, falling
-# back to manual mutation when the tool is not compatible.
+# backlog mutations; `config/backlog-backend=beads` uses the federated task store
+# instead. Validated secondmate handoffs always use `tasks-axi mv` when on the
+# tasks-axi backend. Absent or invalid values keep the default tasks-axi backend
+# path, falling back to manual mutation when the tool is not compatible.
 
 fm_tasks_axi_version_parts() {
   local output

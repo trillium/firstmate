@@ -5,6 +5,10 @@
 # so the secondmate owns its queue from day one instead of the item staying
 # stranded in the main backlog.
 #
+# Handoff works only with the tasks-axi backend. Handoff with the beads backend
+# is not yet supported and requires a different mechanism; secondmates using the
+# beads backend remain without handoff support until that mechanism is implemented.
+#
 # Scope-matching is firstmate's JUDGMENT: you pass the task-id keys you have
 # already judged in-scope for the secondmate. This script performs only the
 # fleet-level validation that the backlog backend cannot know, then DELEGATES
@@ -37,11 +41,11 @@
 # item with a single-space or tab-indented continuation rather than risk leaving
 # it orphaned, because tasks-axi treats only two-or-more-space lines as body.
 # The move needs compatible `tasks-axi` on PATH, including atomic multi-ID `mv`
-# (introduced in 0.2.2). Bootstrap requires it fleet-wide, so this works
-# everywhere; the `config/backlog-backend=manual` knob only governs firstmate's
-# own hand-editing of its own backlog, not this validated helper. Idempotent:
-# re-running converges. Atomic: on any move failure nothing moves.
-# See AGENTS.md project management and task lifecycle.
+# (introduced in 0.2.2). Bootstrap requires it fleet-wide, so this works for the
+# tasks-axi backend everywhere; the `config/backlog-backend=manual` knob only
+# governs firstmate's own hand-editing of its own backlog, not this validated
+# helper. Idempotent: re-running converges. Atomic: on any move failure nothing
+# moves. See AGENTS.md project management and task lifecycle.
 # Usage: fm-backlog-handoff.sh <secondmate-id> <item-key>...
 set -eu
 
