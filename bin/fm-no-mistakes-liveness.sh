@@ -367,7 +367,9 @@ check_all_runs() {
       # Found a task - get its run ID from axi status
       local task_id="${task##*/}"
       local meta_file="$STATE/$task_id.meta"
-      [ -f "$meta_file" ] || meta_file="/Users/trilliumsmith/code/firstmate/state/$task_id.meta"
+      if [ ! -f "$meta_file" ] && [ -d "$FM_HOME/state" ]; then
+        meta_file="$FM_HOME/state/$task_id.meta"
+      fi
       if [ -f "$meta_file" ]; then
         local worktree
         worktree=$(grep "^worktree=" "$meta_file" | tail -1 | cut -d= -f2-)
