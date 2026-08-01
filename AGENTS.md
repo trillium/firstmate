@@ -466,6 +466,7 @@ If a ship task touches firstmate's shared tracked material, explicitly require `
 If a task will drive Herdr lifecycle behavior, scaffold with `--herdr-lab`; if that need appears after an unguarded scaffold, stop and regenerate rather than adding commands by hand.
 The generated Herdr contract must use a named non-`default` isolated lab and its guarded helper for every lifecycle action.
 When a task is linked to an external bead (via `--beads <id>` at spawn), set `FM_HOOK_BEADS_ID=<id>` before scaffolding so the brief receives Bead Receipt and Bead Closure sections that guide the worker's interaction with the tracking system.
+For push-mode ship briefs (direct-PR and no-mistakes) on projects whose git origin is not under the trillium/ namespace (upstream forks the worker cannot push to), the generated brief receives a fork-first push rule that directs the worker to push to the `trillium/<repo>` fork and open the PR from there; local-only briefs are exempt, as are briefs for Trillium-owned origins, unreadable origins, or absent clones.
 
 Load `secondmate-provisioning` before creating or using a charter brief and preserve its idle-by-default and marked-return-channel contracts.
 Status appends are sparse supervisor-actionable events, not routine progress; `bin/fm-classify-lib.sh` owns keyed open and resolved semantics.

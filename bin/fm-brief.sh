@@ -39,6 +39,11 @@
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> captain merge
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                captain approves, firstmate merges to local main
+# Push-mode ship briefs (direct-PR, no-mistakes) whose project clone has a
+# non-Trillium git origin add a fork-first push rule: push the branch to the
+# trillium/<repo> fork and open the PR from there, since the upstream origin
+# refuses the push. Detection reads the clone's real origin remote; a Trillium,
+# unreadable, or absent origin (and every local-only brief) adds no such rule.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
 # Every scaffold's status protocol distinguishes the configured
@@ -130,6 +135,34 @@ shell_quote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\\\\''/g"
   printf "'"
+}
+
+# Print the bare repository name to fork under trillium/ when a ship task's
+# project clone has a non-Trillium git origin (an upstream repo the worker
+# cannot push to); print nothing (and succeed) when the origin is Trillium-owned,
+# unreadable, or the clone is absent, so the generated brief stays unchanged in
+# every case that is not a known upstream fork. Detection reads the clone's real
+# `git remote get-url origin`, never data/projects.md prose.
+fork_repo_for_origin() {
+  local repo=$1 dir origin name rest owner
+  case "$repo" in
+    /*) dir=$repo ;;
+    projects/*) dir="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/${repo#projects/}" ;;
+    *) dir="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/$repo" ;;
+  esac
+  origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 0
+  [ -n "$origin" ] || return 0
+  origin=${origin%.git}
+  origin=${origin%/}
+  name=${origin##*/}
+  rest=${origin%/*}
+  owner=${rest##*/}     # https://host/owner/repo -> owner
+  owner=${owner##*:}    # git@host:owner/repo    -> owner
+  case "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')" in
+    trillium) return 0 ;;
+  esac
+  [ -n "$name" ] || return 0
+  printf '%s\n' "$name"
 }
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
@@ -362,6 +395,31 @@ esac
 # briefs stay byte-identical to the historical Bash 5 output.
 DOD=${DOD%$'\n'}
 
+# Fork-first push rule: a project whose git origin is the upstream repository
+# (not under trillium/) cannot be pushed to directly, so a worker on the push
+# modes must push its branch to the trillium/<repo> fork and open the PR from
+# there. Only direct-PR and no-mistakes push; local-only never does, so it is
+# exempt. The rule text lives here exactly once and is empty (no rule) for
+# local-only and for every Trillium-origin, unreadable, or absent-clone case,
+# keeping those briefs byte-identical to the pre-rule output.
+FORK_FIRST=""
+if [ "$MODE" != local-only ]; then
+  FORK_REPO=$(fork_repo_for_origin "$REPO")
+  if [ -n "$FORK_REPO" ]; then
+    IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+# Fork-based project: all pushes target the fork
+This project's \`origin\` is the upstream repository that refuses pushes, so a refused push to \`origin\` is expected, not a blocker.
+The \`fm/$ID\` branch and its PR must target the \`trillium/$FORK_REPO\` fork, not upstream.
+If the fork does not exist yet, create it with \`gh-axi\`.
+Anything that pushes this branch or opens its PR must target the fork, not upstream.
+In no-mistakes mode, ensure the pipeline is configured to push to the fork, not upstream.
+Never push to the upstream \`origin\`, and never stop to ask fork-vs-local: always use the fork.
+**CRITICAL:** a push to the upstream origin must NEVER happen automatically. If pushing to the fork is not possible, stop and get direct captain confirmation before any upstream push attempt.
+EOF
+  fi
+fi
+
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
@@ -403,7 +461,7 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
-
+$FORK_FIRST
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
 Record only project knowledge useful to almost every future session.

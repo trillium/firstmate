@@ -598,6 +598,68 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# Fork-first push rule: a ship task on a project whose git origin is NOT under
+# trillium/ must be told to push its branch to the trillium/<repo> fork; a
+# Trillium-origin project gets no such rule (byte-identical to pre-rule output),
+# and local-only never pushes so it stays exempt even on an upstream origin.
+make_clone() {
+  local dir=$1 origin=$2
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  git -C "$dir" remote add origin "$origin"
+}
+
+test_fork_first_push_rule() {
+  local home brief
+  home="$TMP_ROOT/fork-first-home"
+  mkdir -p "$home/data" "$home/projects"
+  # local-only fixture project (for the exemption case) needs the registry mode.
+  cat > "$home/data/projects.md" <<'EOF'
+- upstream-local [local-only] - upstream fork on a local-only project (added 2026-07-01)
+EOF
+  make_clone "$home/projects/upstream-proj" "https://github.com/kunchenguid/gnhf.git"
+  make_clone "$home/projects/upstream-ssh" "git@github.com:david-tejada/rango.git"
+  make_clone "$home/projects/trillium-proj" "git@github.com:trillium/firstmate.git"
+  make_clone "$home/projects/upstream-local" "https://github.com/gastownhall/gascity.git"
+
+  # no-mistakes on a non-Trillium origin: rule present, correct fork named.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm upstream-proj >/dev/null 2>&1
+  brief="$home/data/fork-nm/brief.md"
+  assert_grep "# Fork-based project: all pushes target the fork" "$brief" \
+    "no-mistakes brief on an upstream origin lost the fork-first rule"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'the `trillium/gnhf` fork' "$brief" \
+    "no-mistakes fork-first rule named the wrong fork"
+  assert_grep "never stop to ask fork-vs-local" "$brief" \
+    "fork-first rule dropped the never-ask-fork-vs-local instruction"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'Never push to the upstream `origin`' "$brief" \
+    "fork-first rule dropped the never-push-upstream instruction"
+
+  # direct-PR pushes too; SSH origin still resolves the fork name.
+  cat >> "$home/data/projects.md" <<'EOF'
+- upstream-ssh [direct-PR] - upstream fork reached over SSH (added 2026-07-01)
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-dp upstream-ssh >/dev/null 2>&1
+  brief="$home/data/fork-dp/brief.md"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'the `trillium/rango` fork' "$brief" \
+    "direct-PR fork-first rule did not resolve the SSH-origin fork name"
+
+  # Trillium-owned origin: no fork-first rule at all.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-tr trillium-proj >/dev/null 2>&1
+  brief="$home/data/fork-tr/brief.md"
+  assert_no_grep "# Fork-based project: all pushes target the fork" "$brief" \
+    "Trillium-origin brief wrongly carried the fork-first rule"
+
+  # local-only never pushes: exempt even though the origin is upstream.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-lo upstream-local >/dev/null 2>&1
+  brief="$home/data/fork-lo/brief.md"
+  assert_no_grep "# Fork-based project: all pushes target the fork" "$brief" \
+    "local-only brief wrongly carried the fork-first push rule"
+  pass "fm-brief.sh: fork-first push rule appears only for push modes on non-Trillium origins"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -634,4 +696,5 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
+test_fork_first_push_rule
 test_scout_and_secondmate_scaffold
