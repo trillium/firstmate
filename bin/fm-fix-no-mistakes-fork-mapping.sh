@@ -55,8 +55,8 @@ fi
 echo "Existing fork_url: ${EXISTING_FORK:-empty}"
 
 # Update fork_url to match origin (use exact matching and escaped value)
-ROWS_AFFECTED=$(sqlite3 "$DB_PATH" \
-  "UPDATE repos SET fork_url = '$ORIGIN_URL_ESCAPED' WHERE upstream_url = '$ORIGIN_URL_ESCAPED'; SELECT changes();") || {
+sqlite3 "$DB_PATH" \
+  "UPDATE repos SET fork_url = '$ORIGIN_URL_ESCAPED' WHERE upstream_url = '$ORIGIN_URL_ESCAPED';" || {
   echo "error: database update failed" >&2
   exit 1
 }
