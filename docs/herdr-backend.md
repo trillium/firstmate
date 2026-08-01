@@ -188,6 +188,8 @@ A Herdr pane id contains a colon, so the adapter splits `window=` on the first c
 The recorded pane is the operational fast path.
 Workspace and tab ids support verification and cleanup but are not inferred from mutable labels during normal operation.
 
+Legacy Herdr metadata written before `endpoint_task_id=` existed self-repairs at teardown validation time instead of refusing outright: `fm_backend_validate_task_endpoint` queries the live pane's label through `fm_backend_herdr_pane_verifies_task` and, only when it still reads exactly `fm-<id>`, appends `endpoint_task_id=<id>` to the metadata file so the task tears down with no manual editing. When the live pane's label does not match - for example because the pane was recycled for a different task - validation refuses without mutating the metadata, preserving the wrong-pane safety guarantee.
+
 ## Current transport behavior
 
 The adapter starts and polls a named server before workspace, tab, pane, or agent calls.
