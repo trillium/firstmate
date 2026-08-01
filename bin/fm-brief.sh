@@ -307,7 +307,7 @@ fi
 # shellcheck disable=SC2016  # single quotes are deliberate: backtick-wrapped commands and the Monitor snippet must reach the reading agent verbatim; only the '"$ID"' break-outs interpolate the task id.
 PARLAY_SECTION=$(printf '%s\n' \
 '# FIRST ACTION: enroll in Parlay' \
-'Your first action, before verifying isolation or starting the task, is to enroll in Parlay so firstmate can reach you and you can report back.' \
+'Start by enrolling in Parlay so firstmate can reach you and you can report back; this only starts a background listener and touches nothing in the repo, so the Setup isolation check below still governs every repo action.' \
 'Enrollment is one atomic, idempotent call that registers you, announces you are listening, and streams firstmate'"'"'s messages to you: `parlay listen --agent '"$ID"'`.' \
 'Run it as a persistent background listener that stays alive for the whole task: under a harness with a Monitor tool that is `Monitor({ command: "parlay listen --agent '"$ID"'", persistent: true })`, otherwise start it in the background and keep it running.' \
 'Enrollment is best-effort, never a blocker: if parlay is not installed or the Parlay server is unreachable, note the warning briefly and continue with your task normally - do not stop and do not append a blocked status. A missing coordination channel is not a failure.')
