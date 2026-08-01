@@ -680,6 +680,60 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+# Every ship and scout crewmate brief must open with the Parlay enrollment
+# section, so enrolling is the crewmate's first action, the command carries the
+# task id, and the section is ordered before # Task. Enrollment is best-effort:
+# it must NOT tell the crewmate to block or fail when Parlay is down. Secondmate
+# charters are exempt: they return work through the marked-status/corr channel,
+# not the shared chat panel.
+test_crewmate_briefs_enroll_in_parlay_first() {
+  local home brief order
+  home="$TMP_ROOT/parlay-enroll-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout; do
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "enroll-$kind" someproj --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "enroll-$kind" someproj >/dev/null 2>&1
+    fi
+    brief="$home/data/enroll-$kind/brief.md"
+    assert_present "$brief" "$kind: brief was not scaffolded"
+    assert_grep "# FIRST ACTION: enroll in Parlay" "$brief" \
+      "$kind: brief missing the Parlay enrollment section"
+    # The enrollment command must carry this task's id, not a placeholder.
+    # shellcheck disable=SC2016  # literal backticks and command must stay unexpanded
+    assert_grep '`parlay listen --agent enroll-'"$kind"'`' "$brief" \
+      "$kind: enrollment command missing or not bound to the task id"
+    # shellcheck disable=SC2016  # literal Monitor snippet must stay unexpanded
+    assert_grep 'Monitor({ command: "parlay listen --agent enroll-'"$kind"'", persistent: true })' "$brief" \
+      "$kind: enrollment missing the persistent Monitor-tool form"
+    # Best-effort contract: enrollment is explicitly non-blocking.
+    assert_grep "Enrollment is best-effort, never a blocker" "$brief" \
+      "$kind: enrollment missing the best-effort, never-a-blocker contract"
+    assert_grep "continue with your task normally" "$brief" \
+      "$kind: enrollment must tell the crewmate to continue when Parlay is down"
+    # It must NOT reintroduce the fail-loudly block-on-failure posture.
+    # shellcheck disable=SC2016  # literal blocked-status wording must stay unexpanded
+    assert_no_grep '`blocked: parlay enrollment failed' "$brief" \
+      "$kind: enrollment must not tell the crewmate to block when enrollment fails"
+    assert_no_grep "No agent starts work without enrollment." "$brief" \
+      "$kind: enrollment must not carry the mandatory no-work-without-enrollment posture"
+    # Enrollment must precede the task so it is genuinely the first action.
+    order=$(awk '/FIRST ACTION: enroll in Parlay/{e=NR} /^# Task/{t=NR} END{print (e && t && e<t)?"ok":"bad"}' "$brief")
+    [ "$order" = ok ] || fail "$kind: Parlay enrollment section is not ordered before # Task"
+  done
+
+  # Secondmate charters do not enroll in the shared chat panel.
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" enroll-sm --secondmate alpha >/dev/null 2>&1
+  brief="$home/data/enroll-sm/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded"
+  assert_no_grep "# FIRST ACTION: enroll in Parlay" "$brief" \
+    "secondmate charter wrongly carried the crewmate Parlay enrollment section"
+  pass "fm-brief.sh: ship/scout briefs enroll in Parlay first (best-effort); secondmate charters are exempt"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -698,3 +752,4 @@ test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_fork_first_push_rule
 test_scout_and_secondmate_scaffold
+test_crewmate_briefs_enroll_in_parlay_first
