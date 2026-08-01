@@ -1076,7 +1076,11 @@ EOF
         # Idle>2h staleness auto-close backstop, ahead of ordinary
         # classification below: an ordinary ship task, not declared paused or
         # captain-held (that wait is deliberate and may legitimately run much
-        # longer than two hours), not provably working (a no-mistakes
+        # longer than two hours), not parked at a captain-relevant gate (a
+        # needs-decision/blocked/done/failed status means the crew is waiting
+        # on the captain, not idling wastefully - the stale_is_terminal path
+        # below exists to surface that, not have it silently reclaimed out
+        # from under a pending decision), not provably working (a no-mistakes
         # validation legitimately sits on a static pane for its whole run per
         # AGENTS.md's sparse status-reporting contract - the same predicate
         # the terminal-stale path below trusts to avoid the 2026-07 herdr
@@ -1087,6 +1091,7 @@ EOF
         # staleness_autoclose_reclaim above.
         if [ "$kind" = ship ] \
           && ! status_is_paused_or_captain_held "$last" \
+          && ! status_is_captain_relevant "$last" \
           && [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ] \
           && staleness_autoclose_should_retry "$key" \
           && ! crew_is_provably_working "$task"; then

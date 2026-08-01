@@ -1250,6 +1250,40 @@ test_staleness_autoclose_does_not_fire_while_provably_working() {
   pass "a ship task past the auto-close threshold but provably working (e.g. mid no-mistakes validation) is spared"
 }
 
+# Captain design, 2026-08-01: a task parked at a captain-relevant gate
+# (needs-decision/blocked) is waiting on the captain, not idling wastefully -
+# auto-close must skip it and fall through to ordinary stale surfacing so the
+# pending decision is surfaced, never silently reclaimed out from under it.
+test_staleness_autoclose_does_not_fire_at_needs_decision_gate() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case staleness-autoclose-needs-decision); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stale-needs-decision"
+  add_fake_teardown "$fakebin"
+  printf 'idle, nothing changing' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stale-needs-decision.meta"
+  printf 'working: implementing\nneeds-decision: pick A or B\n' > "$state/stale-needs-decision.status"
+  sig=$(seen_sig "$state/stale-needs-decision.status"); printf '%s' "$sig" > "$state/.seen-stale-needs-decision_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, nothing changing")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  # Past the auto-close threshold, exactly like the firing case above.
+  set_mtime "$(( $(date +%s) - 10000 ))" "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_TEST_TEARDOWN_CALLS_LOG="$dir/teardown-calls.log" \
+    watch_bg "$state" "$fakebin" "$out" \
+      FM_TEARDOWN_BIN="$fakebin/fake-teardown" FM_STALENESS_AUTOCLOSE_SECS=5 FM_STALE_ESCALATE_SECS=999
+  pid=$!
+  wait_for_exit "$pid" 40 || { reap "$pid"; fail "watcher did not surface a task parked at a needs-decision gate: $(cat "$out")"; }
+  grep -Fx "stale: $window" "$out" >/dev/null \
+    || fail "a task parked at needs-decision was not surfaced via ordinary stale classification: $(cat "$out")"
+  [ ! -s "$dir/teardown-calls.log" ] \
+    || fail "staleness auto-close reclaimed a task parked at a needs-decision gate: $(cat "$dir/teardown-calls.log")"
+  pass "a ship task past the auto-close threshold but parked at a needs-decision gate is spared and surfaced"
+}
+
 # Captain design, 2026-08-01: reclaiming wasted idle compute matters MOST while
 # nobody is watching it, so the idle>2h backstop also runs during away mode
 # (state/.afk present) instead of being skipped - the reclaim is still gated by
@@ -1810,5 +1844,6 @@ test_afk_paused_changed_pane_hands_off_plain_stale
 test_staleness_autoclose_fires_once_idle_past_threshold
 test_staleness_autoclose_does_not_fire_below_threshold
 test_staleness_autoclose_does_not_fire_while_provably_working
+test_staleness_autoclose_does_not_fire_at_needs_decision_gate
 test_staleness_autoclose_fires_during_afk_and_logs_evidence
 test_staleness_autoclose_exhausts_retries_then_surfaces
