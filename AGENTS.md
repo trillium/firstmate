@@ -268,6 +268,8 @@ Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in sec
 The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.
 After spawning, confirm the worker is processing the brief, handle any trust dialog through `harness-adapters`, and record ship or scout work as under way.
 When spawning with `--beads <id>`, the task is linked to an external bead item for progress tracking on `mg` or similar tools; `fm-bead-stamp.sh` stamps the bead's `dispatch=sent` and `lifecycle=sent` state dimensions, and the generated brief includes instructions for the worker to confirm `dispatch=claimed` and `lifecycle=claimed` after reading, and to close the bead on completion.
+`fm-teardown.sh` also closes the linked bead itself once a non-force teardown confirms the task's work landed, so a worker that cannot reach the closing step is still covered; `--force` and a refused teardown never close it.
+`bin/fm-ledger.sh` is the fleet-wide safety net for a bead that falls outside both paths - claimed, still open, and gone quiet past its staleness window - and can list or close those likely-dropped beads.
 A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
 
 Steer a worker with short single-line messages through fail-closed `fm-send`; put long instructions in a file.
