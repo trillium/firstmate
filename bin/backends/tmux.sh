@@ -71,9 +71,11 @@ _fm_tmux_now_ns() {
 # <budget_secs> to confirm the message drove a turn. Returns 0 and echoes
 # "working" if the pane shows busy output; returns 0 and echoes "idle" if the
 # pane remains quiet; returns 0 and echoes "unknown" on read failures.
-# Errors return 0 and echo "error".
-fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
-  local target=$1 budget=${2:-0.6} start_time current_time elapsed
+# Errors return 0 and echo "error". An optional <harness> selects the
+# harness-specific busy signature so per-harness spinners (e.g. kimi's
+# moon-phase) match instead of only the generic busy regex.
+fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs> [harness]
+  local target=$1 budget=${2:-0.6} harness=${3:-} start_time current_time elapsed
   local budget_ns max_polls polls=0
   start_time=$(_fm_tmux_now_ns)
   budget_ns=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
@@ -89,7 +91,7 @@ fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
       printf 'unknown'
       return 0
     fi
-    if fm_pane_is_busy "$target" 2>/dev/null; then
+    if fm_pane_is_busy "$target" "$harness" 2>/dev/null; then
       printf 'working'
       return 0
     fi

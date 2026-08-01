@@ -828,7 +828,9 @@ fm_backend_composer_state() {  # <backend> <target> -> empty|pending|pending-unp
 # the backend's own verification hit a hard error (callers fail closed on it).
 # This is an optional add-on confirmation for callers that need explicit proof
 # a submission actually drove execution, distinct from composer-state verification.
-fm_backend_wait_for_working() {  # <backend> <target> <budget_secs>
+# An optional trailing <harness> lets regex-based backends (tmux) select the
+# harness-specific busy signature; native-state backends (herdr) ignore it.
+fm_backend_wait_for_working() {  # <backend> <target> <budget_secs> [harness]
   local backend=$1
   shift
   fm_backend_source "$backend" || { printf 'error'; return 0; }

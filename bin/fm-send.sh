@@ -320,7 +320,7 @@ else
     # started, not just that the composer cleared. This uses the backend's own
     # transition-wait primitives to verify idle→working transition.
     verify_budget=${FM_SEND_VERIFY_TIMEOUT:-0.6}
-    verify_result=$(fm_backend_wait_for_working "$TARGET_BACKEND" "$T" "$verify_budget")
+    verify_result=$(fm_backend_wait_for_working "$TARGET_BACKEND" "$T" "$verify_budget" "$TARGET_HARNESS")
     case "$verify_result" in
       working)
         : # Turn confirmed started, proceed normally
