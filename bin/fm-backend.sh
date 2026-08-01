@@ -452,10 +452,6 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       fi
       ;;
     herdr)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy Herdr endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       recorded_session=$(fm_backend_meta_exact_value "$meta" herdr_session) || recorded_session=
       workspace=$(fm_backend_meta_exact_value "$meta" herdr_workspace_id) || workspace=
       tab=$(fm_backend_meta_exact_value "$meta" herdr_tab_id) || tab=
@@ -467,6 +463,21 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         || ! fm_backend_endpoint_atom_valid "${tab//:/_}" \
         || ! fm_backend_endpoint_atom_valid "${pane//:/_}"; then
         echo "REFUSED: Herdr endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
+        return 1
+      fi
+      if [ "$binding" = "$id" ]; then
+        :
+      elif [ -z "$binding" ]; then
+        fm_backend_source herdr || return 1
+        if fm_backend_herdr_pane_verifies_task "$recorded_session" "$pane" "$id" 2>/dev/null; then
+          echo "herdr endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
+          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+        else
+          echo "REFUSED: legacy Herdr endpoint metadata for task $id lacks an exact task binding; pane verification failed or pane does not belong to this task; preserving task state." >&2
+          return 1
+        fi
+      else
+        echo "REFUSED: endpoint metadata belongs to task $binding, not $id; preserving task state." >&2
         return 1
       fi
       ;;

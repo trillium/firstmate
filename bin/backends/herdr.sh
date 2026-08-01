@@ -2508,6 +2508,18 @@ fm_backend_herdr_list_live() {  # <session>
   done < <(printf '%s' "$tabs" | jq -r '.result.tabs[]? | select(.label | startswith("fm-")) | "\(.tab_id)\t\(.label)"' 2>/dev/null)
 }
 
+# fm_backend_herdr_pane_verifies_task: verify that a recorded pane still exists and belongs to the given task.
+# Queries the live herdr pane to confirm its identity matches the expected task label (fm-<id>).
+# Returns 0 if verified, 1 otherwise. This is used to self-repair legacy metadata lacking endpoint_task_id.
+fm_backend_herdr_pane_verifies_task() {  # <session> <pane_id> <task_id>
+  local session=$1 pane_id=$2 task_id=$3 pane_info label
+  [ -n "$session" ] && [ -n "$pane_id" ] && [ -n "$task_id" ] || return 1
+  pane_info=$(fm_backend_herdr_cli "$session" pane get "$pane_id" 2>/dev/null) || return 1
+  label=$(printf '%s' "$pane_info" | jq -r '.result.pane.label // empty' 2>/dev/null)
+  [ "$label" = "fm-$task_id" ] || return 1
+  return 0
+}
+
 # --- native event push: pane.agent_status_changed subscriber -----------------
 #
 # The push half of the immediate blocked-state escalation (AGENTS.md section 8,
