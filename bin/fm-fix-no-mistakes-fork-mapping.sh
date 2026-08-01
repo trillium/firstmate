@@ -42,23 +42,29 @@ ORIGIN_NORMALIZED="${ORIGIN_NORMALIZED#https://github.com/}"
 echo "Detected origin: $ORIGIN_URL"
 echo "Normalized: github.com/$ORIGIN_NORMALIZED"
 
-# Query existing fork_url
+# Escape single quotes for SQL (single quote becomes two single quotes)
+ORIGIN_URL_ESCAPED=$(echo "$ORIGIN_URL" | sed "s/'/''/g")
+
+# Query existing fork_url using exact URL matching
 EXISTING_FORK=$(sqlite3 "$DB_PATH" \
-  "SELECT fork_url FROM repos WHERE upstream_url LIKE '%$ORIGIN_NORMALIZED%' OR upstream_url = '$ORIGIN_URL' LIMIT 1;" 2>/dev/null || echo "")
+  "SELECT fork_url FROM repos WHERE upstream_url = '$ORIGIN_URL_ESCAPED' LIMIT 1;")
 
 echo "Existing fork_url: ${EXISTING_FORK:-empty}"
 
 # Update fork_url to match origin
-sqlite3 "$DB_PATH" \
-  "UPDATE repos SET fork_url = '$ORIGIN_URL' WHERE upstream_url = '$ORIGIN_URL' OR upstream_url LIKE '%$ORIGIN_NORMALIZED%';" 2>/dev/null
+ROWS_AFFECTED=$(sqlite3 "$DB_PATH" \
+  "UPDATE repos SET fork_url = '$ORIGIN_URL_ESCAPED' WHERE upstream_url = '$ORIGIN_URL_ESCAPED'; SELECT changes();")
 
 UPDATED=$(sqlite3 "$DB_PATH" \
-  "SELECT fork_url FROM repos WHERE upstream_url LIKE '%$ORIGIN_NORMALIZED%' OR upstream_url = '$ORIGIN_URL' LIMIT 1;" 2>/dev/null || echo "")
+  "SELECT fork_url FROM repos WHERE upstream_url = '$ORIGIN_URL_ESCAPED' LIMIT 1;")
 
 if [ "$UPDATED" = "$ORIGIN_URL" ]; then
   echo "✓ Fixed: fork_url now correctly set to $ORIGIN_URL"
   echo "✓ Next no-mistakes run will use the correct fork for PR creation"
   exit 0
+elif [ -z "$UPDATED" ]; then
+  echo "error: repository not found in database (upstream_url = $ORIGIN_URL)" >&2
+  exit 1
 else
   echo "error: failed to update fork_url in database" >&2
   exit 1
