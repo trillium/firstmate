@@ -352,6 +352,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "persona.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
     }
