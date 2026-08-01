@@ -20,6 +20,13 @@
 #     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids, and
 #     captain_actionable fields. Repeated blocker tokens remain ordered; a blocker
 #     resolves only when its structured record is Done, and missing ids stay open.
+#     When config/backlog-backend=beads, backlog gains source:"beads",
+#     fleet_label (the queried fleet label), records_truncated, and
+#     records_limit, and records[] holds this fleet's open/in_progress/blocked
+#     beads (state queued/in_flight only, always structured:true with empty
+#     blocked_by_ids and requires_child_metadata/captain_actionable false); a
+#     failed or unavailable beads read falls back to the data/backlog.md shape
+#     above with no beads-only fields. Default-backend output is unaffected.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
 #     state, source, detail, and raw line separately.
@@ -168,6 +175,9 @@ FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT, with truncation disclosed in the result.
 The registered secondmate table uses FM_SNAPSHOT_REGISTRY_LINES,
 FM_SNAPSHOT_REGISTRY_BYTES, FM_SNAPSHOT_REGISTRY_RECORDS, and
 FM_SNAPSHOT_REGISTRY_TIMEOUT, with unavailability and truncation disclosed.
+When config/backlog-backend=beads, the beads-backed backlog read uses
+FM_SNAPSHOT_BEADS_LIMIT (default 200) and FM_SNAPSHOT_BEADS_TIMEOUT (default
+4), with truncation disclosed via records_truncated/records_limit.
 EOF
 }
 

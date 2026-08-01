@@ -84,13 +84,15 @@ fm_beads_backend_available() {
   task list --limit 1 >/dev/null 2>&1
 }
 
-# fm_beads_fleet_label - the label firstmate applies to every bead it creates
-# for its own dispatched work (beads-authority migration Stage 0; see
-# data/beads-authority-migration-scout/report.md section 4 and
+# fm_beads_fleet_label - the label firstmate's own dispatched-work beads are
+# meant to carry once bead creation is wired to it (beads-authority migration
+# Stage 0; see data/beads-authority-migration-scout/report.md section 4 and
 # docs/configuration.md "Backlog backend"). A `task list --label <this>` call
 # scopes to firstmate's fleet instead of the shared federated store's full
-# cross-project set. FM_BEADS_FLEET_LABEL is an override for test fixtures;
-# production code should call this function rather than hardcoding the label.
+# cross-project set. As of Stage 1, only reads (fm-fleet-snapshot.sh) use this
+# label; no code in bin/ creates a bead with it yet. FM_BEADS_FLEET_LABEL is
+# an override for test fixtures; production code should call this function
+# rather than hardcoding the label.
 fm_beads_fleet_label() {
   printf '%s\n' "${FM_BEADS_FLEET_LABEL:-fleet:firstmate}"
 }
