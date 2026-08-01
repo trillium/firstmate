@@ -136,7 +136,9 @@ IDLE_DISCOVERY_INTERVAL=${FM_IDLE_DISCOVERY_INTERVAL:-60}  # seconds between idl
 STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
 # Idle>2h staleness auto-close backstop (captain design, 2026-07-31): once an
 # ordinary ship task's pane content (.hash-<key>, see staleness_autoclose_reclaim)
-# has sat unchanged this long, the prompt-cache advantage of keeping its live
+# has sat unchanged this long AND the crew is not provably working (see
+# crew_is_provably_working - a validating crew legitimately sits on a static
+# pane for its whole run), the prompt-cache advantage of keeping its live
 # process around is already gone (Anthropic cache TTL is 5m/1h), so the watcher
 # reclaims it via bin/fm-teardown.sh --staleness-autoclose rather than leaving
 # costly compute idle indefinitely.
@@ -1015,10 +1017,16 @@ EOF
         # Idle>2h staleness auto-close backstop, ahead of ordinary
         # classification below: an ordinary ship task, not declared paused or
         # captain-held (that wait is deliberate and may legitimately run much
-        # longer than two hours), and not under afk daemon supervision (which
-        # owns its own triage cadence). See staleness_autoclose_reclaim above.
+        # longer than two hours), not provably working (a no-mistakes
+        # validation legitimately sits on a static pane for its whole run per
+        # AGENTS.md's sparse status-reporting contract - the same predicate
+        # the terminal-stale path below trusts to avoid the 2026-07 herdr
+        # false-surface incident), and not under afk daemon supervision
+        # (which owns its own triage cadence). See staleness_autoclose_reclaim
+        # above.
         if [ "$kind" = ship ] && ! afk_present \
           && ! status_is_paused_or_captain_held "$last" \
+          && ! crew_is_provably_working "$task" \
           && [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ]; then
           staleness_autoclose_reclaim "$w" "$task" "$hf"
           continue
