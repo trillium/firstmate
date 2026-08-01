@@ -1026,8 +1026,8 @@ EOF
         # above.
         if [ "$kind" = ship ] && ! afk_present \
           && ! status_is_paused_or_captain_held "$last" \
-          && ! crew_is_provably_working "$task" \
-          && [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ]; then
+          && [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ] \
+          && ! crew_is_provably_working "$task"; then
           staleness_autoclose_reclaim "$w" "$task" "$hf"
           continue
         fi
