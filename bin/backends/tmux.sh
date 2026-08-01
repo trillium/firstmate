@@ -62,7 +62,7 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
 # Errors return 0 and echo "error".
 fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
   local target=$1 budget=${2:-0.6} start_time current_time elapsed
-  start_time=$(date +%s%N 2>/dev/null || date +%s0000000)
+  start_time=$(date +%s%N 2>/dev/null || date +%s000000000)
   budget=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
   case "$budget" in
     ''|*[!0-9]*) printf 'error'; return 0 ;;
@@ -72,7 +72,7 @@ fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
       printf 'working'
       return 0
     fi
-    current_time=$(date +%s%N 2>/dev/null || date +%s0000000)
+    current_time=$(date +%s%N 2>/dev/null || date +%s000000000)
     elapsed=$((current_time - start_time))
     if [ "$elapsed" -ge "$budget" ] 2>/dev/null; then
       printf 'idle'
