@@ -116,6 +116,7 @@ CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
+IDLE_DISCOVERY_INTERVAL=${FM_IDLE_DISCOVERY_INTERVAL:-60}  # seconds between idle-task-discovery attempts
 # Busy state is decided by the semantic contract in bin/fm-busy-lib.sh, which
 # is the single owner of per-harness sources, source attribution, and the one
 # remaining rendered-text fallback (Grok only).
@@ -706,6 +707,72 @@ event_wait_or_sleep() {
   esac
 }
 
+# Idle-task-discovery: when fleet is idle (no active windows), try to dispatch
+# the next ready task from the backlog autonomously. This reduces captain context
+# switches by letting the watcher pick up ready work automatically.
+# Returns 0 if a task was dispatched, 1 if no ready task or fleet not idle.
+discover_and_dispatch_idle_task() {
+  local windows_count ready_tasks_file ready_task_id task_kind
+
+  # Check if fleet is idle: recorded_windows output should be empty
+  windows_count=$(recorded_windows | wc -l)
+  if [ "$windows_count" -ne 0 ]; then
+    # Fleet is not idle, skip auto-discovery
+    return 1
+  fi
+
+  # Fleet is idle; check for ready tasks. Use tasks-axi ready to find unblocked tasks
+  if ! command -v tasks-axi >/dev/null 2>&1; then
+    # tasks-axi not available
+    return 1
+  fi
+
+  # Get the first ready task ID using a temp file to parse output
+  ready_tasks_file=$(mktemp "$STATE/.fm-ready-tasks.XXXXXX") || return 1
+  trap 'rm -f "$ready_tasks_file"' RETURN
+
+  tasks-axi ready > "$ready_tasks_file" 2>/dev/null || {
+    return 1
+  }
+
+  # Parse task ID from first ready task. The output looks like:
+  # count: 2
+  # ready[2]{id,state,kind,repo,title}:
+  #   test-p1-a1,queued,ship,"-",Test P1 task
+  #   test-p2-a2,queued,ship,"-",Test P2 task
+  # We extract the first id from the task lines (indented lines with commas)
+  ready_task_id=$(awk -F',' '
+    /^  [a-z0-9]/ { if (!found) { print $1; gsub(/^[[:space:]]+/, ""); print; found=1 } }
+  ' "$ready_tasks_file" | head -1)
+
+  if [ -z "$ready_task_id" ]; then
+    return 1
+  fi
+
+  # Get task metadata: kind to determine how to dispatch it
+  task_kind=$(awk -F',' -v task="$ready_task_id" '
+    /^  [a-z0-9]/ && $1 ~ task { print $3; gsub(/^[[:space:]]+/, ""); exit }
+  ' "$ready_tasks_file")
+
+  # For secondmate tasks, use FM_HOME directly
+  if [ "$task_kind" = secondmate ]; then
+    if "$SCRIPT_DIR/fm-spawn.sh" "$ready_task_id" "$FM_HOME" --secondmate 2>/dev/null >/dev/null; then
+      triage_log "idle-discovery: dispatched secondmate $ready_task_id (first ready when fleet idle)"
+      return 0
+    else
+      triage_log "idle-discovery: failed to dispatch secondmate $ready_task_id"
+      return 1
+    fi
+  fi
+
+  # For ship/scout tasks, we need a project directory.
+  # Infer from data/projects.md or check if task note contains project info.
+  # For now, skip auto-dispatch of ship/scout without explicit project routing.
+  # TODO: implement project-routing from task metadata or dispatch profiles
+  triage_log "idle-discovery: skipping task $ready_task_id (kind=$task_kind, needs project routing)"
+  return 1
+}
+
 # --- Main entry: the runtime below runs only when this file is executed as a
 # script. When sourced (unit tests loading the functions above), return here
 # before acquiring the singleton lock or entering the blocking loop.
@@ -1126,6 +1193,13 @@ EOF
       echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
       triage_log "absorbed heartbeat (no captain-relevant change)"
     fi
+  fi
+
+  # Idle-task-discovery: when fleet is idle, try to autonomously dispatch ready tasks.
+  # Throttle to every IDLE_DISCOVERY_INTERVAL seconds to avoid constant polling.
+  if [ "$(age_of "$STATE/.last-idle-discovery")" -ge "$IDLE_DISCOVERY_INTERVAL" ]; then
+    touch "$STATE/.last-idle-discovery"
+    discover_and_dispatch_idle_task || true
   fi
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
