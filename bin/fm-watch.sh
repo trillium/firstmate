@@ -180,8 +180,10 @@ hash_pane() {
   # interchangeable here. The chain degrades through progressively more
   # universal tools rather than hard-erroring when a watcher's PATH is
   # missing md5/md5sum (observed on a secondmate whose runtime PATH omitted
-  # both): openssl and cksum are near-universal fallbacks, and wc -c is a
-  # last-resort that cannot itself be absent.
+  # both): openssl and cksum are near-universal fallbacks, and the final tier
+  # is a pure-shell content digest (od + awk, both POSIX baseline) rather
+  # than a raw byte count, so two same-size panes with different content
+  # cannot collide and mask a real change.
   if command -v md5 >/dev/null 2>&1; then
     md5 -q
   elif [ -x "$sbin_md5" ]; then
@@ -195,7 +197,10 @@ hash_pane() {
   elif command -v cksum >/dev/null 2>&1; then
     printf '%x\n' "$(cksum | cut -d' ' -f1)"
   else
-    wc -c | tr -d ' '
+    od -An -tu1 -v | awk '
+      { for (i = 1; i <= NF; i++) h = (h * 31 + $i) % 4294967291 }
+      END { printf "%x\n", h }
+    '
   fi
 }
 
