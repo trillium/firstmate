@@ -408,11 +408,14 @@ if [ "$MODE" != local-only ]; then
   if [ -n "$FORK_REPO" ]; then
     IFS= read -r -d '' FORK_FIRST <<EOF || true
 
-# Fork-based project: push to the fork
-This project's \`origin\` is the upstream repository you cannot push to, so a refused push to \`origin\` is expected, not a blocker.
-Push your \`fm/$ID\` branch to the \`trillium/$FORK_REPO\` fork instead and open the PR from that fork.
-If the \`trillium/$FORK_REPO\` fork does not exist yet, create it with \`gh-axi\` first.
+# Fork-based project: all pushes target the fork
+This project's \`origin\` is the upstream repository that refuses pushes, so a refused push to \`origin\` is expected, not a blocker.
+The \`fm/$ID\` branch and its PR must target the \`trillium/$FORK_REPO\` fork, not upstream.
+If the fork does not exist yet, create it with \`gh-axi\`.
+Anything that pushes this branch or opens its PR must target the fork, not upstream.
+In no-mistakes mode, ensure the pipeline is configured to push to the fork, not upstream.
 Never push to the upstream \`origin\`, and never stop to ask fork-vs-local: always use the fork.
+**CRITICAL:** a push to the upstream origin must NEVER happen automatically. If pushing to the fork is not possible, stop and get direct captain confirmation before any upstream push attempt.
 EOF
   fi
 fi

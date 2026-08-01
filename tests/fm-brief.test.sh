@@ -625,7 +625,7 @@ EOF
   # no-mistakes on a non-Trillium origin: rule present, correct fork named.
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm upstream-proj >/dev/null 2>&1
   brief="$home/data/fork-nm/brief.md"
-  assert_grep "# Fork-based project: push to the fork" "$brief" \
+  assert_grep "# Fork-based project: all pushes target the fork" "$brief" \
     "no-mistakes brief on an upstream origin lost the fork-first rule"
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
   assert_grep 'the `trillium/gnhf` fork' "$brief" \
@@ -649,13 +649,13 @@ EOF
   # Trillium-owned origin: no fork-first rule at all.
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-tr trillium-proj >/dev/null 2>&1
   brief="$home/data/fork-tr/brief.md"
-  assert_no_grep "# Fork-based project: push to the fork" "$brief" \
+  assert_no_grep "# Fork-based project: all pushes target the fork" "$brief" \
     "Trillium-origin brief wrongly carried the fork-first rule"
 
   # local-only never pushes: exempt even though the origin is upstream.
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-lo upstream-local >/dev/null 2>&1
   brief="$home/data/fork-lo/brief.md"
-  assert_no_grep "# Fork-based project: push to the fork" "$brief" \
+  assert_no_grep "# Fork-based project: all pushes target the fork" "$brief" \
     "local-only brief wrongly carried the fork-first push rule"
   pass "fm-brief.sh: fork-first push rule appears only for push modes on non-Trillium origins"
 }
