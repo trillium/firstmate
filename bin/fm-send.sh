@@ -359,14 +359,10 @@ else
         echo "error: SEND DID NOT LAND - text was submitted to $T but the turn did not start (remains idle; tried $RESOLUTION_TRIED)" >&2
         exit 1
         ;;
-      unknown)
-        # Could not verify, but composer cleared. Proceed with warning in verbose mode only.
+      unknown|error)
+        # Could not verify (backend error or unavailable), but composer cleared.
+        # Proceed with warning in verbose mode only. Fail only on definitive idle.
         [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: text was submitted to $T but turn start could not be verified (tried $RESOLUTION_TRIED)" >&2
-        ;;
-      error)
-        # Backend error during verification; fail closed like the idle branch.
-        echo "error: SEND DID NOT LAND - text was submitted to $T but turn-start verification failed (backend error; tried $RESOLUTION_TRIED)" >&2
-        exit 1
         ;;
     esac
   fi
