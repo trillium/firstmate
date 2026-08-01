@@ -113,7 +113,9 @@ state/               volatile runtime signals; gitignored
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
   .claude-autoarm.lock .claude-autoarm-epoch .turnend-claude-blocks   Claude Stop auto-arm single-flight, epoch, and guard-budget records; never touch
-  .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak   watcher internals; never touch
+  .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak .staleness-fails-* .staleness-next-* .staleness-working-*   watcher internals; never touch
+  .staleness-autoclose.log  append-only log of the watcher's idle>2h staleness auto-close reclaim attempts against a ship task (bin/fm-teardown.sh --staleness-autoclose); never relied on, safe to delete
+  .staleness-autoclose-afk.log  durable evidence of staleness auto-close reclaims made while away; surfaced by /afk return as catch-up evidence, then cleared
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
@@ -329,6 +331,10 @@ Tear down a ship task only after landing is confirmed.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
 Never force teardown without explicit discard authority.
 After successful teardown, record completion, retain only the configured recent Done history, and re-evaluate queued work whose blockers and time gates have cleared.
+
+The watcher also reclaims a ship task's live process on its own once its window has sat idle past the configured staleness threshold (default two hours) and the crew is not provably working or parked at a captain-relevant gate.
+Landed work gets the ordinary full teardown above; unlanded work only has its runtime endpoint reclaimed and a triage record filed, leaving the worktree, branch, and every uncommitted change untouched for later deliberate triage.
+Treat a task whose endpoint has gone quiet with no captain-facing wake as a possible automatic reclaim rather than a crash; `state/<id>.status` and the recorded worktree still hold the evidence.
 
 A secondmate is persistent and an empty queue is healthy.
 Retire one only on an explicit captain or main-firstmate decision, after loading `secondmate-provisioning`; its home must contain no work under way, and forced discard still requires explicit captain authority.
