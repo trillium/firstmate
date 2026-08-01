@@ -726,6 +726,35 @@ test_squash_merged_pr_allows_replayed_unpushed_patch() {
   pass "squash-merged PR accepts replayed unpushed local patches contained in the PR head"
 }
 
+test_squash_merged_pr_allows_genuine_multi_commit_squash() {
+  local case_dir rc base_head tree pr_head
+  case_dir=$(make_case squash-multi-commit)
+  write_meta "$case_dir" no-mistakes ship
+  base_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  # Two separate local commits, never pushed anywhere.
+  wt_commit_file "$case_dir" a.txt alpha "add a"
+  wt_commit_file "$case_dir" b.txt beta "add b"
+  append_pr_meta_url "$case_dir"
+  # A genuine squash merge: ONE commit off the original (pre-branch) base
+  # combining both files' changes, with neither local commit as an ancestor.
+  # The ancestor check fails (pr_head does not descend from HEAD), and the
+  # patch-id replay check fails too (the squash's combined two-file diff has
+  # no single patch id matching either local commit's one-file diff) - only
+  # the 3-way merge-tree comparison recognizes this as landed.
+  tree=$(git -C "$case_dir/wt" rev-parse 'HEAD^{tree}')
+  pr_head=$(printf '%s\n' "squash a+b" | git -C "$case_dir/wt" commit-tree "$tree" -p "$base_head")
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "squash-multi-commit: teardown should succeed via 3-way merge-tree comparison"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "squash-multi-commit: teardown printed a REFUSED line"
+  pass "genuine multi-commit squash merge (unmatched by ancestor or patch-id checks) is recognized as landed via 3-way merge-tree comparison"
+}
+
 test_merged_pr_with_later_local_commit_refuses() {
   local case_dir rc pr_head
   case_dir=$(make_case stale-pr-head)
@@ -1477,6 +1506,7 @@ test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
+test_squash_merged_pr_allows_genuine_multi_commit_squash
 test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags

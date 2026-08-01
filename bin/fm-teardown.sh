@@ -463,6 +463,15 @@ $unpushed
 EOF
 }
 
+squash_merged_pr_contains_work() {
+  local pr_head=$1 pr_tree merged_tree
+  pr_tree=$(git -C "$WT" rev-parse --quiet --verify "$pr_head^{tree}" 2>/dev/null) || return 1
+  [ -n "$pr_tree" ] || return 1
+  merged_tree=$(git -C "$WT" merge-tree --write-tree "$pr_head" HEAD 2>/dev/null) || return 1
+  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
+  [ "$merged_tree" = "$pr_tree" ]
+}
+
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
 # PR from the recorded pr= URL first, then from the branch name, and asks GitHub
 # for both the PR state and head. Returns non-zero when the PR is not merged, the
@@ -488,7 +497,8 @@ pr_is_merged() {
   ensure_commit_object "$target" "$head" || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null && return 0
-  unpushed_patches_are_in_pr_head "$head"
+  unpushed_patches_are_in_pr_head "$head" && return 0
+  squash_merged_pr_contains_work "$head"
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
