@@ -124,6 +124,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/coderabbit-pr-gate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/decision-hold-lifecycle/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -149,6 +153,10 @@
     },
     {
       "path": ".agents/skills/harness-adapters/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/night-ops-directive/SKILL.md",
       "audience": "agent-runtime"
     },
     {
