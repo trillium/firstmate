@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <string>] [--scout]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <string>] --secondmate
+# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <string>] [--beads <id>] [--scout]
+#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <string>] [--beads <id>] --secondmate
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
@@ -95,11 +95,12 @@
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.
-#   --beads <id> links this task to an external bead item for lifecycle tracking: the
-#   dispatch=sent and lifecycle=sent state dimensions are stamped via fm-bead-stamp.sh
-#   after spawn, and the brief includes Bead Receipt/Closure sections (when FM_HOOK_BEADS_ID
-#   is set) asking the worker to confirm dispatch=claimed/lifecycle=claimed and close the
-#   bead on completion.
+#   --beads <id> links this task to an external bead item for lifecycle tracking: the id is
+#   recorded as beads_id= in the task's meta (fm-teardown.sh reads it to close the bead once
+#   this task's work is confirmed landed), the dispatch=sent and lifecycle=sent state
+#   dimensions are stamped via fm-bead-stamp.sh after spawn, and the brief includes Bead
+#   Receipt/Closure sections (when FM_HOOK_BEADS_ID is set) asking the worker to confirm
+#   dispatch=claimed/lifecycle=claimed and close the bead on completion.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
@@ -202,11 +203,13 @@ MODEL=
 EFFORT=
 BACKEND_ARG=
 LABEL_ARG=
+BEADS_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
 BACKEND_SET=0
 LABEL_SET=0
+BEADS_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -220,6 +223,7 @@ for a in "$@"; do
       effort) EFFORT=$a; EFFORT_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       label) LABEL_ARG=$a; LABEL_SET=1 ;;
+      beads) BEADS_ARG=$a; BEADS_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -238,6 +242,8 @@ for a in "$@"; do
     --backend=*) BACKEND_ARG=${a#--backend=}; BACKEND_SET=1 ;;
     --label) want_value=label ;;
     --label=*) LABEL_ARG=${a#--label=}; LABEL_SET=1 ;;
+    --beads) want_value=beads ;;
+    --beads=*) BEADS_ARG=${a#--beads=}; BEADS_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -247,6 +253,7 @@ done
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$LABEL_SET" -eq 0 ] || [ -n "$LABEL_ARG" ] || { echo "error: --label requires a non-empty value" >&2; exit 1; }
+[ "$BEADS_SET" -eq 0 ] || [ -n "$BEADS_ARG" ] || { echo "error: --beads requires a non-empty value" >&2; exit 1; }
 case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
@@ -1644,6 +1651,7 @@ META_WINDOW=$T
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   [ -z "$LABEL_ARG" ] || echo "label=$LABEL_ARG"
+  [ -z "$BEADS_ARG" ] || echo "beads_id=$BEADS_ARG"
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
   # data/fm-backend-design-d7's P1 compatibility contract).
@@ -1758,6 +1766,13 @@ if command -v parlay >/dev/null 2>&1; then
   parlay listen --agent "$ID" >/dev/null 2>&1 &
   echo $! > "$STATE/$ID.parlay-listen-pid" 2>/dev/null \
     || echo "warning: could not record parlay listen pid for $ID (non-blocking)" >&2
+fi
+
+# Best-effort bead dispatch stamp. fm-bead-stamp.sh is fail-open by design (a
+# missing task CLI or unreachable bead warns on stderr and exits 0), so this
+# never blocks or fails an already-confirmed spawn.
+if [ -n "$BEADS_ARG" ]; then
+  "$FM_ROOT/bin/fm-bead-stamp.sh" "$BEADS_ARG" "$ID" || true
 fi
 
 echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$META_WINDOW worktree=$WT"

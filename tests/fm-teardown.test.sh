@@ -151,16 +151,19 @@ SH
   chmod +x "$case_dir/fakebin/tasks-axi"
 }
 
-# Write a meta file for the task. Args: case_dir mode kind
+# Write a meta file for the task. Args: case_dir mode kind [beads_id]
 write_meta() {
-  local case_dir=$1 mode=$2 kind=$3
+  local case_dir=$1 mode=$2 kind=$3 beads_id=${4:-}
+  local extra=()
+  [ -z "$beads_id" ] || extra+=("beads_id=$beads_id")
   fm_write_meta "$case_dir/state/task-x1.meta" \
     "window=firstmate:fm-task-x1" \
     "endpoint_task_id=task-x1" \
     "worktree=$case_dir/wt" \
     "project=$case_dir/project" \
     "kind=$kind" \
-    "mode=$mode"
+    "mode=$mode" \
+    "${extra[@]+"${extra[@]}"}"
 }
 
 # Commit something on the worktree's task branch. Args: case_dir [message]
@@ -168,6 +171,18 @@ wt_commit() {
   local case_dir=$1 msg=${2:-wt work}
   git -C "$case_dir/wt" -c user.email=t@t -c user.name=t \
     commit -q --allow-empty -m "$msg"
+}
+
+# Mock `task` (the beads CLI): logs every invocation to $case_dir/task-calls.log
+# and succeeds. Args: case_dir
+add_beads_task_mock() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/task" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/task"
 }
 
 # Add a fork bare repo and register it as a remote on the project, then push
@@ -1490,6 +1505,66 @@ test_teardown_kills_pid_even_when_parlay_absent() {
   pass "a clean teardown still kills the recorded parlay-listen pid even when parlay is absent from PATH"
 }
 
+test_beads_linked_task_closes_bead_on_landed_teardown() {
+  local case_dir rc
+  case_dir=$(make_case beads-close-on-land)
+  write_meta "$case_dir" local-only ship bead-close-1
+  add_beads_task_mock "$case_dir"
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "beads-close-on-land: teardown should succeed when HEAD is on a fork remote"
+  grep -q '^close bead-close-1 ' "$case_dir/task-calls.log" 2>/dev/null \
+    || fail "beads-close-on-land: linked bead was not closed on landed teardown: $(cat "$case_dir/task-calls.log" 2>/dev/null)"
+  pass "a beads-linked task's bead is closed automatically on a landed (non-force) teardown"
+}
+
+test_beads_linked_task_does_not_close_bead_on_force_teardown() {
+  local case_dir rc
+  case_dir=$(make_case beads-no-close-force)
+  write_meta "$case_dir" local-only ship bead-close-2
+  add_beads_task_mock "$case_dir"
+  wt_commit "$case_dir" "unpushed work"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "beads-no-close-force: --force should bypass the unpushed-work check"
+  ! grep -q '^close ' "$case_dir/task-calls.log" 2>/dev/null \
+    || fail "beads-no-close-force: linked bead was closed despite --force (work not confirmed landed)"
+  pass "a beads-linked task's bead is NOT closed on a --force teardown"
+}
+
+test_beads_linked_task_does_not_close_bead_on_refused_teardown() {
+  local case_dir rc
+  case_dir=$(make_case beads-no-close-refused)
+  write_meta "$case_dir" local-only ship bead-close-3
+  add_beads_task_mock "$case_dir"
+  wt_commit "$case_dir" "unpushed work"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "beads-no-close-refused: teardown should refuse truly unpushed work"
+  grep -q REFUSED "$case_dir/stderr" \
+    || fail "beads-no-close-refused: teardown did not print REFUSED"
+  ! grep -q '^close ' "$case_dir/task-calls.log" 2>/dev/null \
+    || fail "beads-no-close-refused: linked bead was closed despite a refused teardown"
+  pass "a beads-linked task's bead is NOT closed when teardown refuses unlanded work"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -1526,3 +1601,6 @@ test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
 test_teardown_deregisters_parlay_when_present
 test_teardown_kills_pid_even_when_parlay_absent
+test_beads_linked_task_closes_bead_on_landed_teardown
+test_beads_linked_task_does_not_close_bead_on_force_teardown
+test_beads_linked_task_does_not_close_bead_on_refused_teardown
