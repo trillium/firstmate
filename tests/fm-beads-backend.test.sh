@@ -83,10 +83,22 @@ test_backend_value_whitespace() {
   [ "$value" = "beads" ] || fail "backend value should strip whitespace, got: $value"
 }
 
+# Test: fm_beads_fleet_label() defaults to fleet:firstmate and honors the
+# test-only FM_BEADS_FLEET_LABEL override (beads-authority migration Stage 0).
+test_beads_fleet_label() {
+  local value
+  value=$(unset FM_BEADS_FLEET_LABEL; fm_beads_fleet_label)
+  [ "$value" = "fleet:firstmate" ] || fail "default fleet label should be fleet:firstmate, got: $value"
+
+  value=$(FM_BEADS_FLEET_LABEL="fleet:example" fm_beads_fleet_label)
+  [ "$value" = "fleet:example" ] || fail "fleet label override should win, got: $value"
+}
+
 # Run all tests
 test_beads_backend_value
 test_beads_backend_available
 test_tasks_axi_backend_false_for_beads
 test_backend_value_whitespace
+test_beads_fleet_label
 
 echo "ok - all beads backend tests passed"
