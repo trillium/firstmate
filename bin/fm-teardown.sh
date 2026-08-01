@@ -474,6 +474,15 @@ staleness_chat_only_teardown() {
   bead_out=$("$SCRIPT_DIR/fm-staleness-file.sh" "$ID" "$purpose" "$WT" "$STALENESS_BRANCH" "$PROJ" \
     "${harness:-unknown}" "$STALENESS_IDLE_SINCE" "$summary" 2>&1) || true
   [ -z "$bead_out" ] || printf '%s\n' "$bead_out"
+  # fm-staleness-file.sh is fail-open (always exits 0), so a failed filing is
+  # only visible by the absence of its success line. $ID.meta is about to be
+  # removed below, so on failure write a durable fallback record first -
+  # otherwise a preserved unlanded worktree loses its only location pointer.
+  if ! printf '%s\n' "$bead_out" | grep -q '^filed staleness bead '; then
+    printf 'task: %s\npurpose: %s\nworktree: %s\nbranch: %s\nproject: %s\nharness: %s\nidle since: %s\n' \
+      "$ID" "${purpose:-unknown}" "$WT" "${STALENESS_BRANCH:-unknown}" "${PROJ:-unknown}" \
+      "${harness:-unknown}" "$STALENESS_IDLE_SINCE" > "$STATE/$ID.staleness-unfiled"
+  fi
   rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
     "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
   echo "staleness auto-close $ID: chat reclaimed, worktree $WT preserved for triage"
@@ -1266,8 +1275,16 @@ remove_secondmate_registry_entry() {
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
 if [ "$STALENESS_AUTOCLOSE" = 1 ]; then
+  if [ ! -d "$WT" ]; then
+    # Nothing to preserve or file a triage bead about - report the actual
+    # state instead of claiming a worktree that is already gone.
+    echo "staleness auto-close $ID: worktree $WT is already gone, skipping triage filing"
+    rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
+      "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
+    exit 0
+  fi
   STALENESS_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
-  if [ ! -d "$WT" ] || ! work_is_landed "$STALENESS_BRANCH"; then
+  if ! work_is_landed "$STALENESS_BRANCH"; then
     staleness_chat_only_teardown
     exit 0
   fi

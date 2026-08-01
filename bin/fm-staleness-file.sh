@@ -41,8 +41,8 @@ body=$(printf 'task: %s\npurpose: %s\nworktree: %s\nbranch: %s\nproject: %s\nhar
   "$idle_human" "${SUMMARY:-<no change summary>}")
 
 bead_id=$(staleness create "Stale task $ID: ${BRANCH:-unknown branch}" \
-  --description "$body" --labels staleness-autoclose --silent 2>&1) || {
-  echo "warning: could not file staleness bead for $ID: $bead_id" >&2
+  --description "$body" --labels staleness-autoclose --silent) || {
+  echo "warning: could not file staleness bead for $ID (see stderr above)" >&2
   exit 0
 }
 echo "filed staleness bead $bead_id for $ID"
