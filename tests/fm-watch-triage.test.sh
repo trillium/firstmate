@@ -1250,6 +1250,93 @@ test_staleness_autoclose_does_not_fire_while_provably_working() {
   pass "a ship task past the auto-close threshold but provably working (e.g. mid no-mistakes validation) is spared"
 }
 
+# Captain design, 2026-08-01: reclaiming wasted idle compute matters MOST while
+# nobody is watching it, so the idle>2h backstop also runs during away mode
+# (state/.afk present) instead of being skipped - the reclaim is still gated by
+# crew_is_provably_working and bin/fm-teardown.sh's own landed-check, and a
+# successful reclaim leaves a durable line in
+# state/.staleness-autoclose-afk.log for bin/fm-afk-return.sh to surface to the
+# returning captain.
+test_staleness_autoclose_fires_during_afk_and_logs_evidence() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case staleness-autoclose-afk); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stale-afk-reclaim"
+  add_fake_teardown "$fakebin"
+  : > "$state/.afk"
+  printf 'idle, nothing changing' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stale-afk-reclaim.meta"
+  printf 'working: idle waiting\n' > "$state/stale-afk-reclaim.status"
+  sig=$(seen_sig "$state/stale-afk-reclaim.status"); printf '%s' "$sig" > "$state/.seen-stale-afk-reclaim_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, nothing changing")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  set_mtime "$(( $(date +%s) - 10000 ))" "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_TEST_TEARDOWN_CALLS_LOG="$dir/teardown-calls.log" \
+    watch_bg "$state" "$fakebin" "$out" \
+      FM_TEARDOWN_BIN="$fakebin/fake-teardown" FM_STALENESS_AUTOCLOSE_SECS=5
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "watcher exited on a silent staleness auto-close reclaim during afk: $(cat "$out")"
+  fi
+  reap "$pid"
+  grep -qE '^stale-afk-reclaim --staleness-autoclose [0-9]+$' "$dir/teardown-calls.log" 2>/dev/null \
+    || fail "staleness auto-close did not reclaim during afk: $(cat "$dir/teardown-calls.log" 2>/dev/null)"
+  grep -qF "reclaimed $window" "$state/.staleness-autoclose-afk.log" 2>/dev/null \
+    || fail "afk staleness reclaim left no durable evidence for the returning captain: $(cat "$state/.staleness-autoclose-afk.log" 2>/dev/null)"
+  pass "the idle>2h auto-close backstop also reclaims during afk and logs durable evidence for the returning captain"
+}
+
+# Captain design, 2026-08-01: a persistently-failing reclaim must not retry
+# forever - bounded attempts with backoff, then fall through to ordinary
+# stale surfacing so a stuck reclaim notifies instead of looping invisibly.
+test_staleness_autoclose_exhausts_retries_then_surfaces() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid
+  dir=$(make_case staleness-autoclose-retry-exhausted); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stale-retry-exhausted"
+  cat > "$fakebin/fake-teardown-failing" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TEARDOWN_CALLS_LOG"
+exit 1
+SH
+  chmod +x "$fakebin/fake-teardown-failing"
+  printf 'idle, nothing changing' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stale-retry-exhausted.meta"
+  # Non-terminal status so the fallthrough after exhausted retries takes the
+  # immediate non-terminal-stale surface path.
+  printf 'working: implementing\n' > "$state/stale-retry-exhausted.status"
+  sig=$(seen_sig "$state/stale-retry-exhausted.status"); printf '%s' "$sig" > "$state/.seen-stale-retry-exhausted_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, nothing changing")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  set_mtime "$(( $(date +%s) - 10000 ))" "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_TEST_TEARDOWN_CALLS_LOG="$dir/teardown-calls.log" \
+    FM_TEARDOWN_BIN="$fakebin/fake-teardown-failing" FM_STALENESS_AUTOCLOSE_SECS=5 \
+    FM_STALENESS_AUTOCLOSE_MAX_RETRIES=2 FM_STALENESS_AUTOCLOSE_RETRY_BASE_SECS=0 \
+    FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not surface a stuck reclaim once its retry budget was spent"
+  unset FM_FAKE_CREW_STATE
+  [ "$(wc -l < "$dir/teardown-calls.log" 2>/dev/null || echo 0)" -eq 2 ] \
+    || fail "reclaim retried a different number of times than the configured budget: $(cat "$dir/teardown-calls.log" 2>/dev/null)"
+  grep -Fx "stale: $window" "$out" >/dev/null \
+    || fail "a reclaim that exhausted its retry budget did not fall through to ordinary stale surfacing: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the exhausted-retry surface failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null \
+    || fail "exhausted-retry stale wake was not queued"
+  pass "a persistently-failing reclaim retries a bounded number of times, then falls through to ordinary stale surfacing"
+}
+
 test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   local dir state fakebin out capture_file window key pane_hash sig pid
   dir=$(make_case busy-stable-hash-turn-age); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1723,3 +1810,5 @@ test_afk_paused_changed_pane_hands_off_plain_stale
 test_staleness_autoclose_fires_once_idle_past_threshold
 test_staleness_autoclose_does_not_fire_below_threshold
 test_staleness_autoclose_does_not_fire_while_provably_working
+test_staleness_autoclose_fires_during_afk_and_logs_evidence
+test_staleness_autoclose_exhausts_retries_then_surfaces
