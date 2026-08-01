@@ -658,8 +658,7 @@ event_wait_or_sleep() {
 # switches by letting the watcher pick up ready work automatically.
 # Returns 0 if a task was dispatched, 1 if no ready task or fleet not idle.
 discover_and_dispatch_idle_task() {
-  local windows_count ready_tasks_file ready_task_id task_kind task_repo
-  local task_project_dir
+  local windows_count ready_tasks_file ready_task_id task_kind
 
   # Check if fleet is idle: recorded_windows output should be empty
   windows_count=$(recorded_windows | wc -l)
@@ -676,7 +675,7 @@ discover_and_dispatch_idle_task() {
 
   # Get the first ready task ID using a temp file to parse output
   ready_tasks_file=$(mktemp "$STATE/.fm-ready-tasks.XXXXXX") || return 1
-  trap "rm -f '$ready_tasks_file'" RETURN
+  trap 'rm -f "$ready_tasks_file"' RETURN
 
   tasks-axi ready > "$ready_tasks_file" 2>/dev/null || {
     return 1
@@ -696,12 +695,9 @@ discover_and_dispatch_idle_task() {
     return 1
   fi
 
-  # Get task metadata: kind and repo to determine how to dispatch it
+  # Get task metadata: kind to determine how to dispatch it
   task_kind=$(awk -F',' -v task="$ready_task_id" '
     /^  [a-z0-9]/ && $1 ~ task { print $3; gsub(/^[[:space:]]+/, ""); exit }
-  ' "$ready_tasks_file")
-  task_repo=$(awk -F',' -v task="$ready_task_id" '
-    /^  [a-z0-9]/ && $1 ~ task { print $4; gsub(/^[[:space:]]+/, ""); exit }
   ' "$ready_tasks_file")
 
   # For secondmate tasks, use FM_HOME directly
