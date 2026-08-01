@@ -741,7 +741,7 @@ test_squash_merged_pr_allows_genuine_multi_commit_squash() {
   # patch-id replay check fails too (the squash's combined two-file diff has
   # no single patch id matching either local commit's one-file diff) - only
   # the 3-way merge-tree comparison recognizes this as landed.
-  tree=$(git -C "$case_dir/wt" rev-parse HEAD^{tree})
+  tree=$(git -C "$case_dir/wt" rev-parse 'HEAD^{tree}')
   pr_head=$(printf '%s\n' "squash a+b" | git -C "$case_dir/wt" commit-tree "$tree" -p "$base_head")
   add_gh_pr_merged_for_head "$case_dir" "$pr_head"
 
