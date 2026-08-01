@@ -56,6 +56,13 @@
 # panel (see bin/fm-spawn.sh's header for the enrollment contract): the recorded
 # `parlay listen` background pid is always killed, and `parlay agent-down` is
 # called only when `parlay` is on PATH. Neither ever blocks or fails teardown.
+# A task linked to a bead (beads_id= in meta, set by fm-spawn.sh --beads) has that
+# bead closed automatically once teardown reaches this point without --force, i.e.
+# every landed-work gate above already passed. --force never closes the linked bead,
+# since --force tears down without confirming the work landed. Closing is fail-open
+# like fm-bead-stamp.sh: a missing task CLI or a close the CLI rejects warns on
+# stderr and never blocks or fails an already-confirmed teardown. bin/fm-ledger.sh
+# is the safety net for a bead that was claimed but never reaches this path.
 # Usage: fm-teardown.sh <task-id> [--force]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
@@ -404,6 +411,7 @@ KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
+BEADS_ID=$(fm_meta_get "$META" beads_id)
 PUBLIC_FOLLOWUP_HOME=$FM_HOME
 PUBLIC_FOLLOWUP_STATE=$STATE
 PUBLIC_FOLLOWUP_WORK_HOME=main
@@ -630,6 +638,22 @@ deregister_parlay_agent() {
     parlay agent-down "$id" >/dev/null 2>&1 \
       || echo "warning: parlay agent-down failed for $id (non-blocking)" >&2
   fi
+}
+
+# Close the bead linked to this task (beads_id= in meta, set by fm-spawn.sh --beads)
+# once its work is confirmed landed. Only called for a non-force teardown that
+# reached this point, i.e. every REFUSED landed-work gate above already passed.
+# Fail-open by design, matching fm-bead-stamp.sh: a missing task CLI or a close
+# the CLI rejects (already closed, unreachable store) warns on stderr and never
+# blocks or fails an already-confirmed teardown.
+close_linked_bead() {
+  local beads_id=$1 id=$2
+  command -v task >/dev/null 2>&1 || {
+    echo "warning: task CLI not found on PATH, could not close bead $beads_id for $id" >&2
+    return 0
+  }
+  task close "$beads_id" --reason "landed: firstmate task $id teardown confirmed work landed" >/dev/null 2>&1 \
+    || echo "warning: could not close bead $beads_id for $id (already closed or unreachable)" >&2
 }
 
 validate_pr_poll_cleanup() {
@@ -2374,6 +2398,7 @@ fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
+[ -z "$BEADS_ID" ] || [ "$FORCE" = "--force" ] || close_linked_bead "$BEADS_ID" "$ID"
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/.$ID.open-decisions-cursor"
