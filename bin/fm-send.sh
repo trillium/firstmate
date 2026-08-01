@@ -319,8 +319,7 @@ else
     # Optional post-submit transition verification: confirm the turn actually
     # started, not just that the composer cleared. This uses the backend's own
     # transition-wait primitives to verify idle→working transition.
-    local verify_budget=${FM_SEND_VERIFY_TIMEOUT:-0.6}
-    local verify_result
+    verify_budget=${FM_SEND_VERIFY_TIMEOUT:-0.6}
     verify_result=$(fm_backend_wait_for_working "$TARGET_BACKEND" "$T" "$verify_budget")
     case "$verify_result" in
       working)

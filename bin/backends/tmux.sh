@@ -61,9 +61,12 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
 # pane remains quiet; returns 0 and echoes "unknown" on read failures.
 # Errors return 0 and echo "error".
 fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
-  local target=$1 budget=${2:-0.6} start_time current_time elapsed poll_interval=200
+  local target=$1 budget=${2:-0.6} start_time current_time elapsed
   start_time=$(date +%s%N 2>/dev/null || date +%s0000000)
   budget=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
+  case "$budget" in
+    ''|*[!0-9]*) printf 'error'; return 0 ;;
+  esac
   while :; do
     if fm_pane_is_busy "$target" 2>/dev/null; then
       printf 'working'

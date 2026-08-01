@@ -2231,7 +2231,7 @@ fm_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <p
 # echoes "unknown" on read failures. Errors return 0 and echo "error".
 fm_backend_herdr_wait_for_working_submit() {  # <target> <budget_secs>
   local target=$1 budget=${2:-0.6}
-  fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
+  fm_backend_herdr_parse_target "$target" || { printf 'error'; return 0; }
   local session=$FM_BACKEND_HERDR_SESSION pane_id=$FM_BACKEND_HERDR_PANE
   local result
   result=$(fm_backend_herdr_wait_for_working "$session" "$pane_id" "$budget" "$FM_BACKEND_HERDR_SUBMIT_POLLS")

@@ -824,7 +824,8 @@ fm_backend_composer_state() {  # <backend> <target> -> empty|pending|pending-unp
 # state (confirming the turn started); returns 0 and echoes "idle" if the target
 # remained idle across the full budget (message may have been queued or
 # dropped); returns 0 and echoes "unknown" on read failures (cannot verify).
-# On error return (1), echoes "error" and an error message to stderr.
+# Returns 0 and echoes "error" when the backend adapter cannot be sourced or
+# the backend's own verification hit a hard error (callers fail closed on it).
 # This is an optional add-on confirmation for callers that need explicit proof
 # a submission actually drove execution, distinct from composer-state verification.
 fm_backend_wait_for_working() {  # <backend> <target> <budget_secs>
