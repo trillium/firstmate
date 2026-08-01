@@ -34,29 +34,39 @@ if [ -z "$ORIGIN_URL" ]; then
   exit 1
 fi
 
-# Normalize URL to https format (remove .git suffix for comparison)
-ORIGIN_NORMALIZED="${ORIGIN_URL%.git}"
-ORIGIN_NORMALIZED="${ORIGIN_NORMALIZED#git@github.com:}"
-ORIGIN_NORMALIZED="${ORIGIN_NORMALIZED#https://github.com/}"
+# Escape single quotes for SQL (fix for SQL injection vulnerability)
+ORIGIN_URL_ESCAPED="${ORIGIN_URL//\'/\'\'}"
 
 echo "Detected origin: $ORIGIN_URL"
-echo "Normalized: github.com/$ORIGIN_NORMALIZED"
 
-# Escape single quotes for SQL (single quote becomes two single quotes)
-ORIGIN_URL_ESCAPED=$(echo "$ORIGIN_URL" | sed "s/'/''/g")
-
-# Query existing fork_url using exact URL matching
+# Query existing fork_url using exact URL matching to prevent unintended matches
 EXISTING_FORK=$(sqlite3 "$DB_PATH" \
-  "SELECT fork_url FROM repos WHERE upstream_url = '$ORIGIN_URL_ESCAPED' LIMIT 1;")
+  "SELECT fork_url FROM repos WHERE upstream_url = '$ORIGIN_URL_ESCAPED' LIMIT 1;") || {
+  echo "error: database query failed" >&2
+  exit 1
+}
+
+if [ -z "$EXISTING_FORK" ]; then
+  echo "error: repository not found in no-mistakes database" >&2
+  echo "hint: run 'no-mistakes init' in the target repository first" >&2
+  exit 1
+fi
 
 echo "Existing fork_url: ${EXISTING_FORK:-empty}"
 
-# Update fork_url to match origin
+# Update fork_url to match origin (use exact matching and escaped value)
 ROWS_AFFECTED=$(sqlite3 "$DB_PATH" \
-  "UPDATE repos SET fork_url = '$ORIGIN_URL_ESCAPED' WHERE upstream_url = '$ORIGIN_URL_ESCAPED'; SELECT changes();")
+  "UPDATE repos SET fork_url = '$ORIGIN_URL_ESCAPED' WHERE upstream_url = '$ORIGIN_URL_ESCAPED'; SELECT changes();") || {
+  echo "error: database update failed" >&2
+  exit 1
+}
 
+# Verify the update succeeded
 UPDATED=$(sqlite3 "$DB_PATH" \
-  "SELECT fork_url FROM repos WHERE upstream_url = '$ORIGIN_URL_ESCAPED' LIMIT 1;")
+  "SELECT fork_url FROM repos WHERE upstream_url = '$ORIGIN_URL_ESCAPED' LIMIT 1;") || {
+  echo "error: verification query failed" >&2
+  exit 1
+}
 
 if [ "$UPDATED" = "$ORIGIN_URL" ]; then
   echo "✓ Fixed: fork_url now correctly set to $ORIGIN_URL"
@@ -66,6 +76,6 @@ elif [ -z "$UPDATED" ]; then
   echo "error: repository not found in database (upstream_url = $ORIGIN_URL)" >&2
   exit 1
 else
-  echo "error: failed to update fork_url in database" >&2
+  echo "error: fork_url not updated correctly in database" >&2
   exit 1
 fi
