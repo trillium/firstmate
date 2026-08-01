@@ -365,7 +365,11 @@ fm_backend_target_of_meta() {  # <meta-file>
 # The validation binds the exact task id, selected backend, target, project,
 # and worktree. New non-tmux records carry endpoint_task_id because their
 # opaque runtime ids do not encode the task label. Legacy tmux records remain
-# valid only when their window name itself is exactly fm-<task-id>.
+# valid only when their window name itself is exactly fm-<task-id>. Legacy
+# Herdr records lacking endpoint_task_id self-repair by appending it once the
+# live pane's label is confirmed to still read fm-<task-id>
+# (fm_backend_herdr_pane_verifies_task); otherwise they refuse without
+# mutation. Legacy Zellij and other non-tmux records still refuse outright.
 # On success, sets FM_BACKEND_VALIDATED_BACKEND and
 # FM_BACKEND_VALIDATED_TARGET. On failure, prints one refusal and returns 1.
 fm_backend_meta_exact_value() {  # <meta-file> <key>
