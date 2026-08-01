@@ -50,6 +50,10 @@ Set the local, gitignored `config/backlog-backend` file to `manual` to force man
 Absent or `tasks-axi` selects the default tasks-axi backend.
 The file format is unchanged in tasks-axi and manual modes; both produce the same `## In flight`, `## Queued`, and `## Done` sections in `data/backlog.md`.
 The beads backend does not use `data/backlog.md`; all backlog state lives in the beads store and is queried dynamically at session start.
+Under the beads backend, firstmate labels every bead it creates for its own dispatched work with a firstmate-fleet label, `fleet:firstmate` by default (overridable only for test fixtures via `FM_BEADS_FLEET_LABEL`), so a `task list --label <that label>` call scopes to firstmate's fleet instead of surfacing the shared federated store's full cross-project set.
+`bin/fm-tasks-axi-lib.sh`'s `fm_beads_fleet_label` is the single owner of that label; read it from there rather than hardcoding it.
+The structured fleet snapshot (`bin/fm-fleet-snapshot.sh --json`) and Bearings (`bin/fm-bearings-snapshot.sh`) also read this fleet's in-flight/queued beads, scoped by that label, when the beads backend is selected; with any other backend their output is unchanged.
+That beads-sourced view currently covers only status open/in_progress/blocked beads mapped to `records[]` state `queued`/`in_flight`; per-bead dependency graphs and correlation with local `state/*.meta` are not yet wired through, so `blocked_by_ids` is always empty and `requires_child_metadata`/`captain_actionable` are always false for a beads-sourced record.
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
