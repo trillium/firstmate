@@ -63,8 +63,11 @@ _fm_tmux_now_ns() {
   case "$t" in
     ''|*[!0-9]*)
       s=$(date +%s 2>/dev/null)
-      [ -n "$s" ] && [ -z "${s##*[!0-9]*}" ] && printf '%s000000000' "$s" && return 0
-      return 1
+      case "$s" in
+        ''|*[!0-9]*) return 1 ;;
+      esac
+      printf '%s000000000' "$s"
+      return 0
       ;;
     *) printf '%s' "$t"; return 0 ;;
   esac
@@ -80,12 +83,11 @@ _fm_tmux_now_ns() {
 # moon-phase) match instead of only the generic busy regex.
 fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs> [harness]
   local target=$1 budget=${2:-0.6} harness=${3:-} start_time current_time elapsed
-  local budget_ns max_polls polls=0 baseline_busy
+  local budget_ns max_polls polls=0
   if ! start_time=$(_fm_tmux_now_ns); then
     printf 'error'
     return 0
   fi
-  baseline_busy=$(fm_pane_is_busy "$target" "$harness" 2>/dev/null && printf '1' || printf '0')
   budget_ns=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
   case "$budget_ns" in
     ''|*[!0-9]*) printf 'error'; return 0 ;;
@@ -100,10 +102,8 @@ fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs> [harness]
       return 0
     fi
     if fm_pane_is_busy "$target" "$harness" 2>/dev/null; then
-      if [ "$baseline_busy" = "0" ]; then
-        printf 'working'
-        return 0
-      fi
+      printf 'working'
+      return 0
     fi
     current_time=$(_fm_tmux_now_ns)
     if [ -z "$current_time" ]; then
