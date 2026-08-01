@@ -6,6 +6,12 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
+# Every ship and scout brief opens with a Parlay-enrollment section: the crewmate's
+# first action is `parlay listen --agent <id>` (atomic, idempotent register + announce
+# + monitor), run as a persistent background listener. Enrollment is best-effort and
+# never load-bearing - if parlay is absent or the server is unreachable the crewmate
+# notes it and works normally. Secondmate charters are exempt (they return work
+# through the marked-status/corr channel).
 # Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -286,9 +292,31 @@ EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
+# Best-effort Parlay enrollment: the crewmate's first action is to self-enroll in
+# Parlay so firstmate can reach it and it can report back. `parlay listen --agent
+# <id>` is the atomic, idempotent one-call enrollment (register + announce + monitor);
+# `parlay listen --help` documents the canonical persistent Monitor-tool form. Like
+# the spawn-side chat-panel registration (fm-spawn.sh), it is best-effort and never
+# load-bearing: if parlay is absent or the server is unreachable, the crewmate notes
+# the warning and works normally, never blocking on a missing coordination channel.
+# Injected as the first section of every ship and scout brief; secondmate charters are
+# exempt because a secondmate runs its own firstmate home and returns work through the
+# marked-status/corr channel, not the shared panel. The $(printf ...) builder is
+# Bash 3.2 parse-safe: no heredoc is nested in the command substitution
+# (tests/fm-brief.test.sh guards that shape).
+# shellcheck disable=SC2016  # single quotes are deliberate: backtick-wrapped commands and the Monitor snippet must reach the reading agent verbatim; only the '"$ID"' break-outs interpolate the task id.
+PARLAY_SECTION=$(printf '%s\n' \
+'# FIRST ACTION: enroll in Parlay' \
+'Start by enrolling in Parlay so firstmate can reach you and you can report back; this only starts a background listener and touches nothing in the repo, so the Setup isolation check below still governs every repo action.' \
+'Enrollment is one atomic, idempotent call that registers you, announces you are listening, and streams firstmate'"'"'s messages to you: `parlay listen --agent '"$ID"'`.' \
+'Run it as a persistent background listener that stays alive for the whole task: under a harness with a Monitor tool that is `Monitor({ command: "parlay listen --agent '"$ID"'", persistent: true })`, otherwise start it in the background and keep it running.' \
+'Enrollment is best-effort, never a blocker: if parlay is not installed or the Parlay server is unreachable, note the warning briefly and continue with your task normally - do not stop and do not append a blocked status. A missing coordination channel is not a failure.')
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+
+$PARLAY_SECTION
 
 # Task
 {TASK}
@@ -422,6 +450,8 @@ fi
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+
+$PARLAY_SECTION
 
 # Task
 {TASK}
