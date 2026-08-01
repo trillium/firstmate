@@ -58,11 +58,15 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
 # BSD date does not fail on %N, it emits "<seconds>N" (literal N), so detect a
 # non-digit result and fall back to seconds*1e9 to keep the same unit scale.
 _fm_tmux_now_ns() {
-  local t
+  local t s
   t=$(date +%s%N 2>/dev/null)
   case "$t" in
-    ''|*[!0-9]*) printf '%s000000000' "$(date +%s 2>/dev/null)" ;;
-    *) printf '%s' "$t" ;;
+    ''|*[!0-9]*)
+      s=$(date +%s 2>/dev/null)
+      [ -n "$s" ] && [ -z "${s##*[!0-9]*}" ] && printf '%s000000000' "$s" && return 0
+      return 1
+      ;;
+    *) printf '%s' "$t"; return 0 ;;
   esac
 }
 
@@ -76,8 +80,12 @@ _fm_tmux_now_ns() {
 # moon-phase) match instead of only the generic busy regex.
 fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs> [harness]
   local target=$1 budget=${2:-0.6} harness=${3:-} start_time current_time elapsed
-  local budget_ns max_polls polls=0
-  start_time=$(_fm_tmux_now_ns)
+  local budget_ns max_polls polls=0 baseline_busy
+  if ! start_time=$(_fm_tmux_now_ns); then
+    printf 'error'
+    return 0
+  fi
+  baseline_busy=$(fm_pane_is_busy "$target" "$harness" 2>/dev/null && printf '1' || printf '0')
   budget_ns=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
   case "$budget_ns" in
     ''|*[!0-9]*) printf 'error'; return 0 ;;
@@ -88,14 +96,20 @@ fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs> [harness]
   esac
   while :; do
     if ! tmux capture-pane -p -t "$target" -S -1 >/dev/null 2>&1; then
-      printf 'unknown'
+      printf 'error'
       return 0
     fi
     if fm_pane_is_busy "$target" "$harness" 2>/dev/null; then
-      printf 'working'
-      return 0
+      if [ "$baseline_busy" = "0" ]; then
+        printf 'working'
+        return 0
+      fi
     fi
     current_time=$(_fm_tmux_now_ns)
+    if [ -z "$current_time" ]; then
+      printf 'error'
+      return 0
+    fi
     elapsed=$((current_time - start_time))
     if [ "$elapsed" -ge "$budget_ns" ] 2>/dev/null; then
       printf 'idle'
