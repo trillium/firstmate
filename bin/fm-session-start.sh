@@ -37,8 +37,10 @@
 #                       when locked.
 #   4. persona        - the active persona file (config/persona.md local
 #                       override, else tracked persona.md): read-only, always
-#                       safe, always runs, so the captain-facing voice is in
-#                       force before any other output this session.
+#                       safe, always runs (including on lock refusal), and
+#                       prints early - before the context and fleet-state
+#                       digests - so the captain-facing voice is reliably
+#                       in force.
 #   5. context digest - data/projects.md, data/secondmates.md, data/captain.md,
 #                       data/captain-shared.md, data/learnings.md: read-only,
 #                       always safe, always runs.
