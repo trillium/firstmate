@@ -21,7 +21,6 @@ TMP_ROOT=$(fm_test_tmproot fm-hash-pane)
 # Resolve real tool paths once, before any test narrows PATH.
 REAL_CUT=$(command -v cut) || fail "cut not found on the test host"
 REAL_TR=$(command -v tr) || fail "tr not found on the test host"
-REAL_WC=$(command -v wc) || fail "wc not found on the test host"
 REAL_OD=$(command -v od) || fail "od not found on the test host"
 REAL_AWK=$(command -v awk) || fail "awk not found on the test host"
 REAL_CAT=$(command -v cat) || fail "cat not found on the test host"
@@ -30,7 +29,7 @@ REAL_SHASUM=$(command -v shasum || true)
 REAL_CKSUM=$(command -v cksum || true)
 
 # make_fakebin <dir> [tool=path ...]: symlink each named tool from its
-# resolved absolute path into <dir>, plus cut/tr/wc/od/awk/cat always
+# resolved absolute path into <dir>, plus cut/tr/od/awk/cat always
 # (hash_pane's fallback tiers, including the pure-shell last resort, pipe
 # through them; cat also backs make_fake_sbin_md5's stand-in script).
 # Echoes <dir>.
@@ -40,7 +39,6 @@ make_fakebin() {
   mkdir -p "$dir"
   ln -sf "$REAL_CUT" "$dir/cut"
   ln -sf "$REAL_TR" "$dir/tr"
-  ln -sf "$REAL_WC" "$dir/wc"
   ln -sf "$REAL_OD" "$dir/od"
   ln -sf "$REAL_AWK" "$dir/awk"
   ln -sf "$REAL_CAT" "$dir/cat"
