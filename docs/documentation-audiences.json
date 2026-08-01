@@ -304,7 +304,19 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/verification/dispatch-auth.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/public-followup.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/runtime-backends.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/stow-memory.md",
       "audience": "maintainer-verification"
     },
     {
@@ -321,6 +333,10 @@
     },
     {
       "path": "docs/zellij-backend.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/no-mistakes-run-liveness.md",
       "audience": "operator-current"
     },
     {
