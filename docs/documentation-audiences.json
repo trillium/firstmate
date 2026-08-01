@@ -248,6 +248,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/gascity-integration-analysis.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/gitlab-merge-watch.md",
       "audience": "maintainer-verification"
     },
