@@ -9,14 +9,6 @@
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
-#   --beads <id> links the task to a beads issue and is passed to every hook in
-#   fm-brief-hooks.d/ as FM_HOOK_BEADS_ID; the beads.sh hook there owns the
-#   resulting brief content. Applies to ship and scout briefs only.
-#   Before the Brief section is written, every executable in fm-brief-hooks.d/
-#   runs (via `.`, in a subshell) with FM_HOOK_BEADS_ID and FM_HOOK_TASK_ID set;
-#   each hook's captured stdout is prepended to the brief as its own section.
-#   Absent or empty fm-brief-hooks.d/ is a no-op. This is the extension point
-#   for out-of-tree brief content so this file stays a pure addition target.
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
 #   --secondmate writes a persistent secondmate charter. The project list
@@ -141,7 +133,6 @@ for a in "$@"; do
     --yolo|--yolo=*) echo "error: --yolo is not a brief input; pass it to bin/fm-spawn.sh, which records the task's approval posture" >&2; exit 1 ;;
     *) POS+=("$a") ;;
   esac
-  shift
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 
@@ -164,16 +155,6 @@ elif [ "$MODE_SET" -eq 1 ]; then
   exit 1
 fi
 ID=${POS[0]}
-
-case "$BEADS_ID" in
-  ''|*[!A-Za-z0-9._-]*)
-    [ -z "$BEADS_ID" ] || { echo "error: invalid --beads id" >&2; exit 1; }
-    ;;
-esac
-if [ -n "$BEADS_ID" ] && [ "$KIND" = secondmate ]; then
-  echo "error: --beads applies only to crewmate ship or scout briefs" >&2
-  exit 1
-fi
 
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to crewmate ship or scout briefs" >&2
@@ -224,27 +205,6 @@ fork_repo_for_origin() {
 }
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
-
-# Pre-brief extension point: source every executable in fm-brief-hooks.d/ that
-# can emit additional brief sections, so out-of-tree features (for example
-# beads dispatch tracking) can extend the brief without patching this file.
-# Each hook's captured stdout is prepended to the brief. Absent or empty dir
-# is a no-op. Each hook runs in a subshell so a hook's own `exit` never
-# terminates fm-brief.sh, keeping every hook fail-open by construction.
-HOOK_SECTION=""
-BRIEF_HOOKS_DIR="$FM_ROOT/bin/fm-brief-hooks.d"
-if [ -d "$BRIEF_HOOKS_DIR" ]; then
-  for hook in "$BRIEF_HOOKS_DIR"/*; do
-    [ -f "$hook" ] && [ -x "$hook" ] || continue
-    hook_out=$(
-      export FM_HOOK_BEADS_ID=$BEADS_ID
-      export FM_HOOK_TASK_ID=$ID
-      # shellcheck disable=SC1090
-      . "$hook"
-    ) || { echo "warning: brief hook $hook exited non-zero" >&2; continue; }
-    [ -z "$hook_out" ] || HOOK_SECTION="${HOOK_SECTION}${HOOK_SECTION:+$'\n\n'}${hook_out}"
-  done
-fi
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -365,11 +325,31 @@ EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
+# Best-effort Parlay enrollment: the crewmate's first action is to self-enroll in
+# Parlay so firstmate can reach it and it can report back. `parlay listen --agent
+# <id>` is the atomic, idempotent one-call enrollment (register + announce + monitor);
+# `parlay listen --help` documents the canonical persistent Monitor-tool form. Like
+# the spawn-side chat-panel registration (fm-spawn.sh), it is best-effort and never
+# load-bearing: if parlay is absent or the server is unreachable, the crewmate notes
+# the warning and works normally, never blocking on a missing coordination channel.
+# Injected as the first section of every ship and scout brief; secondmate charters are
+# exempt because a secondmate runs its own firstmate home and returns work through the
+# marked-status/corr channel, not the shared panel. The $(printf ...) builder is
+# Bash 3.2 parse-safe: no heredoc is nested in the command substitution
+# (tests/fm-brief.test.sh guards that shape).
+# shellcheck disable=SC2016  # single quotes are deliberate: backtick-wrapped commands and the Monitor snippet must reach the reading agent verbatim; only the '"$ID"' break-outs interpolate the task id.
+PARLAY_SECTION=$(printf '%s\n' \
+'# FIRST ACTION: enroll in Parlay' \
+'Start by enrolling in Parlay so firstmate can reach you and you can report back; this only starts a background listener and touches nothing in the repo, so the Setup isolation check below still governs every repo action.' \
+'Enrollment is one atomic, idempotent call that registers you, announces you are listening, and streams firstmate'"'"'s messages to you: `parlay listen --agent '"$ID"'`.' \
+'Run it as a persistent background listener that stays alive for the whole task: under a harness with a Monitor tool that is `Monitor({ command: "parlay listen --agent '"$ID"'", persistent: true })`, otherwise start it in the background and keep it running.' \
+'Enrollment is best-effort, never a blocker: if parlay is not installed or the Parlay server is unreachable, note the warning briefly and continue with your task normally - do not stop and do not append a blocked status. A missing coordination channel is not a failure.')
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
-$HOOK_SECTION
+$PARLAY_SECTION
 
 # Task
 {TASK}
@@ -458,7 +438,6 @@ Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
-When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
 Two firstmate-specific rules layer on top of that guidance:
@@ -505,7 +484,7 @@ fi
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
-$HOOK_SECTION
+$PARLAY_SECTION
 
 # Task
 {TASK}
