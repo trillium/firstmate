@@ -16,10 +16,12 @@
 #
 # The durable state/.afk-return-catchup file is written BEFORE daemon shutdown,
 # so a crash between stopping, draining, and blocker handling fails closed. It
-# retains the drained wake, buffered-escalation, and wedge-marker evidence until
-# every live open blocker is closed and `check` succeeds. Repeated begin/check
-# calls are idempotent. `guard` never mutates state and is suitable for ordinary
-# read entrypoints such as fm-bearings-snapshot.sh.
+# retains the drained wake, buffered-escalation, wedge-marker, and
+# staleness-autoclose-reclaim evidence (bin/fm-watch.sh's idle>2h backstop,
+# which also runs while away) until every live open blocker is closed and
+# `check` succeeds. Repeated begin/check calls are idempotent. `guard` never
+# mutates state and is suitable for ordinary read entrypoints such as
+# fm-bearings-snapshot.sh.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,7 +126,8 @@ clear_delivery_artifacts() {
   rm -f \
     "$STATE/.subsuper-escalations" \
     "$STATE/.subsuper-escalations.since" \
-    "$STATE/.subsuper-inject-wedged"
+    "$STATE/.subsuper-inject-wedged" \
+    "$STATE/.staleness-autoclose-afk.log"
 }
 
 return_guard() {
@@ -141,7 +144,7 @@ return_guard() {
 }
 
 return_reconcile() {
-  local evidence blockers drained wedge escalations lifecycle_ok=1
+  local evidence blockers drained wedge escalations staleness lifecycle_ok=1
   evidence=$(mktemp "$STATE/.afk-return-evidence.XXXXXX") || return 1
   blockers=$(mktemp "$STATE/.afk-return-blockers.XXXXXX") || { rm -f "$evidence"; return 1; }
   preserve_evidence "$evidence"
@@ -167,6 +170,10 @@ return_reconcile() {
   if [ -s "$STATE/.subsuper-escalations" ]; then
     escalations=$(cat "$STATE/.subsuper-escalations" 2>/dev/null || true)
     append_evidence escalation "$escalations" "$evidence"
+  fi
+  if [ -s "$STATE/.staleness-autoclose-afk.log" ]; then
+    staleness=$(cat "$STATE/.staleness-autoclose-afk.log" 2>/dev/null || true)
+    append_evidence staleness "$staleness" "$evidence"
   fi
 
   scan_open_blockers > "$blockers"
