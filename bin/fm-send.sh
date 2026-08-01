@@ -334,8 +334,8 @@ else
         [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: text was submitted to $T but turn start could not be verified (tried $RESOLUTION_TRIED)" >&2
         ;;
       error)
-        # Backend error during verification, but text was submitted. Proceed cautiously.
-        [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: SEND DID NOT LAND - text was submitted to $T but turn-start verification failed (backend error; tried $RESOLUTION_TRIED)" >&2
+        # Backend error during verification; fail closed like the idle branch.
+        echo "error: SEND DID NOT LAND - text was submitted to $T but turn-start verification failed (backend error; tried $RESOLUTION_TRIED)" >&2
         exit 1
         ;;
     esac

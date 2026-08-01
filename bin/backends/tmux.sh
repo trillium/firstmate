@@ -54,6 +54,18 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
   fm_tmux_submit_core "$@"
 }
 
+# _fm_tmux_now_ns: current time in nanoseconds. GNU date supports +%s%N; stock
+# BSD date does not fail on %N, it emits "<seconds>N" (literal N), so detect a
+# non-digit result and fall back to seconds*1e9 to keep the same unit scale.
+_fm_tmux_now_ns() {
+  local t
+  t=$(date +%s%N 2>/dev/null)
+  case "$t" in
+    ''|*[!0-9]*) printf '%s000000000' "$(date +%s 2>/dev/null)" ;;
+    *) printf '%s' "$t" ;;
+  esac
+}
+
 # fm_backend_tmux_wait_for_working_submit: optional post-submit transition
 # confirmation. Polls <target>'s busy state (via pane output scan) for up to
 # <budget_secs> to confirm the message drove a turn. Returns 0 and echoes
@@ -62,7 +74,7 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
 # Errors return 0 and echo "error".
 fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
   local target=$1 budget=${2:-0.6} start_time current_time elapsed
-  start_time=$(date +%s%N 2>/dev/null || date +%s000000000)
+  start_time=$(_fm_tmux_now_ns)
   budget=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
   case "$budget" in
     ''|*[!0-9]*) printf 'error'; return 0 ;;
@@ -72,7 +84,7 @@ fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
       printf 'working'
       return 0
     fi
-    current_time=$(date +%s%N 2>/dev/null || date +%s000000000)
+    current_time=$(_fm_tmux_now_ns)
     elapsed=$((current_time - start_time))
     if [ "$elapsed" -ge "$budget" ] 2>/dev/null; then
       printf 'idle'
