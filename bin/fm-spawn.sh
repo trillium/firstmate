@@ -1812,6 +1812,12 @@ if [ "$KIND" != secondmate ]; then
       fi
       ;;
   esac
+  # Every branch below unconditionally truncates and rewrites its hook
+  # artifact (cat/printf >, never appended or skip-if-exists), so a worktree
+  # treehouse hands back from its reuse pool always gets hooks bound to THIS
+  # incarnation's id and $BUSY_GEN, never a prior tenant's. Keep new adapter
+  # wiring the same way; tests/fm-spawn-reused-worktree-hooks.test.sh guards
+  # the claude case end to end.
   case "$HARNESS" in
     claude*)
       # Semantic busy-state hooks (bin/fm-busy-lib.sh): UserPromptSubmit opens
