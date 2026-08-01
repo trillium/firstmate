@@ -35,6 +35,10 @@ if ! task set-state "$BEADS_ID" dispatch=sent --reason "dispatched: agent=$AGENT
   echo "warning: could not set dispatch=sent on bead $BEADS_ID" >&2
 fi
 
+if ! task set-state "$BEADS_ID" lifecycle=sent --reason "dispatched: agent=$AGENT" >/dev/null 2>&1; then
+  echo "warning: could not set lifecycle=sent on bead $BEADS_ID" >&2
+fi
+
 if ! task assign "$BEADS_ID" "$AGENT" >/dev/null 2>&1; then
   echo "warning: could not assign bead $BEADS_ID to $AGENT" >&2
 fi

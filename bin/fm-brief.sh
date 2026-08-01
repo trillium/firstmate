@@ -34,6 +34,12 @@
 #   The flag must be explicit because {TASK} is filled after scaffolding and the
 #   caller-supplied repo string cannot reliably identify this repo. Briefs made
 #   without it carry a loud declaration so an omitted contract cannot be silent.
+# Hook system: when environment variables like FM_HOOK_BEADS_ID are set, executable
+# scripts in fm-brief-hooks.d/ are sourced in a subshell during scaffolding, and their
+# stdout is prepended to the generated brief. The beads hook (fm-brief-hooks.d/beads.sh)
+# is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt and
+# Bead Closure sections that ask the worker to confirm dispatch/lifecycle state changes
+# and close the bead on completion.
 # For ship tasks, the definition of done is shaped by the project's delivery mode
 # (data/projects.md via fm-project-mode.sh; see the project-management skill
 # and AGENTS.md task lifecycle):
@@ -41,6 +47,11 @@
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> captain merge
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                captain approves, firstmate merges to local main
+# Push-mode ship briefs (direct-PR, no-mistakes) whose project clone has a
+# non-Trillium git origin add a fork-first push rule: push the branch to the
+# trillium/<repo> fork and open the PR from there, since the upstream origin
+# refuses the push. Detection reads the clone's real origin remote; a Trillium,
+# unreadable, or absent origin (and every local-only brief) adds no such rule.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
 # Every scaffold's status protocol distinguishes the configured
@@ -74,10 +85,31 @@ esac
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
+
+resolve_directory_input() {
+  local name=$1 path=$2 resolved
+  case "$path" in
+    /*) printf '%s\n' "$path"; return 0 ;;
+  esac
+  resolved=$(CDPATH='' cd -- "$path" 2>/dev/null && pwd -P) || {
+    echo "error: $name directory cannot be resolved: $path" >&2
+    return 1
+  }
+  printf '%s\n' "$resolved"
+}
+
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
-DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
-STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+FM_HOME=$(resolve_directory_input FM_HOME "${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}") || exit 1
+if [ -n "${FM_DATA_OVERRIDE:-}" ]; then
+  DATA=$(resolve_directory_input FM_DATA_OVERRIDE "$FM_DATA_OVERRIDE") || exit 1
+else
+  DATA="$FM_HOME/data"
+fi
+if [ -n "${FM_STATE_OVERRIDE:-}" ]; then
+  STATE=$(resolve_directory_input FM_STATE_OVERRIDE "$FM_STATE_OVERRIDE") || exit 1
+else
+  STATE="$FM_HOME/state"
+fi
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -127,6 +159,34 @@ shell_quote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\\\\''/g"
   printf "'"
+}
+
+# Print the bare repository name to fork under trillium/ when a ship task's
+# project clone has a non-Trillium git origin (an upstream repo the worker
+# cannot push to); print nothing (and succeed) when the origin is Trillium-owned,
+# unreadable, or the clone is absent, so the generated brief stays unchanged in
+# every case that is not a known upstream fork. Detection reads the clone's real
+# `git remote get-url origin`, never data/projects.md prose.
+fork_repo_for_origin() {
+  local repo=$1 dir origin name rest owner
+  case "$repo" in
+    /*) dir=$repo ;;
+    projects/*) dir="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/${repo#projects/}" ;;
+    *) dir="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/$repo" ;;
+  esac
+  origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 0
+  [ -n "$origin" ] || return 0
+  origin=${origin%.git}
+  origin=${origin%/}
+  name=${origin##*/}
+  rest=${origin%/*}
+  owner=${rest##*/}     # https://host/owner/repo -> owner
+  owner=${owner##*:}    # git@host:owner/repo    -> owner
+  case "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')" in
+    trillium) return 0 ;;
+  esac
+  [ -n "$name" ] || return 0
+  printf '%s\n' "$name"
 }
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
@@ -262,13 +322,13 @@ HERDR_SECTION=$(printf '%s\n' \
 'Never bypass the helper, even for a read-only lifecycle probe or cleanup after failure.' \
 'The captain fleet uses the running `default` session.')
 else
-HERDR_SECTION=$(cat <<'EOF'
+IFS= read -r -d '' HERDR_SECTION <<'EOF' || true
 # Herdr lifecycle declaration - NOT ENABLED
 **HARD SAFETY GATE:** this scaffold cannot inspect the task text that replaces `{TASK}` later.
 If the task will start, stop, delete, restart, profile, or otherwise drive Herdr lifecycle behavior, stop and regenerate the brief with `--herdr-lab` before dispatch.
 Do not add Herdr lifecycle commands to this unguarded brief by hand.
 EOF
-)
+HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
 if [ "$KIND" = scout ]; then
@@ -332,19 +392,18 @@ case "$MODE" in
   direct-PR)
     SETUP2=""
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a PR.'
-    DOD=$(cat <<EOF
+    IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 This project ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
-)
     ;;
   local-only)
     SETUP2=""
     RULE1="1. Never push to any remote and never open a PR. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
-    DOD=$(cat <<EOF
+    IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 This project ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
@@ -352,13 +411,12 @@ Keep your branch a clean fast-forward onto the current default branch - if \`mai
 When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
-)
     ;;
   *)  # no-mistakes (default)
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
     RULE1='1. Never push to the default branch. Never merge a PR.'
-    DOD=$(cat <<EOF
+    IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 The task is complete only when committed on your branch.
 When you believe it is complete, append \`done: {summary}\` to the status file and stop.
@@ -376,9 +434,38 @@ Two firstmate-specific rules layer on top of that guidance:
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
 EOF
-)
     ;;
 esac
+
+# read -r -d '' preserves the heredoc's trailing newline that the removed
+# $(...) command substitution used to strip. Drop that one newline so generated
+# briefs stay byte-identical to the historical Bash 5 output.
+DOD=${DOD%$'\n'}
+
+# Fork-first push rule: a project whose git origin is the upstream repository
+# (not under trillium/) cannot be pushed to directly, so a worker on the push
+# modes must push its branch to the trillium/<repo> fork and open the PR from
+# there. Only direct-PR and no-mistakes push; local-only never does, so it is
+# exempt. The rule text lives here exactly once and is empty (no rule) for
+# local-only and for every Trillium-origin, unreadable, or absent-clone case,
+# keeping those briefs byte-identical to the pre-rule output.
+FORK_FIRST=""
+if [ "$MODE" != local-only ]; then
+  FORK_REPO=$(fork_repo_for_origin "$REPO")
+  if [ -n "$FORK_REPO" ]; then
+    IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+# Fork-based project: all pushes target the fork
+This project's \`origin\` is the upstream repository that refuses pushes, so a refused push to \`origin\` is expected, not a blocker.
+The \`fm/$ID\` branch and its PR must target the \`trillium/$FORK_REPO\` fork, not upstream.
+If the fork does not exist yet, create it with \`gh-axi\`.
+Anything that pushes this branch or opens its PR must target the fork, not upstream.
+In no-mistakes mode, ensure the pipeline is configured to push to the fork, not upstream.
+Never push to the upstream \`origin\`, and never stop to ask fork-vs-local: always use the fork.
+**CRITICAL:** a push to the upstream origin must NEVER happen automatically. If pushing to the fork is not possible, stop and get direct captain confirmation before any upstream push attempt.
+EOF
+  fi
+fi
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -423,7 +510,7 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
-
+$FORK_FIRST
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
 Record only project knowledge useful to almost every future session.

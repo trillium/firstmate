@@ -155,7 +155,8 @@ SH
 write_meta() {
   local case_dir=$1 mode=$2 kind=$3
   fm_write_meta "$case_dir/state/task-x1.meta" \
-    "window=fm-task-x1" \
+    "window=firstmate:fm-task-x1" \
+    "endpoint_task_id=task-x1" \
     "worktree=$case_dir/wt" \
     "project=$case_dir/project" \
     "kind=$kind" \
@@ -1242,13 +1243,39 @@ test_local_only_force_overrides_unpushed() {
   pass "local-only worktree with unpushed work is torn down under --force (escape hatch)"
 }
 
+test_teardown_missing_busy_sidecar_completes() {
+  local case_dir gen rc
+  case_dir=$(make_case missing-busy-sidecar)
+  write_meta "$case_dir" local-only ship
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$case_dir/state" task-x1)
+  printf 'busy_gen=%s\n' "$gen" >> "$case_dir/state/task-x1.meta"
+  rm -f "$case_dir/state/task-x1.busy-gen"
+
+  set +e
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "missing-busy-sidecar: teardown should treat the incarnation as already retired"
+  assert_absent "$case_dir/state/task-x1.busy-state" \
+    "missing-busy-sidecar: teardown left the orphan busy record"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "missing-busy-sidecar: teardown remained incomplete"
+  pass "teardown completes when an exact busy-state sidecar is already absent"
+}
+
 test_herdr_teardown_clears_escalation_marker() {
   local case_dir marker
   case_dir=$(make_case herdr-marker-cleanup)
   write_meta "$case_dir" local-only ship
   sed -i.bak 's/^window=.*/window=default:wG:pQ/' "$case_dir/state/task-x1.meta"
   rm -f "$case_dir/state/task-x1.meta.bak"
-  printf '%s\n' 'backend=herdr' >> "$case_dir/state/task-x1.meta"
+  printf '%s\n' \
+    'backend=herdr' \
+    'herdr_session=default' \
+    'herdr_workspace_id=wG' \
+    'herdr_tab_id=wG:tQ' \
+    'herdr_pane_id=wG:pQ' >> "$case_dir/state/task-x1.meta"
   cat > "$case_dir/fakebin/herdr" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -1371,6 +1398,69 @@ test_herdr_projection_teardown_retains_journal_when_close_unconfirmed() {
   pass "herdr projection teardown retains the stale journal and attempts no workspace cleanup when exact-pane close is unconfirmed"
 }
 
+test_teardown_deregisters_parlay_when_present() {
+  local case_dir calls_log pid
+  case_dir=$(make_case parlay-present)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  calls_log="$case_dir/parlay-calls.log"
+  cat > "$case_dir/fakebin/parlay" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$calls_log"
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/parlay"
+
+  sleep 6600 &
+  pid=$!
+  printf '%s\n' "$pid" > "$case_dir/state/task-x1.parlay-listen-pid"
+
+  run_teardown "$case_dir" >/dev/null 2>&1 \
+    || fail "parlay-present: teardown should succeed"
+
+  ! kill -0 "$pid" 2>/dev/null \
+    || { kill "$pid" 2>/dev/null || true; fail "parlay-present: recorded parlay-listen pid was not killed"; }
+  assert_grep "agent-down task-x1" "$calls_log" \
+    "parlay-present: parlay was not invoked as 'agent-down task-x1'"
+  assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
+    "parlay-present: teardown did not remove the parlay-listen-pid file"
+  pass "a clean teardown kills the recorded parlay-listen pid and calls 'parlay agent-down <id>'"
+}
+
+test_teardown_kills_pid_even_when_parlay_absent() {
+  local case_dir safe_path pid rc
+  case_dir=$(make_case parlay-absent)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  sleep 6600 &
+  pid=$!
+  printf '%s\n' "$pid" > "$case_dir/state/task-x1.parlay-listen-pid"
+
+  # No fakebin/parlay is installed, and the host machine's real parlay (if any)
+  # is stripped out of PATH too - the genuine absent-from-PATH case.
+  safe_path=$(fm_path_without parlay)
+
+  set +e
+  FM_ROOT_OVERRIDE="$ROOT" \
+  FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_CONFIG_OVERRIDE="$case_dir/config" \
+  PATH="$case_dir/fakebin:$safe_path" \
+    "$TEARDOWN" task-x1 >/dev/null 2>&1
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "parlay-absent: teardown should still succeed without parlay on PATH"
+  ! kill -0 "$pid" 2>/dev/null \
+    || { kill "$pid" 2>/dev/null || true; fail "parlay-absent: recorded parlay-listen pid was not killed without parlay on PATH"; }
+  assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
+    "parlay-absent: teardown did not remove the parlay-listen-pid file"
+  pass "a clean teardown still kills the recorded parlay-listen pid even when parlay is absent from PATH"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -1379,6 +1469,7 @@ test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
+test_teardown_missing_busy_sidecar_completes
 test_herdr_teardown_clears_escalation_marker
 test_herdr_projection_teardown_retires_journal_only_after_confirmed_close
 test_herdr_projection_teardown_retains_journal_when_close_unconfirmed
@@ -1403,3 +1494,5 @@ test_transient_index_lock_clears_after_first_attempt_and_retry_succeeds
 test_persistent_index_lock_exhausts_retries_and_refuses_loudly
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
+test_teardown_deregisters_parlay_when_present
+test_teardown_kills_pid_even_when_parlay_absent
