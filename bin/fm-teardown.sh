@@ -464,8 +464,7 @@ EOF
 }
 
 squash_merged_pr_contains_work() {
-  local pr_head=$1 current pr_tree merged_tree
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  local pr_head=$1 pr_tree merged_tree
   pr_tree=$(git -C "$WT" rev-parse --quiet --verify "$pr_head^{tree}" 2>/dev/null) || return 1
   [ -n "$pr_tree" ] || return 1
   merged_tree=$(git -C "$WT" merge-tree --write-tree "$pr_head" HEAD 2>/dev/null) || return 1
