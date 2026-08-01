@@ -410,7 +410,7 @@ staleness_autoclose_record_failure() {  # <key>
 }
 
 staleness_autoclose_clear_retries() {  # <key>
-  rm -f "$STATE/.staleness-fails-$1" "$STATE/.staleness-next-$1"
+  rm -f "$STATE/.staleness-fails-$1" "$STATE/.staleness-next-$1" "$STATE/.staleness-working-$1"
 }
 
 # busy_turn_over_age: 0 iff <task>'s latest completed-turn marker is at least
@@ -1062,6 +1062,7 @@ EOF
     ssf="$STATE/.stale-since-$key"
     ewf="$STATE/.wedge-escalations-$key"
     pf="$STATE/.paused-$key"   # flag: this key's stale is using the bounded pause cadence
+    pwf="$STATE/.staleness-working-$key"   # cache: hash last found provably-working by auto-close
     prev=$(cat "$hf" 2>/dev/null || true)
     # Busy match: a backend's native semantic state when available (herdr), else
     # the last 6 non-blank lines only (the TUI footer area, where every verified
@@ -1088,21 +1089,33 @@ EOF
         # this stale hash. Runs during afk too - reclaiming wasted idle
         # compute matters most while away - with a successful reclaim logged
         # for the returning captain by staleness_autoclose_reclaim itself. See
-        # staleness_autoclose_reclaim above.
+        # staleness_autoclose_reclaim above. crew_is_provably_working is only
+        # invoked on the first poll of a given stale hash (cached in $pwf),
+        # matching the first-sighting-only contract every other caller in this
+        # file follows - not re-run on every ~15s poll for the whole time a
+        # provably-working task sits past the threshold.
         if [ "$kind" = ship ] \
           && ! status_is_paused_or_captain_held "$last" \
           && ! status_is_captain_relevant "$last" \
           && [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ] \
-          && staleness_autoclose_should_retry "$key" \
-          && ! crew_is_provably_working "$task"; then
-          if staleness_autoclose_reclaim "$w" "$task" "$hf"; then
-            staleness_autoclose_clear_retries "$key"
-            continue
+          && staleness_autoclose_should_retry "$key"; then
+          if [ "$(cat "$pwf" 2>/dev/null || true)" != "$h" ]; then
+            if crew_is_provably_working "$task"; then
+              printf '%s' "$h" > "$pwf"
+            else
+              rm -f "$pwf"
+            fi
           fi
-          if [ "$(staleness_autoclose_record_failure "$key")" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; then
-            continue
+          if [ "$(cat "$pwf" 2>/dev/null || true)" != "$h" ]; then
+            if staleness_autoclose_reclaim "$w" "$task" "$hf"; then
+              staleness_autoclose_clear_retries "$key"
+              continue
+            fi
+            if [ "$(staleness_autoclose_record_failure "$key")" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; then
+              continue
+            fi
+            triage_log "staleness auto-close exhausted retries for $w (task $task); falling through to ordinary stale surfacing"
           fi
-          triage_log "staleness auto-close exhausted retries for $w (task $task); falling through to ordinary stale surfacing"
         fi
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
