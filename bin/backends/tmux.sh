@@ -74,20 +74,34 @@ _fm_tmux_now_ns() {
 # Errors return 0 and echo "error".
 fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs>
   local target=$1 budget=${2:-0.6} start_time current_time elapsed
+  local budget_ns max_polls polls=0
   start_time=$(_fm_tmux_now_ns)
-  budget=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
-  case "$budget" in
+  budget_ns=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
+  case "$budget_ns" in
     ''|*[!0-9]*) printf 'error'; return 0 ;;
   esac
+  max_polls=$(awk -v b="$budget" 'BEGIN { printf "%.0f", (b / 0.2) + 5 }' 2>/dev/null)
+  case "$max_polls" in
+    ''|*[!0-9]*|0) printf 'error'; return 0 ;;
+  esac
   while :; do
+    if ! tmux capture-pane -p -t "$target" -S -1 >/dev/null 2>&1; then
+      printf 'unknown'
+      return 0
+    fi
     if fm_pane_is_busy "$target" 2>/dev/null; then
       printf 'working'
       return 0
     fi
     current_time=$(_fm_tmux_now_ns)
     elapsed=$((current_time - start_time))
-    if [ "$elapsed" -ge "$budget" ] 2>/dev/null; then
+    if [ "$elapsed" -ge "$budget_ns" ] 2>/dev/null; then
       printf 'idle'
+      return 0
+    fi
+    polls=$((polls + 1))
+    if [ "$polls" -ge "$max_polls" ]; then
+      printf 'error'
       return 0
     fi
     sleep 0.2
