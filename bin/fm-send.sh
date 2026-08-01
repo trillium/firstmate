@@ -43,6 +43,15 @@
 # footer appears, so an immediate peek would otherwise see the stale idle pane.
 # The pause is fm-send-only; the shared submit core (used by the away-mode daemon,
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
+#
+# Optional post-submit transition verification: set FM_SEND_VERIFY_TRANSITION to a
+# non-zero value to have fm-send confirm the submitted text actually drove a turn
+# (target transitioned idle->working) rather than only clearing the composer. It
+# polls the target's agent state for up to FM_SEND_VERIFY_TIMEOUT seconds (default
+# 0.6) via the backend's wait-for-working primitive. A confirmed still-idle target,
+# or a backend error during verification, exits NON-ZERO because the message did not
+# execute; an unverifiable ("unknown") read proceeds and, when FM_SEND_VERBOSE is
+# non-zero, prints a warning. Off by default and independent of FM_SEND_SETTLE.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
