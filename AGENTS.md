@@ -305,6 +305,16 @@ Running, fixing, or CI states remain working; parked approval or fix-review stat
 A worker hand-editing, committing, aborting, or restarting during an active validation run duplicates pipeline ownership; steer it back to the gate response flow.
 The worker reports the PR when CI first becomes green rather than waiting for merge monitoring to finish.
 
+### Dirty worktrees: exploratory changes during ship tasks
+
+When a task completes with uncommitted changes or off-branch exploration (feature experiments, debugging artifacts, style refinements), the default pattern is:
+
+1. **Commit the work** — never discard exploratory changes; they represent actual investigation
+2. **Mark with `[quality:needs-review]`** in the commit message to flag it as exploratory, not production-ready
+3. **File a tracking task** to curate the work (run through code review, tests, or intentional cleanup)
+
+This preserves thought, keeps decisions durable, and makes exploratory work visible instead of losing it.
+
 ### PR ready, landing, and teardown
 
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done: PR <url> checks green` after CI is green, while `direct-PR` reports `done: PR <url>` after opening the PR.
