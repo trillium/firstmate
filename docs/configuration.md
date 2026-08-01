@@ -590,6 +590,9 @@ GROK_HOME=              # optional Grok config home for firstmate's global grok 
 FM_SEND_RETRIES=3       # fm-send Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send submit checks
 FM_SEND_SETTLE=1        # seconds fm-send waits after a successful text submit; 0 disables
+FM_SEND_VERIFY_TRANSITION=0   # opt-in: after a successful submit, confirm the target actually transitioned idle->working before returning; non-zero enables. On a confirmed still-idle target (or a backend error) fm-send exits non-zero because the turn did not start
+FM_SEND_VERIFY_TIMEOUT=0.6    # seconds fm-send polls the target's agent state for that idle->working transition
+FM_SEND_VERBOSE=0             # non-zero prints a warning when the transition could not be verified (unknown result) instead of proceeding silently
 FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before a completed turn without a correlated parent report is eligible for its one recovery repost
 # sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
 FM_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
