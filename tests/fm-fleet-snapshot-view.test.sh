@@ -779,6 +779,69 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+# beads-authority migration Stage 1
+# (data/beads-authority-migration-scout/report.md section 4): the snapshot
+# reads this fleet's in-flight/queued state from the beads store, scoped by
+# fm_beads_fleet_label, when config/backlog-backend=beads.
+test_beads_backend_snapshot_scopes_by_fleet_label() {
+  local home fakebin out
+  home=$(make_home beads-backend)
+  printf 'beads\n' > "$home/config/backlog-backend"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'list --limit 1')
+    printf '[]\n'
+    exit 0
+    ;;
+  'list --label fleet:firstmate --status open,in_progress,blocked --limit 200 --json')
+    cat <<'JSON'
+[
+  {"id":"task-aaa","title":"Queued bead","description":"queued body","status":"open","priority":2},
+  {"id":"task-bbb","title":"In flight bead","description":"","status":"in_progress","priority":0}
+]
+JSON
+    exit 0
+    ;;
+  *)
+    printf 'unexpected task invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$fakebin/task"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e . >/dev/null || fail "beads-backed snapshot must be valid JSON: $out"
+  printf '%s' "$out" | jq -e '
+    .backlog.source == "beads"
+      and .backlog.fleet_label == "fleet:firstmate"
+      and .backlog.present == true
+  ' >/dev/null || fail "beads-backed snapshot missing beads-source markers: $out"
+  printf '%s' "$out" | jq -e '
+    (.backlog.records[] | select(.id == "task-aaa") | .state) == "queued"
+      and (.backlog.records[] | select(.id == "task-bbb") | .state) == "in_flight"
+  ' >/dev/null || fail "beads status open/in_progress was not mapped to record state queued/in_flight: $out"
+  printf '%s' "$out" | jq -e '.main_inventory.valid == true' >/dev/null \
+    || fail "beads-sourced records must never trip the orphan/unstructured inventory checks: $out"
+  pass "beads backend snapshot reads fleet-scoped in-flight/queued beads"
+}
+
+# Regression guard for the byte-identical default-backend requirement: adding
+# the beads branch must not add fields to the markdown backlog_json path.
+test_default_backend_backlog_json_has_no_beads_fields() {
+  local home fakebin out
+  home=$(make_home default-backend-beads-regression)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.backlog | has("source") | not) and (.backlog | has("fleet_label") | not)
+  ' >/dev/null || fail "default-backend backlog_json must stay byte-identical: unexpected beads-only field: $out"
+  pass "default backend backlog_json carries no beads-only fields"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_main_inventory_orphan_and_unstructured_disclosure
@@ -794,3 +857,5 @@ test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
+test_beads_backend_snapshot_scopes_by_fleet_label
+test_default_backend_backlog_json_has_no_beads_fields

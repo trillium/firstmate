@@ -20,6 +20,13 @@
 #     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids, and
 #     captain_actionable fields. Repeated blocker tokens remain ordered; a blocker
 #     resolves only when its structured record is Done, and missing ids stay open.
+#     When config/backlog-backend=beads, backlog gains source:"beads",
+#     fleet_label (the queried fleet label), records_truncated, and
+#     records_limit, and records[] holds this fleet's open/in_progress/blocked
+#     beads (state queued/in_flight only, always structured:true with empty
+#     blocked_by_ids and requires_child_metadata/captain_actionable false); a
+#     failed or unavailable beads read falls back to the data/backlog.md shape
+#     above with no beads-only fields. Default-backend output is unaffected.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
 #     state, source, detail, and raw line separately.
@@ -94,6 +101,8 @@ FM_SNAPSHOT_REGISTRY_LINES=${FM_SNAPSHOT_REGISTRY_LINES:-256}
 FM_SNAPSHOT_REGISTRY_BYTES=${FM_SNAPSHOT_REGISTRY_BYTES:-65536}
 FM_SNAPSHOT_REGISTRY_RECORDS=${FM_SNAPSHOT_REGISTRY_RECORDS:-40}
 FM_SNAPSHOT_REGISTRY_TIMEOUT=${FM_SNAPSHOT_REGISTRY_TIMEOUT:-2}
+FM_SNAPSHOT_BEADS_LIMIT=${FM_SNAPSHOT_BEADS_LIMIT:-200}
+FM_SNAPSHOT_BEADS_TIMEOUT=${FM_SNAPSHOT_BEADS_TIMEOUT:-4}
 validate_positive_bound() {  # <name> <value>
   case "$2" in
     ''|*[!0-9]*|0)
@@ -124,6 +133,8 @@ validate_positive_bound FM_SNAPSHOT_REGISTRY_LINES "$FM_SNAPSHOT_REGISTRY_LINES"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_BYTES "$FM_SNAPSHOT_REGISTRY_BYTES"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_RECORDS "$FM_SNAPSHOT_REGISTRY_RECORDS"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_TIMEOUT "$FM_SNAPSHOT_REGISTRY_TIMEOUT"
+validate_positive_bound FM_SNAPSHOT_BEADS_LIMIT "$FM_SNAPSHOT_BEADS_LIMIT"
+validate_positive_bound FM_SNAPSHOT_BEADS_TIMEOUT "$FM_SNAPSHOT_BEADS_TIMEOUT"
 
 # shellcheck source=bin/fm-backend.sh
 # shellcheck disable=SC1091
@@ -134,6 +145,9 @@ validate_positive_bound FM_SNAPSHOT_REGISTRY_TIMEOUT "$FM_SNAPSHOT_REGISTRY_TIME
 # shellcheck source=bin/fm-ff-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-ff-lib.sh"  # validate_secondmate_home: shared seeded-home boundary checks
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"  # fm_beads_backend_available, fm_beads_fleet_label
 
 usage() {
   cat <<'EOF'
@@ -161,6 +175,9 @@ FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT, with truncation disclosed in the result.
 The registered secondmate table uses FM_SNAPSHOT_REGISTRY_LINES,
 FM_SNAPSHOT_REGISTRY_BYTES, FM_SNAPSHOT_REGISTRY_RECORDS, and
 FM_SNAPSHOT_REGISTRY_TIMEOUT, with unavailability and truncation disclosed.
+When config/backlog-backend=beads, the beads-backed backlog read uses
+FM_SNAPSHOT_BEADS_LIMIT (default 200) and FM_SNAPSHOT_BEADS_TIMEOUT (default
+4), with truncation disclosed via records_truncated/records_limit.
 EOF
 }
 
@@ -247,7 +264,11 @@ first_pr_url_in_file() {  # <file>
   grep -Eo 'https?://[^[:space:])"]+/pull/[0-9]+' "$1" 2>/dev/null | head -1
 }
 
-backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
+# backlog_json_markdown [<backlog-path>] - parses data/backlog.md into the
+# fm-fleet-snapshot.v1 records[] schema. This is the default-backend body;
+# its output must stay byte-identical, so beads-backend logic lives in the
+# sibling backlog_json_beads instead of branching inline here.
+backlog_json_markdown() {  # [<backlog-path>] - defaults to this home's $BACKLOG
   local backlog=${1:-$BACKLOG}
   if [ ! -f "$backlog" ]; then
     jq -n --arg path "$backlog" '{path:$path,present:false,records:[]}'
@@ -395,6 +416,108 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
         else . end)
     | del(.section,.order)
   ' < "$backlog"
+}
+
+# backlog_json_beads [<backlog-path>] - beads-authority migration Stage 1
+# (data/beads-authority-migration-scout/report.md section 4). Reads this
+# fleet's in-flight/queued beads, scoped by fm_beads_fleet_label, into the
+# same fm-fleet-snapshot.v1 records[] shape backlog_json_markdown produces.
+# Only status open/in_progress/blocked beads are fetched (closed beads are
+# out of scope for an in-flight/queued view). Dependency-graph fields
+# (blocked_by_ids, hold_reason/hold_kind) and local state/*.meta correlation
+# are later-stage work per the report and are left empty/null here; a
+# beads-sourced record is always structured:true with
+# requires_child_metadata:false and captain_actionable:false so it can never
+# be mistaken for an orphaned or unstructured row by main_inventory_json.
+# <backlog-path> is accepted for signature parity with backlog_json_markdown
+# but only used as the markdown-fallback path when the beads read fails.
+backlog_json_beads() {  # [<backlog-path>] - defaults to this home's $BACKLOG
+  local backlog=${1:-$BACKLOG} label out truncated
+  label=$(fm_beads_fleet_label)
+  if ! out=$(run_timed "$FM_SNAPSHOT_BEADS_TIMEOUT" task list --label "$label" \
+      --status open,in_progress,blocked --limit "$FM_SNAPSHOT_BEADS_LIMIT" \
+      --json 2>/dev/null) \
+      || ! printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    backlog_json_markdown "$backlog"
+    return 0
+  fi
+
+  truncated=false
+  if [ "$(printf '%s' "$out" | jq 'length')" -ge "$FM_SNAPSHOT_BEADS_LIMIT" ]; then
+    truncated=true
+  fi
+
+  printf '%s' "$out" | jq --arg path "$backlog" --arg label "$label" \
+    --argjson truncated "$truncated" --argjson limit "$FM_SNAPSHOT_BEADS_LIMIT" '
+    def state_of:
+      if .status == "in_progress" then "in_flight" else "queued" end;
+    def body_excerpt:
+      (.description // "") as $d
+      | if ($d | length) == 0 then null else ($d[:240]) end;
+    {path:$path,
+     present:true,
+     source:"beads",
+     fleet_label:$label,
+     records_truncated:$truncated,
+     records_limit:$limit,
+     records:[
+       to_entries[] | (.key + 1) as $order | .value | ((.id // "?") as $id | (.title // "(untitled)") as $title | {
+         order:$order,
+         state:state_of,
+         structured:true,
+         id:$id,
+         checked:false,
+         title:$title,
+         repo:null,
+         kind:null,
+         priority:(.priority | tostring),
+         hold_reason:null,
+         hold_kind:null,
+         blocked_by:null,
+         blocked_by_ids:[],
+         blocked_reason:null,
+         since:null,
+         merged:null,
+         reported:null,
+         done:null,
+         completion:{verb:null,date:null},
+         links:[],
+         pr_url:null,
+         report_path:null,
+         local_note:null,
+         raw:($id + " - " + $title),
+         body_lines:[],
+         body_excerpt:body_excerpt,
+         unresolved_blocker_ids:[],
+         current_role:(if state_of == "in_flight" then "worker" else "queued" end),
+         requires_child_metadata:false,
+         captain_actionable:false
+       })
+     ]}
+  '
+}
+
+# fm_snapshot_beads_backend_available <config-dir> - same check as
+# fm_beads_backend_available (fm-tasks-axi-lib.sh), but bounds the probe's
+# `task list` subprocess with FM_SNAPSHOT_BEADS_TIMEOUT so a hung or
+# lock-contended federated store cannot stall the snapshot indefinitely.
+fm_snapshot_beads_backend_available() {  # <config-dir>
+  local config_dir=$1
+  [ "$(fm_backlog_backend_value "$config_dir")" = beads ] || return 1
+  command -v task >/dev/null 2>&1 || return 1
+  run_timed "$FM_SNAPSHOT_BEADS_TIMEOUT" task list --limit 1 >/dev/null 2>&1
+}
+
+# backlog_json [<backlog-path>] - dispatcher. Reads from the beads store when
+# config/backlog-backend=beads (mirroring fm-session-start.sh's
+# print_backlog_compact gate), otherwise parses data/backlog.md exactly as
+# before so default-backend output stays byte-identical.
+backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
+  if fm_snapshot_beads_backend_available "$CONFIG"; then
+    backlog_json_beads "${1:-$BACKLOG}"
+  else
+    backlog_json_markdown "${1:-$BACKLOG}"
+  fi
 }
 
 task_json_lines() {
