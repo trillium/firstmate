@@ -174,14 +174,28 @@ _event_cap_fails=0
 afk_present() { [ -e "$STATE/.afk" ]; }
 
 hash_pane() {
+  local sbin_md5="${FM_MD5_SBIN_OVERRIDE:-/sbin/md5}"
+  # Only used for change-detection between polls, so any tool that reliably
+  # returns the checksum in its first whitespace-delimited field is
+  # interchangeable here. The chain degrades through progressively more
+  # universal tools rather than hard-erroring when a watcher's PATH is
+  # missing md5/md5sum (observed on a secondmate whose runtime PATH omitted
+  # both): openssl and cksum are near-universal fallbacks, and wc -c is a
+  # last-resort that cannot itself be absent.
   if command -v md5 >/dev/null 2>&1; then
     md5 -q
-  elif [ -x /sbin/md5 ]; then
-    /sbin/md5 -q
+  elif [ -x "$sbin_md5" ]; then
+    "$sbin_md5" -q
   elif command -v md5sum >/dev/null 2>&1; then
     md5sum | cut -d' ' -f1
-  else
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -md5 -r | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
     shasum | cut -d' ' -f1
+  elif command -v cksum >/dev/null 2>&1; then
+    printf '%x\n' "$(cksum | cut -d' ' -f1)"
+  else
+    wc -c | tr -d ' '
   fi
 }
 
