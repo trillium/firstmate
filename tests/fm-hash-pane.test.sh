@@ -21,22 +21,27 @@ TMP_ROOT=$(fm_test_tmproot fm-hash-pane)
 # Resolve real tool paths once, before any test narrows PATH.
 REAL_CUT=$(command -v cut) || fail "cut not found on the test host"
 REAL_TR=$(command -v tr) || fail "tr not found on the test host"
-REAL_WC=$(command -v wc) || fail "wc not found on the test host"
-REAL_SBIN_MD5=/sbin/md5
-[ -x "$REAL_SBIN_MD5" ] || REAL_SBIN_MD5=$(command -v md5 || true)
+REAL_OD=$(command -v od) || fail "od not found on the test host"
+REAL_AWK=$(command -v awk) || fail "awk not found on the test host"
+REAL_CAT=$(command -v cat) || fail "cat not found on the test host"
 REAL_OPENSSL=$(command -v openssl || true)
 REAL_SHASUM=$(command -v shasum || true)
+REAL_CKSUM=$(command -v cksum || true)
 
 # make_fakebin <dir> [tool=path ...]: symlink each named tool from its
-# resolved absolute path into <dir>, plus cut/tr/wc always (hash_pane's
-# fallback tiers pipe through them). Echoes <dir>.
+# resolved absolute path into <dir>, plus cut/tr/od/awk/cat always
+# (hash_pane's fallback tiers, including the pure-shell last resort, pipe
+# through them; cat also backs make_fake_sbin_md5's stand-in script).
+# Echoes <dir>.
 make_fakebin() {
   local dir=$1 spec tool src
   shift
   mkdir -p "$dir"
   ln -sf "$REAL_CUT" "$dir/cut"
   ln -sf "$REAL_TR" "$dir/tr"
-  ln -sf "$REAL_WC" "$dir/wc"
+  ln -sf "$REAL_OD" "$dir/od"
+  ln -sf "$REAL_AWK" "$dir/awk"
+  ln -sf "$REAL_CAT" "$dir/cat"
   for spec in "$@"; do
     tool=${spec%%=*}
     src=${spec#*=}
@@ -44,6 +49,23 @@ make_fakebin() {
     ln -sf "$src" "$dir/$tool"
   done
   printf '%s\n' "$dir"
+}
+
+# make_fake_sbin_md5 <path>: write an executable stand-in for `md5 -q` at
+# <path> that ignores its arguments and echoes stdin back with a fixed tag
+# prefix. hash_pane only needs the sbin-md5 tier to yield a token that is
+# stable for identical input and distinct for different input, so this
+# avoids depending on the test host actually having /sbin/md5 (absent on
+# non-BSD CI runners) or any ambient `md5` binary. Echoes <path>.
+make_fake_sbin_md5() {
+  local path=$1
+  cat > "$path" <<'FAKE_MD5'
+#!/bin/sh
+printf 'faux-sbin-md5:'
+cat
+FAKE_MD5
+  chmod +x "$path"
+  printf '%s\n' "$path"
 }
 
 # source_watch <home>: source fm-watch.sh's function definitions into the
@@ -59,19 +81,19 @@ source_watch() {
 }
 
 test_hash_pane_stable_and_distinct_via_sbin_md5() (
-  local home fakebin out status
+  local home fakebin fake_sbin_md5 out status
   home="$TMP_ROOT/sbin-md5"
   mkdir -p "$home"
   source_watch "$home"
-  [ -n "$REAL_SBIN_MD5" ] || fail "no BSD-compatible md5 -q binary found on this host"
   fakebin=$(make_fakebin "$home/fakebin")
+  fake_sbin_md5=$(make_fake_sbin_md5 "$home/fake-sbin-md5")
   status=0
-  out=$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$REAL_SBIN_MD5" hash_pane <<<"pane text a") || status=$?
+  out=$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$fake_sbin_md5" hash_pane <<<"pane text a") || status=$?
   expect_code 0 "$status" "hash_pane exit via the sbin md5 tier"
   [ -n "$out" ] || fail "hash_pane produced empty output via the sbin md5 tier"
-  [ "$out" = "$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$REAL_SBIN_MD5" hash_pane <<<"pane text a")" ] \
+  [ "$out" = "$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$fake_sbin_md5" hash_pane <<<"pane text a")" ] \
     || fail "hash_pane is not stable for identical input via the sbin md5 tier"
-  [ "$out" != "$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$REAL_SBIN_MD5" hash_pane <<<"pane text b")" ] \
+  [ "$out" != "$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$fake_sbin_md5" hash_pane <<<"pane text b")" ] \
     || fail "hash_pane produced the same hash for different input via the sbin md5 tier"
   pass "hash_pane returns a stable, input-sensitive hash via the sbin md5 tier"
 )
@@ -110,8 +132,27 @@ test_hash_pane_falls_back_past_openssl_to_shasum() (
   pass "hash_pane falls back past openssl to shasum and still exits cleanly"
 )
 
+test_hash_pane_falls_back_past_shasum_to_cksum() (
+  local home fakebin out expected status
+  home="$TMP_ROOT/no-md5-no-openssl-no-shasum"
+  mkdir -p "$home"
+  source_watch "$home"
+  [ -n "$REAL_CKSUM" ] || fail "cksum not available to exercise the fallback tier"
+  fakebin=$(make_fakebin "$home/fakebin" "cksum=$REAL_CKSUM")
+  status=0
+  out=$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$home/no-such-md5" hash_pane <<<"pane text a") || status=$?
+  expect_code 0 "$status" "hash_pane exit with md5/md5sum/openssl/shasum absent from PATH"
+  [ -n "$out" ] || fail "hash_pane produced empty output with md5/md5sum/openssl/shasum absent from PATH"
+  expected=$(printf '%x\n' "$(printf 'pane text a\n' | "$REAL_CKSUM" | "$REAL_CUT" -d' ' -f1)")
+  [ "$out" = "$expected" ] \
+    || fail "hash_pane did not use the cksum fallback tier past shasum (got '$out', wanted '$expected')"
+  [ "$out" != "$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$home/no-such-md5" hash_pane <<<"pane text b")" ] \
+    || fail "hash_pane produced the same hash for different input via the cksum tier"
+  pass "hash_pane falls back past shasum to cksum and still exits cleanly"
+)
+
 test_hash_pane_never_hard_errors_with_no_hash_tool_at_all() (
-  local home fakebin out status
+  local home fakebin out out_b status
   home="$TMP_ROOT/no-hash-tool"
   mkdir -p "$home"
   source_watch "$home"
@@ -120,10 +161,17 @@ test_hash_pane_never_hard_errors_with_no_hash_tool_at_all() (
   out=$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$home/no-such-md5" hash_pane <<<"pane text a") || status=$?
   expect_code 0 "$status" "hash_pane exit with no md5/md5sum/openssl/shasum/cksum on PATH"
   [ -n "$out" ] || fail "hash_pane produced empty output with no hash tool at all on PATH"
-  pass "hash_pane never hard-errors even with no hashing tool at all on PATH"
+  # "pane text a" and "pane text b" are the same length: this is a regression
+  # check for the prior last-resort tier (wc -c), which returned a raw byte
+  # count and so produced the identical token for both, masking real changes.
+  out_b=$(PATH=$fakebin FM_MD5_SBIN_OVERRIDE="$home/no-such-md5" hash_pane <<<"pane text b")
+  [ "$out" != "$out_b" ] \
+    || fail "hash_pane's last-resort tier produced the same output for same-length different content (got '$out' for both)"
+  pass "hash_pane never hard-errors and stays content-sensitive with no hashing tool at all on PATH"
 )
 
 test_hash_pane_stable_and_distinct_via_sbin_md5
 test_hash_pane_falls_back_to_openssl_without_md5_or_md5sum
 test_hash_pane_falls_back_past_openssl_to_shasum
+test_hash_pane_falls_back_past_shasum_to_cksum
 test_hash_pane_never_hard_errors_with_no_hash_tool_at_all
