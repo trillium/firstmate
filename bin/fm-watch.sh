@@ -134,6 +134,16 @@ IDLE_DISCOVERY_INTERVAL=${FM_IDLE_DISCOVERY_INTERVAL:-60}  # seconds between idl
 # daemon owns triage, so this watcher reverts to one-shot (enqueue + exit on every
 # wake) and never double-triages - and never runs the costly provably-working read.
 STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
+# Idle>2h staleness auto-close backstop (captain design, 2026-07-31): once an
+# ordinary ship task's pane content (.hash-<key>, see staleness_autoclose_reclaim)
+# has sat unchanged this long, the prompt-cache advantage of keeping its live
+# process around is already gone (Anthropic cache TTL is 5m/1h), so the watcher
+# reclaims it via bin/fm-teardown.sh --staleness-autoclose rather than leaving
+# costly compute idle indefinitely.
+STALENESS_AUTOCLOSE_SECS=${FM_STALENESS_AUTOCLOSE_SECS:-7200}
+# FM_TEARDOWN_BIN lets tests stub the reclaim call, matching the
+# FM_CREW_STATE_BIN seam in bin/fm-classify-lib.sh.
+FM_TEARDOWN_BIN="${FM_TEARDOWN_BIN:-$SCRIPT_DIR/fm-teardown.sh}"
 # A busy pane is unconditional proof of liveness with no built-in duration bound,
 # so a hung foreground call can remain hidden even while its rendered busy
 # footer changes every poll. BUSY_TURN_MAX_SECS bounds how long any busy pane
@@ -321,6 +331,25 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       fi
       ;;
   esac
+}
+
+# Idle>2h staleness auto-close (see STALENESS_AUTOCLOSE_SECS above): reclaim an
+# ordinary ship task's expensive live process once its pane has shown zero
+# change for that long, regardless of wedge/pause classification. Delegates the
+# landed-vs-unlanded decision entirely to bin/fm-teardown.sh's
+# --staleness-autoclose mode, which never deletes a worktree that has not
+# landed (git-verified) and instead files it to the staleness triage store.
+# Silent by design (like idle-task-discovery below): this is a deterministic,
+# reversible-for-unlanded-work reclaim, not a captain-actionable wake.
+staleness_autoclose_reclaim() {  # <window> <task> <hash-file>
+  local win=$1 task=$2 hf=$3 idle_since
+  idle_since=$(stat_mtime "$hf")
+  if "$FM_TEARDOWN_BIN" "$task" --staleness-autoclose "${idle_since:-}" \
+    >>"$STATE/.staleness-autoclose.log" 2>&1; then
+    triage_log "staleness auto-close reclaimed $win (task $task, idle $(age_of "$hf")s)"
+  else
+    triage_log "staleness auto-close FAILED for $win (task $task); leaving window as-is for the next poll"
+  fi
 }
 
 # busy_turn_over_age: 0 iff <task>'s latest completed-turn marker is at least
@@ -983,6 +1012,17 @@ EOF
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
+        # Idle>2h staleness auto-close backstop, ahead of ordinary
+        # classification below: an ordinary ship task, not declared paused or
+        # captain-held (that wait is deliberate and may legitimately run much
+        # longer than two hours), and not under afk daemon supervision (which
+        # owns its own triage cadence). See staleness_autoclose_reclaim above.
+        if [ "$kind" = ship ] && ! afk_present \
+          && ! status_is_paused_or_captain_held "$last" \
+          && [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ]; then
+          staleness_autoclose_reclaim "$w" "$task" "$hf"
+          continue
+        fi
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
         if [ "$kind" = secondmate ]; then

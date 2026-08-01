@@ -36,7 +36,8 @@ watch_bg() {  # <state> <fakebin> <out> [extra env assignments...]
   local state=$1 fakebin=$2 out=$3
   shift 3
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
-    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$@" "$WATCH" > "$out" &
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    env "$@" "$WATCH" > "$out" &
 }
 
 # Wait up to <limit> 0.1s ticks while <pid> stays alive; 0 if still alive, 1 if it died.
@@ -1125,6 +1126,90 @@ test_busy_pane_below_turn_age_bound_is_absorbed() {
   pass "a busy worker below the turn-age bound remains working with no escalation"
 }
 
+# --- idle>2h staleness auto-close backstop (bin/fm-watch.sh) ----------------
+# Captain design, 2026-07-31: a ship task's pane idle (unchanged .hash-<key>)
+# past STALENESS_AUTOCLOSE_SECS is reclaimed via bin/fm-teardown.sh
+# --staleness-autoclose, regardless of wedge/pause classification. FM_TEARDOWN_BIN
+# (a test seam mirroring FM_CREW_STATE_BIN in bin/fm-classify-lib.sh) stubs the
+# real teardown call so this test asserts the TRIGGER only - landed-vs-unlanded
+# and worktree preservation are covered against the real script in
+# tests/fm-teardown.test.sh.
+add_fake_teardown() {  # <fakebin>
+  local fakebin=$1
+  cat > "$fakebin/fake-teardown" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TEARDOWN_CALLS_LOG"
+exit 0
+SH
+  chmod +x "$fakebin/fake-teardown"
+}
+
+test_staleness_autoclose_fires_once_idle_past_threshold() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case staleness-autoclose-fires); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stale-reclaim"
+  add_fake_teardown "$fakebin"
+  printf 'idle, nothing changing' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stale-reclaim.meta"
+  printf 'working: idle waiting\n' > "$state/stale-reclaim.status"
+  sig=$(seen_sig "$state/stale-reclaim.status"); printf '%s' "$sig" > "$state/.seen-stale-reclaim_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, nothing changing")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  # Past the (deliberately low, for the test) auto-close threshold.
+  set_mtime "$(( $(date +%s) - 10000 ))" "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_TEST_TEARDOWN_CALLS_LOG="$dir/teardown-calls.log" \
+    watch_bg "$state" "$fakebin" "$out" \
+      FM_TEARDOWN_BIN="$fakebin/fake-teardown" FM_STALENESS_AUTOCLOSE_SECS=5
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "watcher exited on a silent staleness auto-close reclaim: $(cat "$out")"
+  fi
+  reap "$pid"
+  grep -qE '^stale-reclaim --staleness-autoclose [0-9]+$' "$dir/teardown-calls.log" 2>/dev/null \
+    || fail "staleness auto-close did not invoke teardown with the expected args: $(cat "$dir/teardown-calls.log" 2>/dev/null)"
+  grep -qF "staleness auto-close reclaimed $window" "$state/.watch-triage.log" 2>/dev/null \
+    || fail "staleness auto-close reclaim was not recorded in the triage log"
+  pass "a ship task idle past the auto-close threshold is reclaimed via bin/fm-teardown.sh --staleness-autoclose"
+}
+
+test_staleness_autoclose_does_not_fire_below_threshold() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case staleness-autoclose-below-threshold); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-stale-fresh"
+  add_fake_teardown "$fakebin"
+  printf 'idle, nothing changing' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/stale-fresh.meta"
+  printf 'working: idle waiting\n' > "$state/stale-fresh.status"
+  sig=$(seen_sig "$state/stale-fresh.status"); printf '%s' "$sig" > "$state/.seen-stale-fresh_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, nothing changing")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  # Well under the auto-close threshold: idle just started.
+  set_mtime "$(( $(date +%s) - 2 ))" "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_TEST_TEARDOWN_CALLS_LOG="$dir/teardown-calls.log" \
+    watch_bg "$state" "$fakebin" "$out" \
+      FM_TEARDOWN_BIN="$fakebin/fake-teardown" FM_STALENESS_AUTOCLOSE_SECS=7200 FM_STALE_ESCALATE_SECS=999
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "watcher exited on an ordinary provably-working stale pane: $(cat "$out")"
+  fi
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  [ ! -s "$dir/teardown-calls.log" ] \
+    || fail "staleness auto-close fired before the idle threshold was reached: $(cat "$dir/teardown-calls.log")"
+  pass "a ship task idle below the auto-close threshold is left to ordinary stale classification"
+}
+
 test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   local dir state fakebin out capture_file window key pane_hash sig pid
   dir=$(make_case busy-stable-hash-turn-age); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1592,3 +1677,5 @@ test_heartbeat_backstop_surfaces_unsurfaced_status
 test_beacon_stays_fresh_while_absorbing
 test_afk_present_reverts_watcher_to_one_shot
 test_afk_paused_changed_pane_hands_off_plain_stale
+test_staleness_autoclose_fires_once_idle_past_threshold
+test_staleness_autoclose_does_not_fire_below_threshold
