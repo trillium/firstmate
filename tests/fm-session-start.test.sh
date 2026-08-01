@@ -146,6 +146,38 @@ SH
   chmod +x "$fakebin/tasks-axi"
 }
 
+# make_fake_task_beads_compact <fakebin>: a fake `task` (beads) CLI whose
+# `list --limit 1` (availability probe) and `list --ready` (compact listing)
+# both succeed, so a regression back to the empty `--label "status:ready"`
+# query is caught by asserting the exact --ready invocation and its output.
+make_fake_task_beads_compact() {
+  local fakebin=$1
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+log=${FM_FAKE_TASK_LOG:-}
+[ -n "$log" ] && printf '%s\n' "$*" >> "$log"
+case "$*" in
+  'list --limit 1')
+    printf '%s\n' 'fake-ready-1'
+    exit 0
+    ;;
+  *'--label '*'status:ready'*)
+    printf '%s\n' 'No issues found'
+    exit 0
+    ;;
+  *'--ready'*)
+    case "$*" in *'--limit 80'*) : ;; *) printf '%s\n' 'missing compact limit' >&2; exit 9 ;; esac
+    printf '%s\n' 'ready-task-1'
+    printf '%s\n' 'ready-task-2'
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+}
+
 # make_fake_ps_claude <fakebin>: harness_pid()/holder_alive() (fm-lock.sh) walk
 # `ps` output looking for a harness command name; this fake reports EVERY
 # queried pid as a live `claude` harness, so the very first ancestry check
@@ -1220,6 +1252,32 @@ EOF
   pass "unavailable or incompatible tasks-axi falls back to compact manual backlog rendering"
 }
 
+test_backlog_compact_beads_uses_ready_filter_not_empty_label() {
+  local rec root home fakebin out log
+  rec=$(new_world backlog-compact-beads)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_task_beads_compact "$fakebin"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  log="$home/task.log"
+
+  out=$(FM_FAKE_TASK_LOG="$log" run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "compact backlog listing (beads task store; max 80 item(s))" \
+    "beads backend did not render the compact backlog listing"
+  assert_contains "$out" "ready-task-1" "beads compact listing omitted a ready item from bd's native --ready filter"
+  assert_contains "$out" "ready-task-2" "beads compact listing omitted a second ready item"
+  assert_not_contains "$out" "No issues found" \
+    "beads backend queried the empty status:ready label instead of bd's native --ready filter"
+  assert_grep "list --ready --limit 80" "$log" \
+    "session start did not ask beads for its native --ready set with the bounded limit"
+
+  pass "beads backend lists bd's native ready set, not the empty status:ready label query"
+}
+
 # --- fleet-state digest: no in-flight tasks ----------------------------------
 
 test_fleet_digest_empty_fleet() {
@@ -1454,6 +1512,7 @@ test_composition_invokes_real_scripts
 test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
+test_backlog_compact_beads_uses_ready_filter_not_empty_label
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon

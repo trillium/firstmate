@@ -42,7 +42,7 @@ Handoff with the beads backend is not yet supported and requires a different mec
 Because bootstrap requires `tasks-axi` on `PATH` on every profile, that delegation works fleet-wide, and the `config/backlog-backend=manual` knob governs firstmate's own hand-editing of its backlog, not this validated helper.
 Compatible means the installed build passes the shared version and feature probe owned by [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), including the atomic multi-ID move required by handoff delegation.
 Bootstrap requires compatible `tasks-axi` on every profile; see "Toolchain" below for missing-tool reporting and silent default-backend behavior.
-Set the local, gitignored `config/backlog-backend` file to `beads` to use the beads federated `task` store as the queue source; session-start's digest will list items with `status:ready` label from the beads store instead of `data/backlog.md`.
+Set the local, gitignored `config/backlog-backend` file to `beads` to use the beads federated `task` store as the queue source; session-start's digest will list the store's native ready set (via `task list --ready`, bd's dependency-derived readiness with no manual tagging) instead of `data/backlog.md`.
 Beads requires the `task` CLI on `PATH` and access to the active beads store.
 Bootstrap validates the beads backend and reports a `MISSING:` line if the CLI is absent or the store is unreachable.
 Set the local, gitignored `config/backlog-backend` file to `manual` to force manual backlog editing and suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not missing-tool reporting.

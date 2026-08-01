@@ -213,7 +213,7 @@ print_backlog_tasks_axi_compact() {
 print_backlog_beads_compact() {
   local path=$1 out rc
   printf 'compact backlog listing (beads task store; max %s item(s))\n' "$BACKLOG_LIMIT"
-  out=$(task list --label "status:ready" --limit "$BACKLOG_LIMIT" 2>&1)
+  out=$(task list --ready --limit "$BACKLOG_LIMIT" 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ]; then
     printf '%s\n' "$out"
