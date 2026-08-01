@@ -37,10 +37,14 @@ The turn-end guard remains the final backstop rather than the normal continuity 
 
 ## Arm-layer cycle contract
 
-`bin/fm-watch-arm.sh` never returns a clean empty success.
+`bin/fm-watch-arm.sh` never returns a clean empty success off a genuinely down fleet.
 An actionable child output returns that reason normally.
-A zero/empty child return rechecks the home lock and beacon, attaches to a verified healthy successor when one exists, or emits `watcher: FAILED - cycle ended without an actionable reason` and exits nonzero.
-An attached arm follows verified identity-matched successors and reports the same typed failure if that chain ends without one.
+A zero/empty child return rechecks the home lock and beacon and attaches to a verified healthy successor when one exists.
+With no verified successor it classifies the cycle end by the liveness beacon.
+A beacon still fresh within grace proves a watcher was alive and healthy right up to the moment the cycle ended - a clean one-shot actionable exit (whose reason another owner already propagated and whose wake `fm-watch.sh` already enqueued durably before exiting) or a benign empty poll - so the arm prints a non-FAILED `watcher: idle` line and exits zero, leaving the re-arm to the adapter layer rather than raising a false alarm.
+Only a stale, expired, or absent beacon - the signature of a wedged, crashed, or absent watcher - emits `watcher: FAILED - cycle ended without an actionable reason` and exits nonzero.
+An attached arm follows verified identity-matched successors and applies the same beacon-gated terminal classification when that chain ends without one.
+This keeps a benign one-shot exit from spamming a false supervision-down alarm while a stale beacon still fails loudly; the synchronous turn-end guard remains the immediate backstop for a genuinely dead fleet because it re-blocks on the same stale-beacon predicate.
 
 The arm layer appends one tab-separated record per observed cycle to `state/.watch-cycle-exits.log`.
 Each record includes arm and watcher PIDs, start and end timestamps, exit code and signal, classified reason, beacon age, lock identity before and after close, and successor disposition.
