@@ -90,6 +90,7 @@ state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
   <id>.grok-turnend-token   firstmate-owned grok hook registry token for the task; removed by teardown
+  <id>.staleness-unfiled   written by fm-teardown.sh's --staleness-autoclose reclaim only when filing the triage bead failed, before <id>.meta is removed; records the preserved worktree, branch, and project so the location is never lost
   <id>.kimi-turnend-token   firstmate-owned Kimi hook registry token for the task; removed by teardown
   <id>.meta          written by fm-spawn: window=, endpoint_task_id=, worktree=, project=, harness=, model=, effort=, kind=, mode=, yolo=, tasktmp=; an optional traceparent= only when trace context is enabled (docs/configuration.md "Trace context propagation"); kind=secondmate also records home= and projects=, plus remote_host=/remote_root=/remote_backend=/remote_herdr_session=/remote_target= for a remote route; a non-default runtime backend records further backend-specific fields (docs/configuration.md "Runtime backend"; bin/fm-backend.sh, section 8); fm-pr-check, including through fm-pr-merge, records one canonical pr= and the forge's pr_head= when available (GitHub pull requests and GitLab merge requests; docs/gitlab-merge-watch.md); fm-x-link appends x_request=, x_request_ts=, x_followups=, and optional x_platform=/x_reply_max_chars= for an X-mode-originated task (section 14)
   <id>.herdr-presentation  quarantinable attempt and restart-binding journal for Herdr's optional visual projection; never task or endpoint authority; see docs/herdr-backend.md "Presentation spaces"
@@ -339,6 +340,10 @@ Tear down a ship task only after landing is confirmed.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
 Never force teardown without explicit discard authority.
 After successful teardown, record completion, retain only the configured recent Done history, and re-evaluate queued work whose blockers and time gates have cleared.
+
+The watcher also reclaims a ship task's live process on its own once its window has sat idle past the configured staleness threshold (default two hours) and the crew is not provably working or parked at a captain-relevant gate.
+Landed work gets the ordinary full teardown above; unlanded work only has its runtime endpoint reclaimed and a triage record filed, leaving the worktree, branch, and every uncommitted change untouched for later deliberate triage.
+Treat a task whose endpoint has gone quiet with no captain-facing wake as a possible automatic reclaim rather than a crash; the filed staleness bead (or, if filing failed, `state/<id>.staleness-unfiled`), the preserved worktree and branch, and `state/.staleness-autoclose.log` still hold the evidence.
 
 A secondmate is persistent and an empty queue is healthy.
 Retire one only on an explicit captain or main-firstmate decision, after loading `secondmate-provisioning`; its home must contain no work under way, and forced discard still requires explicit captain authority.

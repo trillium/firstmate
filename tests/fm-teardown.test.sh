@@ -232,6 +232,20 @@ SH
   chmod +x "$case_dir/fakebin/task"
 }
 
+# Mock `staleness` (the staleness-store beads CLI that bin/fm-staleness-file.sh
+# invokes): logs every invocation to $case_dir/staleness-calls.log and echoes a
+# bead id, like a real `create --silent` would. Args: case_dir
+add_staleness_mock() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/staleness" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_STALENESS_CALLS_LOG"
+[ "${1:-}" = create ] && printf 'stale-bead-1\n'
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/staleness"
+}
+
 # Add a fork bare repo and register it as a remote on the project, then push
 # the worktree's task branch to it and fetch into the project so the worktree
 # sees the remote-tracking ref. Args: case_dir
@@ -2517,6 +2531,68 @@ EOF
   assert_grep "reap-already-happened" "$case_dir/order.log" \
     "abort-then-reap-then-remove-order: the leaked process was not yet reaped when the worktree return ran"
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
+}
+
+# --- staleness auto-close (bin/fm-watch.sh idle>2h backstop) ---------------
+
+test_staleness_autoclose_landed_falls_through_to_full_teardown() {
+  local case_dir rc wt_head
+  case_dir=$(make_case staleness-landed)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "merged work"
+  # Fast-forward local main to HEAD so work_is_landed sees it as landed, the
+  # same fixture test_local_only_merged_to_local_main_allows uses.
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" --staleness-autoclose 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "staleness-landed: teardown should succeed on landed work"
+  grep -q "teardown task-x1 complete" "$case_dir/stdout" \
+    || fail "staleness-landed: did not fall through to the ordinary full teardown: $(cat "$case_dir/stdout")"
+  ! grep -q "chat reclaimed" "$case_dir/stdout" \
+    || fail "staleness-landed: took the chat-only path despite landed work"
+  assert_absent "$case_dir/state/task-x1.meta" "staleness-landed: task metadata should be removed"
+  pass "staleness auto-close on already-landed work falls through to an ordinary full teardown"
+}
+
+test_staleness_autoclose_unlanded_chat_only_preserves_worktree_and_files_bead() {
+  local case_dir rc
+  case_dir=$(make_case staleness-unlanded)
+  write_meta "$case_dir" local-only ship
+  add_staleness_mock "$case_dir"
+  # A real file change (not an empty commit) so its content genuinely differs
+  # from main - content_in_default must not mistake it for already-landed.
+  wt_commit_file "$case_dir" work.txt "unpushed work in progress"
+  # No fork, no push to origin, not merged into main: never-discard-unlanded-work
+  # applies, so this must reclaim the process only, not the worktree.
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-autoclose 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "staleness-unlanded: chat-only teardown should succeed"
+  grep -q "chat reclaimed" "$case_dir/stdout" \
+    || fail "staleness-unlanded: did not take the chat-only path: $(cat "$case_dir/stdout")"
+  [ -d "$case_dir/wt" ] || fail "staleness-unlanded: worktree directory was deleted"
+  [ -f "$case_dir/wt/work.txt" ] \
+    || fail "staleness-unlanded: the unlanded file no longer exists in the worktree"
+  git -C "$case_dir/wt" log --oneline -1 2>/dev/null | grep -q "add work.txt" \
+    || fail "staleness-unlanded: the unlanded commit no longer exists in the worktree"
+  assert_absent "$case_dir/state/task-x1.meta" "staleness-unlanded: task metadata should still be retired"
+  assert_absent "$case_dir/state/task-x1.status" "staleness-unlanded: task status should still be retired"
+  grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "staleness-unlanded: no bead filed in the staleness store: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  grep -q "fm/task-x1" "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "staleness-unlanded: filed bead did not record the branch: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  pass "staleness auto-close on unlanded work reclaims the process only, preserves the worktree, and files a triage bead"
 }
 
 test_beads_linked_task_closes_bead_on_landed_teardown() {
