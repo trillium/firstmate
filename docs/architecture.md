@@ -86,6 +86,7 @@ Unsupported supervisor backends refuse at daemon startup.
 Stalled escalation delivery writes `state/.subsuper-inject-wedged` and attempts a configured backend-independent active alert after `FM_MAX_DEFER_SECS` instead of silently deferring forever.
 On an unmarked return, `bin/fm-afk-return.sh` owns ordered shutdown, durable catch-up evidence, and the fail-closed gate that keeps ordinary work behind every live firstmate-actionable blocker.
 `fm-send.sh` selects a pre-Enter popup-settle for slash commands and for codex `$...` skill invocations using metadata-routed target `harness=` values, then adds its own `FM_SEND_SETTLE` pause after successful text sends so immediate peeks catch the receiving turn starting; the sub-supervisor uses only the shared submit core and does not pay that post-submit pause.
+Opt-in `FM_SEND_VERIFY_TRANSITION` adds a stronger post-submit check on top of the settle pause: fm-send polls the target's agent state through the backend's wait-for-working primitive and exits non-zero if the submitted text cleared the composer but never drove an idle->working transition, so a message staged but never executed fails loudly instead of reporting success.
 
 ## Busy state is semantic, per adapter
 
