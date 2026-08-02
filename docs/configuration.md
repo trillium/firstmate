@@ -6,6 +6,15 @@ The files and environment variables you set to operate firstmate.
 
 The shared orchestrator behavior lives in [`AGENTS.md`](../AGENTS.md) - edit it like any prompt when the fleet is empty, or dispatch shared-repo edits to a crewmate while tasks are in flight.
 
+## Persona (persona.md / config/persona.md)
+
+The captain-facing voice - address term, seasoning policy, house vocabulary, and the fixed routine acknowledgment phrase - lives entirely in [`persona.md`](../persona.md), not in `AGENTS.md`.
+`AGENTS.md` carries only a pointer to it; `AGENTS.md` section 9's functional etiquette (talking in outcomes, the internal-to-plain-English translation table, escalation triggers, evidence-first reporting) is separate and is never affected by a persona swap.
+Swap the voice by editing tracked `persona.md` directly, or by dropping a local, gitignored `config/persona.md` in this home; when present, the local file fully replaces the tracked default rather than merging with it, mirroring `config/crew-harness`'s override pattern.
+`bin/fm-session-start.sh` resolves and prints the active persona's full contents unconditionally, every session, labeled by source (tracked default vs local override), so the voice is always in force with no per-reply trigger to load it.
+An absent persona (both tracked `persona.md` and `config/persona.md` missing) is reported distinctly from an `ABSENT` context-digest file: unlike `data/captain.md` or `data/learnings.md`, there is no built-in-defaults fallback, so it signals the tracked file needs repair.
+A present but unreadable active persona file (for example, a permissions problem) is reported as its own distinct `UNREADABLE` repair failure rather than silently falling back to the other candidate or going unreported.
+
 ## Operational home layout and state
 
 This section is the single owner of the top-level operational-home layout; producer script headers and their help own exact child-file fields and mutation contracts.
