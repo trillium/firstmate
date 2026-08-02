@@ -233,7 +233,11 @@ test_spawn_hook_stamps_and_registers_check() {
   check="$state/hook-task-a8.check.sh"
   assert_present "$check" "spawn hook did not write the watcher check"
   assert_present "$state/hook-task-a8.check-trust" "spawn hook did not register the watcher check"
-  perm=$(stat -f '%Lp' "$check" 2>/dev/null || stat -c '%a' "$check")
+  if [ "$(uname)" = Darwin ]; then
+    perm=$(stat -f '%Lp' "$check" 2>/dev/null)
+  else
+    perm=$(stat -c '%a' "$check" 2>/dev/null)
+  fi
   [ "$perm" = "700" ] || fail "watcher check must be mode 0700, got $perm"
   pass "fm-spawn-hooks.d/beads.sh: stamps the bead and registers a mode-0700 watcher check"
 }
