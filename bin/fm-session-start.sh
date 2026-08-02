@@ -18,7 +18,7 @@
 # standalone with unchanged default behavior - other flows (fm-bootstrap.sh
 # install <tools> after consent, /updatefirstmate, the afk daemon, existing
 # tests) still call them directly. The one seam this script needed -
-# bootstrap running its detect-only diagnostics without its five mutating
+# bootstrap running its detect-only diagnostics without its six mutating
 # sweeps - is an opt-in FM_BOOTSTRAP_DETECT_ONLY=1 flag on fm-bootstrap.sh
 # itself (default unset/0 = unchanged behavior), not a fork.
 #
@@ -29,8 +29,9 @@
 #                       mutating step runs.
 #   2. bootstrap      - home-local stale Herdr projection cleanup runs only
 #                       when this session actually holds the lock. Detect-only
-#                       diagnostics always run. Bootstrap's five MUTATING sweeps
-#                       (legacy PR-check migration, secondmate fast-forward,
+#                       diagnostics always run. Bootstrap's six MUTATING sweeps
+#                       (legacy PR-check migration, the beads write-queue
+#                       reconcile [beads backend only], secondmate fast-forward,
 #                       secondmate liveness, X-mode artifact writes, fleet sync)
 #                       also run only when locked.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
@@ -75,7 +76,7 @@
 # tasks-axi and quota-axi tool checks, and tasks-axi availability - none of
 # which mutate shared state and all of which are safe to compute without
 # verified lock ownership.
-# Only projection cleanup, the five bootstrap mutating sweeps, and the
+# Only projection cleanup, the six bootstrap mutating sweeps, and the
 # wake-queue drain are skipped.
 # The context and fleet-state digests
 # below are always read-only, so they run unconditionally in both modes.
@@ -115,6 +116,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-public-followup-lib.sh
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 
 STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
@@ -268,15 +271,45 @@ print_backlog_tasks_axi_compact() {
 # as before Stage 2.
 print_backlog_beads_compact() {
   local path=$1 label out_inflight rc_inflight out_queued rc_queued
+  local inflight_ok=0 queued_ok=0 inflight_stale_since='' queued_stale_since=''
   label=$(fm_beads_fleet_label)
   printf 'compact backlog listing (beads task store; label %s; max %s item(s) per section)\n' "$label" "$BACKLOG_LIMIT"
+
   out_inflight=$(task list --label "$label" --status in_progress,blocked --limit "$BACKLOG_LIMIT" 2>&1)
   rc_inflight=$?
+  if [ "$rc_inflight" -eq 0 ]; then
+    fm_beads_mirror_write inflight "$out_inflight" 2>/dev/null || true
+    inflight_ok=1
+  elif fm_beads_mirror_fresh inflight; then
+    out_inflight=$(fm_beads_mirror_read inflight)
+    inflight_stale_since=$(fm_beads_mirror_timestamp_iso inflight)
+    inflight_ok=1
+  fi
+
   out_queued=$(task list --label "$label" --ready --limit "$BACKLOG_LIMIT" 2>&1)
   rc_queued=$?
-  if [ "$rc_inflight" -eq 0 ] && [ "$rc_queued" -eq 0 ]; then
-    printf '## In flight\n%s\n' "$out_inflight"
-    printf '## Queued\n%s\n' "$out_queued"
+  if [ "$rc_queued" -eq 0 ]; then
+    fm_beads_mirror_write ready "$out_queued" 2>/dev/null || true
+    queued_ok=1
+  elif fm_beads_mirror_fresh ready; then
+    out_queued=$(fm_beads_mirror_read ready)
+    queued_stale_since=$(fm_beads_mirror_timestamp_iso ready)
+    queued_ok=1
+  fi
+
+  if [ "$inflight_ok" -eq 1 ] && [ "$queued_ok" -eq 1 ]; then
+    if [ -n "$inflight_stale_since" ]; then
+      printf '(stale mirror, beads store unreachable since %s) In flight, as of last successful read:\n' "$inflight_stale_since"
+    else
+      printf '## In flight\n'
+    fi
+    printf '%s\n' "$out_inflight"
+    if [ -n "$queued_stale_since" ]; then
+      printf '(stale mirror, beads store unreachable since %s) Queued, as of last successful read:\n' "$queued_stale_since"
+    else
+      printf '## Queued\n'
+    fi
+    printf '%s\n' "$out_queued"
   else
     printf 'beads task listing failed; falling back to title-line rendering.\n'
     printf '%s\n' "$out_inflight"
@@ -290,7 +323,7 @@ print_backlog_beads_compact() {
 print_backlog_compact() {
   local path=$1 label=$2
   subsection "$label"
-  if fm_beads_backend_available "$CONFIG"; then
+  if [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
     print_backlog_beads_compact "$path"
     print_backlog_pointer
   elif [ -f "$path" ]; then
