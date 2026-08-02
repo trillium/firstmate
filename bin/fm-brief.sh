@@ -45,11 +45,29 @@
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> captain merge
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                captain approves, firstmate merges to local main
-# Push-mode ship briefs (direct-PR, no-mistakes) whose project clone has a
-# non-Trillium git origin add a fork-first push rule: push the branch to the
-# trillium/<repo> fork and open the PR from there, since the upstream origin
-# refuses the push. Detection reads the clone's real origin remote; a Trillium,
-# unreadable, or absent origin (and every local-only brief) adds no such rule.
+# Push-mode ship briefs (direct-PR, no-mistakes) on a fork-contribution
+# project - one whose PRs must land in the captain's own trillium/<repo> fork
+# and never reach the project's upstream - add an explicit anti-upstream
+# PR-target rule. Detection reads the clone's real git remotes, never
+# data/projects.md prose, and fires in two shapes: a legacy clone whose
+# `origin` is still the upstream repo (the not-yet-swapped state the
+# project-management skill's convention corrects), or the correct swapped
+# setup where `origin` is already the trillium fork and a separate
+# `upstream` remote proves the relationship. A Trillium origin with no
+# `upstream` remote (an ordinary captain-owned project), an unreadable or
+# absent origin, and every local-only brief add no such rule.
+# Pushing to the fork does not by itself keep a PR off upstream: `gh pr
+# create` and no-mistakes both default an opened PR's base to the upstream
+# parent unless told otherwise, and no-mistakes always opens against whatever
+# `origin` is configured to. On a legacy (unswapped) clone, no-mistakes mode
+# cannot be driven safely at all - the brief tells the worker to stop and
+# escalate rather than run it - because there is no flag that redirects the
+# pipeline's PR target: `no-mistakes init --fork-url` pushes to the named
+# fork while still opening the PR against `origin` (upstream), which is the
+# CONTRIBUTING.md-documented "contribute upstream" flow, exactly backwards
+# for a fork-contribution project. direct-PR mode instead gives the worker
+# the explicit `gh pr create --repo trillium/<repo>` form, which works on
+# either clone shape.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
 # Every scaffold's status protocol distinguishes the configured
@@ -143,19 +161,32 @@ shell_quote() {
   printf "'"
 }
 
-# Print the bare repository name to fork under trillium/ when a ship task's
-# project clone has a non-Trillium git origin (an upstream repo the worker
-# cannot push to); print nothing (and succeed) when the origin is Trillium-owned,
-# unreadable, or the clone is absent, so the generated brief stays unchanged in
-# every case that is not a known upstream fork. Detection reads the clone's real
-# `git remote get-url origin`, never data/projects.md prose.
-fork_repo_for_origin() {
-  local repo=$1 dir origin name rest owner
+# Resolve a project's clone directory exactly as the origin/upstream lookups
+# below need it: an absolute path is used as-is, "projects/<name>" is
+# relative to FM_HOME, and a bare name resolves under $FM_HOME/projects (or
+# FM_PROJECTS_OVERRIDE).
+project_clone_dir() {
+  local repo=$1
   case "$repo" in
-    /*) dir=$repo ;;
-    projects/*) dir="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/${repo#projects/}" ;;
-    *) dir="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/$repo" ;;
+    /*) printf '%s\n' "$repo" ;;
+    projects/*) printf '%s\n' "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/${repo#projects/}" ;;
+    *) printf '%s\n' "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/$repo" ;;
   esac
+}
+
+# Print "<trillium-repo-name> <state>" for a ship task's fork-contribution
+# project, where <state> is "legacy" when `origin` is still the upstream repo
+# the worker cannot push to, or "swapped" when `origin` is already the
+# trillium fork and a separate `upstream` remote proves the fork-contribution
+# relationship (the project-management skill's required setup). Prints
+# nothing (and succeeds) for an ordinary captain-owned project - a Trillium
+# origin with no `upstream` remote - or an unreadable or absent clone, so the
+# generated brief stays unchanged in every case that is not a known fork
+# relationship. Detection reads the clone's real git remotes, never
+# data/projects.md prose.
+fork_repo_for_origin() {
+  local repo=$1 dir origin name rest owner upstream
+  dir=$(project_clone_dir "$repo")
   origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 0
   [ -n "$origin" ] || return 0
   origin=${origin%.git}
@@ -164,11 +195,17 @@ fork_repo_for_origin() {
   rest=${origin%/*}
   owner=${rest##*/}     # https://host/owner/repo -> owner
   owner=${owner##*:}    # git@host:owner/repo    -> owner
-  case "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')" in
-    trillium) return 0 ;;
-  esac
   [ -n "$name" ] || return 0
-  printf '%s\n' "$name"
+  if [ "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')" = trillium ]; then
+    # origin already is the trillium fork; still a fork-contribution project
+    # (and the anti-upstream PR-target rule still applies) only when a
+    # separate `upstream` remote proves the relationship.
+    upstream=$(git -C "$dir" remote get-url upstream 2>/dev/null) || return 0
+    [ -n "$upstream" ] || return 0
+    printf '%s swapped\n' "$name"
+    return 0
+  fi
+  printf '%s legacy\n' "$name"
 }
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
@@ -423,28 +460,62 @@ esac
 # briefs stay byte-identical to the historical Bash 5 output.
 DOD=${DOD%$'\n'}
 
-# Fork-first push rule: a project whose git origin is the upstream repository
-# (not under trillium/) cannot be pushed to directly, so a worker on the push
-# modes must push its branch to the trillium/<repo> fork and open the PR from
-# there. Only direct-PR and no-mistakes push; local-only never does, so it is
-# exempt. The rule text lives here exactly once and is empty (no rule) for
-# local-only and for every Trillium-origin, unreadable, or absent-clone case,
+# Fork-contribution PR-target rule: a project whose PRs must land in the
+# captain's own trillium/<repo> fork, never the upstream project it was
+# forked from. Only direct-PR and no-mistakes push or open a PR; local-only
+# never does, so it is exempt. Rule text lives here exactly once and is empty
+# (no rule) for local-only and for every ordinary captain-owned project,
 # keeping those briefs byte-identical to the pre-rule output.
+#
+# Pushing to the fork does not by itself keep the PR off upstream: `gh pr
+# create` and no-mistakes both default an opened PR's base to the upstream
+# parent unless told otherwise. direct-PR mode gets an explicit `--repo`
+# override that works on either clone shape. no-mistakes mode has no such
+# override - it always opens against whatever `origin` is configured to - so
+# a legacy (unswapped) clone cannot be driven safely at all; the worker is
+# told to stop and escalate instead.
 FORK_FIRST=""
 if [ "$MODE" != local-only ]; then
-  FORK_REPO=$(fork_repo_for_origin "$REPO")
-  if [ -n "$FORK_REPO" ]; then
-    IFS= read -r -d '' FORK_FIRST <<EOF || true
-
-# Fork-based project: all pushes target the fork
-This project's \`origin\` is the upstream repository that refuses pushes, so a refused push to \`origin\` is expected, not a blocker.
-The \`fm/$ID\` branch and its PR must target the \`trillium/$FORK_REPO\` fork, not upstream.
-If the fork does not exist yet, create it with \`gh-axi\`.
-Anything that pushes this branch or opens its PR must target the fork, not upstream.
-In no-mistakes mode, ensure the pipeline is configured to push to the fork, not upstream.
-Never push to the upstream \`origin\`, and never stop to ask fork-vs-local: always use the fork.
-**CRITICAL:** a push to the upstream origin must NEVER happen automatically. If pushing to the fork is not possible, stop and get direct captain confirmation before any upstream push attempt.
+  FORK_REPO=""
+  FORK_STATE=""
+  read -r FORK_REPO FORK_STATE <<EOF
+$(fork_repo_for_origin "$REPO")
 EOF
+  if [ -n "$FORK_REPO" ]; then
+    FORK_HEADLINE="# Fork-based project: PRs stay in the fork, never upstream"
+    FORK_TARGET_RULE="This project's PRs must land in the captain's own \`trillium/$FORK_REPO\` fork, NEVER upstream; the PR only goes upstream on the captain's explicit word."
+    if [ "$MODE" = direct-PR ]; then
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+$FORK_HEADLINE
+$FORK_TARGET_RULE
+If the fork does not exist yet, create it with \`gh-axi\` before pushing.
+Push your branch to the fork - \`git push git@github.com:trillium/$FORK_REPO.git fm/$ID:fm/$ID\` if \`origin\` here is still upstream, or plain \`git push origin fm/$ID\` once \`origin\` is the fork.
+Open the PR with an explicit repo override so it can never default to upstream: \`gh pr create --repo trillium/$FORK_REPO --base <fork-default-branch> --head fm/$ID\`.
+Never omit that \`--repo trillium/$FORK_REPO\` override, and never stop to ask fork-vs-local: always target the fork.
+**CRITICAL:** a PR opened against the upstream repo must NEVER happen automatically. If targeting the fork is not possible, stop and get direct captain confirmation before any upstream PR attempt.
+EOF
+    elif [ "$FORK_STATE" = swapped ]; then
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+$FORK_HEADLINE
+$FORK_TARGET_RULE
+\`origin\` here is already the \`trillium/$FORK_REPO\` fork, with \`upstream\` as a separate remote, so no-mistakes's normal PR-open behavior already targets the fork - do not change that.
+Never run \`no-mistakes init --fork-url\` or any similar remote reconfiguration on this project: that flag pushes to the named fork while still opening the PR against \`origin\`, which is the exact wrong direction here.
+Never stop to ask fork-vs-local: always target the fork.
+**CRITICAL:** if no-mistakes ever proposes or opens a PR against anything other than \`trillium/$FORK_REPO\`, stop and escalate immediately rather than letting it proceed.
+EOF
+    else
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+# Fork-based project: origin is not yet the fork - STOP before running no-mistakes
+$FORK_TARGET_RULE
+\`origin\` here is still the upstream repository, not the \`trillium/$FORK_REPO\` fork. no-mistakes opens its PR against whatever \`origin\` is configured to, so running it now would open the PR against upstream.
+This clone's remotes need the captain-approved origin swap (origin -> the \`trillium/$FORK_REPO\` fork, upstream -> the current origin) before no-mistakes can run safely here; that change is outside this task's worktree.
+Do NOT run \`no-mistakes init --fork-url\` as a workaround: it pushes to the named fork while still opening the PR against \`origin\` (upstream), reproducing the same failure.
+Append \`blocked: project clone's origin is not the trillium fork yet, no-mistakes would target upstream\` and stop; do not attempt any workaround that could open a PR against upstream.
+EOF
+    fi
   fi
 fi
 
