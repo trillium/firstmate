@@ -11,6 +11,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-sessionstart-nudge.sh` | Print the native session-start hook nudge when the primary has not already run the digest |
 | `fm-operational-input.sh` | Construct and parse the canonical cross-language operational-input protocol |
 | `fm-isolated-launch.sh`  | Launch `claude` with `HOME` redirected to a fresh isolated home, stripped of global harness config |
+| `claude-account.sh`      | Standalone launcher for `claude` with per-account credential isolation under `~/.claude-homes/account<N>/.claude` |
+| `claude-1.sh`, `claude-2.sh` | One-line direct launchers for `claude-account.sh 1` and `claude-account.sh 2`               |
 | `fm-bootstrap.sh`        | Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools |
 | `fm-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
 | `fm-fleet-snapshot.sh`   | Print the read-only structured fleet snapshot JSON (schema `fm-fleet-snapshot.v1`)   |
@@ -19,11 +21,19 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-update.sh`           | Fast-forward-only self-update of firstmate and secondmate homes from origin          |
 | `fm-backlog-handoff.sh`  | Validate and delegate queued backlog-item moves into a secondmate home               |
 | `fm-decision-hold.sh`    | Create, verify, complete, and resolve durable captain-held decisions                 |
+| `fm-idea-mine.ts`        | Mine recent chat/context history for uncaptured ideas, re-evaluate them in a second inference pass, and file survivors to the `ideas` store |
+| `fm-groom.sh`            | Rate-limited, opt-in (`FM_GROOM_ENABLED`) idea-to-brief-to-dispatch generator: formulate, classify, and dispatch or file `ideas`-store items |
+| `fm-groom-lib.sh`        | Sourced brief-formulation and safety-classification helpers for `fm-groom.sh`         |
+| `fm-groom-json-field.sh` | Extract one string field from a JSON document on stdin for the groom pipeline        |
+| `fm-review-page.ts`      | Render `review`-store items to interactive, phone-readable Pulse decision pages under `~/pulse-pages/review/` |
+| `fm-review-decision.sh`  | Record a captain's Approve/Decline/Comment decision from a review page and wake firstmate to act on it |
 | `fm-brief.sh`            | Scaffold ship, scout, secondmate-charter, and Herdr-lab briefs; load hooks when FM_HOOK_BEADS_ID or other hook env vars are set |
 | `fm-brief-hooks.d/beads.sh` | Pre-brief extension: emit the Bead Receipt and Bead Closure sections for a `--beads` task |
 | `fm-bead-stamp.sh`       | Stamp a linked bead's dispatch and lifecycle state when a task is spawned with --beads or auto-linked under the beads backend |
 | `fm-ledger.sh`           | List or close likely-dropped beads: claimed, still open, and idle past a staleness window |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
+| `fm-herdr-session-cleanup.sh` | Retire stale restored-shell Herdr presentation children at locked session start |
+| `fm-herdr-spur.sh`       | Bridge external (non-firstmate-spawned) Herdr agent completions into firstmate's durable wake queue |
 | `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
 | `fm-install-treehouse.sh`| Install CI's exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees |
 | `fm-herdr-ci-cleanup.sh` | Snapshot and tear down only job-owned `fm-lab-*` sessions in the Herdr CI lane       |

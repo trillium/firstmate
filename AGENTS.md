@@ -74,6 +74,7 @@ config/herdr-presentation-spaces  optional presence flag for Herdr's default-off
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
 config/x-mode.env    generated X-mode watcher cadence; LOCAL, gitignored; source before arming watcher when present
+config/herdr-spur.agents  optional watch list (one agent name per line) for bin/fm-herdr-spur.sh's external-agent completion bridge; LOCAL, gitignored; absent with no --agent flags means auto-track every agent herdr reports (docs/examples/herdr-spur.agents)
 data/                personal fleet records; LOCAL, gitignored as a whole
   backlog.md         task queue, dependencies, history
   captain.md         this home's domain-local captain preferences and working style; LOCAL, gitignored, canonical even if harness memory mirrors it, and updated with inspect-then-update
@@ -119,6 +120,7 @@ state/               volatile runtime signals; gitignored
   .staleness-autoclose.log  append-only log of the watcher's idle>2h staleness auto-close reclaim attempts against a ship task (bin/fm-teardown.sh --staleness-autoclose); never relied on, safe to delete
   .staleness-autoclose-afk.log  durable evidence of staleness auto-close reclaims made while away; surfaced by /afk return as catch-up evidence, then cleared
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
+  .herdr-spur.log    bin/fm-herdr-spur.sh's own append-only run log; never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
 .no-mistakes/        local validation state and evidence; gitignored
