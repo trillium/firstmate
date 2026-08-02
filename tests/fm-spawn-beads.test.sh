@@ -198,9 +198,84 @@ test_spawn_under_beads_backend_explicit_beads_wins() {
   pass "an explicit --beads id wins over auto-resolution under the beads backend"
 }
 
+# Test: an auto-linked spawn (beads backend, no --beads flag) must inject the
+# Bead Receipt/Closure hook sections into the already-scaffolded brief, since
+# fm-brief.sh ran before a bead existed and its own hook loop never fired.
+test_spawn_under_beads_backend_auto_links_injects_bead_hook_sections() {
+  local rec id out setup_line receipt_line
+  id=spawn-beads-hooksect-z5
+  rec=$(make_spawn_case spawn-beads-hooksect "$id")
+  read_spawn_record "$rec"
+  printf 'beads\n' > "$HOME_DIR/config/backlog-backend"
+  add_beads_task_mock_full "$FAKEBIN_DIR" "$CASE_DIR/task-calls.log" "bead-hooksect-1"
+  cat > "$HOME_DIR/data/$id/brief.md" <<'EOF'
+You are a crewmate.
+
+# Task
+{TASK}
+
+# Setup
+You are in a disposable git worktree.
+EOF
+
+  out=$(run_case_spawn "$id")
+  expect_code 0 "$?" "spawn should succeed under the beads backend without --beads"
+
+  assert_grep '# Bead Receipt' "$HOME_DIR/data/$id/brief.md" \
+    "auto-linked spawn did not inject the Bead Receipt section into the brief"
+  assert_grep '# Bead Closure' "$HOME_DIR/data/$id/brief.md" \
+    "auto-linked spawn did not inject the Bead Closure section into the brief"
+  assert_grep 'bead-hooksect-1' "$HOME_DIR/data/$id/brief.md" \
+    "injected bead hook sections did not reference the auto-resolved bead id"
+
+  setup_line=$(grep -n '^# Setup$' "$HOME_DIR/data/$id/brief.md" | head -1 | cut -d: -f1)
+  receipt_line=$(grep -n '^# Bead Receipt$' "$HOME_DIR/data/$id/brief.md" | head -1 | cut -d: -f1)
+  [ -n "$setup_line" ] && [ -n "$receipt_line" ] && [ "$receipt_line" -lt "$setup_line" ] \
+    || fail "Bead Receipt section was not inserted before # Setup"
+
+  pass "an auto-linked spawn injects the Bead Receipt/Closure sections into the brief before # Setup"
+}
+
+# Test: an explicit --beads spawn must not duplicate the hook sections that
+# fm-brief.sh already rendered at scaffold time (its caller pre-set
+# FM_HOOK_BEADS_ID before scaffolding).
+test_spawn_explicit_beads_does_not_duplicate_hook_sections() {
+  local rec id out receipt_count
+  id=spawn-beads-nodupe-z6
+  rec=$(make_spawn_case spawn-beads-nodupe "$id")
+  read_spawn_record "$rec"
+  printf 'beads\n' > "$HOME_DIR/config/backlog-backend"
+  add_beads_task_mock_full "$FAKEBIN_DIR" "$CASE_DIR/task-calls.log" "bead-should-not-be-used"
+  cat > "$HOME_DIR/data/$id/brief.md" <<'EOF'
+You are a crewmate.
+
+# Task
+{TASK}
+
+# Bead Receipt
+This task is linked to bead `bead-explicit-2`.
+
+# Bead Closure
+Close bead `bead-explicit-2` when done.
+
+# Setup
+You are in a disposable git worktree.
+EOF
+
+  out=$(run_case_spawn "$id" --beads bead-explicit-2)
+  expect_code 0 "$?" "spawn should succeed with --beads set under the beads backend"
+
+  receipt_count=$(grep -c '^# Bead Receipt$' "$HOME_DIR/data/$id/brief.md")
+  [ "$receipt_count" -eq 1 ] \
+    || fail "explicit --beads spawn duplicated the Bead Receipt section (count=$receipt_count)"
+  pass "an explicit --beads spawn does not duplicate the brief's already-scaffolded hook sections"
+}
+
 test_spawn_beads_records_meta_and_stamps_bead
 test_spawn_without_beads_flag_omits_meta_and_skips_stamp
 test_spawn_under_beads_backend_auto_links_without_flag
 test_spawn_under_beads_backend_explicit_beads_wins
+test_spawn_under_beads_backend_auto_links_injects_bead_hook_sections
+test_spawn_explicit_beads_does_not_duplicate_hook_sections
 
 echo "# all fm-spawn-beads tests passed"

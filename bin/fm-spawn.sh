@@ -461,8 +461,10 @@ SPAWN_TASK_LOCK_HELD=1
 # entities, not backlog work items, so they stay exempt. Fails open: a resolve
 # failure (task/jq missing, store unreachable) leaves BEADS_ARG empty and spawn
 # proceeds exactly as it did before this backend existed.
+AUTO_BEADS_LINKED=0
 if [ "$BEADS_SET" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
   BEADS_ARG=$(fm_beads_resolve_or_create "$ID") || BEADS_ARG=
+  [ -z "$BEADS_ARG" ] || AUTO_BEADS_LINKED=1
 fi
 PROJ=
 ARG3=
@@ -894,6 +896,54 @@ else
   BRIEF="$DATA/$ID/brief.md"
 fi
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
+
+# Auto-linked beads case (see AUTO_BEADS_LINKED above): fm-brief.sh scaffolded
+# this brief before a bead existed, so its hook loop (fm-brief-hooks.d/*.sh,
+# keyed on FM_HOOK_BEADS_ID) never ran. Re-run that same hook loop now that
+# BEADS_ARG is resolved, and splice any output into the already-written brief
+# at the same position fm-brief.sh would have used: immediately before the
+# "# Setup" section. An explicit --beads spawn is exempt because its caller
+# already set FM_HOOK_BEADS_ID before scaffolding, so the sections are already
+# in the brief and re-adding them here would duplicate them.
+if [ "$AUTO_BEADS_LINKED" -eq 1 ]; then
+  SPAWN_HOOK_SECTION=""
+  for hook in "$FM_ROOT"/bin/fm-brief-hooks.d/*.sh; do
+    [ -e "$hook" ] || continue
+    hook_out=$(export FM_HOOK_BEADS_ID="$BEADS_ARG"; . "$hook") || continue
+    [ -n "$hook_out" ] || continue
+    if [ -n "$SPAWN_HOOK_SECTION" ]; then
+      SPAWN_HOOK_SECTION="$SPAWN_HOOK_SECTION"$'\n\n'"$hook_out"
+    else
+      SPAWN_HOOK_SECTION="$hook_out"
+    fi
+  done
+  if [ -n "$SPAWN_HOOK_SECTION" ]; then
+    BRIEF_HOOK_SECTION_FILE=$(mktemp "$BRIEF.hooksection.XXXXXX") || BRIEF_HOOK_SECTION_FILE=
+    BRIEF_HOOK_TMP=$(mktemp "$BRIEF.hooktmp.XXXXXX") || BRIEF_HOOK_TMP=
+    if [ -n "$BRIEF_HOOK_SECTION_FILE" ] && [ -n "$BRIEF_HOOK_TMP" ]; then
+      printf '%s\n' "$SPAWN_HOOK_SECTION" > "$BRIEF_HOOK_SECTION_FILE"
+      if awk -v sectionfile="$BRIEF_HOOK_SECTION_FILE" '
+          BEGIN { inserted = 0 }
+          !inserted && $0 == "# Setup" {
+            while ((getline line < sectionfile) > 0) print line
+            close(sectionfile)
+            print ""
+            inserted = 1
+          }
+          { print }
+        ' "$BRIEF" > "$BRIEF_HOOK_TMP" && [ -s "$BRIEF_HOOK_TMP" ]; then
+        mv "$BRIEF_HOOK_TMP" "$BRIEF"
+      else
+        rm -f "$BRIEF_HOOK_TMP"
+      fi
+    else
+      [ -z "$BRIEF_HOOK_SECTION_FILE" ] || rm -f "$BRIEF_HOOK_SECTION_FILE"
+      [ -z "$BRIEF_HOOK_TMP" ] || rm -f "$BRIEF_HOOK_TMP"
+    fi
+    rm -f "$BRIEF_HOOK_SECTION_FILE"
+  fi
+fi
+
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
 BRIEF_REAL="$BRIEF_DIR_REAL/$(basename "$BRIEF")"
 
