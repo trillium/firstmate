@@ -97,3 +97,29 @@ fm_beads_backend_available() {
 fm_beads_fleet_label() {
   printf '%s\n' "${FM_BEADS_FLEET_LABEL:-fleet:firstmate}"
 }
+
+# fm_beads_resolve_or_create <task_id> [title] - beads-authority migration
+# Stage 3 (see data/beads-authority-migration-scout/report.md section "Stage
+# 3"): under config/backlog-backend=beads, every firstmate task must have a
+# linked bead without requiring an explicit --beads flag. Looks up an
+# existing bead carrying the idempotency label "task:<task_id>" first (so
+# fm-brief.sh and fm-spawn.sh converge on the same bead regardless of call
+# order) and mints one with that label plus the fleet label
+# (fm_beads_fleet_label) only if none is found. Echoes the resolved bead id on
+# success. Fails open like the rest of the beads integration: prints nothing
+# and returns 1 on any missing tool or failure, never blocking dispatch.
+fm_beads_resolve_or_create() {
+  local task_id=$1 title=${2:-"firstmate: $1"} task_label existing id
+  command -v task >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  task_label="task:$task_id"
+  existing=$(task list --label "$task_label" --all --limit 1 --json 2>/dev/null) || existing=
+  id=$(printf '%s' "$existing" | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
+  if [ -n "$id" ]; then
+    printf '%s\n' "$id"
+    return 0
+  fi
+  id=$(task create --title "$title" --labels "$(fm_beads_fleet_label),$task_label" --silent 2>/dev/null) || return 1
+  [ -n "$id" ] || return 1
+  printf '%s\n' "$id"
+}

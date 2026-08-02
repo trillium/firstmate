@@ -771,6 +771,86 @@ test_crewmate_briefs_enroll_in_parlay_first() {
   pass "fm-brief.sh: ship/scout briefs enroll in Parlay first (best-effort); secondmate charters are exempt"
 }
 
+# add_beads_task_mock_resolve <fakebin_dir> <minted_id>: a fake `task` CLI
+# reporting no existing task:<id>-labeled bead, so `create` mints <minted_id>.
+add_beads_task_mock_resolve() {
+  local fakebin_dir=$1 minted_id=$2
+  cat > "$fakebin_dir/task" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+  list) printf '[]\n' ;;
+  create) printf '%s\n' "$minted_id" ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin_dir/task"
+}
+
+# Test: under config/backlog-backend=beads, fm-brief.sh auto-resolves a bead
+# (no FM_HOOK_BEADS_ID needed) and the now-wired hook loop renders the Bead
+# Receipt/Closure sections (beads-authority migration Stage 3). Covers both
+# ship and scout briefs; secondmate charters stay exempt.
+test_beads_backend_auto_populates_hook_sections() {
+  local home fakebin brief
+  home="$TMP_ROOT/beads-backend-home"
+  mkdir -p "$home/data" "$home/config"
+  printf 'beads\n' > "$home/config/backlog-backend"
+  write_registry "$home"
+  fakebin=$(fm_fakebin "$TMP_ROOT/beads-backend-fake")
+  add_beads_task_mock_resolve "$fakebin" bead-auto-brief-1
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-ship no-registry-proj >/dev/null 2>&1
+  brief="$home/data/beads-auto-ship/brief.md"
+  assert_present "$brief" "ship brief was not scaffolded under the beads backend"
+  assert_grep "# Bead Receipt" "$brief" \
+    "ship brief did not auto-populate the Bead Receipt section under the beads backend"
+  assert_grep "task set-state bead-auto-brief-1 dispatch=claimed" "$brief" \
+    "ship brief's Bead Receipt section did not carry the auto-resolved bead id"
+  assert_grep "# Bead Closure" "$brief" \
+    "ship brief did not auto-populate the Bead Closure section under the beads backend"
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-scout no-registry-proj --scout >/dev/null 2>&1
+  brief="$home/data/beads-auto-scout/brief.md"
+  assert_present "$brief" "scout brief was not scaffolded under the beads backend"
+  assert_grep "# Bead Receipt" "$brief" \
+    "scout brief did not auto-populate the Bead Receipt section under the beads backend"
+
+  # Secondmate charters stay exempt: no auto-resolution, no hook sections.
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-sm --secondmate alpha >/dev/null 2>&1
+  brief="$home/data/beads-auto-sm/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded under the beads backend"
+  assert_no_grep "# Bead Receipt" "$brief" \
+    "secondmate charter wrongly picked up bead auto-linking under the beads backend"
+  pass "fm-brief.sh: under config/backlog-backend=beads, ship/scout briefs auto-resolve a bead and render Bead Receipt/Closure sections; secondmate charters stay exempt"
+}
+
+# Test: under the default (non-beads) backend, briefs are unchanged - no Bead
+# Receipt/Closure sections appear absent an explicit FM_HOOK_BEADS_ID, exactly
+# as before this backend existed.
+test_default_backend_omits_hook_sections() {
+  local home brief
+  home="$TMP_ROOT/default-backend-home"
+  write_registry "$home"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" no-beads-ship no-registry-proj >/dev/null 2>&1
+  brief="$home/data/no-beads-ship/brief.md"
+  assert_present "$brief" "ship brief was not scaffolded under the default backend"
+  assert_no_grep "# Bead Receipt" "$brief" \
+    "ship brief wrongly carried a Bead Receipt section under the default backend"
+  assert_no_grep "# Bead Closure" "$brief" \
+    "ship brief wrongly carried a Bead Closure section under the default backend"
+
+  # An explicit FM_HOOK_BEADS_ID still works under the default backend (the
+  # pre-existing --beads opt-in path, now that the hook loop is actually wired).
+  FM_HOOK_BEADS_ID=bead-explicit-99 FM_HOME="$home" \
+    "$ROOT/bin/fm-brief.sh" explicit-beads-ship no-registry-proj >/dev/null 2>&1
+  brief="$home/data/explicit-beads-ship/brief.md"
+  assert_grep "task set-state bead-explicit-99 dispatch=claimed" "$brief" \
+    "an explicit FM_HOOK_BEADS_ID did not render the Bead Receipt section under the default backend"
+  pass "fm-brief.sh: default backend omits Bead Receipt/Closure sections unless FM_HOOK_BEADS_ID is explicitly set"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -790,3 +870,5 @@ test_scout_and_secondmate_load_decision_hold_policy
 test_fork_first_push_rule
 test_scout_and_secondmate_scaffold
 test_crewmate_briefs_enroll_in_parlay_first
+test_beads_backend_auto_populates_hook_sections
+test_default_backend_omits_hook_sections

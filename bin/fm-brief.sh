@@ -37,7 +37,11 @@
 # stdout is prepended to the generated brief. The beads hook (fm-brief-hooks.d/beads.sh)
 # is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt and
 # Bead Closure sections that ask the worker to confirm dispatch/lifecycle state changes
-# and close the bead on completion.
+# and close the bead on completion. Under config/backlog-backend=beads, FM_HOOK_BEADS_ID
+# is auto-populated (same fm_beads_resolve_or_create lookup-or-mint fm-spawn.sh uses, so
+# both scripts converge on the same bead) for every ship/scout brief; an explicit
+# FM_HOOK_BEADS_ID always wins, and secondmate charters are exempt (beads-authority
+# migration Stage 3).
 # For ship tasks, the definition of done is shaped by the project's delivery mode
 # (data/projects.md via fm-project-mode.sh; see the project-management skill
 # and AGENTS.md task lifecycle):
@@ -126,6 +130,13 @@ if [ -n "${FM_STATE_OVERRIDE:-}" ]; then
 else
   STATE="$FM_HOME/state"
 fi
+if [ -n "${FM_CONFIG_OVERRIDE:-}" ]; then
+  CONFIG=$(resolve_directory_input FM_CONFIG_OVERRIDE "$FM_CONFIG_OVERRIDE") || exit 1
+else
+  CONFIG="$FM_HOME/config"
+fi
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -297,6 +308,34 @@ fi
 
 REPO=${POS[1]}
 
+# beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
+# "Stage 3"): under config/backlog-backend=beads, resolve or mint this task's bead
+# the same way fm-spawn.sh does (fm_beads_resolve_or_create, label task:<id>) so
+# both scripts converge on the same bead regardless of call order, and the Bead
+# Receipt/Closure hook below fires without requiring an explicit --beads flag. An
+# already-set FM_HOOK_BEADS_ID (e.g. from an explicit --beads spawn) always wins.
+# Fails open: a resolve failure leaves FM_HOOK_BEADS_ID unset, same as today.
+if [ -z "${FM_HOOK_BEADS_ID:-}" ] && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+  FM_HOOK_BEADS_ID=$(fm_beads_resolve_or_create "$ID") || FM_HOOK_BEADS_ID=
+fi
+
+# Hook system (see header comment above): scripts in fm-brief-hooks.d/ are sourced
+# in a subshell, and any stdout they produce is collected into HOOK_SECTION and
+# inserted into the generated brief. Each hook is self-gating (e.g. the beads hook
+# below exits with no output when FM_HOOK_BEADS_ID is unset), so HOOK_SECTION stays
+# empty and briefs are unchanged when no hook has anything to add.
+HOOK_SECTION=""
+for hook in "$SCRIPT_DIR"/fm-brief-hooks.d/*.sh; do
+  [ -e "$hook" ] || continue
+  hook_out=$(. "$hook") || continue
+  [ -n "$hook_out" ] || continue
+  if [ -n "$HOOK_SECTION" ]; then
+    HOOK_SECTION="$HOOK_SECTION"$'\n\n'"$hook_out"
+  else
+    HOOK_SECTION="$hook_out"
+  fi
+done
+
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
 # shellcheck disable=SC2016  # single quotes are deliberate: these lines are literal brief text whose backtick-wrapped $(...) and "$HERDR_LAB_SESSION" snippets must reach the reading agent verbatim, not expand at scaffold time; only the '"$VAR"' break-outs interpolate.
@@ -328,6 +367,7 @@ Do not add Herdr lifecycle commands to this unguarded brief by hand.
 EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
+[ -z "$HOOK_SECTION" ] || HERDR_SECTION="$HERDR_SECTION"$'\n\n'"$HOOK_SECTION"
 
 # Best-effort Parlay enrollment: the crewmate's first action is to self-enroll in
 # Parlay so firstmate can reach it and it can report back. `parlay listen --agent
