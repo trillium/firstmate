@@ -164,6 +164,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/process-event-sources/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/project-management/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -325,6 +329,10 @@
     },
     {
       "path": "docs/verification/dispatch-auth.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/process-event-sources.md",
       "audience": "maintainer-verification"
     },
     {
