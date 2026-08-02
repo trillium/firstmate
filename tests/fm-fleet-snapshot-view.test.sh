@@ -828,6 +828,64 @@ SH
   pass "beads backend snapshot reads fleet-scoped in-flight/queued beads"
 }
 
+# beads-authority migration Stage 4
+# (docs/decision-hold-lifecycle.md "Structured read surfaces"): a record
+# carrying the captain-hold label surfaces hold_kind/hold_reason/current_role/
+# captain_actionable from the same task list --json read fm-decision-hold.sh's
+# beads path relies on, with no extra beads calls. A resolved hold's anchor is
+# closed and so is absent from the open/in_progress/blocked query entirely,
+# which is why no separate "resolved hold is hidden" fixture is needed here:
+# the fake task output below simply never includes one, matching what the
+# real query would return.
+test_beads_backend_snapshot_surfaces_captain_holds() {
+  local home fakebin out
+  home=$(make_home beads-backend-holds)
+  printf 'beads\n' > "$home/config/backlog-backend"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'list --limit 1')
+    printf '[]\n'
+    exit 0
+    ;;
+  'list --label fleet:firstmate --status open,in_progress,blocked --limit 200 --json')
+    cat <<'JSON'
+[
+  {"id":"task-hold","title":"Decision: rollout scope","description":"","status":"open","priority":1,
+   "labels":["fleet:firstmate","captain-hold","human","ship-decision-key"],
+   "metadata":{"hold_reason":"pick canary vs full rollout"}},
+  {"id":"task-plain","title":"Ordinary bead","description":"","status":"open","priority":2,
+   "labels":["fleet:firstmate"]}
+]
+JSON
+    exit 0
+    ;;
+  *)
+    printf 'unexpected task invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$fakebin/task"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e . >/dev/null || fail "beads-backed snapshot must be valid JSON: $out"
+  printf '%s' "$out" | jq -e '
+    (.backlog.records[] | select(.id == "task-hold")) as $h
+    | $h.hold_kind == "captain"
+      and $h.hold_reason == "pick canary vs full rollout"
+      and $h.current_role == "held"
+      and $h.captain_actionable == true
+  ' >/dev/null || fail "captain-hold-labeled bead did not surface structured hold fields: $out"
+  printf '%s' "$out" | jq -e '
+    (.backlog.records[] | select(.id == "task-plain")) as $p
+    | $p.hold_kind == null and $p.hold_reason == null
+      and $p.current_role == "queued" and $p.captain_actionable == false
+  ' >/dev/null || fail "an ordinary bead without the captain-hold label must not read as held: $out"
+  pass "beads backend snapshot surfaces structured captain-hold fields from gate-anchor metadata"
+}
+
 # Regression guard for the byte-identical default-backend requirement: adding
 # the beads branch must not add fields to the markdown backlog_json path.
 test_default_backend_backlog_json_has_no_beads_fields() {
@@ -858,4 +916,5 @@ test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
 test_beads_backend_snapshot_scopes_by_fleet_label
+test_beads_backend_snapshot_surfaces_captain_holds
 test_default_backend_backlog_json_has_no_beads_fields
