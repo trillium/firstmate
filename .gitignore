@@ -4,11 +4,13 @@ data/
 .no-mistakes/
 .lavish/
 .fm-secondmate-home
+.fm-isolated-home
 .DS_Store
 __pycache__/
 *.pyc
 .env
 config/
+CHANGELOG.md
 
 # Per-task worktree-resident hook artifacts written by bin/fm-spawn.sh's
 # busy-hook install (and scrubbed by bin/fm-teardown.sh on return to the

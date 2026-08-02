@@ -1,19 +1,27 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <string>] [--beads <id>] [--scout]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <string>] [--beads <id>] --secondmate
+# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--account <N>] [--label <string>] [--beads <id>] [--scout]
+#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <string>] --secondmate
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
+#   --account <N> is the optional per-account Claude Code isolation index (see
+#   docs/configuration.md "Multi-account Claude Code"). It requires the claude
+#   harness, records account=N in the task's meta, sets CLAUDE_TRUST_DIR to the
+#   task's worktree in the crewmate's launch environment, and launches through
+#   bin/claude-account.sh N instead of the plain claude binary. Absent means
+#   current behavior: plain claude, no account isolation.
 #   --backend <name> is the explicit runtime session-provider backend for this
-#   spawn. Without it, the script resolves FM_BACKEND, then config/backend, then
-#   runtime auto-detection (the runtime firstmate itself is executing inside -
-#   $TMUX, HERDR_ENV=1, or cmux runtime signals; bin/fm-backend.sh's
-#   fm_backend_detect, with cmux fallback details in docs/cmux-backend.md),
+#   exact task only (docs/configuration.md "Runtime backend" owns when that flag
+#   is authorized). Without it, the script resolves FM_BACKEND, then
+#   config/backend, then runtime auto-detection from the runtime firstmate's
+#   environment: $TMUX, HERDR_ENV=1, or cmux runtime signals (via
+#   bin/fm-backend.sh's fm_backend_detect, with cmux fallback details in
+#   docs/cmux-backend.md),
 #   then tmux.
 #   Spawn-capable backends are the reference tmux adapter and experimental
 #   herdr, zellij, orca, and cmux. Orca owns both the task worktree and
@@ -142,6 +150,14 @@
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<backend-target> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md for ship/scout tasks;
 # secondmate spawns record mode=secondmate, yolo=off, home=, and projects=.
+# --beads <id> links the spawn to a beads issue; meta records beads_id= when set.
+# Applies only to ship/scout spawns, not --secondmate.
+# After a successful spawn, every executable in bin/fm-spawn-hooks.d/ is sourced
+# (in its own subshell, so a hook's own exit cannot end this script) with
+# FM_HOOK_ID, FM_HOOK_HARNESS, FM_HOOK_BEADS_ID, FM_HOOK_WINDOW, FM_HOOK_STATE,
+# and FM_HOOK_ROOT set. Absent or empty fm-spawn-hooks.d/ is a no-op. This is
+# the extension point for out-of-tree post-spawn behavior (for example beads
+# dispatch tracking) so this file stays a pure addition target.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -213,12 +229,14 @@ EFFORT=
 BACKEND_ARG=
 LABEL_ARG=
 BEADS_ARG=
+ACCOUNT=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
 BACKEND_SET=0
 LABEL_SET=0
 BEADS_SET=0
+ACCOUNT_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -233,6 +251,7 @@ for a in "$@"; do
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       label) LABEL_ARG=$a; LABEL_SET=1 ;;
       beads) BEADS_ARG=$a; BEADS_SET=1 ;;
+      account) ACCOUNT=$a; ACCOUNT_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -253,6 +272,8 @@ for a in "$@"; do
     --label=*) LABEL_ARG=${a#--label=}; LABEL_SET=1 ;;
     --beads) want_value=beads ;;
     --beads=*) BEADS_ARG=${a#--beads=}; BEADS_SET=1 ;;
+    --account) want_value=account ;;
+    --account=*) ACCOUNT=${a#--account=}; ACCOUNT_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -263,10 +284,20 @@ done
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$LABEL_SET" -eq 0 ] || [ -n "$LABEL_ARG" ] || { echo "error: --label requires a non-empty value" >&2; exit 1; }
 [ "$BEADS_SET" -eq 0 ] || [ -n "$BEADS_ARG" ] || { echo "error: --beads requires a non-empty value" >&2; exit 1; }
+case "$BEADS_ARG" in
+  ''|*[!A-Za-z0-9._-]*) [ -z "$BEADS_ARG" ] || { echo "error: invalid --beads id" >&2; exit 1; } ;;
+esac
+[ -z "$BEADS_ARG" ] || [ "$KIND" != secondmate ] || { echo "error: --beads applies only to crewmate ship or scout tasks" >&2; exit 1; }
 case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
+if [ "$ACCOUNT_SET" -eq 1 ]; then
+  case "$ACCOUNT" in
+    ''|*[!0-9]*) echo "error: --account requires a positive integer" >&2; exit 1 ;;
+    0) echo "error: --account requires a positive integer" >&2; exit 1 ;;
+  esac
+fi
 
 # Backend selection (data/fm-backend-design-d7): explicit --backend, else
 # FM_BACKEND env, else config/backend, else runtime auto-detection, else
@@ -509,7 +540,7 @@ launch_template() {
     # does NOT suppress the interactive ghost text (verified empirically), so the env
     # var is the correct control. The dim-aware composer reader in fm-tmux-lib.sh is
     # the defense-in-depth backstop for any pane this flag cannot reach.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false __CLAUDEBIN__ --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -581,6 +612,11 @@ esac
 case "$HARNESS" in
   pi|pi-signed) LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH" ;;
 esac
+
+if [ -n "$ACCOUNT" ] && [ "$HARNESS" != claude ]; then
+  echo "error: --account requires the claude harness (got '$HARNESS')" >&2
+  exit 1
+fi
 
 # pi-signed is an explicitly selected executable identity, not an alias that may
 # silently fall back to pi. Resolve it from PATH before creating an endpoint and
@@ -910,6 +946,7 @@ if [ "$AUTO_BEADS_LINKED" -eq 1 ]; then
   for hook in "$FM_ROOT"/bin/fm-brief-hooks.d/*.sh; do
     [ -e "$hook" ] || continue
     # shellcheck source=/dev/null
+    # shellcheck disable=SC2030 # Deliberately subshell-local; fm-spawn-hooks.d's own block below sets it independently for its own hooks.
     hook_out=$(export FM_HOOK_BEADS_ID="$BEADS_ARG"; . "$hook") || continue
     [ -n "$hook_out" ] || continue
     if [ -n "$SPAWN_HOOK_SECTION" ]; then
@@ -1733,6 +1770,9 @@ META_WINDOW=$T
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  # account= is written only when --account was passed, matching the backend=
+  # convention below: absent means no per-account Claude Code isolation.
+  [ -z "$ACCOUNT" ] || echo "account=$ACCOUNT"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   [ -z "$LABEL_ARG" ] || echo "label=$LABEL_ARG"
   [ -z "$BEADS_ARG" ] || echo "beads_id=$BEADS_ARG"
@@ -1774,6 +1814,8 @@ sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
+CLAUDEBIN=claude
+[ -z "$ACCOUNT" ] || CLAUDEBIN="$(shell_quote "$FM_ROOT/bin/claude-account.sh") $ACCOUNT"
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
@@ -1782,6 +1824,11 @@ LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
+LAUNCH=${LAUNCH//__CLAUDEBIN__/$CLAUDEBIN}
+if [ -n "$ACCOUNT" ]; then
+  sq_trust_dir=$(shell_quote "$WT")
+  LAUNCH="CLAUDE_TRUST_DIR=$sq_trust_dir $LAUNCH"
+fi
 # Crewmate panes are created by a long-lived tmux/herdr daemon that does not
 # inherit firstmate's current environment, so a bare `claude` in the pane falls
 # back to the default ~/.claude store even when firstmate itself runs under a
@@ -1852,11 +1899,29 @@ if command -v parlay >/dev/null 2>&1; then
     || echo "warning: could not record parlay listen pid for $ID (non-blocking)" >&2
 fi
 
-# Best-effort bead dispatch stamp. fm-bead-stamp.sh is fail-open by design (a
-# missing task CLI or unreachable bead warns on stderr and exits 0), so this
-# never blocks or fails an already-confirmed spawn.
-if [ -n "$BEADS_ARG" ]; then
-  "$FM_ROOT/bin/fm-bead-stamp.sh" "$BEADS_ARG" "$ID" || true
-fi
-
 echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$META_WINDOW worktree=$WT"
+
+# Post-spawn extension point: source every executable in fm-spawn-hooks.d/ so
+# out-of-tree features (for example beads dispatch tracking, via
+# fm-spawn-hooks.d/beads.sh, which stamps the bead dispatched and registers a
+# bead-close watcher check) can react to a successful spawn without patching
+# this file. Absent or empty dir is a no-op.
+# Each hook runs in a subshell so a hook's own `exit` never terminates fm-spawn.sh,
+# keeping every hook fail-open by construction.
+SPAWN_HOOKS_DIR="$FM_ROOT/bin/fm-spawn-hooks.d"
+if [ -d "$SPAWN_HOOKS_DIR" ]; then
+  for hook in "$SPAWN_HOOKS_DIR"/*; do
+    [ -f "$hook" ] && [ -x "$hook" ] || continue
+    (
+      export FM_HOOK_ID=$ID
+      export FM_HOOK_HARNESS=$HARNESS
+      # shellcheck disable=SC2031 # Deliberately independent of fm-brief-hooks.d's own subshell-local export above.
+      export FM_HOOK_BEADS_ID=$BEADS_ARG
+      export FM_HOOK_WINDOW=$META_WINDOW
+      export FM_HOOK_STATE=$STATE
+      export FM_HOOK_ROOT=$FM_ROOT
+      # shellcheck disable=SC1090
+      . "$hook"
+    ) || echo "warning: spawn hook $hook exited non-zero" >&2
+  done
+fi

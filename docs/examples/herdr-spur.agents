@@ -1,0 +1,10 @@
+# fm-herdr-spur.sh watch list (copy to config/herdr-spur.agents to use).
+#
+# One herdr agent NAME per line. Blank lines and # comments are ignored.
+# When this file is absent AND no --agent flags are passed, fm-herdr-spur.sh
+# watches EVERY agent herdr reports (auto-track). List names here to restrict
+# the spur to specific externally-spawned agents (e.g. parlay-spawned ones).
+#
+# Example: only spur firstmate for these two external agents.
+muse
+parlay-dev

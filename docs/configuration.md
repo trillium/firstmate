@@ -81,7 +81,7 @@ Bootstrap's mutating sweep (beads backend only, real runs only) replays the queu
 For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.
 `tmux` is the verified reference backend (see [`docs/tmux-backend.md`](tmux-backend.md)); `herdr`, `zellij`, `orca`, and `cmux` are experimental spawn backends (see [`docs/herdr-backend.md`](herdr-backend.md), [`docs/zellij-backend.md`](zellij-backend.md), [`docs/orca-backend.md`](orca-backend.md), and [`docs/cmux-backend.md`](cmux-backend.md)).
 Treehouse remains the worktree provider for tmux, herdr, zellij, and cmux, since herdr, zellij, and cmux are session providers only; Orca provides both the task worktree and terminal endpoint.
-New spawns choose the backend in this order: an explicit `--backend` flag firstmate passes when it spawns a task, then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX`, `HERDR_ENV=1`, or cmux runtime signals, then default `tmux`.
+New spawns choose the backend in this order: an explicit `--backend` flag that current authority for that exact task alone has authorized (a present captain instruction or the task's own accepted brief; never later-task precedent by analogy), then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX`, `HERDR_ENV=1`, or cmux runtime signals, then default `tmux`.
 If more than one runtime marker is present, detection resolves innermost-first: `$TMUX` is checked before `HERDR_ENV=1`, which is checked before cmux's primary `CMUX_WORKSPACE_ID` marker and its documented fallback signals - tmux or herdr started from inside a cmux terminal is the innermost, currently-executing layer, while cmux itself (a terminal application, not a nestable multiplexer) is always checked last.
 See [`docs/cmux-backend.md`](cmux-backend.md#runtime-detection) for why cmux can be selected when `CMUX_WORKSPACE_ID` is absent.
 Auto-detected herdr or cmux prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve existing default behavior.
@@ -222,6 +222,17 @@ The full zellij home label also includes a short hash of the resolved `FM_ROOT` 
 For the cmux backend, `FM_CONFIG_OVERRIDE` overrides where `config/cmux-socket-password` is read from, while `FM_HOME` determines the default config path and readable home prefix embedded in workspace titles.
 The full cmux home label also includes a short hash of the resolved `FM_ROOT` path, and there is no per-home container split.
 
+## Isolated launch (bin/fm-isolated-launch.sh)
+
+`bin/fm-isolated-launch.sh` launches `claude` stripped of the operator's global `~/.claude/` PAI layer - no global CLAUDE.md @-imports, hooks, skills/agents, or auto-memory - while this repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load.
+Redirecting `HOME` alone is not enough, so it does two things: it points `HOME` at a fresh `$FM_ROOT/.fm-isolated-home` (override with `FM_ISOLATED_HOME`) to strip the `$HOME/.claude/` global config, and, because Claude Code also walks cwd's ancestor directories for `.claude/CLAUDE.md` independent of `HOME`, it mirrors the repo's tracked files into a detached git worktree outside the real home tree at `/private/tmp/fm-isolated-worktree` (override with `FM_ISOLATED_CWD`) and launches `claude` from there so that ancestor walk never reaches `~/.claude/CLAUDE.md`.
+The mirror is refreshed to the repo's current HEAD every launch, and the launch refuses rather than fall back to `$FM_ROOT` (nested under the real `$HOME`) if the mirror cannot be built.
+`FM_ROOT_OVERRIDE` is exported into the session so every `bin/` script still resolves firstmate's real `data/`, `state/`, `config/`, and `projects/`, and the isolated home's `data/` is symlinked at the real one so the federated `bd` store wrappers keep resolving under the real `$HOME`.
+The session runs in bypass-permissions (YOLO) autonomy - the same `claude --dangerously-skip-permissions` mode `fm-spawn.sh` uses for crewmates - re-applied every launch, so it does not stop for a tool-approval dialog.
+On macOS the first launch seeds the isolated home's file-based credential by copying the existing OAuth token read-only out of the real, already-unlocked Keychain, so the session reuses the same logged-in account; only when that extraction is impossible (non-macOS, no `security`, or no stored credential) does first run fall back to a login prompt.
+Later launches against the same isolated home reuse whatever credential file is already there.
+The script header is the authoritative owner of the full rationale and mechanics.
+
 ## Harness support
 
 claude, codex, opencode, pi, pi-signed, grok, and kimi are empirically verified for crewmate and secondmate launches; [README requirements](../README.md#requirements) own the set supported for the primary session.
@@ -254,6 +265,24 @@ The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
+## Multi-account Claude Code (bin/claude-account.sh, --account)
+
+A captain with more than one paid Claude subscription can have claude-harness crewmates draw from a second account's quota instead of competing with the primary session's own account.
+[`bin/claude-account.sh <N> [args...]`](../bin/claude-account.sh) is a standalone launcher (it works with no firstmate checkout on `PATH`) that sets `CLAUDE_CONFIG_DIR` to `~/.claude-homes/account<N>/.claude`, symlinks shared config (`commands`, `hooks`, `skills`, `mcp-configs`, `settings.json`, `settings.local.json`, `rules`, `agents`) in from `~/.claude/` idempotently, and pre-accepts the onboarding and trust-dialog prompts so a headless session doesn't hang.
+`.credentials.json` and `.claude.json` are never symlinked - they stay per-account real files, or OAuth tokens leak across accounts.
+`bin/claude-1.sh` and `bin/claude-2.sh` are one-line direct launchers (`claude-1.sh <args>` == `claude-account.sh 1 <args>`) for a human or an orchestrator to call.
+
+Seed an account's credentials once before first use:
+
+```
+CLAUDE_CONFIG_DIR=~/.claude-homes/account1/.claude claude /login
+```
+
+`fm-spawn.sh --account <N>` wires a ship or scout claude-harness spawn to a specific account: it records `account=N` in the task's `state/<id>.meta`, sets `CLAUDE_TRUST_DIR` to the task's worktree in the crewmate's launch environment so the correct directory gets pre-trusted, and launches through `bin/claude-account.sh N` instead of the plain `claude` binary.
+`--account` requires the claude harness and is strictly optional; absent means current behavior (plain `claude`, no account isolation).
+
+Full pattern, rationale, verification steps, and a capacity-aware routing reference: <https://gist.github.com/sjarmak/61e22d3625ecaac2279e8564d1b1b68f>.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
@@ -262,7 +291,7 @@ When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate 
 Batch spawns satisfy the same requirement with a shared `--harness`.
 Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
 This section is the single owner of the canonical schema and its per-field semantics.
-`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the pace-aware profile-array selection procedure.
+`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the completion-aware profile-array selection procedure.
 
 ```json
 {
