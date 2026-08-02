@@ -197,10 +197,16 @@ assert_not_contains_local "$PRIMARY_LIVE" "fm-cm2" "the primary home's list_live
 pass "real herdr E2E: list_live from the primary's own context sees only the primary's own task"
 
 SM_LIVE=$(FM_HOME="$SM_HOME" fm_backend_herdr_list_live "$SESSION")
-assert_contains_local "$SM_LIVE" "fm-e2esm1" "the secondmate home's list_live did not see its own task"
+# e2esm1's own tab carries the mate naming convention's uppercase
+# "<materank>-<scope>" label (2M-E2ESM1), not fm-e2esm1 - fm-spawn.sh labels a
+# --secondmate spawn's own live-agent tab with its mate label instead of the
+# ordinary fm-<id> task label (docs/herdr-backend.md "Mate naming
+# convention"), so list_live's fm-<id> task filter deliberately does not
+# surface it here.
+assert_not_contains_local "$SM_LIVE" "fm-e2esm1" "the secondmate home's list_live must not see a fm-<id>-labeled tab for its own mate identity, which is labeled 2M-E2ESM1 instead"
 assert_contains_local "$SM_LIVE" "fm-cm2" "the secondmate home's list_live did not see the crewmate spawned from it"
 assert_not_contains_local "$SM_LIVE" "fm-cm1" "the secondmate home's list_live must not see the primary's task"
-pass "real herdr E2E: list_live from the secondmate's own context sees only tasks in the secondmate's own workspace (both its own tab and its crewmate's)"
+pass "real herdr E2E: list_live from the secondmate's own context sees only the fm-<id> task tabs in its own workspace (its crewmate's, not its own mate tab)"
 
 # --- 5. teardown closes the RIGHT tab, and no other ------------------------
 
