@@ -57,8 +57,8 @@
 # never overrides a real invocation. It exists only so this file's own unit
 # tests, which source it directly without that preamble, resolve to a sane
 # default (the firstmate repo root - never a secondmate home, so
-# fm_backend_herdr_workspace_label falls through to "firstmate" exactly like
-# pre-P3 behavior when a test does not care about home-specific labeling).
+# fm_backend_herdr_workspace_label falls through to "1M-FIRSTMATE" when a
+# test does not care about home-specific labeling).
 FM_BACKEND_HERDR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BACKEND_HERDR_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
@@ -142,10 +142,10 @@ fm_backend_herdr_presentation_enabled() {  # <config-dir>
 }
 
 # fm_backend_herdr_workspace_label: the per-firstmate-HOME herdr workspace
-# label (docs/herdr-backend.md "Default task container shape"). The PRIMARY home (no
-# secondmate marker) resolves to the constant "firstmate", byte-identical to
-# every pre-existing task's recorded label - no forced migration. A SECONDMATE
-# home resolves to "2ndmate-<secondmate-id>", so its tasks land in their own
+# label (docs/herdr-backend.md "Mate naming convention"), always uppercase
+# "<materank>-<scope>". The PRIMARY home (no secondmate marker) resolves to
+# the constant "1M-FIRSTMATE". A SECONDMATE home resolves to
+# "2M-<fm_backend_herdr_mate_scope-of-its-id>", so its tasks land in their own
 # workspace, obviously distinguishable from the primary's (and from every
 # other secondmate's) in herdr's spaces sidebar. Read fresh from FM_HOME on
 # every call rather than cached at source time: FM_HOME is the home's own
@@ -157,13 +157,16 @@ fm_backend_herdr_presentation_enabled() {  # <config-dir>
 fm_backend_herdr_workspace_label() {
   local marker="$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" id
   if [ -f "$marker" ]; then
-    id=$(tr -d '[:space:]' < "$marker" 2>/dev/null)
-    if [ -n "$id" ]; then
-      printf '2ndmate-%s' "$id"
-      return 0
-    fi
+    id=$(cat "$marker" 2>/dev/null)
+    # Trim only outer whitespace here; fm_backend_herdr_mate_scope is what
+    # normalizes any embedded separator (space, newline, ...) to "-", so
+    # stripping it here first would silently merge distinct ids together.
+    id="${id#"${id%%[![:space:]]*}"}"
+    id="${id%"${id##*[![:space:]]}"}"
+    printf '2M-%s' "$(fm_backend_herdr_mate_scope "$id")"
+    return 0
   fi
-  printf 'firstmate'
+  printf '1M-FIRSTMATE'
 }
 
 # fm_backend_herdr_cli: run `herdr <args...>` scoped to <session>, setting
@@ -672,7 +675,10 @@ fm_backend_herdr_projection_close_pane_focus_preserving() {  # <session> <pane-i
 # returned by THIS projected create immediately after its owning parent's
 # contiguous child block and before the next parent.
 #
-# <parent-label> is the owning FM_HOME label (firstmate or 2ndmate-<id>).
+# <parent-label> is the owning FM_HOME label (docs/herdr-backend.md "Mate
+# naming convention": 1M-FIRSTMATE or 2M-<scope>, or - read-only, for
+# already-adjacent pre-existing workspaces - the legacy firstmate/2ndmate-<id>
+# form).
 # Optional <parent-workspace-id> is that parent's EXACT id, which the caller
 # already resolved from the launching agent's own herdr identity. When given it
 # anchors the owning parent by id, so two workspaces sharing the home label no
@@ -712,7 +718,9 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
       end;
     def is_top_level_parent:
       (.label | type) == "string"
-      and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")));
+      and ((.label == "firstmate")
+           or (.label | test("^2ndmate-[^/]+$"))
+           or (.label | test("^[0-9]+M-[A-Z0-9-]+$")));
     def is_new_child:
       (.label | type) == "string"
       and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
@@ -898,7 +906,7 @@ fm_backend_herdr_workspace_find_all() {  # <session>
   # NOTE: the jq variable is $want, NOT $label - `label` is a jq reserved
   # keyword (label/break), so declaring a jq variable named "label" is a
   # compile error that `2>/dev/null` would silently swallow, making this find
-  # ALWAYS return empty and every spawn mint a fresh "firstmate" workspace
+  # ALWAYS return empty and every spawn mint a fresh "1M-FIRSTMATE" workspace
   # (the workspace leak).
   printf '%s' "$list" | jq -r --arg want "$label" \
     '.result.workspaces[]? | select(.label == $want) | .workspace_id' 2>/dev/null

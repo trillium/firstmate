@@ -36,9 +36,9 @@ Real harness credential tests remain opt-in rather than part of default CI.
 
 The ordinary topology puts one task tab per endpoint in the exact workspace of the Firstmate or secondmate that launches it.
 When the launcher has no Herdr workspace to inherit, the adapter maintains one durable home-labeled workspace instead.
-The primary home label is `firstmate`.
-A secondmate home label is `2ndmate-<secondmate-id>`, derived from its validated `.fm-secondmate-home` marker.
-A secondmate launched by the primary receives a narrowly scoped home override during container creation.
+The primary home label is `1M-FIRSTMATE`.
+A secondmate home label is `2M-<SCOPE>`, uppercase and derived from its validated `.fm-secondmate-home` marker id; see "Mate naming convention" below for the full contract.
+A secondmate launched by the primary receives a narrowly scoped home override during container creation, and its own live-agent tab (not only its workspace) carries the same uppercase mate label.
 
 Attach to the selected named Herdr session and switch to the relevant home workspace to watch its task tabs.
 Routine supervision uses `bin/fm-peek.sh <id>` and `FM_HOME=<home> bin/fm-send.sh <id> '<text>'` without attaching.
@@ -58,8 +58,9 @@ That covers a missing or unusable socket identity, a closed or unreadable launch
 
 Firstmate running outside Herdr entirely has no launcher workspace to inherit, so its workers use this home's own labeled workspace, created on first use.
 That path needs the home label to identify exactly one workspace: two workspaces sharing it are an unresolvable placement and refuse rather than adopting either.
-Avoid naming a personal workspace `firstmate` or `2ndmate-<id>` for that reason, and because the adapter cannot distinguish that label collision from its own container.
-An older secondmate workspace using `firstmate-<id>` is not migrated automatically; rename it manually before expecting new tasks or recovery to use it.
+Avoid naming a personal workspace `1M-FIRSTMATE` or `2M-<SCOPE>` for that reason, and because the adapter cannot distinguish that label collision from its own container.
+An older secondmate workspace using `2ndmate-<id>` is not migrated automatically; rename it manually before expecting new tasks or recovery to use it.
+An installation upgrading from the pre-mate-naming-convention `firstmate`/`2ndmate-<id>` labels is not migrated either: the first spawn into an already-running home mints a fresh `1M-FIRSTMATE`/`2M-<SCOPE>` workspace rather than adopting the old one, leaving the old workspace behind to close or merge manually.
 Recovery and list-live still scan the first workspace matching the home label, because they address panes they already recorded rather than choosing where new work goes.
 
 Existing task operations use recorded endpoint ids and do not move a live task when labels change.
