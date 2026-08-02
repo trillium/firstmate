@@ -37,11 +37,12 @@
 # stdout is prepended to the generated brief. The beads hook (fm-brief-hooks.d/beads.sh)
 # is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt and
 # Bead Closure sections that ask the worker to confirm dispatch/lifecycle state changes
-# and close the bead on completion. Under config/backlog-backend=beads, FM_HOOK_BEADS_ID
-# is auto-populated (same fm_beads_resolve_or_create lookup-or-mint fm-spawn.sh uses, so
-# both scripts converge on the same bead) for every ship/scout brief; an explicit
-# FM_HOOK_BEADS_ID always wins, and secondmate charters are exempt (beads-authority
-# migration Stage 3).
+# and close the bead on completion. FM_HOOK_BEADS_ID is never auto-populated here: bead
+# minting/resolution is deliberately deferred to fm-spawn.sh (beads-authority migration
+# Stage 3), which is the point where a task is actually dispatched, so a brief that is
+# scaffolded but never spawned never leaves an orphaned bead in the shared store. This
+# section only renders when a caller sets FM_HOOK_BEADS_ID explicitly before scaffolding
+# (the pre-existing --beads opt-in path); secondmate charters are exempt.
 # For ship tasks, the definition of done is shaped by the project's delivery mode
 # (data/projects.md via fm-project-mode.sh; see the project-management skill
 # and AGENTS.md task lifecycle):
@@ -130,13 +131,6 @@ if [ -n "${FM_STATE_OVERRIDE:-}" ]; then
 else
   STATE="$FM_HOME/state"
 fi
-if [ -n "${FM_CONFIG_OVERRIDE:-}" ]; then
-  CONFIG=$(resolve_directory_input FM_CONFIG_OVERRIDE "$FM_CONFIG_OVERRIDE") || exit 1
-else
-  CONFIG="$FM_HOME/config"
-fi
-# shellcheck source=bin/fm-tasks-axi-lib.sh
-. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -309,15 +303,13 @@ fi
 REPO=${POS[1]}
 
 # beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
-# "Stage 3"): under config/backlog-backend=beads, resolve or mint this task's bead
-# the same way fm-spawn.sh does (fm_beads_resolve_or_create, label task:<id>) so
-# both scripts converge on the same bead regardless of call order, and the Bead
-# Receipt/Closure hook below fires without requiring an explicit --beads flag. An
-# already-set FM_HOOK_BEADS_ID (e.g. from an explicit --beads spawn) always wins.
-# Fails open: a resolve failure leaves FM_HOOK_BEADS_ID unset, same as today.
-if [ -z "${FM_HOOK_BEADS_ID:-}" ] && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
-  FM_HOOK_BEADS_ID=$(fm_beads_resolve_or_create "$ID") || FM_HOOK_BEADS_ID=
-fi
+# "Stage 3"): bead minting/resolution under config/backlog-backend=beads happens only
+# in fm-spawn.sh, at actual dispatch time, not here. Minting here at scaffold time
+# would create a bead the moment a brief is written, before the task is ever spawned;
+# if the captain declines after review or spawn fails, that bead would be permanently
+# orphaned in the shared store since no state/<id>.meta ever records its beads_id= for
+# fm-teardown.sh to close. FM_HOOK_BEADS_ID is therefore left exactly as the caller set
+# it (unset unless an explicit --beads workflow pre-populated it).
 
 # Hook system (see header comment above): scripts in fm-brief-hooks.d/ are sourced
 # in a subshell, and any stdout they produce is collected into HOOK_SECTION and

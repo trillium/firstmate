@@ -141,8 +141,9 @@ test_beads_resolve_or_create_mints_when_absent() {
 }
 
 # Test: fm_beads_resolve_or_create() reuses an existing task:<id>-labeled bead
-# instead of minting a duplicate, so fm-spawn.sh and fm-brief.sh converge on the
-# same bead regardless of which one runs first.
+# instead of minting a duplicate, so a resolution against an id that was already
+# linked (e.g. an explicit --beads spawn, or a prior successful spawn attempt)
+# never mints a second bead for the same task.
 test_beads_resolve_or_create_reuses_existing() {
   local dir fakebin calls_log id
   dir="$TMP_ROOT/resolve-reuse"
