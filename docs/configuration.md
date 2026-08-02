@@ -224,8 +224,14 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 ## Isolated launch (bin/fm-isolated-launch.sh)
 
-`bin/fm-isolated-launch.sh` launches `claude` with `HOME` redirected to a fresh `$FM_ROOT/.fm-isolated-home` (override with `FM_ISOLATED_HOME`), so the session gets none of the operator's global `~/.claude/` layer - no global CLAUDE.md @-imports, hooks, skills/agents, or auto-memory - while this repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load normally, since those resolve relative to cwd, not `HOME`.
-First launch under a fresh isolated home requires logging into Claude Code again, since no auth or session state is copied from the real `~/.claude.json`; later launches against the same isolated home reuse whatever that login produced.
+`bin/fm-isolated-launch.sh` launches `claude` stripped of the operator's global `~/.claude/` PAI layer - no global CLAUDE.md @-imports, hooks, skills/agents, or auto-memory - while this repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load.
+Redirecting `HOME` alone is not enough, so it does two things: it points `HOME` at a fresh `$FM_ROOT/.fm-isolated-home` (override with `FM_ISOLATED_HOME`) to strip the `$HOME/.claude/` global config, and, because Claude Code also walks cwd's ancestor directories for `.claude/CLAUDE.md` independent of `HOME`, it mirrors the repo's tracked files into a detached git worktree outside the real home tree at `/private/tmp/fm-isolated-worktree` (override with `FM_ISOLATED_CWD`) and launches `claude` from there so that ancestor walk never reaches `~/.claude/CLAUDE.md`.
+The mirror is refreshed to the repo's current HEAD every launch, and the launch refuses rather than fall back to `$FM_ROOT` (nested under the real `$HOME`) if the mirror cannot be built.
+`FM_ROOT_OVERRIDE` is exported into the session so every `bin/` script still resolves firstmate's real `data/`, `state/`, `config/`, and `projects/`, and the isolated home's `data/` is symlinked at the real one so the federated `bd` store wrappers keep resolving under the real `$HOME`.
+The session runs in bypass-permissions (YOLO) autonomy - the same `claude --dangerously-skip-permissions` mode `fm-spawn.sh` uses for crewmates - re-applied every launch, so it does not stop for a tool-approval dialog.
+On macOS the first launch seeds the isolated home's file-based credential by copying the existing OAuth token read-only out of the real, already-unlocked Keychain, so the session reuses the same logged-in account; only when that extraction is impossible (non-macOS, no `security`, or no stored credential) does first run fall back to a login prompt.
+Later launches against the same isolated home reuse whatever credential file is already there.
+The script header is the authoritative owner of the full rationale and mechanics.
 
 ## Harness support
 
