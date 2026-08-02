@@ -134,6 +134,8 @@ cmux is experimental, GUI-first, macOS-only, and can be selected explicitly or b
 cmux's container shape is one workspace per task with one surface, no per-home container split; workspace titles are scoped by the active home label plus a short hash of the resolved `FM_ROOT` path, and `--secondmate` spawns are refused, mirroring Orca.
 Codex App support is recorded in `docs/codex-app-backend.md`; it is not selectable as a runtime backend.
 
+`bin/fm-remote-launch.sh` is a separate, EXPERIMENTAL, explicitly transitional launcher for a crewmate on a named "mini" (mini1/mini2/mini3/...) over the herdr-web bridge; it is deliberately kept outside this runtime-backend contract - not a `bin/backends/*.sh` adapter, not wired into `fm-backend.sh` dispatch, and not called from `fm-spawn.sh`/`fm-teardown.sh`/`fm-watch.sh` - so it can be deleted or handed off to Parlay's future spawn primitive without touching them. It never injects git/gh credentials into a remote pane, refusing instead when the mini lacks working `gh auth status`. See the script's own header for its full design rationale and state contract.
+
 ## Worktrees, not branches in your checkout
 
 Crewmates never intentionally touch your project clone; [treehouse](https://github.com/kunchenguid/treehouse) pools clean worktrees for tmux, herdr, zellij, and cmux tasks, while Orca creates its own worktrees for `backend=orca`.
