@@ -857,7 +857,7 @@ EOF
 }
 
 test_session_lock_concurrent_single_winner() {
-  local rec root home fakebin ready completed winners pids i pid count
+  local rec root home fakebin ready completed winners pids i pid count worker_script
   rec=$(new_world lock-concurrency)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -897,26 +897,33 @@ esac
 SH
   chmod +x "$fakebin/ps"
 
+  # Bash 3.2 (stock macOS) has no BASHPID, and a plain "( ... ) &" subshell
+  # keeps its parent's $$ rather than getting its own - so each racer is
+  # spawned as a genuine "bash -c" process instead, whose own $$ is real and
+  # unique on every bash version and stays live for fm_harness_pid_alive's
+  # kill -0 check for as long as the racer is still running.
+  worker_script='
+    home=$1; ready=$2; completed=$3; winners=$4; fakebin=$5; base_path=$6; root=$7; i=$8
+    harness_pid=$$
+    : > "$home/state/harness-$harness_pid"
+    : > "$ready/$i"
+    while [ "$(find "$ready" -type f | wc -l | tr -d " ")" -lt 40 ]; do
+      sleep 0.01
+    done
+    if FM_HOME="$home" FM_FAKE_LOCK_STATE="$home/state" \
+      FM_FAKE_HARNESS_PID="$harness_pid" PATH="$fakebin:$base_path" \
+      "$root/bin/fm-lock.sh" >/dev/null 2>&1; then
+      printf "%s\n" "$harness_pid" >> "$winners"
+    fi
+    : > "$completed/$i"
+    while [ "$(find "$completed" -type f | wc -l | tr -d " ")" -lt 40 ]; do
+      sleep 0.01
+    done
+  '
   pids=
   i=1
   while [ "$i" -le 40 ]; do
-    (
-      harness_pid=$BASHPID
-      : > "$home/state/harness-$harness_pid"
-      : > "$ready/$i"
-      while [ "$(find "$ready" -type f | wc -l | tr -d ' ')" -lt 40 ]; do
-        sleep 0.01
-      done
-      if FM_HOME="$home" FM_FAKE_LOCK_STATE="$home/state" \
-        FM_FAKE_HARNESS_PID="$harness_pid" PATH="$fakebin:$BASE_PATH" \
-        "$ROOT/bin/fm-lock.sh" >/dev/null 2>&1; then
-        printf '%s\n' "$harness_pid" >> "$winners"
-      fi
-      : > "$completed/$i"
-      while [ "$(find "$completed" -type f | wc -l | tr -d ' ')" -lt 40 ]; do
-        sleep 0.01
-      done
-    ) &
+    bash -c "$worker_script" _ "$home" "$ready" "$completed" "$winners" "$fakebin" "$BASE_PATH" "$ROOT" "$i" &
     pids="$pids $!"
     i=$((i + 1))
   done
