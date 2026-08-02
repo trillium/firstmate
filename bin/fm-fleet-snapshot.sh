@@ -24,9 +24,16 @@
 #     fleet_label (the queried fleet label), records_truncated, and
 #     records_limit, and records[] holds this fleet's open/in_progress/blocked
 #     beads (state queued/in_flight only, always structured:true with empty
-#     blocked_by_ids and requires_child_metadata/captain_actionable false); a
-#     failed or unavailable beads read falls back to the data/backlog.md shape
-#     above with no beads-only fields. Default-backend output is unaffected.
+#     blocked_by_ids and requires_child_metadata false). A record carrying the
+#     `captain-hold` label (bin/fm-decision-hold.sh's beads-native hold anchor;
+#     see docs/decision-hold-lifecycle.md) reads hold_kind:"captain",
+#     hold_reason from the anchor's own metadata.hold_reason, current_role
+#     "held", and captain_actionable true, straight from the same `task list
+#     --json` read with no extra beads calls; a resolved hold's anchor is
+#     closed and so is absent from this query entirely, hiding it without
+#     further work. A failed or unavailable beads read falls back to the
+#     data/backlog.md shape above with no beads-only fields. Default-backend
+#     output is unaffected.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
 #     state, source, detail, and raw line separately.
@@ -419,16 +426,24 @@ backlog_json_markdown() {  # [<backlog-path>] - defaults to this home's $BACKLOG
 }
 
 # backlog_json_beads [<backlog-path>] - beads-authority migration Stage 1
-# (data/beads-authority-migration-scout/report.md section 4). Reads this
-# fleet's in-flight/queued beads, scoped by fm_beads_fleet_label, into the
-# same fm-fleet-snapshot.v1 records[] shape backlog_json_markdown produces.
-# Only status open/in_progress/blocked beads are fetched (closed beads are
-# out of scope for an in-flight/queued view). Dependency-graph fields
-# (blocked_by_ids, hold_reason/hold_kind) and local state/*.meta correlation
-# are later-stage work per the report and are left empty/null here; a
-# beads-sourced record is always structured:true with
-# requires_child_metadata:false and captain_actionable:false so it can never
-# be mistaken for an orphaned or unstructured row by main_inventory_json.
+# (data/beads-authority-migration-scout/report.md section 4), extended in
+# Stage 4 for captain-hold visibility. Reads this fleet's in-flight/queued
+# beads, scoped by fm_beads_fleet_label, into the same fm-fleet-snapshot.v1
+# records[] shape backlog_json_markdown produces. Only status
+# open/in_progress/blocked beads are fetched (closed beads are out of scope
+# for an in-flight/queued view). A record carrying the `captain-hold` label
+# is a bin/fm-decision-hold.sh hold anchor: its open status in this query
+# already proves the hold is active (that script never leaves an anchor open
+# without an active gate, and self-heals if it finds one), so hold_kind,
+# hold_reason (from the anchor's own metadata.hold_reason), current_role, and
+# captain_actionable are derived straight from this one read - no extra
+# `task show` call per record. A resolved hold's anchor is closed and so
+# never appears here, hiding it with no further work needed.
+# General dependency-graph fields (blocked_by_ids for non-hold records) and
+# local state/*.meta correlation remain later-stage work and are left
+# empty/null here; every beads-sourced record is always structured:true with
+# requires_child_metadata:false so it can never be mistaken for an orphaned
+# or unstructured row by main_inventory_json.
 # <backlog-path> is accepted for signature parity with backlog_json_markdown
 # but only used as the markdown-fallback path when the beads read fails.
 backlog_json_beads() {  # [<backlog-path>] - defaults to this home's $BACKLOG
@@ -454,6 +469,10 @@ backlog_json_beads() {  # [<backlog-path>] - defaults to this home's $BACKLOG
     def body_excerpt:
       (.description // "") as $d
       | if ($d | length) == 0 then null else ($d[:240]) end;
+    def is_captain_hold:
+      (.labels // []) | index("captain-hold") != null;
+    def hold_reason_of:
+      (.metadata.hold_reason // null);
     {path:$path,
      present:true,
      source:"beads",
@@ -461,7 +480,8 @@ backlog_json_beads() {  # [<backlog-path>] - defaults to this home's $BACKLOG
      records_truncated:$truncated,
      records_limit:$limit,
      records:[
-       to_entries[] | (.key + 1) as $order | .value | ((.id // "?") as $id | (.title // "(untitled)") as $title | {
+       to_entries[] | (.key + 1) as $order | .value | ((.id // "?") as $id | (.title // "(untitled)") as $title |
+         is_captain_hold as $held | hold_reason_of as $reason | {
          order:$order,
          state:state_of,
          structured:true,
@@ -471,8 +491,8 @@ backlog_json_beads() {  # [<backlog-path>] - defaults to this home's $BACKLOG
          repo:null,
          kind:null,
          priority:(.priority | tostring),
-         hold_reason:null,
-         hold_kind:null,
+         hold_reason:(if $held then $reason else null end),
+         hold_kind:(if $held then "captain" else null end),
          blocked_by:null,
          blocked_by_ids:[],
          blocked_reason:null,
@@ -489,9 +509,9 @@ backlog_json_beads() {  # [<backlog-path>] - defaults to this home's $BACKLOG
          body_lines:[],
          body_excerpt:body_excerpt,
          unresolved_blocker_ids:[],
-         current_role:(if state_of == "in_flight" then "worker" else "queued" end),
+         current_role:(if $held then "held" elif state_of == "in_flight" then "worker" else "queued" end),
          requires_child_metadata:false,
-         captain_actionable:false
+         captain_actionable:($held and state_of == "queued" and $reason != null)
        })
      ]}
   '
