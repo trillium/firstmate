@@ -52,10 +52,30 @@
 # leased home releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
-# Usage: fm-teardown.sh <task-id> [--force]
+# A clean teardown best-effort deregisters the task from Parlay's live chat
+# panel (see bin/fm-spawn.sh's header for the enrollment contract): the recorded
+# `parlay listen` background pid is always killed, and `parlay agent-down` is
+# called only when `parlay` is on PATH. Neither ever blocks or fails teardown.
+# A task linked to a bead (beads_id= in meta, set by fm-spawn.sh --beads or
+# auto-linked under config/backlog-backend=beads) has that
+# bead closed automatically once teardown reaches this point without --force, i.e.
+# every landed-work gate above already passed. --force never closes the linked bead,
+# since --force tears down without confirming the work landed. Closing is fail-open
+# like fm-bead-stamp.sh: a missing task CLI or a close the CLI rejects warns on
+# stderr and never blocks or fails an already-confirmed teardown. bin/fm-ledger.sh
+# is the safety net for a bead that was claimed but never reaches this path.
+# Usage: fm-teardown.sh <task-id> [--force | --staleness-autoclose [<idle-since-epoch>]]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
+#   --staleness-autoclose is bin/fm-watch.sh's idle>2h backstop for kind=ship
+#   tasks only: work_is_landed decides the branch. Landed falls through to the
+#   ordinary teardown above unchanged. Unlanded reclaims only the runtime
+#   endpoint and firstmate's own tracking state (never the worktree, its
+#   branch, or any uncommitted change) and files a bin/fm-staleness-file.sh bead
+#   recording the worktree, branch, harness, and idle-since timestamp for later
+#   triage - deletion happens only during that deliberate triage, still under
+#   the never-discard-unlanded-work guard.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
@@ -98,6 +118,8 @@ SECONDMATE_REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-lock-lib.sh
@@ -114,6 +136,18 @@ if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
 fi
 ID=$1
 FORCE=${2:-}
+# --staleness-autoclose (bin/fm-watch.sh's idle>2h backstop): resolve landed vs
+# unlanded via work_is_landed and either fall through to the ordinary teardown
+# below (landed - FORCE reset to "" so it behaves exactly like a plain call) or
+# take the staleness_chat_only_teardown branch (unlanded - kill only the runtime
+# endpoint, file a staleness-store bead, and never touch the worktree). The
+# optional third argument is the idle-since epoch, recorded on the filed bead.
+STALENESS_AUTOCLOSE=0
+STALENESS_IDLE_SINCE=${3:-}
+if [ "$FORCE" = "--staleness-autoclose" ]; then
+  STALENESS_AUTOCLOSE=1
+  FORCE=""
+fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -148,6 +182,11 @@ KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
+if [ "$STALENESS_AUTOCLOSE" = 1 ] && [ "$KIND" != ship ]; then
+  echo "error: staleness auto-close only supports kind=ship tasks (task $ID is kind=$KIND)" >&2
+  exit 1
+fi
+BEADS_ID=$(fm_meta_get "$META" beads_id)
 PUBLIC_FOLLOWUP_HOME=$FM_HOME
 PUBLIC_FOLLOWUP_STATE=$STATE
 PUBLIC_FOLLOWUP_WORK_HOME=main
@@ -292,6 +331,48 @@ retire_busy_state() {
   fi
 }
 
+# Best-effort Parlay deregistration (bin/fm-spawn.sh's header owns enrollment).
+# The recorded background pid is killed unconditionally so a `parlay` that went
+# missing from PATH between spawn and teardown never orphans it; only the final
+# `parlay agent-down` network call is gated on `parlay` being present.
+deregister_parlay_agent() {
+  local state_dir=$1 id=$2 pid_file pid
+  pid_file="$state_dir/$id.parlay-listen-pid"
+  pid=$(cat "$pid_file" 2>/dev/null || true)
+  case "$pid" in ''|*[!0-9]*) ;; *) kill "$pid" 2>/dev/null || true ;; esac
+  rm -f "$pid_file"
+  if command -v parlay >/dev/null 2>&1; then
+    parlay agent-down "$id" >/dev/null 2>&1 \
+      || echo "warning: parlay agent-down failed for $id (non-blocking)" >&2
+  fi
+}
+
+# Close the bead linked to this task (beads_id= in meta, set by fm-spawn.sh --beads
+# or auto-linked under config/backlog-backend=beads) once its work is confirmed
+# landed. Only called for a non-force teardown that
+# reached this point, i.e. every REFUSED landed-work gate above already passed.
+# Fail-open by design, matching fm-bead-stamp.sh: a missing task CLI warns on
+# stderr and never blocks or fails an already-confirmed teardown. Any close
+# failure - store unreachable, a transient write-path outage while reads still
+# succeed, or a genuine conflict - is queued via fm-beads-resilience-lib.sh for
+# replay once the store recovers (beads-authority-migration Stage 5 resilience
+# layer, report.md section 5), so the confirmed-landed close is never silently
+# dropped; fm_beads_write_queue_reconcile treats a bead already reported closed
+# on replay as reconciled rather than retrying it forever.
+close_linked_bead() {
+  local beads_id=$1 id=$2 reason
+  reason="landed: firstmate task $id teardown confirmed work landed"
+  command -v task >/dev/null 2>&1 || {
+    echo "warning: task CLI not found on PATH, could not close bead $beads_id for $id" >&2
+    return 0
+  }
+  if task close "$beads_id" --reason "$reason" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "warning: could not close bead $beads_id for $id, queuing for retry" >&2
+  fm_beads_write_enqueue "$beads_id" "close: $id" close "$beads_id" --reason "$reason" || true
+}
+
 validate_pr_poll_cleanup() {
   local state_dir=$1 id=$2 quarantine state_device artifact has_artifact=0
   fm_task_id_path_safe "$id" || return 0
@@ -360,7 +441,7 @@ remove_pr_poll_artifacts() {
   fm_pr_poll_retirement_recover_one "$state_dir" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" || return 1
   rm -f "$state_dir/$id.check.sh" "$state_dir/$id.pr-poll" \
     "$state_dir/$id.pr-poll-registration" "$state_dir/$id.pr-poll-retirement" \
-    "$state_dir/$id.check-trust" || return 1
+    "$state_dir/$id.pr-review-seen" "$state_dir/$id.check-trust" || return 1
   if fm_task_id_path_safe "$id"; then
     quarantine="$state_dir/.pr-check-quarantine"
     if [ -d "$quarantine" ] && [ ! -L "$quarantine" ]; then
@@ -371,6 +452,53 @@ remove_pr_poll_artifacts() {
       rmdir "$quarantine" 2>/dev/null || true
     fi
   fi
+}
+
+# Best-effort uncommitted/unpushed summary for a staleness-store bead. Read-only
+# (git status/log against $1); never writes into the worktree.
+staleness_worktree_summary() {
+  local wt=$1 dirty unpushed
+  dirty=$(git -C "$wt" status --porcelain 2>/dev/null | head -20)
+  unpushed=$(git -C "$wt" log --oneline HEAD --not --remotes -- 2>/dev/null | head -20)
+  printf 'uncommitted changes:\n%s\nunpushed commits:\n%s' "${dirty:-<none>}" "${unpushed:-<none>}"
+}
+
+# --staleness-autoclose, unlanded branch: reclaim the expensive live process for
+# a task whose worktree has not landed (work_is_landed already returned false),
+# file it to the staleness triage store, and leave the worktree, its branch, and
+# every uncommitted change on disk exactly as-is - deletion happens only later,
+# during deliberate triage. Mirrors the fail-open external-CLI pattern used by
+# close_linked_bead(): a missing/failing staleness CLI never blocks reclaim.
+staleness_chat_only_teardown() {
+  local harness purpose summary bead_out
+  fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+  remove_grok_turnend_auth "$STATE" "$ID"
+  remove_kimi_turnend_auth "$STATE" "$ID"
+  deregister_parlay_agent "$STATE" "$ID"
+  fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
+  remove_pr_poll_artifacts "$STATE" "$ID" || true
+  retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || true
+  harness=$(meta_value "$META" harness)
+  purpose=""
+  if [ -f "$DATA/$ID/brief.md" ]; then
+    purpose=$(awk '/^# Task/{f=1;next} f && NF {print; exit}' "$DATA/$ID/brief.md" 2>/dev/null || true)
+  fi
+  summary=$(staleness_worktree_summary "$WT")
+  bead_out=$("$SCRIPT_DIR/fm-staleness-file.sh" "$ID" "$purpose" "$WT" "$STALENESS_BRANCH" "$PROJ" \
+    "${harness:-unknown}" "$STALENESS_IDLE_SINCE" "$summary" 2>&1) || true
+  [ -z "$bead_out" ] || printf '%s\n' "$bead_out"
+  # fm-staleness-file.sh is fail-open (always exits 0), so a failed filing is
+  # only visible by the absence of its success line. $ID.meta is about to be
+  # removed below, so on failure write a durable fallback record first -
+  # otherwise a preserved unlanded worktree loses its only location pointer.
+  if ! printf '%s\n' "$bead_out" | grep -q '^filed staleness bead '; then
+    printf 'task: %s\npurpose: %s\nworktree: %s\nbranch: %s\nproject: %s\nharness: %s\nidle since: %s\n' \
+      "$ID" "${purpose:-unknown}" "$WT" "${STALENESS_BRANCH:-unknown}" "${PROJ:-unknown}" \
+      "${harness:-unknown}" "$STALENESS_IDLE_SINCE" > "$STATE/$ID.staleness-unfiled"
+  fi
+  rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
+    "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
+  echo "staleness auto-close $ID: chat reclaimed, worktree $WT preserved for triage"
 }
 
 # Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
@@ -443,6 +571,15 @@ $unpushed
 EOF
 }
 
+squash_merged_pr_contains_work() {
+  local pr_head=$1 pr_tree merged_tree
+  pr_tree=$(git -C "$WT" rev-parse --quiet --verify "$pr_head^{tree}" 2>/dev/null) || return 1
+  [ -n "$pr_tree" ] || return 1
+  merged_tree=$(git -C "$WT" merge-tree --write-tree "$pr_head" HEAD 2>/dev/null) || return 1
+  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
+  [ "$merged_tree" = "$pr_tree" ]
+}
+
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
 # PR from the recorded pr= URL first, then from the branch name, and asks GitHub
 # for both the PR state and head. Returns non-zero when the PR is not merged, the
@@ -468,7 +605,8 @@ pr_is_merged() {
   ensure_commit_object "$target" "$head" || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null && return 0
-  unpushed_patches_are_in_pr_head "$head"
+  unpushed_patches_are_in_pr_head "$head" && return 0
+  squash_merged_pr_contains_work "$head"
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
@@ -530,6 +668,8 @@ backlog_refresh_reminder() {
         ;;
     esac
     printf '%s\n' "Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+  elif [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+    printf '%s\n' "Backlog: $ID just finished. The beads store has been updated with the completion status. Run task list --ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else
     printf '%s\n' "Backlog: $ID just finished. Update data/backlog.md - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
   fi
@@ -1271,6 +1411,7 @@ cleanup_firstmate_home_children() {
     fi
     remove_grok_turnend_auth "$sub_state" "$child_id"
     remove_kimi_turnend_auth "$sub_state" "$child_id"
+    deregister_parlay_agent "$sub_state" "$child_id"
     remove_pr_poll_artifacts "$sub_state" "$child_id" || return 1
     child_busy_gen=$(meta_value "$child_meta" busy_gen)
     if [ -z "$child_busy_gen" ]; then
@@ -1292,6 +1433,23 @@ remove_secondmate_registry_entry() {
 }
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
+
+if [ "$STALENESS_AUTOCLOSE" = 1 ]; then
+  if [ ! -d "$WT" ]; then
+    # Nothing to preserve or file a triage bead about - report the actual
+    # state instead of claiming a worktree that is already gone.
+    echo "staleness auto-close $ID: worktree $WT is already gone, skipping triage filing"
+    rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
+      "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
+    exit 0
+  fi
+  STALENESS_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+  if ! work_is_landed "$STALENESS_BRANCH"; then
+    staleness_chat_only_teardown
+    exit 0
+  fi
+  # Landed: fall through to the ordinary full teardown below (FORCE is "").
+fi
 
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
@@ -1514,12 +1672,14 @@ if [ "$KIND" = secondmate ]; then
 fi
 remove_grok_turnend_auth "$STATE" "$ID"
 remove_kimi_turnend_auth "$STATE" "$ID"
+deregister_parlay_agent "$STATE" "$ID"
 fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
 # Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
+[ -z "$BEADS_ID" ] || [ "$FORCE" = "--force" ] || close_linked_bead "$BEADS_ID" "$ID"
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token"

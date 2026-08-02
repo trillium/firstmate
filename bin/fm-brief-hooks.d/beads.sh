@@ -13,9 +13,11 @@ This task is linked to bead \`$FM_HOOK_BEADS_ID\`.
 Before anything else - your first action, before the setup below - prove you received and read this brief:
 \`\`\`
 task set-state $FM_HOOK_BEADS_ID dispatch=claimed --reason 'brief read and accepted'
+task set-state $FM_HOOK_BEADS_ID lifecycle=claimed --reason 'brief read and accepted'
 \`\`\`
 
 # Bead Closure
 Before appending \`done:\` to the status file, close this bead: \`task close $FM_HOOK_BEADS_ID\`.
 That closure is what a registered watcher check uses to trigger your cleanup - do this as the last step before reporting done.
+If you cannot reach this step, do not worry about it further: firstmate closes this bead automatically once your work is confirmed landed and this task is torn down.
 SECTION

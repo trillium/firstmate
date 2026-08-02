@@ -35,9 +35,9 @@ Real harness credential tests remain opt-in rather than part of default CI.
 
 The ordinary topology puts one task tab per endpoint in the exact workspace of the Firstmate or secondmate that launches it.
 When the launcher has no Herdr workspace to inherit, the adapter maintains one durable home-labeled workspace instead.
-The primary home label is `firstmate`.
-A secondmate home label is `2ndmate-<secondmate-id>`, derived from its validated `.fm-secondmate-home` marker.
-A secondmate launched by the primary receives a narrowly scoped home override during container creation.
+The primary home label is `1M-FIRSTMATE`.
+A secondmate home label is `2M-<SCOPE>`, uppercase and derived from its validated `.fm-secondmate-home` marker id; see "Mate naming convention" below for the full contract.
+A secondmate launched by the primary receives a narrowly scoped home override during container creation, and its own live-agent tab (not only its workspace) carries the same uppercase mate label.
 
 Attach to the selected named Herdr session and switch to the relevant home workspace to watch its task tabs.
 Routine supervision uses `bin/fm-peek.sh <id>` and `FM_HOME=<home> bin/fm-send.sh <id> '<text>'` without attaching.
@@ -57,13 +57,22 @@ That covers a missing or unusable socket identity, a closed or unreadable launch
 
 Firstmate running outside Herdr entirely has no launcher workspace to inherit, so its workers use this home's own labeled workspace, created on first use.
 That path needs the home label to identify exactly one workspace: two workspaces sharing it are an unresolvable placement and refuse rather than adopting either.
-Avoid naming a personal workspace `firstmate` or `2ndmate-<id>` for that reason, and because the adapter cannot distinguish that label collision from its own container.
-An older secondmate workspace using `firstmate-<id>` is not migrated automatically; rename it manually before expecting new tasks or recovery to use it.
+Avoid naming a personal workspace `1M-FIRSTMATE` or `2M-<SCOPE>` for that reason, and because the adapter cannot distinguish that label collision from its own container.
+An older secondmate workspace using `2ndmate-<id>` is not migrated automatically; rename it manually before expecting new tasks or recovery to use it.
+An installation upgrading from the pre-mate-naming-convention `firstmate`/`2ndmate-<id>` labels is not migrated either: the first spawn into an already-running home mints a fresh `1M-FIRSTMATE`/`2M-<SCOPE>` workspace rather than adopting the old one, leaving the old workspace behind to close or merge manually.
 Recovery and list-live still scan the first workspace matching the home label, because they address panes they already recorded rather than choosing where new work goes.
 
 Existing task operations use recorded endpoint ids and do not move a live task when labels change.
 The per-home workspace is reused while it has task tabs.
 Closing its last tab can remove the workspace, and the next spawn recreates it.
+
+## Mate naming convention
+
+A mate's workspace and its own live-agent tab are always labeled uppercase `<materank>-<scope>`, so the captain can tell a supervisor from a worker in Herdr's sidebar at a glance.
+`materank` is `1M` for the main firstmate, `2M` for a secondmate, `3M` for a third mate if one ever exists.
+`scope` is the mate's own registered id, uppercased: the primary defaults to the literal scope `FIRSTMATE` (giving `1M-FIRSTMATE`), and a secondmate's scope comes from its `.fm-secondmate-home` marker id (`bin/backends/herdr.sh`'s `fm_backend_herdr_mate_scope`), for example `2M-BEADME`.
+That helper sanitizes the id (uppercase, non-alphanumeric characters collapsed to a single `-`, leading/trailing `-` trimmed) and falls back to the literal scope `UNKNOWN` when the id is empty or sanitizes to nothing, so a malformed or missing marker never produces an empty label; every malformed marker shares that same `UNKNOWN` scope, so two malformed homes can still collide on `2M-UNKNOWN`.
+A crewmate spawned by any mate inherits that mate's placement but is never uppercase: its tab keeps the ordinary lowercase `fm-<id>` task label, so a mate and its subordinate crewmates are always visually distinct and never collide.
 
 ## Optional presentation spaces
 
@@ -180,6 +189,8 @@ herdr_pane_id=<pane-id>
 A Herdr pane id contains a colon, so the adapter splits `window=` on the first colon only.
 The recorded pane is the operational fast path.
 Workspace and tab ids support verification and cleanup but are not inferred from mutable labels during normal operation.
+
+Legacy Herdr metadata written before `endpoint_task_id=` existed self-repairs at teardown validation time instead of refusing outright: `fm_backend_validate_task_endpoint` queries the live pane's label through `fm_backend_herdr_pane_verifies_task` and, only when it still reads exactly `fm-<id>`, appends `endpoint_task_id=<id>` to the metadata file so the task tears down with no manual editing. When the live pane's label does not match - for example because the pane was recycled for a different task - validation refuses without mutating the metadata, preserving the wrong-pane safety guarantee.
 
 ## Current transport behavior
 

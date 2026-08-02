@@ -43,6 +43,15 @@
 # footer appears, so an immediate peek would otherwise see the stale idle pane.
 # The pause is fm-send-only; the shared submit core (used by the away-mode daemon,
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
+#
+# Optional post-submit transition verification: set FM_SEND_VERIFY_TRANSITION to a
+# non-zero value to have fm-send confirm the submitted text actually drove a turn
+# (target transitioned idle->working) rather than only clearing the composer. It
+# polls the target's agent state for up to FM_SEND_VERIFY_TIMEOUT seconds (default
+# 0.6) via the backend's wait-for-working primitive. A confirmed still-idle target,
+# or a backend error during verification, exits NON-ZERO because the message did not
+# execute; an unverifiable ("unknown") read proceeds and, when FM_SEND_VERBOSE is
+# non-zero, prints a warning. Off by default and independent of FM_SEND_SETTLE.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -336,5 +345,26 @@ else
   # turn before its busy footer shows. Pause so an immediate peek catches the
   # crewmate actually working instead of the stale idle pane. FM_SEND_SETTLE=0
   # disables it. Scoped to this path only, never the shared submit core.
+  if [ "${FM_SEND_VERIFY_TRANSITION:-0}" != 0 ]; then
+    # Optional post-submit transition verification: confirm the turn actually
+    # started, not just that the composer cleared. This uses the backend's own
+    # transition-wait primitives to verify idle→working transition.
+    verify_budget=${FM_SEND_VERIFY_TIMEOUT:-0.6}
+    verify_result=$(fm_backend_wait_for_working "$TARGET_BACKEND" "$T" "$verify_budget" "$TARGET_HARNESS")
+    case "$verify_result" in
+      working)
+        : # Turn confirmed started, proceed normally
+        ;;
+      idle)
+        echo "error: SEND DID NOT LAND - text was submitted to $T but the turn did not start (remains idle; tried $RESOLUTION_TRIED)" >&2
+        exit 1
+        ;;
+      unknown|error)
+        # Could not verify (backend error or unavailable), but composer cleared.
+        # Proceed with warning in verbose mode only. Fail only on definitive idle.
+        [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: text was submitted to $T but turn start could not be verified (tried $RESOLUTION_TRIED)" >&2
+        ;;
+    esac
+  fi
   [ "${FM_SEND_SETTLE:-1}" = 0 ] || sleep "${FM_SEND_SETTLE:-1}"
 fi

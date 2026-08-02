@@ -11,3 +11,18 @@ __pycache__/
 .env
 config/
 CHANGELOG.md
+
+# Per-task worktree-resident hook artifacts written by bin/fm-spawn.sh's
+# busy-hook install (and scrubbed by bin/fm-teardown.sh on return to the
+# treehouse pool). These bind one task incarnation's id/gen and must never be
+# committed: a pooled worktree's next tenant checks out whatever is in git
+# history, so a commit here would freeze one task's stale hooks into every
+# future worktree derived from it (bin/fm-spawn.sh already calls
+# exclude_path() for the same paths as a per-worktree-local backstop, but that
+# only suppresses `git status`/`add -A` for a file git has never tracked - it
+# cannot undo an accidental commit).
+/.claude/settings.local.json
+/.opencode/plugins/fm-busy-state.js
+/.opencode/plugins/fm-turn-end.js
+/.fm-grok-turnend
+/.fm-kimi-turnend

@@ -76,15 +76,16 @@
 #          refresh relays any completed fm-fleet-sync.sh output before the
 #          aggregate timeout skip line with timeout and elapsed seconds.
 #          Set FM_FLEET_PRUNE=0 to skip branch pruning during that refresh.
-#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the five MUTATING sweeps
-#          (PR-check migration, secondmate_sync, secondmate_liveness_sweep,
-#          x_mode_setup, fleet_sync) while still printing every read-only detect line
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the six MUTATING sweeps
+#          (PR-check migration, the beads write-queue reconcile [beads backend
+#          only], secondmate_sync, secondmate_liveness_sweep, x_mode_setup,
+#          fleet_sync) while still printing every read-only detect line
 #          above; the TANGLE line switches to advisory-only wording with no
 #          checkout command. Used by
 #          fm-session-start.sh's read-only path when another live session holds
 #          the fleet lock, so a second concurrent session never race-mutates
-#          PR-check artifacts, secondmate homes, X-mode artifacts, project
-#          clones, or repair instructions.
+#          PR-check artifacts, queued beads writes, secondmate homes, X-mode
+#          artifacts, project clones, or repair instructions.
 #          Unset/0 (the default) runs every sweep exactly as before - this flag
 #          is purely additive.
 #        fm-bootstrap.sh install <tool>...
@@ -100,6 +101,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
@@ -502,6 +505,7 @@ install_cmd() {
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
     tasks-axi|quota-axi) echo "npm install -g $1" ;;
+    task) echo "go install github.com/steveyegge/beads/cmd/bd@latest && ln -sf bd ~/go/bin/task" ;;
     *) return 1 ;;
   esac
 }
@@ -900,11 +904,38 @@ if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != 
   echo "BOOTSTRAP_INFO: crew harness override active: $crew"
 fi
 crew_dispatch_validate
-if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
-  && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
-  echo "BOOTSTRAP_INFO: tasks-axi available"
-fi
+backlog_backend=$(fm_backlog_backend_value "$CONFIG")
+case "$backlog_backend" in
+  beads)
+    if ! command -v task >/dev/null 2>&1; then
+      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+        echo "DEGRADED: task CLI not found (beads store; install: $(install_cmd task)); using local mirror from $mirror_iso until it is"
+      else
+        echo "MISSING: task CLI (beads store; install: $(install_cmd task))"
+      fi
+    elif ! task list --limit 1 >/dev/null 2>&1; then
+      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+        echo "DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from $mirror_iso until it is"
+      else
+        echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list'), and no usable local mirror"
+      fi
+    elif [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
+      echo "BOOTSTRAP_INFO: beads task store available"
+    fi
+    ;;
+  manual)
+    : # manual backend requires no validation
+    ;;
+  *)
+    if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && fm_tasks_axi_compatible; then
+      echo "BOOTSTRAP_INFO: tasks-axi available"
+    fi
+    ;;
+esac
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
+  if [ "$backlog_backend" = beads ]; then
+    fm_beads_write_queue_reconcile
+  fi
   secondmate_liveness_sweep
   secondmate_sync
   x_mode_setup

@@ -6,6 +6,12 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
+# Every ship and scout brief opens with a Parlay-enrollment section: the crewmate's
+# first action is `parlay listen --agent <id>` (atomic, idempotent register + announce
+# + monitor), run as a persistent background listener. Enrollment is best-effort and
+# never load-bearing - if parlay is absent or the server is unreachable the crewmate
+# notes it and works normally. Secondmate charters are exempt (they return work
+# through the marked-status/corr channel).
 # Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--herdr-lab] [--beads <id>]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --beads <id> links the task to a beads issue and is passed to every hook in
@@ -34,6 +40,17 @@
 #   The flag must be explicit because {TASK} is filled after scaffolding and the
 #   caller-supplied repo string cannot reliably identify this repo. Briefs made
 #   without it carry a loud declaration so an omitted contract cannot be silent.
+# Hook system: when environment variables like FM_HOOK_BEADS_ID are set, executable
+# scripts in fm-brief-hooks.d/ are sourced in a subshell during scaffolding, and their
+# stdout is prepended to the generated brief. The beads hook (fm-brief-hooks.d/beads.sh)
+# is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt and
+# Bead Closure sections that ask the worker to confirm dispatch/lifecycle state changes
+# and close the bead on completion. FM_HOOK_BEADS_ID is never auto-populated here: bead
+# minting/resolution is deliberately deferred to fm-spawn.sh (beads-authority migration
+# Stage 3), which is the point where a task is actually dispatched, so a brief that is
+# scaffolded but never spawned never leaves an orphaned bead in the shared store. This
+# section only renders when a caller sets FM_HOOK_BEADS_ID explicitly before scaffolding
+# (the pre-existing --beads opt-in path); secondmate charters are exempt.
 # For ship tasks, the definition of done is shaped by the project's delivery mode
 # (data/projects.md via fm-project-mode.sh; see the project-management skill
 # and AGENTS.md task lifecycle):
@@ -41,6 +58,29 @@
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> captain merge
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                captain approves, firstmate merges to local main
+# Push-mode ship briefs (direct-PR, no-mistakes) on a fork-contribution
+# project - one whose PRs must land in the captain's own trillium/<repo> fork
+# and never reach the project's upstream - add an explicit anti-upstream
+# PR-target rule. Detection reads the clone's real git remotes, never
+# data/projects.md prose, and fires in two shapes: a legacy clone whose
+# `origin` is still the upstream repo (the not-yet-swapped state the
+# project-management skill's convention corrects), or the correct swapped
+# setup where `origin` is already the trillium fork and a separate
+# `upstream` remote proves the relationship. A Trillium origin with no
+# `upstream` remote (an ordinary captain-owned project), an unreadable or
+# absent origin, and every local-only brief add no such rule.
+# Pushing to the fork does not by itself keep a PR off upstream: `gh pr
+# create` and no-mistakes both default an opened PR's base to the upstream
+# parent unless told otherwise, and no-mistakes always opens against whatever
+# `origin` is configured to. On a legacy (unswapped) clone, no-mistakes mode
+# cannot be driven safely at all - the brief tells the worker to stop and
+# escalate rather than run it - because there is no flag that redirects the
+# pipeline's PR target: `no-mistakes init --fork-url` pushes to the named
+# fork while still opening the PR against `origin` (upstream), which is the
+# CONTRIBUTING.md-documented "contribute upstream" flow, exactly backwards
+# for a fork-contribution project. direct-PR mode instead gives the worker
+# the explicit `gh pr create --repo trillium/<repo>` form, which works on
+# either clone shape.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
 # Every scaffold's status protocol distinguishes the configured
@@ -150,28 +190,54 @@ shell_quote() {
   printf "'"
 }
 
-STATUS_FILE=$(shell_quote "$STATE/$ID.status")
+# Resolve a project's clone directory exactly as the origin/upstream lookups
+# below need it: an absolute path is used as-is, "projects/<name>" is
+# relative to FM_HOME, and a bare name resolves under $FM_HOME/projects (or
+# FM_PROJECTS_OVERRIDE).
+project_clone_dir() {
+  local repo=$1
+  case "$repo" in
+    /*) printf '%s\n' "$repo" ;;
+    projects/*) printf '%s\n' "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/${repo#projects/}" ;;
+    *) printf '%s\n' "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/$repo" ;;
+  esac
+}
 
-# Pre-brief extension point: source every executable in fm-brief-hooks.d/ that
-# can emit additional brief sections, so out-of-tree features (for example
-# beads dispatch tracking) can extend the brief without patching this file.
-# Each hook's captured stdout is prepended to the brief. Absent or empty dir
-# is a no-op. Each hook runs in a subshell so a hook's own `exit` never
-# terminates fm-brief.sh, keeping every hook fail-open by construction.
-HOOK_SECTION=""
-BRIEF_HOOKS_DIR="$FM_ROOT/bin/fm-brief-hooks.d"
-if [ -d "$BRIEF_HOOKS_DIR" ]; then
-  for hook in "$BRIEF_HOOKS_DIR"/*; do
-    [ -f "$hook" ] && [ -x "$hook" ] || continue
-    hook_out=$(
-      export FM_HOOK_BEADS_ID=$BEADS_ID
-      export FM_HOOK_TASK_ID=$ID
-      # shellcheck disable=SC1090
-      . "$hook"
-    ) || { echo "warning: brief hook $hook exited non-zero" >&2; continue; }
-    [ -z "$hook_out" ] || HOOK_SECTION="${HOOK_SECTION}${HOOK_SECTION:+$'\n\n'}${hook_out}"
-  done
-fi
+# Print "<trillium-repo-name> <state>" for a ship task's fork-contribution
+# project, where <state> is "legacy" when `origin` is still the upstream repo
+# the worker cannot push to, or "swapped" when `origin` is already the
+# trillium fork and a separate `upstream` remote proves the fork-contribution
+# relationship (the project-management skill's required setup). Prints
+# nothing (and succeeds) for an ordinary captain-owned project - a Trillium
+# origin with no `upstream` remote - or an unreadable or absent clone, so the
+# generated brief stays unchanged in every case that is not a known fork
+# relationship. Detection reads the clone's real git remotes, never
+# data/projects.md prose.
+fork_repo_for_origin() {
+  local repo=$1 dir origin name rest owner upstream
+  dir=$(project_clone_dir "$repo")
+  origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 0
+  [ -n "$origin" ] || return 0
+  origin=${origin%.git}
+  origin=${origin%/}
+  name=${origin##*/}
+  rest=${origin%/*}
+  owner=${rest##*/}     # https://host/owner/repo -> owner
+  owner=${owner##*:}    # git@host:owner/repo    -> owner
+  [ -n "$name" ] || return 0
+  if [ "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')" = trillium ]; then
+    # origin already is the trillium fork; still a fork-contribution project
+    # (and the anti-upstream PR-target rule still applies) only when a
+    # separate `upstream` remote proves the relationship.
+    upstream=$(git -C "$dir" remote get-url upstream 2>/dev/null) || return 0
+    [ -n "$upstream" ] || return 0
+    printf '%s swapped\n' "$name"
+    return 0
+  fi
+  printf '%s legacy\n' "$name"
+}
+
+STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -260,6 +326,37 @@ fi
 
 REPO=${POS[1]}
 
+# beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
+# "Stage 3"): bead minting/resolution under config/backlog-backend=beads happens only
+# in fm-spawn.sh, at actual dispatch time, not here. Minting here at scaffold time
+# would create a bead the moment a brief is written, before the task is ever spawned;
+# if the captain declines after review or spawn fails, that bead would be permanently
+# orphaned in the shared store since no state/<id>.meta ever records its beads_id= for
+# fm-teardown.sh to close. FM_HOOK_BEADS_ID is therefore left exactly as the caller set
+# it (unset unless an explicit --beads workflow pre-populated it).
+
+# Hook system (see header comment above): scripts in fm-brief-hooks.d/ are sourced
+# in a subshell, and any stdout they produce is collected into HOOK_SECTION and
+# inserted into the generated brief. Each hook is self-gating (e.g. the beads hook
+# below exits with no output when FM_HOOK_BEADS_ID is unset), so HOOK_SECTION stays
+# empty and briefs are unchanged when no hook has anything to add.
+# An explicit --beads workflow pre-populates FM_HOOK_BEADS_ID here; otherwise it is
+# left exactly as the caller already set it (see the Stage 3 comment above).
+[ -z "$BEADS_ID" ] || export FM_HOOK_BEADS_ID="$BEADS_ID"
+export FM_HOOK_TASK_ID="$ID"
+HOOK_SECTION=""
+for hook in "$SCRIPT_DIR"/fm-brief-hooks.d/*.sh; do
+  [ -e "$hook" ] || continue
+  # shellcheck disable=SC1090
+  hook_out=$(. "$hook") || continue
+  [ -n "$hook_out" ] || continue
+  if [ -n "$HOOK_SECTION" ]; then
+    HOOK_SECTION="$HOOK_SECTION"$'\n\n'"$hook_out"
+  else
+    HOOK_SECTION="$hook_out"
+  fi
+done
+
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
 # shellcheck disable=SC2016  # single quotes are deliberate: these lines are literal brief text whose backtick-wrapped $(...) and "$HERDR_LAB_SESSION" snippets must reach the reading agent verbatim, not expand at scaffold time; only the '"$VAR"' break-outs interpolate.
@@ -291,12 +388,33 @@ Do not add Herdr lifecycle commands to this unguarded brief by hand.
 EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
+[ -z "$HOOK_SECTION" ] || HERDR_SECTION="$HERDR_SECTION"$'\n\n'"$HOOK_SECTION"
+
+# Best-effort Parlay enrollment: the crewmate's first action is to self-enroll in
+# Parlay so firstmate can reach it and it can report back. `parlay listen --agent
+# <id>` is the atomic, idempotent one-call enrollment (register + announce + monitor);
+# `parlay listen --help` documents the canonical persistent Monitor-tool form. Like
+# the spawn-side chat-panel registration (fm-spawn.sh), it is best-effort and never
+# load-bearing: if parlay is absent or the server is unreachable, the crewmate notes
+# the warning and works normally, never blocking on a missing coordination channel.
+# Injected as the first section of every ship and scout brief; secondmate charters are
+# exempt because a secondmate runs its own firstmate home and returns work through the
+# marked-status/corr channel, not the shared panel. The $(printf ...) builder is
+# Bash 3.2 parse-safe: no heredoc is nested in the command substitution
+# (tests/fm-brief.test.sh guards that shape).
+# shellcheck disable=SC2016  # single quotes are deliberate: backtick-wrapped commands and the Monitor snippet must reach the reading agent verbatim; only the '"$ID"' break-outs interpolate the task id.
+PARLAY_SECTION=$(printf '%s\n' \
+'# FIRST ACTION: enroll in Parlay' \
+'Start by enrolling in Parlay so firstmate can reach you and you can report back; this only starts a background listener and touches nothing in the repo, so the Setup isolation check below still governs every repo action.' \
+'Enrollment is one atomic, idempotent call that registers you, announces you are listening, and streams firstmate'"'"'s messages to you: `parlay listen --agent '"$ID"'`.' \
+'Run it as a persistent background listener that stays alive for the whole task: under a harness with a Monitor tool that is `Monitor({ command: "parlay listen --agent '"$ID"'", persistent: true })`, otherwise start it in the background and keep it running.' \
+'Enrollment is best-effort, never a blocker: if parlay is not installed or the Parlay server is unreachable, note the warning briefly and continue with your task normally - do not stop and do not append a blocked status. A missing coordination channel is not a failure.')
 
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
-$HOOK_SECTION
+$PARLAY_SECTION
 
 # Task
 {TASK}
@@ -404,10 +522,69 @@ esac
 # briefs stay byte-identical to the historical Bash 5 output.
 DOD=${DOD%$'\n'}
 
+# Fork-contribution PR-target rule: a project whose PRs must land in the
+# captain's own trillium/<repo> fork, never the upstream project it was
+# forked from. Only direct-PR and no-mistakes push or open a PR; local-only
+# never does, so it is exempt. Rule text lives here exactly once and is empty
+# (no rule) for local-only and for every ordinary captain-owned project,
+# keeping those briefs byte-identical to the pre-rule output.
+#
+# Pushing to the fork does not by itself keep the PR off upstream: `gh pr
+# create` and no-mistakes both default an opened PR's base to the upstream
+# parent unless told otherwise. direct-PR mode gets an explicit `--repo`
+# override that works on either clone shape. no-mistakes mode has no such
+# override - it always opens against whatever `origin` is configured to - so
+# a legacy (unswapped) clone cannot be driven safely at all; the worker is
+# told to stop and escalate instead.
+FORK_FIRST=""
+if [ "$MODE" != local-only ]; then
+  FORK_REPO=""
+  FORK_STATE=""
+  read -r FORK_REPO FORK_STATE <<EOF
+$(fork_repo_for_origin "$REPO")
+EOF
+  if [ -n "$FORK_REPO" ]; then
+    FORK_HEADLINE="# Fork-based project: PRs stay in the fork, never upstream"
+    FORK_TARGET_RULE="This project's PRs must land in the captain's own \`trillium/$FORK_REPO\` fork, NEVER upstream; the PR only goes upstream on the captain's explicit word."
+    if [ "$MODE" = direct-PR ]; then
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+$FORK_HEADLINE
+$FORK_TARGET_RULE
+If the fork does not exist yet, create it with \`gh-axi\` before pushing.
+Push your branch to the fork - \`git push git@github.com:trillium/$FORK_REPO.git fm/$ID:fm/$ID\` if \`origin\` here is still upstream, or plain \`git push origin fm/$ID\` once \`origin\` is the fork.
+Open the PR with an explicit repo override so it can never default to upstream: \`gh pr create --repo trillium/$FORK_REPO --base <fork-default-branch> --head fm/$ID\`.
+Never omit that \`--repo trillium/$FORK_REPO\` override, and never stop to ask fork-vs-local: always target the fork.
+**CRITICAL:** a PR opened against the upstream repo must NEVER happen automatically. If targeting the fork is not possible, stop and get direct captain confirmation before any upstream PR attempt.
+EOF
+    elif [ "$FORK_STATE" = swapped ]; then
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+$FORK_HEADLINE
+$FORK_TARGET_RULE
+\`origin\` here is already the \`trillium/$FORK_REPO\` fork, with \`upstream\` as a separate remote, so no-mistakes's normal PR-open behavior already targets the fork - do not change that.
+Never run \`no-mistakes init --fork-url\` or any similar remote reconfiguration on this project: that flag pushes to the named fork while still opening the PR against \`origin\`, which is the exact wrong direction here.
+Never stop to ask fork-vs-local: always target the fork.
+**CRITICAL:** if no-mistakes ever proposes or opens a PR against anything other than \`trillium/$FORK_REPO\`, stop and escalate immediately rather than letting it proceed.
+EOF
+    else
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+# Fork-based project: origin is not yet the fork - STOP before running no-mistakes
+$FORK_TARGET_RULE
+\`origin\` here is still the upstream repository, not the \`trillium/$FORK_REPO\` fork. no-mistakes opens its PR against whatever \`origin\` is configured to, so running it now would open the PR against upstream.
+This clone's remotes need the captain-approved origin swap (origin -> the \`trillium/$FORK_REPO\` fork, upstream -> the current origin) before no-mistakes can run safely here; that change is outside this task's worktree.
+Do NOT run \`no-mistakes init --fork-url\` as a workaround: it pushes to the named fork while still opening the PR against \`origin\` (upstream), reproducing the same failure.
+Append \`blocked: project clone's origin is not the trillium fork yet, no-mistakes would target upstream\` and stop; do not attempt any workaround that could open a PR against upstream.
+EOF
+    fi
+  fi
+fi
+
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
-$HOOK_SECTION
+$PARLAY_SECTION
 
 # Task
 {TASK}
@@ -447,7 +624,7 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
-
+$FORK_FIRST
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
 Record only project knowledge useful to almost every future session.

@@ -281,6 +281,7 @@ fm_herdr_spur_event_block() {  # <watch-set>
   # Stream. herdr-eventwait.py prints "@subscribed" then TAB lines:
   #   <pane_id>\t<workspace_id>\t<agent_status>\t<agent>
   local pane_id ev_ws ev_status ev_agent name prev prev_var pa_var
+  # shellcheck disable=SC2034 # ev_ws is a positional field in the stream, deliberately unused here.
   while IFS=$'\t' read -r pane_id ev_ws ev_status ev_agent; do
     [ "$pane_id" = "@subscribed" ] && { log "subscribed panes=$#"; continue; }
     [ -n "$pane_id" ] || continue

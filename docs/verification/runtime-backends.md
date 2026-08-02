@@ -228,6 +228,9 @@ ok - real herdr E2E: a --secondmate launch still stands up that secondmate's own
 ok - real herdr E2E: teardown closes only the worker's own pane and leaves the launcher, its workspace, and the same-labeled sibling intact
 ```
 
+This capture predates the mate naming convention (see `docs/herdr-backend.md`'s "Mate naming convention" section): it still shows the old `firstmate` workspace label rather than the current `1M-FIRSTMATE`.
+The output above is preserved verbatim as the historical record; capture fresh evidence with the new label on the next real Herdr E2E run.
+
 That suite's headline case runs `bin/fm-spawn.sh` inside a real Herdr pane, so the parent identity comes from Herdr's own injection rather than a composed environment.
 Cross-session and contradictory bindings are covered deterministically in `tests/fm-backend-herdr.test.sh`, which can script a second server's socket without provisioning one.
 

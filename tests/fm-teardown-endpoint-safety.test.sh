@@ -146,6 +146,49 @@ test_supported_backend_endpoint_records_validate() {
   pass "cleanup identity: valid tmux, Herdr, Zellij, Orca, and cmux records validate while every empty backend target refuses"
 }
 
+test_herdr_legacy_meta_self_repair_and_recycled_pane_refusal() {
+  local dir id rc
+  command -v jq >/dev/null 2>&1 || { echo "skip - jq not found (required by the herdr adapter)"; return 0; }
+  dir=$(make_case herdr-legacy-repair)
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-backend.sh"
+
+  cat > "$dir/fakebin/herdr" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = pane ] && [ "$2" = get ]; then
+  printf '{"result":{"pane":{"label":"%s"}}}\n' "${FM_TEST_HERDR_PANE_LABEL:?}"
+  exit 0
+fi
+exit 1
+SH
+  chmod +x "$dir/fakebin/herdr"
+
+  id=herdr-legacy-task
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=lab:p2" "worktree=$dir/worktree" "project=$dir/project" \
+    "backend=herdr" "herdr_session=lab" "herdr_workspace_id=w1" "herdr_tab_id=w1:t2" "herdr_pane_id=p2"
+  PATH="$dir/fakebin:$PATH" FM_TEST_HERDR_PANE_LABEL="fm-$id" \
+    fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id" \
+    || fail "legacy herdr metadata with a live matching pane should self-repair, not refuse"
+  assert_grep "endpoint_task_id=$id" "$dir/home/state/$id.meta" \
+    "legacy herdr metadata was not self-repaired with endpoint_task_id"
+
+  id=herdr-recycled-task
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=lab:p3" "worktree=$dir/worktree" "project=$dir/project" \
+    "backend=herdr" "herdr_session=lab" "herdr_workspace_id=w1" "herdr_tab_id=w1:t3" "herdr_pane_id=p3"
+  set +e
+  PATH="$dir/fakebin:$PATH" FM_TEST_HERDR_PANE_LABEL="fm-some-other-task" \
+    fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "legacy herdr metadata whose live pane now belongs to a different task should validate (recycled-pane safety)"
+  assert_no_grep "endpoint_task_id=" "$dir/home/state/$id.meta" \
+    "recycled-pane refusal must not mutate the metadata"
+
+  pass "fm_backend_validate_task_endpoint (herdr): legacy metadata self-repairs when the live pane still matches the task, and refuses without mutation when the pane now belongs to a different (recycled) task"
+}
+
 test_tmux_empty_target_refuses_without_invocation() {
   local dir rc
   dir=$(make_case direct-empty)
@@ -270,6 +313,7 @@ SH
 
 test_invalid_endpoint_records_refuse_before_mutation
 test_supported_backend_endpoint_records_validate
+test_herdr_legacy_meta_self_repair_and_recycled_pane_refusal
 test_tmux_empty_target_refuses_without_invocation
 test_recorded_process_identity_cleanup_is_exact
 test_isolated_tmux_invalid_and_valid_cleanup

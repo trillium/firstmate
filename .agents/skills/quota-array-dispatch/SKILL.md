@@ -98,7 +98,7 @@ Never use headroom, runway, pace, or reserve to silently replace that reasoning 
    Preserve projection confidence and basis, the limiting window, and the horizon estimate in the rationale rather than hiding them in a score or model-specific heuristic.
 6. Resolve remaining uncertainty explicitly.
    An authenticated candidate with unknown or unmeasurable headroom or runway stays eligible and cannot be silently excluded or assumed sustainable.
-   Prefer known viable evidence when otherwise comparable, and report uncertainty or ask the captain when it still prevents a justified choice.
+   Prefer known viable evidence when otherwise comparable, disclose any unmeasured headroom or runway in the dispatch record, and report uncertainty or ask the captain when it still prevents a justified choice.
 7. Use pace and signed reserve only as later diagnostic tie-break evidence among candidates still unresolved after headroom, runway, likely-completion viability, and uncertainty.
    Pace and reserve never rescue a clearly inferior completion prospect.
    Do not collapse these facts into an opaque composite score.

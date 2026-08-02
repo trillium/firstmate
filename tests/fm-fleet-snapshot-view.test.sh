@@ -779,6 +779,181 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+# beads-authority migration Stage 1
+# (data/beads-authority-migration-scout/report.md section 4): the snapshot
+# reads this fleet's in-flight/queued state from the beads store, scoped by
+# fm_beads_fleet_label, when config/backlog-backend=beads.
+test_beads_backend_snapshot_scopes_by_fleet_label() {
+  local home fakebin out
+  home=$(make_home beads-backend)
+  printf 'beads\n' > "$home/config/backlog-backend"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'list --limit 1')
+    printf '[]\n'
+    exit 0
+    ;;
+  'list --label fleet:firstmate --status open,in_progress,blocked --limit 200 --json')
+    cat <<'JSON'
+[
+  {"id":"task-aaa","title":"Queued bead","description":"queued body","status":"open","priority":2},
+  {"id":"task-bbb","title":"In flight bead","description":"","status":"in_progress","priority":0}
+]
+JSON
+    exit 0
+    ;;
+  *)
+    printf 'unexpected task invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$fakebin/task"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e . >/dev/null || fail "beads-backed snapshot must be valid JSON: $out"
+  printf '%s' "$out" | jq -e '
+    .backlog.source == "beads"
+      and .backlog.fleet_label == "fleet:firstmate"
+      and .backlog.present == true
+  ' >/dev/null || fail "beads-backed snapshot missing beads-source markers: $out"
+  printf '%s' "$out" | jq -e '
+    (.backlog.records[] | select(.id == "task-aaa") | .state) == "queued"
+      and (.backlog.records[] | select(.id == "task-bbb") | .state) == "in_flight"
+  ' >/dev/null || fail "beads status open/in_progress was not mapped to record state queued/in_flight: $out"
+  printf '%s' "$out" | jq -e '.main_inventory.valid == true' >/dev/null \
+    || fail "beads-sourced records must never trip the orphan/unstructured inventory checks: $out"
+  pass "beads backend snapshot reads fleet-scoped in-flight/queued beads"
+}
+
+# beads-authority migration Stage 4
+# (docs/decision-hold-lifecycle.md "Structured read surfaces"): a record
+# carrying the captain-hold label surfaces hold_kind/hold_reason/current_role/
+# captain_actionable from the same task list --json read fm-decision-hold.sh's
+# beads path relies on, with no extra beads calls. A resolved hold's anchor is
+# closed and so is absent from the open/in_progress/blocked query entirely,
+# which is why no separate "resolved hold is hidden" fixture is needed here:
+# the fake task output below simply never includes one, matching what the
+# real query would return.
+test_beads_backend_snapshot_surfaces_captain_holds() {
+  local home fakebin out
+  home=$(make_home beads-backend-holds)
+  printf 'beads\n' > "$home/config/backlog-backend"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'list --limit 1')
+    printf '[]\n'
+    exit 0
+    ;;
+  'list --label fleet:firstmate --status open,in_progress,blocked --limit 200 --json')
+    cat <<'JSON'
+[
+  {"id":"task-hold","title":"Decision: rollout scope","description":"","status":"open","priority":1,
+   "labels":["fleet:firstmate","captain-hold","human","ship-decision-key"],
+   "metadata":{"hold_reason":"pick canary vs full rollout"}},
+  {"id":"task-plain","title":"Ordinary bead","description":"","status":"open","priority":2,
+   "labels":["fleet:firstmate"]}
+]
+JSON
+    exit 0
+    ;;
+  *)
+    printf 'unexpected task invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$fakebin/task"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e . >/dev/null || fail "beads-backed snapshot must be valid JSON: $out"
+  printf '%s' "$out" | jq -e '
+    (.backlog.records[] | select(.id == "task-hold")) as $h
+    | $h.hold_kind == "captain"
+      and $h.hold_reason == "pick canary vs full rollout"
+      and $h.current_role == "held"
+      and $h.captain_actionable == true
+  ' >/dev/null || fail "captain-hold-labeled bead did not surface structured hold fields: $out"
+  printf '%s' "$out" | jq -e '
+    (.backlog.records[] | select(.id == "task-plain")) as $p
+    | $p.hold_kind == null and $p.hold_reason == null
+      and $p.current_role == "queued" and $p.captain_actionable == false
+  ' >/dev/null || fail "an ordinary bead without the captain-hold label must not read as held: $out"
+  pass "beads backend snapshot surfaces structured captain-hold fields from gate-anchor metadata"
+}
+
+# beads-authority migration Stage 5 resilience layer (report.md section 5,
+# docs/configuration.md "Beads resilience layer"): a successful beads read
+# opportunistically refreshes a local mirror, and a later read failure falls
+# back to that mirror only when it is still fresh, labeling every fallback
+# record with source:"beads-mirror", stale:true, and a stale_since timestamp
+# so no caller can mistake it for a current read.
+test_beads_backend_mirror_refresh_and_stale_fallback() {
+  local home fakebin out
+  home=$(make_home beads-mirror)
+  printf 'beads\n' > "$home/config/backlog-backend"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+down_marker=$(dirname "$0")/task.down
+if [ -e "$down_marker" ]; then
+  exit 7
+fi
+case "$*" in
+  'list --limit 1') printf '[]\n'; exit 0 ;;
+  'list --label fleet:firstmate --status open,in_progress,blocked --limit 200 --json')
+    cat <<'JSON'
+[
+  {"id":"task-live","title":"Live bead","description":"live body","status":"open","priority":2}
+]
+JSON
+    exit 0
+    ;;
+  *)
+    printf 'unexpected task invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .backlog.source == "beads" and .backlog.stale == false and .backlog.stale_since == null
+      and (.backlog.records[] | select(.id == "task-live"))
+  ' >/dev/null || fail "a live beads read did not report source beads with stale=false: $out"
+  [ -f "$home/state/.beads-mirror-fleet.json" ] \
+    || fail "a successful beads read did not opportunistically refresh the local mirror"
+
+  : > "$fakebin/task.down"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .backlog.source == "beads-mirror" and .backlog.stale == true and (.backlog.stale_since | type) == "string"
+      and (.backlog.records[] | select(.id == "task-live"))
+  ' >/dev/null || fail "an outage with a fresh mirror did not fall back with explicit stale labeling: $out"
+
+  pass "beads snapshot refreshes its mirror on a live read and labels a stale-mirror fallback explicitly"
+}
+
+# Regression guard for the byte-identical default-backend requirement: adding
+# the beads branch must not add fields to the markdown backlog_json path.
+test_default_backend_backlog_json_has_no_beads_fields() {
+  local home fakebin out
+  home=$(make_home default-backend-beads-regression)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.backlog | has("source") | not) and (.backlog | has("fleet_label") | not)
+  ' >/dev/null || fail "default-backend backlog_json must stay byte-identical: unexpected beads-only field: $out"
+  pass "default backend backlog_json carries no beads-only fields"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_main_inventory_orphan_and_unstructured_disclosure
@@ -794,3 +969,7 @@ test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
+test_beads_backend_snapshot_scopes_by_fleet_label
+test_beads_backend_snapshot_surfaces_captain_holds
+test_beads_backend_mirror_refresh_and_stale_fallback
+test_default_backend_backlog_json_has_no_beads_fields
