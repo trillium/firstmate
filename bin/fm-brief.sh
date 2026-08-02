@@ -9,6 +9,14 @@
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
+#   --beads <id> links the task to a beads issue and is passed to every hook in
+#   fm-brief-hooks.d/ as FM_HOOK_BEADS_ID; the beads.sh hook there owns the
+#   resulting brief content. Applies to ship and scout briefs only.
+#   Before the Brief section is written, every executable in fm-brief-hooks.d/
+#   runs (via `.`, in a subshell) with FM_HOOK_BEADS_ID and FM_HOOK_TASK_ID set;
+#   each hook's captured stdout is prepended to the brief as its own section.
+#   Absent or empty fm-brief-hooks.d/ is a no-op. This is the extension point
+#   for out-of-tree brief content so this file stays a pure addition target.
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
 #   --secondmate writes a persistent secondmate charter. The project list
@@ -155,6 +163,16 @@ elif [ "$MODE_SET" -eq 1 ]; then
   exit 1
 fi
 ID=${POS[0]}
+
+case "$BEADS_ID" in
+  ''|*[!A-Za-z0-9._-]*)
+    [ -z "$BEADS_ID" ] || { echo "error: invalid --beads id" >&2; exit 1; }
+    ;;
+esac
+if [ -n "$BEADS_ID" ] && [ "$KIND" = secondmate ]; then
+  echo "error: --beads applies only to crewmate ship or scout briefs" >&2
+  exit 1
+fi
 
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to crewmate ship or scout briefs" >&2
@@ -326,6 +344,10 @@ REPO=${POS[1]}
 # inserted into the generated brief. Each hook is self-gating (e.g. the beads hook
 # below exits with no output when FM_HOOK_BEADS_ID is unset), so HOOK_SECTION stays
 # empty and briefs are unchanged when no hook has anything to add.
+# An explicit --beads workflow pre-populates FM_HOOK_BEADS_ID here; otherwise it is
+# left exactly as the caller already set it (see the Stage 3 comment above).
+[ -z "$BEADS_ID" ] || export FM_HOOK_BEADS_ID="$BEADS_ID"
+export FM_HOOK_TASK_ID="$ID"
 HOOK_SECTION=""
 for hook in "$SCRIPT_DIR"/fm-brief-hooks.d/*.sh; do
   [ -e "$hook" ] || continue
@@ -485,6 +507,7 @@ Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
+When starting no-mistakes, make \`--intent\` preserve all relevant content from this brief's \`# Task\` section plus every later accepted Firstmate requirement, clarification, constraint, exclusion, and supersession, carrying only each requirement's current accepted form; retain direct requirements instead of substituting a diff summary, and exclude generic operational, status, delivery, and other scaffold boilerplate unless it is task-specific.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
 Two firstmate-specific rules layer on top of that guidance:
