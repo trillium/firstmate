@@ -153,6 +153,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-lock-lib.sh
@@ -667,17 +669,26 @@ deregister_parlay_agent() {
 # Close the bead linked to this task (beads_id= in meta, set by fm-spawn.sh --beads)
 # once its work is confirmed landed. Only called for a non-force teardown that
 # reached this point, i.e. every REFUSED landed-work gate above already passed.
-# Fail-open by design, matching fm-bead-stamp.sh: a missing task CLI or a close
-# the CLI rejects (already closed, unreachable store) warns on stderr and never
-# blocks or fails an already-confirmed teardown.
+# Fail-open by design, matching fm-bead-stamp.sh: a missing task CLI warns on
+# stderr and never blocks or fails an already-confirmed teardown. Any close
+# failure - store unreachable, a transient write-path outage while reads still
+# succeed, or a genuine conflict - is queued via fm-beads-resilience-lib.sh for
+# replay once the store recovers (beads-authority-migration Stage 5 resilience
+# layer, report.md section 5), so the confirmed-landed close is never silently
+# dropped; fm_beads_write_queue_reconcile treats a bead already reported closed
+# on replay as reconciled rather than retrying it forever.
 close_linked_bead() {
-  local beads_id=$1 id=$2
+  local beads_id=$1 id=$2 reason
+  reason="landed: firstmate task $id teardown confirmed work landed"
   command -v task >/dev/null 2>&1 || {
     echo "warning: task CLI not found on PATH, could not close bead $beads_id for $id" >&2
     return 0
   }
-  task close "$beads_id" --reason "landed: firstmate task $id teardown confirmed work landed" >/dev/null 2>&1 \
-    || echo "warning: could not close bead $beads_id for $id (already closed or unreachable)" >&2
+  if task close "$beads_id" --reason "$reason" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "warning: could not close bead $beads_id for $id, queuing for retry" >&2
+  fm_beads_write_enqueue "$beads_id" "close: $id" close "$beads_id" --reason "$reason" || true
 }
 
 validate_pr_poll_cleanup() {
