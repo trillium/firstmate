@@ -364,15 +364,13 @@ SH
 
 make_fake_herdr_secondmate_recovery() {
   local fakebin=$1
-  # The recovery kill now requires the shared named-session lock and an exact
-  # focus snapshot. Keep a focused sibling tab so this test's husk close is
-  # provably non-workspace-emptying and never needs to signal a fake shell pid.
   cat > "$fakebin/herdr" <<'SH'
 #!/usr/bin/env bash
 set -u
 log=${FM_FAKE_HERDR_LOG:?}
 state=${FM_FAKE_HERDR_STATE:?}
 mate_id=${FM_FAKE_SECOND_MATE_ID:?}
+mate_scope=${FM_FAKE_SECOND_MATE_SCOPE:?}
 killed="${state}.killed"
 spawned="${state}.spawned"
 printf '%s\n' "$*" >> "$log"
@@ -380,19 +378,16 @@ case "${1:-} ${2:-}" in
   "status --json")
     printf '%s\n' '{"client":{"protocol":14,"version":"test"},"server":{"running":true}}'
     ;;
-  "session list")
-    printf '{"sessions":[{"name":"default","running":true,"socket_path":"%s.sock"}]}\n' "$state"
-    ;;
   "workspace list")
-    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2ndmate-%s","focused":true,"active_tab_id":"t-focus"}]}}\n' "$mate_id"
+    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2M-%s"}]}}\n' "$mate_scope"
     ;;
   "tab list")
     if [ -e "$spawned" ]; then
-      printf '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true},{"tab_id":"t-new","workspace_id":"ws1","label":"fm-%s","focused":false}]}}\n' "$mate_id"
+      printf '{"result":{"tabs":[{"tab_id":"t-new","workspace_id":"ws1","label":"fm-%s"}]}}\n' "$mate_id"
     elif [ -e "$killed" ]; then
-      printf '%s\n' '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true}]}}'
+      printf '%s\n' '{"result":{"tabs":[]}}'
     else
-      printf '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true},{"tab_id":"t-old","workspace_id":"ws1","label":"fm-%s","focused":false}]}}\n' "$mate_id"
+      printf '{"result":{"tabs":[{"tab_id":"t-old","workspace_id":"ws1","label":"fm-%s"}]}}\n' "$mate_id"
     fi
     ;;
   "tab create")
@@ -411,9 +406,9 @@ case "${1:-} ${2:-}" in
   "pane get")
     pane=${3:-}
     if [ "$pane" = p-new ] && [ -e "$spawned" ]; then
-      printf '%s\n' '{"result":{"pane":{"pane_id":"p-new","tab_id":"t-new","workspace_id":"ws1"}}}'
+      printf '%s\n' '{"result":{"pane":{"pane_id":"p-new"}}}'
     elif [ "$pane" = p-old ] && [ ! -e "$killed" ]; then
-      printf '%s\n' '{"result":{"pane":{"pane_id":"p-old","tab_id":"t-old","workspace_id":"ws1"}}}'
+      printf '%s\n' '{"result":{"pane":{"pane_id":"p-old"}}}'
     else
       printf '%s\n' '{"error":{"code":"pane_not_found"}}' >&2
       exit 1
@@ -560,9 +555,12 @@ EOF
 }
 
 run_session_start_herdr_secondmate() {
-  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6
+  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6 scope
+  scope=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_mate_scope "$1"' \
+    "$ROOT" "$SESSION_START_HERDR_SECOND_MATE_ID")
   FM_BACKEND=herdr FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" \
     FM_FAKE_SECOND_MATE_ID="$SESSION_START_HERDR_SECOND_MATE_ID" \
+    FM_FAKE_SECOND_MATE_SCOPE="$scope" \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH"
 }
 
