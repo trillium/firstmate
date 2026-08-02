@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, DEGRADED, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, NUDGE_SECONDMATES, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, DEGRADED, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, NUDGE_SECONDMATES, BEADS_WRITE_QUEUE, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
   A silent bootstrap section, or a BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -57,3 +57,8 @@ When any diagnostic needs captain attention, report the plain consequence and re
   Inspect the reason, keep the pending marker under `state/.secondmate-nudge-pending/` intact, and rerun session start after the endpoint or metadata issue is fixed so bootstrap can retry the exact same marked send.
 - `FMX: X mode on ...` / `FMX: X mode off ...` - bootstrap confirmed or removed the local X-mode poll artifacts (`docs/configuration.md` "X mode (.env)").
   Only when a running watcher needs the cadence transition applied immediately, restart the home-scoped watcher through the emitted harness supervision protocol; bootstrap deliberately never restarts the watcher itself.
+- `BEADS_WRITE_QUEUE: reconciled queued write for <id> (<description>)` - a beads write that failed during an earlier outage (dispatch stamp, assignment, or a task-close) replayed cleanly against the recovered store on this bootstrap's mutating sweep; no action needed, it is reported only so the recovery is visible.
+  `(bead already closed)` on a queued close means the bead was already closed - by the outage's original close attempt landing after all, or by someone else - and firstmate reconciled instead of retrying it forever.
+- `BEADS_WRITE_QUEUE: task CLI not found, N write(s) remain queued` / `BEADS_WRITE_QUEUE: store still unreachable, N write(s) remain queued` - the beads store outage is still ongoing; treat the same as an unresolved `DEGRADED:`/`MISSING:` beads line above rather than a new problem, and expect the queue to keep draining on later bootstraps once the store recovers.
+- `BEADS_WRITE_QUEUE: replay failed for <id> (<description>); re-queued` - a queued write hit a genuine replay failure (not just an unreachable store) and was left queued for the next attempt.
+  Investigate if the same id keeps failing to replay across multiple bootstraps rather than treating a one-off as actionable.

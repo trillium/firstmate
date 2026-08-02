@@ -21,19 +21,23 @@
 #     captain_actionable fields. Repeated blocker tokens remain ordered; a blocker
 #     resolves only when its structured record is Done, and missing ids stay open.
 #     When config/backlog-backend=beads, backlog gains source:"beads",
-#     fleet_label (the queried fleet label), records_truncated, and
-#     records_limit, and records[] holds this fleet's open/in_progress/blocked
-#     beads (state queued/in_flight only, always structured:true with empty
-#     blocked_by_ids and requires_child_metadata false). A record carrying the
-#     `captain-hold` label (bin/fm-decision-hold.sh's beads-native hold anchor;
-#     see docs/decision-hold-lifecycle.md) reads hold_kind:"captain",
-#     hold_reason from the anchor's own metadata.hold_reason, current_role
-#     "held", and captain_actionable true, straight from the same `task list
-#     --json` read with no extra beads calls; a resolved hold's anchor is
-#     closed and so is absent from this query entirely, hiding it without
-#     further work. A failed or unavailable beads read falls back to the
-#     data/backlog.md shape above with no beads-only fields. Default-backend
-#     output is unaffected.
+#     stale:false, stale_since:null, fleet_label (the queried fleet label),
+#     records_truncated, and records_limit, and records[] holds this fleet's
+#     open/in_progress/blocked beads (state queued/in_flight only, always
+#     structured:true with empty blocked_by_ids and requires_child_metadata
+#     false). A record carrying the `captain-hold` label (bin/fm-decision-hold.sh's
+#     beads-native hold anchor; see docs/decision-hold-lifecycle.md) reads
+#     hold_kind:"captain", hold_reason from the anchor's own metadata.hold_reason,
+#     current_role "held", and captain_actionable true, straight from the same
+#     `task list --json` read with no extra beads calls; a resolved hold's
+#     anchor is closed and so is absent from this query entirely, hiding it
+#     without further work. A failed live read falls back to this fleet's
+#     local mirror (Stage 5 resilience layer, bin/fm-beads-resilience-lib.sh)
+#     when it is still fresh, with source:"beads-mirror", stale:true, and
+#     stale_since set to the mirror's write time; only when both the live read
+#     and the mirror are unusable does it fall back to the data/backlog.md
+#     shape above with no beads-only fields. Default-backend output is
+#     unaffected.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
 #     state, source, detail, and raw line separately.
@@ -154,7 +158,7 @@ validate_positive_bound FM_SNAPSHOT_BEADS_TIMEOUT "$FM_SNAPSHOT_BEADS_TIMEOUT"
 . "$SCRIPT_DIR/fm-ff-lib.sh"  # validate_secondmate_home: shared seeded-home boundary checks
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"  # fm_beads_backend_available, fm_beads_fleet_label
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"  # fm_backlog_backend_value, fm_beads_fleet_label
 # shellcheck source=bin/fm-beads-resilience-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
