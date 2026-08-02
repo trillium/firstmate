@@ -138,8 +138,9 @@ To run firstmate with none of your global harness config (no global CLAUDE.md, h
 bin/fm-isolated-launch.sh
 ```
 
-This repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load normally.
-First run under a fresh isolated home requires logging in again - no auth carries over from the real `~/.claude.json`.
+This repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load normally, and the isolated session runs with the same bypass-permissions autonomy as an ordinary crewmate.
+On macOS it reuses your existing login by copying the OAuth token read-only out of your Keychain, so no re-login is needed; it only falls back to a login prompt when that isn't possible (non-macOS, or no stored credential).
+See [docs/configuration.md](docs/configuration.md#isolated-launch-binfm-isolated-launchsh) for the full mechanics and the `FM_ISOLATED_HOME`, `FM_ISOLATED_CWD`, and `FM_ROOT_OVERRIDE` overrides.
 
 ## How It Works
 
