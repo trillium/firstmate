@@ -1403,6 +1403,72 @@ EOF
   pass "a failed In flight beads read falls back to the whole title-line rendering rather than a partial digest"
 }
 
+# make_fake_task_beads_switchable <fakebin>: a fake `task` CLI whose live-vs-
+# down behavior is controlled at call time by whether $fakebin/task.down
+# exists, so one test can flip a live store to an outage mid-run without
+# rewriting the fixture (beads resilience layer, docs/configuration.md
+# "Beads resilience layer").
+make_fake_task_beads_switchable() {
+  local fakebin=$1
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+down_marker=$(dirname "$0")/task.down
+if [ -e "$down_marker" ]; then
+  exit 7
+fi
+case "$*" in
+  'list --limit 1')
+    printf '%s\n' 'fake-ready-1'
+    exit 0
+    ;;
+  *'--status in_progress,blocked'*)
+    printf '%s\n' 'inflight-task-1'
+    exit 0
+    ;;
+  *'--ready'*)
+    printf '%s\n' 'ready-task-1'
+    printf '%s\n' 'ready-task-2'
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+}
+
+test_backlog_beads_mirror_refresh_and_stale_fallback() {
+  local rec root home fakebin out mirror_inflight mirror_ready
+  rec=$(new_world backlog-beads-mirror)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_task_beads_switchable "$fakebin"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  mirror_inflight="$home/state/.beads-mirror-inflight.json"
+  mirror_ready="$home/state/.beads-mirror-ready.json"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "inflight-task-1" "live beads read did not render the In flight set"
+  assert_contains "$out" "ready-task-1" "live beads read did not render the Queued set"
+  assert_not_contains "$out" "stale mirror" "a live read was mislabeled as a stale mirror"
+  [ -f "$mirror_inflight" ] || fail "a successful In flight beads read did not opportunistically refresh the local mirror"
+  [ -f "$mirror_ready" ] || fail "a successful Queued beads read did not opportunistically refresh the local mirror"
+
+  : > "$fakebin/task.down"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "stale mirror, beads store unreachable since" \
+    "an outage with fresh mirrors did not label its fallback output as a stale mirror"
+  assert_contains "$out" "inflight-task-1" \
+    "stale-mirror fallback dropped the last successfully mirrored In flight set"
+  assert_contains "$out" "ready-task-1" \
+    "stale-mirror fallback dropped the last successfully mirrored Queued set"
+
+  pass "a successful beads read refreshes the local mirror for both sections, and an outage falls back to them with explicit stale labeling"
+}
+
 # --- fleet-state digest: no in-flight tasks ----------------------------------
 
 test_fleet_digest_empty_fleet() {
@@ -1642,6 +1708,7 @@ test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
 test_backlog_compact_beads_shows_inflight_and_queued_sections
 test_backlog_compact_beads_partial_failure_falls_back_to_manual
+test_backlog_beads_mirror_refresh_and_stale_fallback
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon

@@ -886,6 +886,60 @@ SH
   pass "beads backend snapshot surfaces structured captain-hold fields from gate-anchor metadata"
 }
 
+# beads-authority migration Stage 5 resilience layer (report.md section 5,
+# docs/configuration.md "Beads resilience layer"): a successful beads read
+# opportunistically refreshes a local mirror, and a later read failure falls
+# back to that mirror only when it is still fresh, labeling every fallback
+# record with source:"beads-mirror", stale:true, and a stale_since timestamp
+# so no caller can mistake it for a current read.
+test_beads_backend_mirror_refresh_and_stale_fallback() {
+  local home fakebin out
+  home=$(make_home beads-mirror)
+  printf 'beads\n' > "$home/config/backlog-backend"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+down_marker=$(dirname "$0")/task.down
+if [ -e "$down_marker" ]; then
+  exit 7
+fi
+case "$*" in
+  'list --limit 1') printf '[]\n'; exit 0 ;;
+  'list --label fleet:firstmate --status open,in_progress,blocked --limit 200 --json')
+    cat <<'JSON'
+[
+  {"id":"task-live","title":"Live bead","description":"live body","status":"open","priority":2}
+]
+JSON
+    exit 0
+    ;;
+  *)
+    printf 'unexpected task invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .backlog.source == "beads" and .backlog.stale == false and .backlog.stale_since == null
+      and (.backlog.records[] | select(.id == "task-live"))
+  ' >/dev/null || fail "a live beads read did not report source beads with stale=false: $out"
+  [ -f "$home/state/.beads-mirror-fleet.json" ] \
+    || fail "a successful beads read did not opportunistically refresh the local mirror"
+
+  : > "$fakebin/task.down"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .backlog.source == "beads-mirror" and .backlog.stale == true and (.backlog.stale_since | type) == "string"
+      and (.backlog.records[] | select(.id == "task-live"))
+  ' >/dev/null || fail "an outage with a fresh mirror did not fall back with explicit stale labeling: $out"
+
+  pass "beads snapshot refreshes its mirror on a live read and labels a stale-mirror fallback explicitly"
+}
+
 # Regression guard for the byte-identical default-backend requirement: adding
 # the beads branch must not add fields to the markdown backlog_json path.
 test_default_backend_backlog_json_has_no_beads_fields() {
@@ -917,4 +971,5 @@ test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
 test_beads_backend_snapshot_scopes_by_fleet_label
 test_beads_backend_snapshot_surfaces_captain_holds
+test_beads_backend_mirror_refresh_and_stale_fallback
 test_default_backend_backlog_json_has_no_beads_fields

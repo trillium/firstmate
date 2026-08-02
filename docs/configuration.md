@@ -56,7 +56,7 @@ Set the local, gitignored `config/backlog-backend` file to `beads` to use the be
 Session-start's digest mirrors `data/backlog.md`'s `## In flight`/`## Queued` split with two beads-sourced sections, both scoped by the firstmate-fleet label below: **In flight** is `task list --label <label> --status in_progress,blocked`, and **Queued** is `task list --label <label> --ready` (bd's dependency-derived readiness with no manual tagging).
 If either read fails, the whole listing falls back to the title-line rendering of `data/backlog.md` rather than printing a partial digest.
 Beads requires the `task` CLI on `PATH` and access to the active beads store.
-Bootstrap validates the beads backend and reports a `MISSING:` line if the CLI is absent or the store is unreachable.
+Bootstrap validates the beads backend and reports a `MISSING:` line if the CLI is absent or the store is unreachable and no fresh local mirror covers the gap, or a `DEGRADED:` line naming the mirror's timestamp when one does; see "Beads resilience layer" below.
 Set the local, gitignored `config/backlog-backend` file to `manual` to force manual backlog editing and suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not missing-tool reporting.
 Absent or `tasks-axi` selects the default tasks-axi backend.
 The file format is unchanged in tasks-axi and manual modes; both produce the same `## In flight`, `## Queued`, and `## Done` sections in `data/backlog.md`.
@@ -65,6 +65,15 @@ Under the beads backend, firstmate's own dispatched-work beads are meant to carr
 `bin/fm-tasks-axi-lib.sh`'s `fm_beads_fleet_label` is the single owner of that label; read it from there rather than hardcoding it.
 The structured fleet snapshot (`bin/fm-fleet-snapshot.sh --json`), Bearings (`bin/fm-bearings-snapshot.sh`), and session-start's compact digest above all read this fleet's in-flight/queued beads, scoped by that label, when the beads backend is selected; with any other backend their output is unchanged.
 That beads-sourced view covers only status open/in_progress/blocked beads mapped to `records[]` state `queued`/`in_flight`; per-bead dependency graphs and correlation with local `state/*.meta` remain unwired, so `blocked_by_ids` is always empty and `requires_child_metadata` is always false for a beads-sourced record. A record carrying the `captain-hold` label is the exception: its `hold_kind`, `hold_reason`, `current_role`, and `captain_actionable` are populated from the anchor's own labels and `metadata.hold_reason` (see [`decision-hold-lifecycle.md`](decision-hold-lifecycle.md)); every other beads-sourced record leaves those fields null/false.
+
+### Beads resilience layer (state/.beads-mirror-*.json, state/.beads-write-queue)
+
+`bin/fm-beads-resilience-lib.sh` keeps the beads backend from wedging firstmate during a Dolt/beads-store outage (beads-authority-migration Stage 5); its header comment is the single owner of the exact function contracts summarized here.
+On the read side, a successful beads read that firstmate already performs for another reason - session-start's compact listing, `bin/fm-fleet-snapshot.sh`, teardown's re-evaluate-queue - opportunistically writes its raw output to a local mirror file (`state/.beads-mirror-<view>.json`, one per read shape) with a timestamp; no code path polls beads solely to refresh a mirror, the same discipline as `state/.last-watcher-beat`.
+When a beads read then fails, the caller falls back to the mirror only if it is fresh (`FM_BEADS_MIRROR_MAX_AGE`, default 900 seconds / 15 minutes) and labels every line sourced from it as a stale mirror, naming the store-unreachable-since timestamp; stale mirror data is never presented as current.
+Bootstrap applies the same freshness check across every known view (`fm_beads_mirror_freshest_iso`) to decide its own diagnostic: `DEGRADED:` when a fresh mirror exists, escalating to `MISSING:` only when both the live store and every mirror are unusable (`bootstrap-diagnostics` owns the captain-facing handling of both lines).
+On the write side, a beads write that already tolerated failure by warning and continuing (`fm-bead-stamp.sh`'s dispatch stamp, `fm-teardown.sh`'s `close_linked_bead`) instead enqueues the failed write to a durable FIFO log (`state/.beads-write-queue`, lock-protected) when it cannot reach the store; the queue is availability, not a second write authority, and never resolves conflicts locally, it only replays each queued write strictly in order and reports whatever `task` itself returns.
+Bootstrap's mutating sweep (beads backend only, real runs only) replays the queue on every session-start bootstrap, so an outage recovers without a new polling loop.
 
 ## Runtime backend (config/backend / FM_BACKEND)
 

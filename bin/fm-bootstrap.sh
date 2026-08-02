@@ -100,6 +100,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
@@ -905,9 +907,17 @@ backlog_backend=$(fm_backlog_backend_value "$CONFIG")
 case "$backlog_backend" in
   beads)
     if ! command -v task >/dev/null 2>&1; then
-      echo "MISSING: task CLI (beads store; install: $(install_cmd task))"
+      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+        echo "DEGRADED: task CLI not found (beads store; install: $(install_cmd task)); using local mirror from $mirror_iso until it is"
+      else
+        echo "MISSING: task CLI (beads store; install: $(install_cmd task))"
+      fi
     elif ! task list --limit 1 >/dev/null 2>&1; then
-      echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list')"
+      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+        echo "DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from $mirror_iso until it is"
+      else
+        echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list'), and no usable local mirror"
+      fi
     elif [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
       echo "BOOTSTRAP_INFO: beads task store available"
     fi
@@ -922,6 +932,9 @@ case "$backlog_backend" in
     ;;
 esac
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
+  if [ "$backlog_backend" = beads ]; then
+    fm_beads_write_queue_reconcile
+  fi
   secondmate_liveness_sweep
   secondmate_sync
   x_mode_setup

@@ -115,6 +115,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-public-followup-lib.sh
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 
 STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
@@ -268,15 +270,45 @@ print_backlog_tasks_axi_compact() {
 # as before Stage 2.
 print_backlog_beads_compact() {
   local path=$1 label out_inflight rc_inflight out_queued rc_queued
+  local inflight_ok=0 queued_ok=0 inflight_stale_since='' queued_stale_since=''
   label=$(fm_beads_fleet_label)
   printf 'compact backlog listing (beads task store; label %s; max %s item(s) per section)\n' "$label" "$BACKLOG_LIMIT"
+
   out_inflight=$(task list --label "$label" --status in_progress,blocked --limit "$BACKLOG_LIMIT" 2>&1)
   rc_inflight=$?
+  if [ "$rc_inflight" -eq 0 ]; then
+    fm_beads_mirror_write inflight "$out_inflight" 2>/dev/null || true
+    inflight_ok=1
+  elif fm_beads_mirror_fresh inflight; then
+    out_inflight=$(fm_beads_mirror_read inflight)
+    inflight_stale_since=$(fm_beads_mirror_timestamp_iso inflight)
+    inflight_ok=1
+  fi
+
   out_queued=$(task list --label "$label" --ready --limit "$BACKLOG_LIMIT" 2>&1)
   rc_queued=$?
-  if [ "$rc_inflight" -eq 0 ] && [ "$rc_queued" -eq 0 ]; then
-    printf '## In flight\n%s\n' "$out_inflight"
-    printf '## Queued\n%s\n' "$out_queued"
+  if [ "$rc_queued" -eq 0 ]; then
+    fm_beads_mirror_write ready "$out_queued" 2>/dev/null || true
+    queued_ok=1
+  elif fm_beads_mirror_fresh ready; then
+    out_queued=$(fm_beads_mirror_read ready)
+    queued_stale_since=$(fm_beads_mirror_timestamp_iso ready)
+    queued_ok=1
+  fi
+
+  if [ "$inflight_ok" -eq 1 ] && [ "$queued_ok" -eq 1 ]; then
+    if [ -n "$inflight_stale_since" ]; then
+      printf '(stale mirror, beads store unreachable since %s) In flight, as of last successful read:\n' "$inflight_stale_since"
+    else
+      printf '## In flight\n'
+    fi
+    printf '%s\n' "$out_inflight"
+    if [ -n "$queued_stale_since" ]; then
+      printf '(stale mirror, beads store unreachable since %s) Queued, as of last successful read:\n' "$queued_stale_since"
+    else
+      printf '## Queued\n'
+    fi
+    printf '%s\n' "$out_queued"
   else
     printf 'beads task listing failed; falling back to title-line rendering.\n'
     printf '%s\n' "$out_inflight"
@@ -290,7 +322,7 @@ print_backlog_beads_compact() {
 print_backlog_compact() {
   local path=$1 label=$2
   subsection "$label"
-  if fm_beads_backend_available "$CONFIG"; then
+  if [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
     print_backlog_beads_compact "$path"
     print_backlog_pointer
   elif [ -f "$path" ]; then
