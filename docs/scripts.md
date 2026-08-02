@@ -19,7 +19,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-backlog-handoff.sh`  | Validate and delegate queued backlog-item moves into a secondmate home               |
 | `fm-decision-hold.sh`    | Create, verify, complete, and resolve durable captain-held decisions                 |
 | `fm-brief.sh`            | Scaffold ship, scout, secondmate-charter, and Herdr-lab briefs; load hooks when FM_HOOK_BEADS_ID or other hook env vars are set |
-| `fm-bead-stamp.sh`       | Stamp a linked bead's dispatch and lifecycle state when a task is spawned with --beads |
+| `fm-bead-stamp.sh`       | Stamp a linked bead's dispatch and lifecycle state when a task is spawned with --beads or auto-linked under the beads backend |
 | `fm-ledger.sh`           | List or close likely-dropped beads: claimed, still open, and idle past a staleness window |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
@@ -75,7 +75,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-ff-lib.sh`           | Shared guarded fast-forward helper for origin pulls and local secondmate syncs       |
 | `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
 | `fm-config-inherit-lib.sh` | Shared primary-to-secondmate inherited local-material propagation and config-reread delivery |
-| `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector (tasks-axi/beads/manual) and `tasks-axi` compatibility probe |
+| `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector (tasks-axi/beads/manual), `tasks-axi` compatibility probe, and beads resolve-or-create for auto-linking |
 | `fm-beads-resilience-lib.sh` | Shared beads read-side local mirror and write-side durable queue so a Dolt/beads-store outage degrades instead of wedging firstmate |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor for the bootstrap diagnostic                  |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Stamp a linked bead as dispatched: sets its dispatch=sent state dimension and
 # assigns it to the launched agent. Called by fm-spawn.sh after a successful
-# spawn when the task was launched with --beads <id>.
+# spawn when the task was launched with --beads <id> or auto-linked under
+# config/backlog-backend=beads.
 # Fail-open by design: a missing `task` CLI, an empty beads id, or a bead the
 # CLI cannot find warns on stderr and exits 0 so a bead-tracking problem never
 # blocks or fails a spawn. A failed write against a reachable store, or every
