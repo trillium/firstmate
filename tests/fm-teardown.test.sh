@@ -2655,6 +2655,82 @@ test_beads_linked_task_does_not_close_bead_on_refused_teardown() {
   pass "a beads-linked task's bead is NOT closed when teardown refuses unlanded work"
 }
 
+# Mock `task` where `close` always fails but `list --limit 1` succeeds (the
+# store is reachable, e.g. the bead is already closed or a write-only outage
+# leaves reads working). Args: case_dir
+add_beads_task_mock_close_fails_store_reachable() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/task" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
+case "$1" in
+  close) exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/task"
+}
+
+# Mock `task` where every call fails (the store itself is unreachable, reads
+# included). Args: case_dir
+add_beads_task_mock_store_unreachable() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/task" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
+exit 7
+SH
+  chmod +x "$case_dir/fakebin/task"
+}
+
+test_beads_close_failure_queues_for_replay_when_store_reachable() {
+  local case_dir rc queue
+  case_dir=$(make_case beads-close-fail-reachable)
+  write_meta "$case_dir" local-only ship bead-close-4
+  add_beads_task_mock_close_fails_store_reachable "$case_dir"
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "beads-close-fail-reachable: teardown should still succeed (fail-open close)"
+  grep -q '^close bead-close-4 ' "$case_dir/task-calls.log" 2>/dev/null \
+    || fail "beads-close-fail-reachable: close was never attempted: $(cat "$case_dir/task-calls.log" 2>/dev/null)"
+  grep -q "queuing for retry" "$case_dir/stderr" \
+    || fail "beads-close-fail-reachable: did not warn about queuing the failed close: $(cat "$case_dir/stderr")"
+  queue="$case_dir/state/.beads-write-queue"
+  [ -s "$queue" ] || fail "beads-close-fail-reachable: a close that fails against a reachable store must still be queued durably: $(cat "$queue" 2>/dev/null)"
+  jq -e 'select(.task_id == "bead-close-4" and (.argv[0:2] == ["close","bead-close-4"]))' "$queue" >/dev/null \
+    || fail "beads-close-fail-reachable: queued write has the wrong shape: $(cat "$queue")"
+  pass "a bead close that fails against a reachable store is durably queued for replay, not silently dropped"
+}
+
+test_beads_close_failure_queues_for_replay_when_store_unreachable() {
+  local case_dir rc queue
+  case_dir=$(make_case beads-close-fail-unreachable)
+  write_meta "$case_dir" local-only ship bead-close-5
+  add_beads_task_mock_store_unreachable "$case_dir"
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "beads-close-fail-unreachable: teardown should still succeed (fail-open close)"
+  queue="$case_dir/state/.beads-write-queue"
+  [ -s "$queue" ] || fail "beads-close-fail-unreachable: a close attempted against an unreachable store must still be queued durably: $(cat "$queue" 2>/dev/null)"
+  jq -e 'select(.task_id == "bead-close-5" and (.argv[0:2] == ["close","bead-close-5"]))' "$queue" >/dev/null \
+    || fail "beads-close-fail-unreachable: queued write has the wrong shape: $(cat "$queue")"
+  pass "a bead close attempted against an unreachable store is durably queued for replay"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
