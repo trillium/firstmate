@@ -319,6 +319,7 @@ REPO=${POS[1]}
 HOOK_SECTION=""
 for hook in "$SCRIPT_DIR"/fm-brief-hooks.d/*.sh; do
   [ -e "$hook" ] || continue
+  # shellcheck source=/dev/null
   hook_out=$(. "$hook") || continue
   [ -n "$hook_out" ] || continue
   if [ -n "$HOOK_SECTION" ]; then

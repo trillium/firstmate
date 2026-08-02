@@ -909,6 +909,7 @@ if [ "$AUTO_BEADS_LINKED" -eq 1 ]; then
   SPAWN_HOOK_SECTION=""
   for hook in "$FM_ROOT"/bin/fm-brief-hooks.d/*.sh; do
     [ -e "$hook" ] || continue
+    # shellcheck source=/dev/null
     hook_out=$(export FM_HOOK_BEADS_ID="$BEADS_ARG"; . "$hook") || continue
     [ -n "$hook_out" ] || continue
     if [ -n "$SPAWN_HOOK_SECTION" ]; then
