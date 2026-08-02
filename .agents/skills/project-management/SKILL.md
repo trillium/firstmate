@@ -68,6 +68,7 @@ This origin/upstream shape is load-bearing, not cosmetic: `git push origin` and,
 `bin/fm-brief.sh`'s header and `AGENTS.md` section 11 own the resulting brief-scaffold rule and its exact clone-shape detection; do not restate that mechanism here.
 Never initialize a fork-contribution project with `no-mistakes init --fork-url` - that flag implements the opposite workflow (push to a named fork, open the PR against `origin`/upstream), documented for external contributors to firstmate itself in `CONTRIBUTING.md`, and is exactly backwards for a fork-contribution project.
 A clone still carrying the legacy shape (`origin` = upstream, no `upstream` remote) needs this swap before its next `no-mistakes` run; treat discovering one as a project-management fix, not a task for the ship worker mid-brief to attempt.
+Run `bin/fm-fork-origin-check.sh` by hand to advisory-scan every registered clone for a legacy or partially swapped origin/upstream shape; it is read-only and never blocks a spawn or edits a remote.
 
 ## Create a project
 
