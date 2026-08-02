@@ -368,7 +368,8 @@ case "${1:-} ${2:-}" in
     printf '%s\n' '{"client":{"protocol":14,"version":"test"},"server":{"running":true}}'
     ;;
   "workspace list")
-    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2ndmate-%s"}]}}\n' "$mate_id"
+    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2M-%s"}]}}\n' \
+      "$(printf '%s' "$mate_id" | tr '[:lower:]' '[:upper:]')"
     ;;
   "tab list")
     if [ -e "$spawned" ]; then
