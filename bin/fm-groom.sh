@@ -237,7 +237,15 @@ for id in $ids; do
       continue
     fi
 
-    task_id="groom-$(printf '%s' "$id" | tr -cd 'a-z0-9')"
+    # shellcheck disable=SC2018,SC2019  # ASCII-only ids by construction
+    task_id="groom-$(printf '%s' "$id" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9')"
+    if [ "$task_id" = "groom-" ] || [ -e "$STATE/$task_id.meta" ] || [ -e "$DATA/$task_id/brief.md" ]; then
+      action="SKIP: task id $task_id unusable or already exists (idea id collision)"
+      if [ "$JSON" -eq 1 ]; then emit_json "$id" "$title" "$verdict" "error" "$brief" "$action"
+      else emit_human "$id" "$title" "$verdict" "$action" "$brief" "$rationale"; fi
+      acted=$((acted + 1))
+      continue
+    fi
     if [ "$ENABLED" -eq 1 ]; then
       # Real dispatch: write the formulated brief to data/<task-id>/brief.md and
       # spawn a scout crewmate (report deliverable, scratch worktree). We mark the
@@ -270,11 +278,17 @@ for id in $ids; do
       if command -v "$REVIEW_BIN" >/dev/null 2>&1; then
         rid=$(printf '%s' "$brief" | "$REVIEW_BIN" q "$review_title" \
           --description "Auto-formulated from idea $id. Classified NOT safe to auto-dispatch: ${rationale:-no rationale}. Review the brief below and either enable it or drop it." \
-          --body-file - 2>/dev/null || true)
-        "$IDEAS_BIN" set-state "$id" "$GROOM_DIM=escalated" \
-          --reason "fm-groom filed review item ${rid:-?}" >/dev/null 2>&1 || true
-        "$IDEAS_BIN" note "$id" "fm-groom escalated to review item ${rid:-(unknown)}: $rationale" >/dev/null 2>&1 || true
-        action="FILED review item ${rid:-(id unknown)}"
+          --body-file - 2>/dev/null) || rid=
+        if [ -n "$rid" ]; then
+          "$IDEAS_BIN" set-state "$id" "$GROOM_DIM=escalated" \
+            --reason "fm-groom filed review item $rid" >/dev/null 2>&1 || true
+          "$IDEAS_BIN" note "$id" "fm-groom escalated to review item $rid: $rationale" >/dev/null 2>&1 || true
+          action="FILED review item $rid"
+        else
+          # Never mark an idea handled when no review item exists; the groom
+          # label is permanent and would drop the captain's decision silently.
+          action="REVIEW FILING FAILED; idea left unmarked for retry"
+        fi
       else
         action="REVIEW CLI MISSING; idea left unmarked for retry"
       fi

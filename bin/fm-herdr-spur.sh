@@ -281,8 +281,14 @@ fm_herdr_spur_event_block() {  # <watch-set>
   # Stream. herdr-eventwait.py prints "@subscribed" then TAB lines:
   #   <pane_id>\t<workspace_id>\t<agent_status>\t<agent>
   local pane_id ev_ws ev_status ev_agent name prev prev_var pa_var
+  local saw_subscribed=false
+  # shellcheck disable=SC2034 # ev_ws is a positional field in the stream, deliberately unused here.
   while IFS=$'\t' read -r pane_id ev_ws ev_status ev_agent; do
-    [ "$pane_id" = "@subscribed" ] && { log "subscribed panes=$#"; continue; }
+    if [ "$pane_id" = "@subscribed" ]; then
+      saw_subscribed=true
+      log "subscribed panes=$#"
+      continue
+    fi
     [ -n "$pane_id" ] || continue
     pa_var="PANE_AGENT_$(fm_herdr_spur_safekey "$pane_id")"
     name="${!pa_var:-$ev_agent}"
@@ -296,7 +302,11 @@ fm_herdr_spur_event_block() {  # <watch-set>
     fi
     printf -v "$prev_var" '%s' "$ev_status"
   done < <(python3 "$reader_py" "$sock" "$FM_HERDR_SPUR_EVENT_BUDGET" "$@" 2>/dev/null)
-  return 0
+  if [ "$saw_subscribed" = true ]; then
+    return 0
+  fi
+  log "event stream never subscribed; treating as reader failure"
+  return 2
 }
 
 # --- main --------------------------------------------------------------------
