@@ -312,6 +312,33 @@ fi
 
 REPO=${POS[1]}
 
+# beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
+# "Stage 3"): bead minting/resolution under config/backlog-backend=beads happens only
+# in fm-spawn.sh, at actual dispatch time, not here. Minting here at scaffold time
+# would create a bead the moment a brief is written, before the task is ever spawned;
+# if the captain declines after review or spawn fails, that bead would be permanently
+# orphaned in the shared store since no state/<id>.meta ever records its beads_id= for
+# fm-teardown.sh to close. FM_HOOK_BEADS_ID is therefore left exactly as the caller set
+# it (unset unless an explicit --beads workflow pre-populated it).
+
+# Hook system (see header comment above): scripts in fm-brief-hooks.d/ are sourced
+# in a subshell, and any stdout they produce is collected into HOOK_SECTION and
+# inserted into the generated brief. Each hook is self-gating (e.g. the beads hook
+# below exits with no output when FM_HOOK_BEADS_ID is unset), so HOOK_SECTION stays
+# empty and briefs are unchanged when no hook has anything to add.
+HOOK_SECTION=""
+for hook in "$SCRIPT_DIR"/fm-brief-hooks.d/*.sh; do
+  [ -e "$hook" ] || continue
+  # shellcheck disable=SC1090
+  hook_out=$(. "$hook") || continue
+  [ -n "$hook_out" ] || continue
+  if [ -n "$HOOK_SECTION" ]; then
+    HOOK_SECTION="$HOOK_SECTION"$'\n\n'"$hook_out"
+  else
+    HOOK_SECTION="$hook_out"
+  fi
+done
+
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
 # shellcheck disable=SC2016  # single quotes are deliberate: these lines are literal brief text whose backtick-wrapped $(...) and "$HERDR_LAB_SESSION" snippets must reach the reading agent verbatim, not expand at scaffold time; only the '"$VAR"' break-outs interpolate.
@@ -343,6 +370,7 @@ Do not add Herdr lifecycle commands to this unguarded brief by hand.
 EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
+[ -z "$HOOK_SECTION" ] || HERDR_SECTION="$HERDR_SECTION"$'\n\n'"$HOOK_SECTION"
 
 # Best-effort Parlay enrollment: the crewmate's first action is to self-enroll in
 # Parlay so firstmate can reach it and it can report back. `parlay listen --agent

@@ -113,7 +113,14 @@
 #   this task's work is confirmed landed), the dispatch=sent and lifecycle=sent state
 #   dimensions are stamped via fm-bead-stamp.sh after spawn, and the brief includes Bead
 #   Receipt/Closure sections (when FM_HOOK_BEADS_ID is set) asking the worker to confirm
-#   dispatch=claimed/lifecycle=claimed and close the bead on completion.
+#   dispatch=claimed/lifecycle=claimed and close the bead on completion. Under
+#   config/backlog-backend=beads, this whole linkage is automatic for every ship/scout
+#   spawn (an explicit --beads still wins): fm_beads_resolve_or_create looks up or mints a
+#   bead labeled task:<task-id> (bin/fm-tasks-axi-lib.sh), so beads_id= is always populated
+#   and the claim/close lifecycle applies to every dispatch, not just opted-in ones
+#   (beads-authority migration Stage 3). --secondmate launches stay exempt (a secondmate
+#   home is an operational entity, not a backlog work item). Under the default tasks-axi
+#   or manual backends, --beads remains the deliberate opt-in cross-reference, unchanged.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
@@ -786,6 +793,18 @@ if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
   exit 1
 fi
 SPAWN_TASK_LOCK_HELD=1
+# beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
+# "Stage 3"): under config/backlog-backend=beads, bead-linking is the backend
+# itself rather than an opt-in cross-reference, so resolve or mint the bead
+# automatically instead of requiring --beads. Secondmate homes are operational
+# entities, not backlog work items, so they stay exempt. Fails open: a resolve
+# failure (task/jq missing, store unreachable) leaves BEADS_ARG empty and spawn
+# proceeds exactly as it did before this backend existed.
+AUTO_BEADS_LINKED=0
+if [ "$BEADS_SET" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+  BEADS_ARG=$(fm_beads_resolve_or_create "$ID") || BEADS_ARG=
+  [ -z "$BEADS_ARG" ] || AUTO_BEADS_LINKED=1
+fi
 PROJ=
 ARG3=
 FIRSTMATE_HOME=
