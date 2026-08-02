@@ -170,6 +170,28 @@ decode_send_call() {
   printf '%s' "$out"
 }
 
+# make_fake_gh: logs every invocation together with its cwd (so a test can
+# assert *which* local repo `gh` ran against), then answers with
+# $FAKE_GH_RESPONSE (default "0", i.e. no merged PRs found).
+make_fake_gh() {
+  local dir=$1 fb
+  fb=$(fm_fakebin "$dir")
+  cat > "$fb/gh" <<'SH'
+#!/usr/bin/env bash
+set -u
+LOG="${FAKE_GH_LOG:?}"
+{
+  printf 'CALL\x1fcwd=%s' "$PWD"
+  for a in "$@"; do printf '\x1f%s' "$a"; done
+  printf '\n'
+} >> "$LOG"
+printf '%s\n' "${FAKE_GH_RESPONSE:-0}"
+exit 0
+SH
+  chmod +x "$fb/gh"
+  printf '%s\n' "$fb"
+}
+
 # setup_env <case-name>: fresh STATE/PROJECTS dirs plus fake curl/python3 on
 # PATH, wired to per-case response/log dirs. Sets SPAWN_ENV as an array of
 # "KEY=val" assignments a test can splice into an `env` call.
@@ -377,9 +399,46 @@ test_reclaim_closes_when_landed() {
   pass "fm-remote-launch reclaims a workspace once its work is confirmed landed"
 }
 
+# --- test 7: squash-merge fallback scopes `gh` to the target project's repo,
+# not firstmate's own ambient cwd ---------------------------------------
+
+test_reclaim_pr_merged_fallback_scopes_to_project_repo() {
+  local out rc call
+  setup_case reclaim-pr-merged
+  fm_git_identity
+  fm_git_init_commit "$CASE/projects/proj"
+  fm_git_add_origin "$CASE/projects/proj" "$CASE/origin-bare.git"
+  seed_reclaim_meta task-7
+
+  local GH_FB
+  GH_FB=$(make_fake_gh "$CASE/gh-fb")
+  RUN_PATH="$GH_FB:$RUN_PATH"
+  FAKE_GH_LOG="$CASE/gh.log"
+  : > "$FAKE_GH_LOG"
+  export FAKE_GH_LOG
+  export FAKE_GH_RESPONSE=1
+
+  printf '200\n' > "$CASE/curl-resp/1.code"   # reachability
+  printf '0\t3\n' > "$CASE/py-resp/1.out"     # clean, 3 local commits ahead of upstream
+  printf '200\n' > "$CASE/curl-resp/2.code"   # workspace.close
+
+  out=$(run_launcher reclaim task-7 2>&1); rc=$?
+  expect_code 0 "$rc" "reclaim (squash-merge fallback) exit"
+  assert_contains "$out" "done: reclaimed task task-7" \
+    "reclaim reports done via the merged-PR fallback"
+
+  local expected_cwd
+  expected_cwd=$(cd "$CASE/projects/proj" && pwd)
+  call=$(get_call_line "$FAKE_GH_LOG" 1)
+  assert_contains "$call" "cwd=$expected_cwd" \
+    "gh pr list runs from the target project's own local clone, not firstmate's own cwd"
+  pass "fm-remote-launch's squash-merge fallback queries the target project's own repo"
+}
+
 test_spawn_clones_absent_project
 test_spawn_refuses_dirty_project
 test_spawn_refuses_no_gh_auth
 test_spawn_full_recipe_records_meta
 test_reclaim_refuses_when_unlanded
 test_reclaim_closes_when_landed
+test_reclaim_pr_merged_fallback_scopes_to_project_repo

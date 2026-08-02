@@ -102,6 +102,14 @@ fm_remote_validate_name() {  # <value> <label>
   return 0
 }
 
+# Prints <value> safely wrapped in single quotes for embedding in remote
+# shell command text (closes any embedded single quotes rather than trusting
+# the caller's value to contain none).
+fm_remote_shquote() {
+  local value=$1
+  printf "'%s'" "$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
+}
+
 # Mirrors bin/fm-backend.sh's fm_meta_get exactly (grep last key=, never
 # errors); re-implemented here rather than sourced so this file has zero
 # runtime dependency on fm-backend.sh (see header: collision-avoidance with
@@ -394,10 +402,11 @@ fm_remote_project_clean_state() {  # <mini> <terminal_id> <project>
 }
 
 fm_remote_clone_project() {  # <mini> <terminal_id> <project> <origin_url>
-  local mini=$1 terminal_id=$2 project=$3 url=$4 out rc
+  local mini=$1 terminal_id=$2 project=$3 url=$4 out rc quoted_url
+  quoted_url=$(fm_remote_shquote "$url")
   set +e
   out=$(fm_remote_ws_probe "$mini" "$terminal_id" \
-    "mkdir -p ~/code && cd ~/code && [ -d '$project/.git' ] || git clone '$url' '$project'" \
+    "mkdir -p ~/code && cd ~/code && [ -d '$project/.git' ] || git clone $quoted_url '$project'" \
     "$RL_CLONE_TIMEOUT")
   rc=$?
   set -e
@@ -415,7 +424,7 @@ fm_remote_worktree_add() {  # <mini> <terminal_id> <project> <task_id> -> prints
   wt="~/code/.fm-worktrees/$task_id"
   set +e
   out=$(fm_remote_ws_probe "$mini" "$terminal_id" \
-    "mkdir -p ~/code/.fm-worktrees && cd ~/code/$project && git worktree add -b fm/$task_id $wt >/dev/null 2>&1 && cd $wt && pwd" \
+    "mkdir -p ~/code/.fm-worktrees && cd ~/code/$project && git worktree add -b fm/$task_id $wt && cd $wt && pwd" \
     "$RL_PROBE_TIMEOUT")
   rc=$?
   set -e
@@ -459,15 +468,17 @@ fm_remote_meta_write() {  # <id> <mini> <project> <wid> <tid> <pid> <term> <path
 # down: remote-tracking reachability first, a locally-run `gh` merged-PR
 # lookup as fallback for the common squash-merge case) --------------------
 
-fm_remote_pr_merged() {  # <branch> -> 0 if a local `gh` reports a merged PR for this branch
+fm_remote_pr_merged() {  # <project> <branch> -> 0 if a local `gh` reports a merged PR for this branch
+  local project=$1 branch=$2 local_path n
   command -v gh >/dev/null 2>&1 || return 1
-  local n
-  n=$(gh pr list --head "$branch" --state merged --json number --jq 'length' 2>/dev/null) || return 1
+  local_path="$PROJECTS/$project"
+  [ -d "$local_path/.git" ] || return 1
+  n=$(cd "$local_path" && gh pr list --head "$branch" --state merged --json number --jq 'length' 2>/dev/null) || return 1
   [ "${n:-0}" -gt 0 ]
 }
 
-fm_remote_landed() {  # <mini> <terminal_id> <path> <branch> -> 0 landed / 1 not landed
-  local mini=$1 terminal_id=$2 path=$3 branch=$4 out rc porcelain ahead
+fm_remote_landed() {  # <mini> <terminal_id> <path> <branch> <project> -> 0 landed / 1 not landed
+  local mini=$1 terminal_id=$2 path=$3 branch=$4 project=$5 out rc porcelain ahead
   set +e
   out=$(fm_remote_ws_probe "$mini" "$terminal_id" \
     "cd $path && git fetch origin >/dev/null 2>&1; p=\$(git status --porcelain | wc -l | tr -d ' '); a=\$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo NA); printf '%s\\t%s\\n' \"\$p\" \"\$a\"" \
@@ -489,7 +500,7 @@ fm_remote_landed() {  # <mini> <terminal_id> <path> <branch> -> 0 landed / 1 not
     return 1
   fi
   if [ "$ahead" != "0" ]; then
-    if fm_remote_pr_merged "$branch"; then
+    if fm_remote_pr_merged "$project" "$branch"; then
       return 0
     fi
     echo "refusing: $path on $mini has $ahead local commit(s) not reachable from any remote-tracking branch and no merged PR found for $branch" >&2
@@ -589,7 +600,7 @@ cmd_reclaim() {
     echo "error: no state/$id.meta found for task $id" >&2
     return 1
   }
-  local backend mini wid term path
+  local backend mini wid term path project
   backend=$(fm_remote_meta_get "$meta" backend)
   [ "$backend" = remote-bridge ] || {
     echo "error: task $id is not a remote-bridge task (backend=$backend)" >&2
@@ -599,6 +610,7 @@ cmd_reclaim() {
   wid=$(fm_remote_meta_get "$meta" remote_workspace_id)
   term=$(fm_remote_meta_get "$meta" remote_terminal_id)
   path=$(fm_remote_meta_get "$meta" remote_project_path)
+  project=$(fm_remote_meta_get "$meta" project)
 
   fm_remote_reachable "$mini" || {
     echo "error: mini '$mini' is unreachable; cannot verify landed work, refusing to close workspace $wid" >&2
@@ -608,7 +620,7 @@ cmd_reclaim() {
   if [ "$force" = "--force" ]; then
     echo "warning: --force reclaiming task $id without a landed-work check" >&2
   else
-    fm_remote_landed "$mini" "$term" "$path" "fm/$id" || {
+    fm_remote_landed "$mini" "$term" "$path" "fm/$id" "$project" || {
       echo "error: task $id's work on $mini is not confirmed landed; refusing to close workspace $wid (pass --force only with explicit captain-authorized discard)" >&2
       return 1
     }
