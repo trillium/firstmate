@@ -252,6 +252,15 @@ test_workspace_label_secondmate_marker_trims_whitespace() {
   pass "fm_backend_herdr_workspace_label: trims whitespace around the marker's secondmate id"
 }
 
+test_workspace_label_secondmate_marker_preserves_embedded_separator() {
+  local home
+  home="$TMP_ROOT/secondmate-home-embedded-sep"; mkdir -p "$home"
+  printf '  alpha beta  \n' > "$home/.fm-secondmate-home"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = "2M-ALPHA-BETA" ] || fail "an embedded separator inside the marker id should survive outer-whitespace trimming and normalize to '-', got '$out'"
+  pass "fm_backend_herdr_workspace_label: preserves an embedded separator in the marker id through normalization"
+}
+
 test_workspace_label_empty_marker_falls_back_to_unknown_scope() {
   local home
   home="$TMP_ROOT/secondmate-home-empty"; mkdir -p "$home"
@@ -3149,6 +3158,7 @@ test_version_check_refuses_missing_herdr
 test_workspace_label_primary_home_no_marker
 test_workspace_label_secondmate_home_uses_marker_id
 test_workspace_label_secondmate_marker_trims_whitespace
+test_workspace_label_secondmate_marker_preserves_embedded_separator
 test_workspace_label_empty_marker_falls_back_to_unknown_scope
 test_workspace_label_different_secondmates_get_different_labels
 test_mate_scope_uppercases_plain_id

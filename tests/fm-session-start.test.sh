@@ -360,6 +360,7 @@ set -u
 log=${FM_FAKE_HERDR_LOG:?}
 state=${FM_FAKE_HERDR_STATE:?}
 mate_id=${FM_FAKE_SECOND_MATE_ID:?}
+mate_scope=${FM_FAKE_SECOND_MATE_SCOPE:?}
 killed="${state}.killed"
 spawned="${state}.spawned"
 printf '%s\n' "$*" >> "$log"
@@ -368,8 +369,7 @@ case "${1:-} ${2:-}" in
     printf '%s\n' '{"client":{"protocol":14,"version":"test"},"server":{"running":true}}'
     ;;
   "workspace list")
-    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2M-%s"}]}}\n' \
-      "$(printf '%s' "$mate_id" | tr '[:lower:]' '[:upper:]')"
+    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2M-%s"}]}}\n' "$mate_scope"
     ;;
   "tab list")
     if [ -e "$spawned" ]; then
@@ -545,9 +545,12 @@ EOF
 }
 
 run_session_start_herdr_secondmate() {
-  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6
+  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6 scope
+  scope=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_mate_scope "$1"' \
+    "$ROOT" "$SESSION_START_HERDR_SECOND_MATE_ID")
   FM_BACKEND=herdr FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" \
     FM_FAKE_SECOND_MATE_ID="$SESSION_START_HERDR_SECOND_MATE_ID" \
+    FM_FAKE_SECOND_MATE_SCOPE="$scope" \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH"
 }
 

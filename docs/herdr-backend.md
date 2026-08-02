@@ -58,7 +58,7 @@ That covers a missing or unusable socket identity, a closed or unreadable launch
 Firstmate running outside Herdr entirely has no launcher workspace to inherit, so its workers use this home's own labeled workspace, created on first use.
 That path needs the home label to identify exactly one workspace: two workspaces sharing it are an unresolvable placement and refuse rather than adopting either.
 Avoid naming a personal workspace `1M-FIRSTMATE` or `2M-<SCOPE>` for that reason, and because the adapter cannot distinguish that label collision from its own container.
-An older secondmate workspace using `firstmate-<id>` is not migrated automatically; rename it manually before expecting new tasks or recovery to use it.
+An older secondmate workspace using `2ndmate-<id>` is not migrated automatically; rename it manually before expecting new tasks or recovery to use it.
 An installation upgrading from the pre-mate-naming-convention `firstmate`/`2ndmate-<id>` labels is not migrated either: the first spawn into an already-running home mints a fresh `1M-FIRSTMATE`/`2M-<SCOPE>` workspace rather than adopting the old one, leaving the old workspace behind to close or merge manually.
 Recovery and list-live still scan the first workspace matching the home label, because they address panes they already recorded rather than choosing where new work goes.
 
@@ -71,7 +71,7 @@ Closing its last tab can remove the workspace, and the next spawn recreates it.
 A mate's workspace and its own live-agent tab are always labeled uppercase `<materank>-<scope>`, so the captain can tell a supervisor from a worker in Herdr's sidebar at a glance.
 `materank` is `1M` for the main firstmate, `2M` for a secondmate, `3M` for a third mate if one ever exists.
 `scope` is the mate's own registered id, uppercased: the primary defaults to the literal scope `FIRSTMATE` (giving `1M-FIRSTMATE`), and a secondmate's scope comes from its `.fm-secondmate-home` marker id (`bin/backends/herdr.sh`'s `fm_backend_herdr_mate_scope`), for example `2M-BEADME`.
-That helper sanitizes the id (uppercase, non-alphanumeric characters collapsed to a single `-`, leading/trailing `-` trimmed) and falls back to the literal scope `UNKNOWN` when the id is empty or sanitizes to nothing, so a malformed or missing marker never produces an empty or colliding label.
+That helper sanitizes the id (uppercase, non-alphanumeric characters collapsed to a single `-`, leading/trailing `-` trimmed) and falls back to the literal scope `UNKNOWN` when the id is empty or sanitizes to nothing, so a malformed or missing marker never produces an empty label; every malformed marker shares that same `UNKNOWN` scope, so two malformed homes can still collide on `2M-UNKNOWN`.
 A crewmate spawned by any mate inherits that mate's placement but is never uppercase: its tab keeps the ordinary lowercase `fm-<id>` task label, so a mate and its subordinate crewmates are always visually distinct and never collide.
 
 ## Optional presentation spaces

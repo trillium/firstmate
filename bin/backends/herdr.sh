@@ -115,8 +115,11 @@ FM_BACKEND_HERDR_PRESENTATION_JOURNAL_SUFFIX=".herdr-presentation"
 # independently unit-testable: uppercases, then replaces every character
 # outside A-Z0-9 with "-", squeezes repeats, and trims leading/trailing "-".
 # An id that sanitizes to nothing (empty input, or no surviving alphanumeric)
-# falls back to the literal "UNKNOWN" so a malformed or missing marker can
-# never produce an empty or colliding workspace label.
+# falls back to the literal "UNKNOWN" so a malformed or missing marker never
+# produces an empty workspace label. That fallback only guarantees non-empty,
+# not non-colliding: every malformed marker shares the same "UNKNOWN" scope,
+# so two malformed homes can still collide on "2M-UNKNOWN" - fix the marker
+# rather than relying on this fallback to stay unique.
 fm_backend_herdr_mate_scope() {
   local id=$1 scope
   scope=$(printf '%s' "$id" | tr '[:lower:]' '[:upper:]' | LC_ALL=C tr -c 'A-Z0-9' '-' | tr -s '-')
@@ -141,7 +144,12 @@ fm_backend_herdr_mate_scope() {
 fm_backend_herdr_workspace_label() {
   local marker="$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" id
   if [ -f "$marker" ]; then
-    id=$(tr -d '[:space:]' < "$marker" 2>/dev/null)
+    id=$(cat "$marker" 2>/dev/null)
+    # Trim only outer whitespace here; fm_backend_herdr_mate_scope is what
+    # normalizes any embedded separator (space, newline, ...) to "-", so
+    # stripping it here first would silently merge distinct ids together.
+    id="${id#"${id%%[![:space:]]*}"}"
+    id="${id%"${id##*[![:space:]]}"}"
     printf '2M-%s' "$(fm_backend_herdr_mate_scope "$id")"
     return 0
   fi
