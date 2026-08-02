@@ -22,7 +22,8 @@ process.stdin.on("end", () => {
   try { doc = JSON.parse(raw); } catch { process.exit(0); }
   const obj = Array.isArray(doc) ? doc[0] : doc;
   if (obj && typeof obj === "object" && typeof obj[key] === "string") {
-    process.stdout.write(obj[key]);
+    process.stdout.write(obj[key], () => process.exit(0));
+    return;
   }
   process.exit(0);
 });

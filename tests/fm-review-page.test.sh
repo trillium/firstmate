@@ -98,6 +98,7 @@ run_tool() {
     FM_REVIEW_BIN="$fakebin/review" \
     FM_REVIEW_PAGE_OUT="$out" \
     FM_REVIEW_PAGE_BASE_URL="$BASE_URL" \
+    FM_REVIEW_PAGE_NO_WIRE="" \
       bun "$TOOL" "$@" 2>&1
   )
   RC=$?

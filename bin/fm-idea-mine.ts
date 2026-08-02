@@ -794,7 +794,7 @@ function reviewDescription(result: EvalResult, filed: FileResult, mined: MinedTa
   return lines.join("\n");
 }
 
-function fileHarvest(cfg: Config, result: EvalResult, existing: ExistingIdea[]): FileResult {
+function fileHarvest(cfg: Config, result: EvalResult, existing: ExistingIdea[], mined: MinedTail): FileResult {
   const filed: FileResult = { filedIdeas: [], skippedDuplicates: [], reviewId: null };
 
   // File each kept idea that is not a duplicate of an existing one.
@@ -810,9 +810,9 @@ function fileHarvest(cfg: Config, result: EvalResult, existing: ExistingIdea[]):
     existing.push({ id, title: k.title });
   }
 
-  // One consolidated review item.
+  // One consolidated review item, created with its final body.
   const reviewTitle = `Morning idea harvest — ${today()}`;
-  filed.reviewId = createIssue(cfg.reviewCmd, reviewTitle, "PLACEHOLDER");
+  filed.reviewId = createIssue(cfg.reviewCmd, reviewTitle, reviewDescription(result, filed, mined));
   return filed;
 }
 
@@ -911,25 +911,10 @@ function main(): number {
 
   let filed: FileResult;
   try {
-    filed = fileHarvest(cfg, result, existing);
+    filed = fileHarvest(cfg, result, existing, mined);
   } catch (e) {
     console.error(`fm-idea-mine: filing failed: ${(e as Error).message}`);
     return 1;
-  }
-
-  // The review item needs the filed ids, so re-write its body now that we have them.
-  if (filed.reviewId) {
-    const body = reviewDescription(result, filed, mined);
-    const res = spawnSync(cfg.reviewCmd, ["update", filed.reviewId, "-d", body], {
-      encoding: "utf8",
-      timeout: 30000,
-    });
-    if (res.status !== 0) {
-      // Non-fatal: the review item exists; only its body is the placeholder.
-      console.error(
-        `fm-idea-mine: warning — could not update review body (${filed.reviewId}): ${(res.stderr || "").slice(0, 200)}`,
-      );
-    }
   }
 
   writeMarker(cfg, mined.rangeHash);
