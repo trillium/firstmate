@@ -257,16 +257,30 @@ print_backlog_tasks_axi_compact() {
   fi
 }
 
+# print_backlog_beads_compact - beads-authority migration Stage 2 (see
+# data/beads-authority-migration-scout/report.md section 4). Mirrors
+# data/backlog.md's `## In flight`/`## Queued` structure instead of listing
+# only bd's native --ready set, which silently drops in_progress/blocked
+# work from the digest. Both sections are scoped by fm_beads_fleet_label so
+# this stays firstmate's fleet view, not the shared federated store's full
+# cross-project set (same label fm-fleet-snapshot.sh's Stage 1 beads read
+# uses). Any read failure falls back to the whole title-line rendering, same
+# as before Stage 2.
 print_backlog_beads_compact() {
-  local path=$1 out rc
-  printf 'compact backlog listing (beads task store; max %s item(s))\n' "$BACKLOG_LIMIT"
-  out=$(task list --ready --limit "$BACKLOG_LIMIT" 2>&1)
-  rc=$?
-  if [ "$rc" -eq 0 ]; then
-    printf '%s\n' "$out"
+  local path=$1 label out_inflight rc_inflight out_queued rc_queued
+  label=$(fm_beads_fleet_label)
+  printf 'compact backlog listing (beads task store; label %s; max %s item(s) per section)\n' "$label" "$BACKLOG_LIMIT"
+  out_inflight=$(task list --label "$label" --status in_progress,blocked --limit "$BACKLOG_LIMIT" 2>&1)
+  rc_inflight=$?
+  out_queued=$(task list --label "$label" --ready --limit "$BACKLOG_LIMIT" 2>&1)
+  rc_queued=$?
+  if [ "$rc_inflight" -eq 0 ] && [ "$rc_queued" -eq 0 ]; then
+    printf '## In flight\n%s\n' "$out_inflight"
+    printf '## Queued\n%s\n' "$out_queued"
   else
     printf 'beads task listing failed; falling back to title-line rendering.\n'
-    printf '%s\n' "$out"
+    printf '%s\n' "$out_inflight"
+    printf '%s\n' "$out_queued"
     if [ -f "$path" ]; then
       print_backlog_manual_compact "$path" "fallback"
     fi
