@@ -885,7 +885,7 @@ fm_backend_herdr_workspace_find_all() {  # <session>
   # NOTE: the jq variable is $want, NOT $label - `label` is a jq reserved
   # keyword (label/break), so declaring a jq variable named "label" is a
   # compile error that `2>/dev/null` would silently swallow, making this find
-  # ALWAYS return empty and every spawn mint a fresh "firstmate" workspace
+  # ALWAYS return empty and every spawn mint a fresh "1M-FIRSTMATE" workspace
   # (the workspace leak).
   printf '%s' "$list" | jq -r --arg want "$label" \
     '.result.workspaces[]? | select(.label == $want) | .workspace_id' 2>/dev/null
