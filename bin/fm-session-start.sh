@@ -35,22 +35,26 @@
 #                       also run only when locked.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
-#   4. persona        - the active persona file (config/persona.md local
+#   4. supervision    - emits exactly one operating block for the detected
+#                       primary harness, after the wake queue and before
+#                       persona and context.
+#   5. persona        - the active persona file (config/persona.md local
 #                       override, else tracked persona.md): read-only, always
 #                       safe, always runs (including on lock refusal), and
 #                       prints early - before the context and fleet-state
 #                       digests - so the captain-facing voice is reliably
 #                       in force.
-#   5. context digest - data/projects.md, data/secondmates.md, data/captain.md,
+#   6. context digest - data/projects.md, data/secondmates.md, data/captain.md,
 #                       data/captain-shared.md, data/learnings.md: read-only,
 #                       always safe, always runs.
-#   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
+#   7. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs.
-#   7. closing reminder - prints the context-specific watcher next step; this
+#   8. closing reminder - prints the context-specific watcher next step; this
 #                       script points back to the emitted harness supervision
-#                       block and deliberately never arms the watcher itself.
+#                       block (step 4) and deliberately never arms the watcher
+#                       itself.
 #
 # On a Pi primary, the supervision-block step also checks whether Pi's two
 # tracked primary extensions are loaded and prints a PI_WATCH_EXTENSION
@@ -172,6 +176,10 @@ print_persona() {
     subsection "persona.md (local override: config/persona.md)"
   else
     subsection "persona.md (tracked default)"
+  fi
+  if [ ! -r "$path" ]; then
+    printf 'UNREADABLE (%s exists but could not be read - captain-facing address/voice is undefined; this needs repair, fix its permissions or restore it)\n' "$path"
+    return
   fi
   if [ -s "$path" ]; then
     cat "$path"

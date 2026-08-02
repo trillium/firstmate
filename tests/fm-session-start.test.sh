@@ -701,6 +701,34 @@ EOF
   pass "session start reports a fully-absent persona distinctly, as needing repair rather than a quiet defaults fallback"
 }
 
+test_persona_unreadable_reports_repair_needed() {
+  local rec root home fakebin out
+  rec=$(new_world persona-unreadable)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Persona\n\naddress the captain as skipper\n' > "$root/persona.md"
+  printf '# Persona\n\naddress the user as boss, no nautical flavor\n' > "$home/config/persona.md"
+  chmod 000 "$home/config/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  chmod 700 "$home/config/persona.md"
+
+  assert_contains "$out" "UNREADABLE (" \
+    "digest did not call out an unreadable active persona file as needing repair"
+  assert_contains "$out" "$home/config/persona.md" \
+    "digest's unreadable-persona message did not name the broken file"
+  case "$out" in
+    *"address the captain as skipper"*) fail "an unreadable local override must not silently fall back to the tracked default: $out" ;;
+    *"address the user as boss, no nautical flavor"*) fail "an unreadable persona file's content must not print: $out" ;;
+  esac
+
+  pass "an unreadable active persona file is reported as needing repair, not silently skipped or fallen back from"
+}
+
 # --- lock refusal: read-only path --------------------------------------------
 
 test_lock_refusal_read_only_path() {
@@ -1527,6 +1555,7 @@ test_context_digest_absent_empty_present
 test_persona_tracked_default_printed
 test_persona_local_override_supersedes_default
 test_persona_absent_reports_repair_needed
+test_persona_unreadable_reports_repair_needed
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
 test_session_lock_concurrent_single_winner
