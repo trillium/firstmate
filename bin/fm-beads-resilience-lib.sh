@@ -63,8 +63,20 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BEADS_RESILIENCE_DEFAULT_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-${STATE:-$FM_HOME/state}}"
 
-# shellcheck source=bin/fm-wake-lib.sh disable=SC1091
-. "$FM_BEADS_RESILIENCE_LIB_DIR/fm-wake-lib.sh"
+# fm-wake-lib.sh (fm_current_pid, fm_lock_acquire_wait, fm_lock_release) is
+# loaded lazily, only by the write-path functions that actually need its
+# locking primitives, because it unconditionally mkdir -p's $STATE on source.
+# The read-side mirror functions never need it, and callers like
+# fm-bootstrap.sh's detect-only path read the mirror without mutating
+# anything - eagerly sourcing it here would create $STATE as a side effect of
+# merely checking beads availability.
+_FM_BEADS_WAKE_LIB_LOADED=0
+fm_beads_require_wake_lib() {
+  [ "$_FM_BEADS_WAKE_LIB_LOADED" = 1 ] && return 0
+  # shellcheck source=bin/fm-wake-lib.sh disable=SC1091
+  . "$FM_BEADS_RESILIENCE_LIB_DIR/fm-wake-lib.sh"
+  _FM_BEADS_WAKE_LIB_LOADED=1
+}
 
 FM_BEADS_MIRROR_MAX_AGE=${FM_BEADS_MIRROR_MAX_AGE:-900}
 case "$FM_BEADS_MIRROR_MAX_AGE" in '' | *[!0-9]*) FM_BEADS_MIRROR_MAX_AGE=900 ;; esac
@@ -95,6 +107,7 @@ fm_beads_epoch_to_iso() { # <epoch-seconds>
 
 fm_beads_mirror_write() { # <view> <raw-output>
   local view=$1 raw=$2 path tmp
+  fm_beads_require_wake_lib
   path=$(fm_beads_mirror_view_path "$view") || return 1
   mkdir -p "$(dirname "$path")" 2>/dev/null || true
   tmp="${path}.tmp.$(fm_current_pid 2>/dev/null || echo $$)"
@@ -155,6 +168,7 @@ fm_beads_mirror_freshest_iso() { # [<max-age-seconds>] -> ISO-8601 timestamp of
 
 fm_beads_write_enqueue() { # <task-id> <description> <argv to pass to `task`, excluding the program name itself>
   local id=$1 desc=$2 line rc
+  fm_beads_require_wake_lib
   shift 2
   [ "$#" -gt 0 ] || return 1
   line=$(jq -nc --arg id "$id" --arg desc "$desc" --argjson epoch "$(date +%s)" \
@@ -187,6 +201,7 @@ fm_beads_close_already_applied() { # <task-id> - true if the bead is absent or a
 fm_beads_write_queue_reconcile() {
   local queue=$FM_BEADS_WRITE_QUEUE drained remaining line id desc replayed=0 failed=0
   [ -s "$queue" ] || return 0
+  fm_beads_require_wake_lib
 
   if ! command -v task >/dev/null 2>&1; then
     echo "BEADS_WRITE_QUEUE: task CLI not found, $(fm_beads_write_queue_count) write(s) remain queued"

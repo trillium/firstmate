@@ -70,6 +70,12 @@ make_fake_root() {
   # teardown now requires.
   ln -s "$ROOT/bin/fm-public-followup-lib.sh" "$fake/bin/fm-public-followup-lib.sh"
   ln -s "$ROOT/bin/fm-x-lib.sh" "$fake/bin/fm-x-lib.sh"
+  # fm-beads-resilience-lib.sh (and the fm-wake-lib.sh it sources): teardown
+  # sources it unconditionally for the queued-close retry path (beads-authority-
+  # migration Stage 5). Neither does anything in this fixture, which never sets
+  # beads_id= in meta, but both are real siblings teardown now requires.
+  ln -s "$ROOT/bin/fm-beads-resilience-lib.sh" "$fake/bin/fm-beads-resilience-lib.sh"
+  ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
   # fm-guard.sh: stub (teardown calls it with `|| true`).
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -142,6 +148,8 @@ test_teardown_skips_gracefully_without_tasktmp() {
   # teardown now requires.
   ln -s "$ROOT/bin/fm-public-followup-lib.sh" "$fake/bin/fm-public-followup-lib.sh"
   ln -s "$ROOT/bin/fm-x-lib.sh" "$fake/bin/fm-x-lib.sh"
+  ln -s "$ROOT/bin/fm-beads-resilience-lib.sh" "$fake/bin/fm-beads-resilience-lib.sh"
+  ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0

@@ -902,6 +902,7 @@ SH
   # spawned as a genuine "bash -c" process instead, whose own $$ is real and
   # unique on every bash version and stays live for fm_harness_pid_alive's
   # kill -0 check for as long as the racer is still running.
+  # shellcheck disable=SC2016 # Positional parameters expand inside the child bash, not here.
   worker_script='
     home=$1; ready=$2; completed=$3; winners=$4; fakebin=$5; base_path=$6; root=$7; i=$8
     harness_pid=$$
