@@ -14,8 +14,9 @@ This skill is the single policy owner for unresolved captain decisions discovere
 
 ## Policy
 
-Every unresolved decision that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or visual review must become a structured captain-held work item in the authoritative tasks-axi backlog of the home that owns the originating work before that work or review may be treated as complete.
-Decision holds require the tasks-axi backlog backend and are not supported when `config/backlog-backend=beads` or `config/backlog-backend=manual` is set.
+Every unresolved decision that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or visual review must become a structured captain-held work item in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
+Decision holds work on the tasks-axi and beads backlog backends; they are not supported when `config/backlog-backend=manual` is set.
+`bin/fm-decision-hold.sh` owns which backend-native mechanism it uses; this policy is the same regardless.
 The agent performs the semantic inventory because scripts must not infer decisions from report prose, visual-review artifacts, terminal output, or chat.
 Give each distinct unresolved decision a stable privacy-safe key, register it through `bin/fm-decision-hold.sh hold`, and use the same key on retry so registration is idempotent while different decisions retain different durable identities.
 After inventorying the whole report and review surface, run `bin/fm-decision-hold.sh complete` with every unresolved key, or with `--none` only when the reviewed surface contains no unresolved captain decision.
@@ -33,7 +34,7 @@ Bearings reads the resulting structured state and must never compensate by scrap
 3. For each choice, choose a stable key and use the script's `hold` command with a concise title, reason, and repository.
 4. Run the script's `complete` command with the full unresolved-key inventory for that review pass.
 5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
-6. After the captain decides, record dependent work with normal tasks-axi commands and block it by the hold identity.
+6. After the captain decides, record dependent work with the backlog's normal commands and block it by the hold identity.
 7. Put the captain's exact durable decision in a file and use the script's `resolve` command with every routed task.
 8. Confirm Bearings no longer shows the closed hold and that routed work remains in structured backlog state.
 
