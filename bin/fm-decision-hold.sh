@@ -278,6 +278,14 @@ beads_open_gate_id() {  # <id> -> the id of an open human gate blocking it, if a
     head -1
 }
 
+beads_resolved_gate_id() {  # <id> -> the id of a resolved/closed human gate blocking it, if any
+  local id=$1 show
+  show=$(beads_show_json "$id") || return 1
+  printf '%s' "$show" |
+    jq -r '.[0].dependencies[]? | select(.issue_type=="gate" and .dependency_type=="blocks" and .status!="open") | .id' |
+    head -1
+}
+
 beads_hold_durable() {  # <origin-id> <decision-key>
   local origin=$1 key=$2 id label anchor status gate
   id=$(hold_id "$origin" "$key")
@@ -407,7 +415,24 @@ command_resolve_beads() {
 
   [ "$status" = open ] || fail "captain hold $id is not actively held"
   gate=$(beads_open_gate_id "$anchor_id")
-  [ -n "$gate" ] || fail "captain hold $id is not actively held"
+  if [ -z "$gate" ]; then
+    gate=$(beads_resolved_gate_id "$anchor_id")
+    [ -n "$gate" ] || fail "captain hold $id is not actively held"
+    [ -n "$recorded_digest" ] || fail "captain hold $id is not actively held"
+    [ "$recorded_digest" = "$decision_digest" ] \
+      || fail "captain hold $id records a different captain decision"
+    [ "$recorded_routes" = "$routed_csv" ] \
+      || fail "captain hold $id records different routed work"
+    beads_task close "$anchor_id" --reason "captain decision recorded" >/dev/null \
+      || fail "could not close resolved captain hold $id"
+    beads_task dep remove "$anchor_id" "$gate" >/dev/null \
+      || fail "could not clear the captain hold's own dependency edge"
+    anchor=$(beads_anchor_json "$label") || fail "captain hold $id did not retain its durable resolution record"
+    status=$(printf '%s' "$anchor" | jq -r '.status')
+    [ "$status" = closed ] || fail "captain hold $id did not retain its durable resolution record"
+    printf 'resolved: %s -> %s\n' "$id" "$routed"
+    return 0
+  fi
 
   if [ -n "$recorded_digest" ]; then
     [ "$recorded_digest" = "$decision_digest" ] \
@@ -444,13 +469,13 @@ command_resolve_beads() {
     beads_task dep remove "$dep" "$gate" >/dev/null \
       || fail "could not route the recorded decision to $dep"
   done
-  beads_task dep remove "$anchor_id" "$gate" >/dev/null \
-    || fail "could not clear the captain hold's own dependency edge"
 
   beads_task gate resolve "$gate" --reason "captain decision recorded" >/dev/null \
     || fail "could not close resolved captain hold $id"
   beads_task close "$anchor_id" --reason "captain decision recorded" >/dev/null \
     || fail "could not close resolved captain hold $id"
+  beads_task dep remove "$anchor_id" "$gate" >/dev/null \
+    || fail "could not clear the captain hold's own dependency edge"
 
   anchor=$(beads_anchor_json "$label") || fail "captain hold $id did not retain its durable resolution record"
   status=$(printf '%s' "$anchor" | jq -r '.status')
