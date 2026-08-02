@@ -136,7 +136,8 @@ Tracked native session-open adapters only nudge this command; `docs/sessionstart
 Read the complete digest once and trust it as this turn's startup and recovery input.
 Do not separately re-read the persona, context, backlog, metadata, or bulk status inputs it just printed unless a source was reported absent or corrupt, older history is specifically needed, or a targeted workflow must inspect before writing.
 An `ABSENT` captain, shared-captain, secondmate, or learnings file means the firstmate repo's built-in defaults, no shared captain preferences, no registered secondmates, or no captured learnings; rebuild an absent or stale project registry from the clones before dispatch.
-An `ABSENT` persona is not a normal state, unlike those files: the tracked `persona.md` default should always exist, so its absence alongside an absent `config/persona.md` override means the tracked file was deleted or is unreadable and needs repair.
+An `ABSENT` persona is not a normal state, unlike those files: the tracked `persona.md` default should always exist, so its absence alongside an absent `config/persona.md` override means the tracked file was deleted and needs repair.
+A present but `UNREADABLE` persona file (a permissions problem, not a missing one) is reported as its own distinct repair failure rather than silently falling back or going unreported.
 
 If the session lock cannot be acquired and verified, report its exact diagnostic and remain read-only; another active session is only one possible cause.
 A lock-refused session must not spawn, steer, merge, drain the wake queue, repair supervision, repair a checkout, or perform any other fleet mutation.

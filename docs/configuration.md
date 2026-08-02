@@ -13,6 +13,7 @@ The captain-facing voice - address term, seasoning policy, house vocabulary, and
 Swap the voice by editing tracked `persona.md` directly, or by dropping a local, gitignored `config/persona.md` in this home; when present, the local file fully replaces the tracked default rather than merging with it, mirroring `config/crew-harness`'s override pattern.
 `bin/fm-session-start.sh` resolves and prints the active persona's full contents unconditionally, every session, labeled by source (tracked default vs local override), so the voice is always in force with no per-reply trigger to load it.
 An absent persona (both tracked `persona.md` and `config/persona.md` missing) is reported distinctly from an `ABSENT` context-digest file: unlike `data/captain.md` or `data/learnings.md`, there is no built-in-defaults fallback, so it signals the tracked file needs repair.
+A present but unreadable active persona file (for example, a permissions problem) is reported as its own distinct `UNREADABLE` repair failure rather than silently falling back to the other candidate or going unreported.
 
 ## Operational home layout and state
 
