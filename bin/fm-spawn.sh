@@ -1899,18 +1899,13 @@ if command -v parlay >/dev/null 2>&1; then
     || echo "warning: could not record parlay listen pid for $ID (non-blocking)" >&2
 fi
 
-# Best-effort bead dispatch stamp. fm-bead-stamp.sh is fail-open by design (a
-# missing task CLI or unreachable bead warns on stderr and exits 0), so this
-# never blocks or fails an already-confirmed spawn.
-if [ -n "$BEADS_ARG" ]; then
-  "$FM_ROOT/bin/fm-bead-stamp.sh" "$BEADS_ARG" "$ID" || true
-fi
-
 echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$META_WINDOW worktree=$WT"
 
 # Post-spawn extension point: source every executable in fm-spawn-hooks.d/ so
-# out-of-tree features (for example beads dispatch tracking) can react to a
-# successful spawn without patching this file. Absent or empty dir is a no-op.
+# out-of-tree features (for example beads dispatch tracking, via
+# fm-spawn-hooks.d/beads.sh, which stamps the bead dispatched and registers a
+# bead-close watcher check) can react to a successful spawn without patching
+# this file. Absent or empty dir is a no-op.
 # Each hook runs in a subshell so a hook's own `exit` never terminates fm-spawn.sh,
 # keeping every hook fail-open by construction.
 SPAWN_HOOKS_DIR="$FM_ROOT/bin/fm-spawn-hooks.d"

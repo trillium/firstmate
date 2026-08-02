@@ -143,21 +143,33 @@ KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
 BEADS_ID=""
+BEADS_SET=0
 POS=()
-while [ "$#" -gt 0 ]; do
-  case "$1" in
+want_value=
+for a in "$@"; do
+  if [ -n "$want_value" ]; then
+    case "$a" in
+      --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
+    esac
+    case "$want_value" in
+      beads) BEADS_ID=$a; BEADS_SET=1 ;;
+      *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
+    esac
+    want_value=
+    continue
+  fi
+  case "$a" in
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
     --herdr-lab) HERDR_LAB=1 ;;
     --no-projects) NO_PROJECTS=1 ;;
-    --beads)
-      shift
-      BEADS_ID=${1-}
-      ;;
-    *) POS+=("$1") ;;
+    --beads) want_value=beads ;;
+    --beads=*) BEADS_ID=${a#--beads=}; BEADS_SET=1 ;;
+    *) POS+=("$a") ;;
   esac
-  shift
 done
+[ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
+[ "$BEADS_SET" -eq 0 ] || [ -n "$BEADS_ID" ] || { echo "error: --beads requires a non-empty value" >&2; exit 1; }
 ID=${POS[0]}
 
 case "$BEADS_ID" in
