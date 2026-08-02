@@ -156,9 +156,10 @@ SH
 }
 
 # make_fake_task_beads_compact <fakebin>: a fake `task` (beads) CLI whose
-# `list --limit 1` (availability probe) and `list --ready` (compact listing)
-# both succeed, so a regression back to the empty `--label "status:ready"`
-# query is caught by asserting the exact --ready invocation and its output.
+# `list --limit 1` (availability probe), `list --label fleet:firstmate
+# --status in_progress,blocked` (In flight section), and `list --label
+# fleet:firstmate --ready` (Queued section) all succeed, each scoped by the
+# firstmate-fleet label so unscoped or wrong-status regressions are caught.
 make_fake_task_beads_compact() {
   local fakebin=$1
   cat > "$fakebin/task" <<'SH'
@@ -171,14 +172,47 @@ case "$*" in
     printf '%s\n' 'fake-ready-1'
     exit 0
     ;;
-  *'--label '*'status:ready'*)
-    printf '%s\n' 'No issues found'
+  *'--label fleet:firstmate'*'--status in_progress,blocked'*)
+    case "$*" in *'--limit 80'*) : ;; *) printf '%s\n' 'missing compact limit' >&2; exit 9 ;; esac
+    printf '%s\n' 'inflight-task-1'
+    printf '%s\n' 'inflight-task-2'
     exit 0
     ;;
-  *'--ready'*)
+  *'--label fleet:firstmate'*'--ready'*)
     case "$*" in *'--limit 80'*) : ;; *) printf '%s\n' 'missing compact limit' >&2; exit 9 ;; esac
     printf '%s\n' 'ready-task-1'
     printf '%s\n' 'ready-task-2'
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+}
+
+# make_fake_task_beads_inflight_read_fails <fakebin>: same availability probe
+# as make_fake_task_beads_compact, but the In flight `--status
+# in_progress,blocked` call fails while the Queued `--ready` call would
+# otherwise succeed, so the whole beads listing must fall back to title-line
+# rendering rather than printing a partial digest.
+make_fake_task_beads_inflight_read_fails() {
+  local fakebin=$1
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+log=${FM_FAKE_TASK_LOG:-}
+[ -n "$log" ] && printf '%s\n' "$*" >> "$log"
+case "$*" in
+  'list --limit 1')
+    printf '%s\n' 'fake-ready-1'
+    exit 0
+    ;;
+  *'--status in_progress,blocked'*)
+    printf '%s\n' 'store timeout' >&2
+    exit 1
+    ;;
+  *'--ready'*)
+    printf '%s\n' 'ready-task-1'
     exit 0
     ;;
 esac
@@ -1358,7 +1392,7 @@ EOF
   pass "unavailable or incompatible tasks-axi falls back to compact manual backlog rendering"
 }
 
-test_backlog_compact_beads_uses_ready_filter_not_empty_label() {
+test_backlog_compact_beads_shows_inflight_and_queued_sections() {
   local rec root home fakebin out log
   rec=$(new_world backlog-compact-beads)
   IFS='|' read -r root home fakebin <<EOF
@@ -1372,16 +1406,44 @@ EOF
 
   out=$(FM_FAKE_TASK_LOG="$log" run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
-  assert_contains "$out" "compact backlog listing (beads task store; max 80 item(s))" \
-    "beads backend did not render the compact backlog listing"
-  assert_contains "$out" "ready-task-1" "beads compact listing omitted a ready item from bd's native --ready filter"
-  assert_contains "$out" "ready-task-2" "beads compact listing omitted a second ready item"
-  assert_not_contains "$out" "No issues found" \
-    "beads backend queried the empty status:ready label instead of bd's native --ready filter"
-  assert_grep "list --ready --limit 80" "$log" \
-    "session start did not ask beads for its native --ready set with the bounded limit"
+  assert_contains "$out" "compact backlog listing (beads task store; label fleet:firstmate; max 80 item(s) per section)" \
+    "beads backend did not render the labeled compact backlog listing"
+  assert_contains "$out" "## In flight" "beads backend digest is missing the In flight section heading"
+  assert_contains "$out" "inflight-task-1" "beads compact listing omitted an in_progress/blocked item from the In flight section"
+  assert_contains "$out" "inflight-task-2" "beads compact listing omitted a second In flight item"
+  assert_contains "$out" "## Queued" "beads backend digest is missing the Queued section heading"
+  assert_contains "$out" "ready-task-1" "beads compact listing omitted a ready item from the Queued section"
+  assert_contains "$out" "ready-task-2" "beads compact listing omitted a second Queued item"
+  assert_grep "list --label fleet:firstmate --status in_progress,blocked --limit 80" "$log" \
+    "session start did not query beads for its own fleet's in_progress/blocked set with the bounded limit"
+  assert_grep "list --label fleet:firstmate --ready --limit 80" "$log" \
+    "session start did not query beads for its own fleet's ready set with the bounded limit"
 
-  pass "beads backend lists bd's native ready set, not the empty status:ready label query"
+  pass "beads backend digest shows In flight (in_progress/blocked) and Queued (ready) sections, both scoped by the fleet label"
+}
+
+test_backlog_compact_beads_partial_failure_falls_back_to_manual() {
+  local rec root home fakebin out
+  rec=$(new_world backlog-compact-beads-partial-failure)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_task_beads_inflight_read_fails "$fakebin"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  write_long_body_backlog "$home/data/backlog.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "beads task listing failed; falling back to title-line rendering." \
+    "a failed In flight beads read did not trigger the whole-listing fallback"
+  assert_contains "$out" "- [ ] compact-startup - Compact startup digest" \
+    "beads read failure fallback omitted the In flight backlog title line"
+  assert_contains "$out" "- [ ] blocked-followup - Follow compact startup" \
+    "beads read failure fallback omitted the Queued backlog title line - a partial digest was printed instead of the full title-line fallback"
+
+  pass "a failed In flight beads read falls back to the whole title-line rendering rather than a partial digest"
 }
 
 # --- fleet-state digest: no in-flight tasks ----------------------------------
@@ -1622,7 +1684,8 @@ test_composition_invokes_real_scripts
 test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
-test_backlog_compact_beads_uses_ready_filter_not_empty_label
+test_backlog_compact_beads_shows_inflight_and_queued_sections
+test_backlog_compact_beads_partial_failure_falls_back_to_manual
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
