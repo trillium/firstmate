@@ -56,7 +56,8 @@
 # panel (see bin/fm-spawn.sh's header for the enrollment contract): the recorded
 # `parlay listen` background pid is always killed, and `parlay agent-down` is
 # called only when `parlay` is on PATH. Neither ever blocks or fails teardown.
-# A task linked to a bead (beads_id= in meta, set by fm-spawn.sh --beads) has that
+# A task linked to a bead (beads_id= in meta, set by fm-spawn.sh --beads or
+# auto-linked under config/backlog-backend=beads) has that
 # bead closed automatically once teardown reaches this point without --force, i.e.
 # every landed-work gate above already passed. --force never closes the linked bead,
 # since --force tears down without confirming the work landed. Closing is fail-open
@@ -346,8 +347,9 @@ deregister_parlay_agent() {
   fi
 }
 
-# Close the bead linked to this task (beads_id= in meta, set by fm-spawn.sh --beads)
-# once its work is confirmed landed. Only called for a non-force teardown that
+# Close the bead linked to this task (beads_id= in meta, set by fm-spawn.sh --beads
+# or auto-linked under config/backlog-backend=beads) once its work is confirmed
+# landed. Only called for a non-force teardown that
 # reached this point, i.e. every REFUSED landed-work gate above already passed.
 # Fail-open by design, matching fm-bead-stamp.sh: a missing task CLI warns on
 # stderr and never blocks or fails an already-confirmed teardown. Any close
