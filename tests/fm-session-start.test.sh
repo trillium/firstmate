@@ -4,6 +4,10 @@
 # (recovery) into one ordered digest.
 #
 # Coverage:
+#   - persona: the tracked default persona.md is printed every session ahead
+#     of the context digest, a local config/persona.md override fully
+#     replaces it (not a merge), and a fully-absent persona is reported
+#     distinctly as needing repair
 #   - absent-file markers vs empty-but-present files in the context digest
 #   - the lock-refusal read-only path: banner leads, every mutating step is
 #     skipped (including bootstrap's five mutating sweeps, verified by their
@@ -42,6 +46,10 @@ fm_git_identity fmtest fmtest@example.invalid
 # and default-branch checks behave exactly as they do against the real
 # firstmate repo) to use as FM_ROOT_OVERRIDE, plus an empty FM_HOME with
 # state/, data/, config/, and a fakebin. Echoes "<root-dir>|<home-dir>|<fakebin>".
+# Plants a minimal root/persona.md, mirroring the real repo's tracked default,
+# so ordinary tests (not specifically about persona) see a present tracked
+# persona rather than an ABSENT one; persona-specific tests below override or
+# remove it as needed.
 new_world() {
   local name=$1 w root home fakebin
   w="$TMP_ROOT/$name"
@@ -50,6 +58,7 @@ new_world() {
   fakebin="$w/fakebin"
   mkdir -p "$home/state" "$home/data" "$home/config" "$fakebin"
   git init -q -b main "$root"
+  printf '# Persona\n\ntest default persona\n' > "$root/persona.md"
   git -C "$root" commit -q --allow-empty -m init
   printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
 }
@@ -619,6 +628,105 @@ EOF
   assert_contains "$cap_section" "(present, empty)" "empty-but-present captain.md was not distinguished from ABSENT"
 
   pass "context digest distinguishes ABSENT, empty-but-present, and populated files"
+}
+
+# --- persona: default, local override, ordering, absent ---------------------
+
+test_persona_tracked_default_printed() {
+  local rec root home fakebin out persona_line context_line
+  rec=$(new_world persona-default)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Persona\n\naddress the captain as skipper\n' > "$root/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "PERSONA" "digest did not print a PERSONA section header"
+  assert_contains "$out" "persona.md (tracked default)" "digest did not label the tracked default persona source"
+  assert_contains "$out" "address the captain as skipper" "digest did not print the tracked persona.md content"
+
+  persona_line=$(printf '%s\n' "$out" | grep -n '^PERSONA$' | head -1 | cut -d: -f1)
+  context_line=$(printf '%s\n' "$out" | grep -n '^CONTEXT$' | head -1 | cut -d: -f1)
+  [ -n "$persona_line" ] && [ -n "$context_line" ] || fail "PERSONA or CONTEXT section header missing: $out"
+  [ "$persona_line" -lt "$context_line" ] || fail "PERSONA did not precede CONTEXT"
+
+  pass "session start prints the tracked default persona.md every session, ahead of the context digest"
+}
+
+test_persona_local_override_supersedes_default() {
+  local rec root home fakebin out
+  rec=$(new_world persona-override)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Persona\n\naddress the captain as skipper\n' > "$root/persona.md"
+  printf '# Persona\n\naddress the user as boss, no nautical flavor\n' > "$home/config/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "persona.md (local override: config/persona.md)" "digest did not label the local persona override as active"
+  assert_contains "$out" "address the user as boss, no nautical flavor" "digest did not print the local override's content"
+  case "$out" in
+    *"address the captain as skipper"*) fail "local persona override did not fully replace the tracked default: $out" ;;
+  esac
+
+  pass "a local config/persona.md override fully replaces the tracked default, not merges with it"
+}
+
+test_persona_absent_reports_repair_needed() {
+  local rec root home fakebin out persona_section
+  rec=$(new_world persona-absent)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  rm -f "$root/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "ABSENT (tracked persona.md and config/persona.md both missing" \
+    "digest did not call out a fully-absent persona as needing repair"
+
+  persona_section=$(printf '%s\n' "$out" | awk '/^persona\.md$/{flag=1;next}/^(data\/|CONTEXT)/{flag=0}flag')
+  case "$persona_section" in
+    *$'\n''ABSENT'$'\n'*|ABSENT$'\n'*) fail "an absent persona must not print a bare ABSENT marker like the ordinary context-digest files: $persona_section" ;;
+  esac
+
+  pass "session start reports a fully-absent persona distinctly, as needing repair rather than a quiet defaults fallback"
+}
+
+test_persona_unreadable_reports_repair_needed() {
+  local rec root home fakebin out
+  rec=$(new_world persona-unreadable)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Persona\n\naddress the captain as skipper\n' > "$root/persona.md"
+  printf '# Persona\n\naddress the user as boss, no nautical flavor\n' > "$home/config/persona.md"
+  chmod 000 "$home/config/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  chmod 700 "$home/config/persona.md"
+
+  assert_contains "$out" "UNREADABLE (" \
+    "digest did not call out an unreadable active persona file as needing repair"
+  assert_contains "$out" "$home/config/persona.md" \
+    "digest's unreadable-persona message did not name the broken file"
+  case "$out" in
+    *"address the captain as skipper"*) fail "an unreadable local override must not silently fall back to the tracked default: $out" ;;
+    *"address the user as boss, no nautical flavor"*) fail "an unreadable persona file's content must not print: $out" ;;
+  esac
+
+  pass "an unreadable active persona file is reported as needing repair, not silently skipped or fallen back from"
 }
 
 # --- lock refusal: read-only path --------------------------------------------
@@ -1444,6 +1552,10 @@ EOF
 }
 
 test_context_digest_absent_empty_present
+test_persona_tracked_default_printed
+test_persona_local_override_supersedes_default
+test_persona_absent_reports_repair_needed
+test_persona_unreadable_reports_repair_needed
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
 test_session_lock_concurrent_single_winner
