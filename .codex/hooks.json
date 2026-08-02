@@ -15,8 +15,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bd codex-hook SessionStart",
-            "statusMessage": "Loading Beads context"
+            "command": "bash -lc 'command -v bd >/dev/null 2>&1 && exec bd codex-hook SessionStart || exit 0'",
+            "statusMessage": "Loading Beads context",
+            "timeout": 10
           }
         ]
       }
@@ -44,8 +45,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bd codex-hook PreCompact",
-            "statusMessage": "Checking Beads context"
+            "command": "bash -lc 'command -v bd >/dev/null 2>&1 && exec bd codex-hook PreCompact || exit 0'",
+            "statusMessage": "Checking Beads context",
+            "timeout": 10
           }
         ]
       }
@@ -56,8 +58,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bd codex-hook PostCompact",
-            "statusMessage": "Scheduling Beads context refresh"
+            "command": "bash -lc 'command -v bd >/dev/null 2>&1 && exec bd codex-hook PostCompact || exit 0'",
+            "statusMessage": "Scheduling Beads context refresh",
+            "timeout": 10
           }
         ]
       }
@@ -67,8 +70,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bd codex-hook UserPromptSubmit",
-            "statusMessage": "Refreshing Beads context"
+            "command": "bash -lc 'command -v bd >/dev/null 2>&1 && exec bd codex-hook UserPromptSubmit || exit 0'",
+            "statusMessage": "Refreshing Beads context",
+            "timeout": 10
           }
         ]
       }
