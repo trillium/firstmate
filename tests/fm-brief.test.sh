@@ -598,10 +598,18 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
-# Fork-first push rule: a ship task on a project whose git origin is NOT under
-# trillium/ must be told to push its branch to the trillium/<repo> fork; a
-# Trillium-origin project gets no such rule (byte-identical to pre-rule output),
-# and local-only never pushes so it stays exempt even on an upstream origin.
+# Fork-contribution PR-target rule: a ship task on a project whose PRs must
+# land in the captain's own trillium/<repo> fork, never upstream. Detection
+# reads the clone's real git remotes in two shapes - a legacy clone whose
+# `origin` is still the upstream repo, or the correct swapped setup where
+# `origin` is already the trillium fork with a separate `upstream` remote -
+# and the generated rule differs by push mode and clone shape:
+#   direct-PR             -> explicit `gh pr create --repo trillium/<repo>` form
+#   no-mistakes + swapped  -> confirms origin already targets the fork, forbids `--fork-url`
+#   no-mistakes + legacy   -> STOP: no-mistakes cannot be driven safely, escalate
+# An ordinary captain-owned project (Trillium origin, no `upstream` remote)
+# gets no such rule (byte-identical to pre-rule output), and local-only never
+# pushes so it stays exempt even on an upstream origin.
 make_clone() {
   local dir=$1 origin=$2
   mkdir -p "$dir"
@@ -621,43 +629,72 @@ EOF
   make_clone "$home/projects/upstream-ssh" "git@github.com:david-tejada/rango.git"
   make_clone "$home/projects/trillium-proj" "git@github.com:trillium/firstmate.git"
   make_clone "$home/projects/upstream-local" "https://github.com/gastownhall/gascity.git"
+  make_clone "$home/projects/swapped-proj" "git@github.com:trillium/rango.git"
+  git -C "$home/projects/swapped-proj" remote add upstream "git@github.com:david-tejada/rango.git"
 
-  # no-mistakes on a non-Trillium origin: rule present, correct fork named.
+  # no-mistakes on a legacy (non-Trillium, unswapped) origin: the worker must
+  # stop rather than let no-mistakes default the PR to upstream.
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm upstream-proj >/dev/null 2>&1
   brief="$home/data/fork-nm/brief.md"
-  assert_grep "# Fork-based project: all pushes target the fork" "$brief" \
-    "no-mistakes brief on an upstream origin lost the fork-first rule"
+  assert_grep "# Fork-based project: origin is not yet the fork - STOP before running no-mistakes" "$brief" \
+    "no-mistakes brief on a legacy upstream origin lost the stop-before-running rule"
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
-  assert_grep 'the `trillium/gnhf` fork' "$brief" \
-    "no-mistakes fork-first rule named the wrong fork"
-  assert_grep "never stop to ask fork-vs-local" "$brief" \
-    "fork-first rule dropped the never-ask-fork-vs-local instruction"
+  assert_grep 'own `trillium/gnhf` fork, NEVER upstream' "$brief" \
+    "no-mistakes fork rule named the wrong fork or dropped the never-upstream wording"
+  assert_grep "the PR only goes upstream on the captain's explicit word" "$brief" \
+    "fork rule dropped the captain's-explicit-word wording"
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
-  assert_grep 'Never push to the upstream `origin`' "$brief" \
-    "fork-first rule dropped the never-push-upstream instruction"
+  assert_grep 'Do NOT run `no-mistakes init --fork-url`' "$brief" \
+    "legacy no-mistakes rule dropped the --fork-url warning"
+  assert_grep "blocked: project clone's origin is not the trillium fork yet" "$brief" \
+    "legacy no-mistakes rule dropped the explicit blocked-status instruction"
 
-  # direct-PR pushes too; SSH origin still resolves the fork name.
+  # no-mistakes on the correctly swapped setup (origin = fork, upstream =
+  # separate remote): origin already targets the fork, so no-mistakes may run,
+  # but --fork-url is still forbidden since it would redirect the PR upstream.
+  cat >> "$home/data/projects.md" <<'EOF'
+- swapped-proj [no-mistakes] - correctly swapped fork-contribution project (added 2026-08-01)
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm-swapped swapped-proj >/dev/null 2>&1
+  brief="$home/data/fork-nm-swapped/brief.md"
+  assert_grep "# Fork-based project: PRs stay in the fork, never upstream" "$brief" \
+    "swapped no-mistakes brief lost the fork-target rule"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'already the `trillium/rango` fork, with `upstream` as a separate remote' "$brief" \
+    "swapped no-mistakes rule did not confirm the origin/upstream setup"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'Never run `no-mistakes init --fork-url`' "$brief" \
+    "swapped no-mistakes rule dropped the --fork-url warning"
+
+  # direct-PR pushes too; SSH origin still resolves the fork name, with an
+  # explicit --repo override so gh cannot default the PR base to upstream.
   cat >> "$home/data/projects.md" <<'EOF'
 - upstream-ssh [direct-PR] - upstream fork reached over SSH (added 2026-07-01)
 EOF
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-dp upstream-ssh >/dev/null 2>&1
   brief="$home/data/fork-dp/brief.md"
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
-  assert_grep 'the `trillium/rango` fork' "$brief" \
-    "direct-PR fork-first rule did not resolve the SSH-origin fork name"
+  assert_grep 'own `trillium/rango` fork, NEVER upstream' "$brief" \
+    "direct-PR fork rule did not resolve the SSH-origin fork name or dropped never-upstream wording"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'gh pr create --repo trillium/rango --base' "$brief" \
+    "direct-PR fork rule dropped the explicit --repo override in the gh pr create form"
+  assert_grep "never stop to ask fork-vs-local" "$brief" \
+    "fork rule dropped the never-ask-fork-vs-local instruction"
 
-  # Trillium-owned origin: no fork-first rule at all.
+  # Trillium-owned origin with no upstream remote: an ordinary captain-owned
+  # project, no fork-contribution rule at all.
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-tr trillium-proj >/dev/null 2>&1
   brief="$home/data/fork-tr/brief.md"
-  assert_no_grep "# Fork-based project: all pushes target the fork" "$brief" \
-    "Trillium-origin brief wrongly carried the fork-first rule"
+  assert_no_grep "# Fork-based project" "$brief" \
+    "Trillium-origin brief wrongly carried a fork-contribution rule"
 
   # local-only never pushes: exempt even though the origin is upstream.
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-lo upstream-local >/dev/null 2>&1
   brief="$home/data/fork-lo/brief.md"
-  assert_no_grep "# Fork-based project: all pushes target the fork" "$brief" \
-    "local-only brief wrongly carried the fork-first push rule"
-  pass "fm-brief.sh: fork-first push rule appears only for push modes on non-Trillium origins"
+  assert_no_grep "# Fork-based project" "$brief" \
+    "local-only brief wrongly carried a fork-contribution rule"
+  pass "fm-brief.sh: fork-contribution PR-target rule covers legacy, swapped, direct-PR, and exempt clone shapes"
 }
 
 # Scout and secondmate paths still scaffold well-formed briefs.
