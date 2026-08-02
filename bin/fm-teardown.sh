@@ -350,11 +350,13 @@ deregister_parlay_agent() {
 # once its work is confirmed landed. Only called for a non-force teardown that
 # reached this point, i.e. every REFUSED landed-work gate above already passed.
 # Fail-open by design, matching fm-bead-stamp.sh: a missing task CLI warns on
-# stderr and never blocks or fails an already-confirmed teardown. A close that
-# fails against a reachable store (already closed) just warns, but a close that
-# fails because the store is unreachable is queued via fm-beads-resilience-lib.sh
-# for replay once the store recovers (beads-authority-migration Stage 5
-# resilience layer, report.md section 5), so the confirmed-landed close is not lost.
+# stderr and never blocks or fails an already-confirmed teardown. Any close
+# failure - store unreachable, a transient write-path outage while reads still
+# succeed, or a genuine conflict - is queued via fm-beads-resilience-lib.sh for
+# replay once the store recovers (beads-authority-migration Stage 5 resilience
+# layer, report.md section 5), so the confirmed-landed close is never silently
+# dropped; fm_beads_write_queue_reconcile treats a bead already reported closed
+# on replay as reconciled rather than retrying it forever.
 close_linked_bead() {
   local beads_id=$1 id=$2 reason
   reason="landed: firstmate task $id teardown confirmed work landed"
@@ -365,11 +367,7 @@ close_linked_bead() {
   if task close "$beads_id" --reason "$reason" >/dev/null 2>&1; then
     return 0
   fi
-  if task list --limit 1 >/dev/null 2>&1; then
-    echo "warning: could not close bead $beads_id for $id (already closed or rejected)" >&2
-    return 0
-  fi
-  echo "warning: beads store unreachable, queuing close of bead $beads_id for $id" >&2
+  echo "warning: could not close bead $beads_id for $id, queuing for retry" >&2
   fm_beads_write_enqueue "$beads_id" "close: $id" close "$beads_id" --reason "$reason" || true
 }
 

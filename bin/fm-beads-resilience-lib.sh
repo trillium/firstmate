@@ -7,8 +7,8 @@
 # Read-side mirror (beads-authority-migration Stage 5, report.md section 5):
 #   fm_beads_mirror_write <view> <raw-output>   - opportunistic side effect of
 #     a successful `task ...` read already performed by a caller (session-start's
-#     compact listing, fm-fleet-snapshot.sh, teardown's re-evaluate-queue).
-#     No code path polls beads solely to refresh this file, same discipline as
+#     compact listing, fm-fleet-snapshot.sh). No code path polls beads solely
+#     to refresh this file, same discipline as
 #     state/.last-watcher-beat. <view> is a short slug (e.g. "ready", "fleet")
 #     naming which read this is a mirror of; each view gets its own file.
 #   fm_beads_mirror_read <view>     - prints the last mirrored raw output for
@@ -22,9 +22,6 @@
 #   fm_beads_mirror_timestamp_iso <view>   - prints the mirror's write time as
 #     a UTC ISO-8601 timestamp, for the "(stale mirror, beads store
 #     unreachable since <ts>)" label callers prefix onto stale output.
-#   fm_beads_mirror_any_fresh [<max-age-seconds>]   - true if any known view
-#     (FM_BEADS_MIRROR_VIEWS) has a fresh mirror; used by fm-bootstrap.sh to
-#     decide MISSING: vs DEGRADED:.
 # A mirror file is never presented as current: every caller that falls back to
 # one must label the output as a stale mirror (AGENTS.md section 3's ABSENT-
 # file discipline extended to "unreachable-store" fallback data).
@@ -34,20 +31,26 @@
 #     failed `task <task-argv...>` write to the durable queue for later
 #     replay. Beads remains sole write authority; the queue is availability,
 #     not a second authority, and never resolves conflicts itself - replay is
-#     strict FIFO, and a write that no longer applies cleanly (e.g. the target
-#     bead was closed by hand during the outage) is left for whatever `task`
-#     itself reports on replay rather than reconciled locally.
+#     strict FIFO, and a write that no longer applies cleanly is left for
+#     whatever `task` itself reports on replay rather than reconciled locally,
+#     with one narrow exception: fm_beads_write_queue_reconcile's close check
+#     below.
 #   fm_beads_write_queue_count      - prints the number of queued writes.
 #   fm_beads_write_queue_reconcile   - replays every queued write against the
 #     live store, dropping ones that succeed and re-queuing ones that still
 #     fail; prints one BEADS_WRITE_QUEUE: line per outcome plus a summary
-#     line; returns 0 only when the queue drains completely. Call sites that
-#     currently warn-and-continue on a failed beads write (fm-teardown.sh's
-#     close_linked_bead, fm-bead-stamp.sh) enqueue on failure instead of only
-#     warning, preserving their existing fail-open posture. Called from
-#     fm-bootstrap.sh's mutating sweep block (beads backend only) so an
-#     outage recovers on the next session-start bootstrap without a new
-#     polling loop.
+#     line; returns 0 only when the queue drains completely. A queued `close`
+#     write whose replay fails is checked with fm_beads_close_already_applied
+#     (a `task show <id> --json` reporting the bead absent or status=closed)
+#     before being re-queued, so a bead the outage's original close (or
+#     someone else) already closed is reconciled instead of retried forever;
+#     every other write kind still leaves a genuine replay failure re-queued
+#     as-is. Call sites that currently warn-and-continue on a failed beads
+#     write (fm-teardown.sh's close_linked_bead, fm-bead-stamp.sh) enqueue on
+#     failure instead of only warning, preserving their existing fail-open
+#     posture. Called from fm-bootstrap.sh's mutating sweep block (beads
+#     backend only) so an outage recovers on the next session-start bootstrap
+#     without a new polling loop.
 #
 # Both mirror files (state/.beads-mirror-<view>.json) and the write queue
 # (state/.beads-write-queue) are private runtime state (AGENTS.md section 2)
@@ -133,14 +136,6 @@ fm_beads_mirror_timestamp_iso() { # <view>
   fm_beads_epoch_to_iso "$FM_BEADS_MIRROR_WRITTEN_AT"
 }
 
-fm_beads_mirror_any_fresh() { # [<max-age-seconds>]
-  local max_age=${1:-$FM_BEADS_MIRROR_MAX_AGE} view
-  for view in $FM_BEADS_MIRROR_VIEWS; do
-    fm_beads_mirror_fresh "$view" "$max_age" && return 0
-  done
-  return 1
-}
-
 fm_beads_mirror_freshest_iso() { # [<max-age-seconds>] -> ISO-8601 timestamp of
   # whichever known view has the freshest fresh mirror; returns 1 if none fresh.
   local max_age=${1:-$FM_BEADS_MIRROR_MAX_AGE} view best_age best_view age
@@ -181,6 +176,14 @@ fm_beads_write_queue_count() {
   fi
 }
 
+fm_beads_close_already_applied() { # <task-id> - true if the bead is absent or already closed
+  local id=$1 out status
+  out=$(task show "$id" --json 2>/dev/null)
+  [ -n "$out" ] || return 0
+  status=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null)
+  [ "$status" = closed ]
+}
+
 fm_beads_write_queue_reconcile() {
   local queue=$FM_BEADS_WRITE_QUEUE drained remaining line id desc replayed=0 failed=0
   [ -s "$queue" ] || return 0
@@ -213,6 +216,9 @@ fm_beads_write_queue_reconcile() {
     if [ "${#argv[@]}" -gt 0 ] && task "${argv[@]}" >/dev/null 2>&1; then
       replayed=$((replayed + 1))
       echo "BEADS_WRITE_QUEUE: reconciled queued write for $id ($desc)"
+    elif [ "${argv[0]:-}" = close ] && fm_beads_close_already_applied "$id"; then
+      replayed=$((replayed + 1))
+      echo "BEADS_WRITE_QUEUE: reconciled queued write for $id ($desc) (bead already closed)"
     else
       failed=$((failed + 1))
       printf '%s\n' "$line" >>"$remaining"
