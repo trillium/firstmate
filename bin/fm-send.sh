@@ -10,20 +10,6 @@
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca currently supports Enter and C-c only, and rejects Escape.
 #
-# Raw/unmanaged pane escape hatch: fm-send.sh <target> --raw <text...>
-#   sends TEXT then Enter best-effort with NO delivery verification and NO
-#   from-firstmate marking. It exists because the default text path verifies
-#   submission by reading the target's agent composer/busy-state, and a raw
-#   shell pane (an explicit backend target with no state/<id>.meta and no agent
-#   composer) has nothing to verify against, so the verified path fails closed.
-#   --raw dispatches the backend's atomic type-then-Enter primitive
-#   (fm_backend_send_text_line) instead. Best-effort means exactly that: a zero
-#   exit proves the send command was issued, never that the pane accepted or
-#   submitted it. Use fm-<id> for any recorded task/lane so delivery IS verified;
-#   reach for --raw only to drive an ad-hoc pane the captain points at. --raw
-#   applies to the text path only and cannot be combined with --key (a raw key
-#   send already works: --key never verifies a composer).
-#
 # Text submission is verified: the line is typed ONCE, then Enter is sent and
 # retried (Enter only, never retyped) until the target backend confirms a
 # submit or reports an inconclusive send. If a swallowed Enter is positively
@@ -57,15 +43,6 @@
 # footer appears, so an immediate peek would otherwise see the stale idle pane.
 # The pause is fm-send-only; the shared submit core (used by the away-mode daemon,
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
-#
-# Optional post-submit transition verification: set FM_SEND_VERIFY_TRANSITION to a
-# non-zero value to have fm-send confirm the submitted text actually drove a turn
-# (target transitioned idle->working) rather than only clearing the composer. It
-# polls the target's agent state for up to FM_SEND_VERIFY_TIMEOUT seconds (default
-# 0.6) via the backend's wait-for-working primitive. A confirmed still-idle target,
-# or a backend error during verification, exits NON-ZERO because the message did not
-# execute; an unverifiable ("unknown") read proceeds and, when FM_SEND_VERBOSE is
-# non-zero, prints a warning. Off by default and independent of FM_SEND_SETTLE.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -154,10 +131,23 @@ fm_send_resolve_target() {  # <raw-target>
   EXPECTED_LABEL=""
   TARGET_META=""
   TARGET_SELECTOR=""
+  TARGET_REMOTE_ID=""
   RESOLUTION_TRIED=""
 
   meta=$(fm_backend_meta_for_selector "$raw" "$STATE" 2>/dev/null || true)
   if [ -n "$meta" ]; then
+    if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
+      id=$(fm_send_id_from_meta "$meta")
+      RESOLVED_TARGET="remote:$id"
+      TARGET_BACKEND=remote
+      TARGET_META=$meta
+      TARGET_HARNESS=$(fm_meta_get "$meta" harness)
+      EXPECTED_LABEL="fm-$id"
+      TARGET_SELECTOR=1
+      TARGET_REMOTE_ID=$id
+      RESOLUTION_TRIED="meta=$meta; placement=remote"
+      return 0
+    fi
     RESOLUTION_TRIED="meta=$meta; backend=from-meta"
     target=$(fm_backend_target_of_meta "$meta")
     if [ -z "$target" ]; then
@@ -234,20 +224,9 @@ fm_send_resolve_target "$RAW_TARGET" || exit 1
 T=$RESOLVED_TARGET
 shift
 
-# Raw/unmanaged pane escape hatch: best-effort literal send + Enter with no
-# submit verification and no from-firstmate marking (see header). Parsed here so
-# it precedes both the --key branch and the verified text path.
-RAW_MODE=0
-if [ "${1:-}" = "--raw" ]; then
-  RAW_MODE=1
-  shift
-  if [ "${1:-}" = "--key" ]; then
-    echo "error: --raw cannot be combined with --key; a raw key send already works via '--key' alone (it never verifies a composer)" >&2
-    exit 1
-  fi
+if [ "$TARGET_BACKEND" != remote ]; then
+  fm_backend_validate "$TARGET_BACKEND" || exit 1
 fi
-
-fm_backend_validate "$TARGET_BACKEND" || exit 1
 
 # Classify a from-firstmate -> secondmate request. Only a task selector resolved
 # through this home's meta whose authoritative kind is secondmate is marked: the
@@ -258,7 +237,7 @@ MARK_FROM_FIRSTMATE=0
 PENDING_REPLY_CORR=
 PENDING_REPLY_CREATED=0
 TARGET_TASK_ID=
-if [ "$RAW_MODE" = 0 ] && [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(fm_meta_get "$TARGET_META" kind)" = secondmate ]; then
+if [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(fm_meta_get "$TARGET_META" kind)" = secondmate ]; then
   MARK_FROM_FIRSTMATE=1
   TARGET_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
 fi
@@ -276,24 +255,18 @@ fi
 # error with the attempted resolution attached.
 
 if [ "${1:-}" = "--key" ]; then
-  if ! fm_backend_send_key "$TARGET_BACKEND" "$T" "$2" "$EXPECTED_LABEL"; then
+  if [ "$TARGET_BACKEND" = remote ]; then
+    if ! "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" fm-remote-secondmate-control.sh key "$TARGET_REMOTE_ID" "$2"; then
+      echo "error: key '$2' not sent to remote secondmate $TARGET_REMOTE_ID; completion may be unknown" >&2
+      exit 1
+    fi
+  elif ! fm_backend_send_key "$TARGET_BACKEND" "$T" "$2" "$EXPECTED_LABEL"; then
     echo "error: key '$2' not sent to $T ($TARGET_BACKEND send failed; tried $RESOLUTION_TRIED)" >&2
     exit 1
   fi
   fm_send_record_interrupt "$2" || exit 1
 else
   MESSAGE=$*
-  if [ "$RAW_MODE" = 1 ]; then
-    # Best-effort escape hatch: issue the backend's atomic type-then-Enter with
-    # no submit verification and no marker. A zero exit proves only that the send
-    # command was issued, never that the pane accepted or submitted the text.
-    if ! fm_backend_send_text_line "$TARGET_BACKEND" "$T" "$MESSAGE" "$EXPECTED_LABEL"; then
-      echo "error: raw text not sent to $T ($TARGET_BACKEND send failed; tried $RESOLUTION_TRIED)" >&2
-      exit 1
-    fi
-    [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: raw send to $T is best-effort; delivery was not verified" >&2
-    exit 0
-  fi
   if [ "$MARK_FROM_FIRSTMATE" = 1 ]; then
     # Reuse an existing correlation id for recovery resends; otherwise create a
     # durable parent expectation before delivery. Transport success never
@@ -338,7 +311,25 @@ else
   sleep_s=${FM_SEND_SLEEP:-0.4}
   # Type once, submit, verify. Only exact empty confirms delivery; every other
   # verdict preserves the loud refusal boundary.
-  if ! verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
+  send_rc=0
+  if [ "$TARGET_BACKEND" = remote ]; then
+    if "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" fm-remote-secondmate-control.sh send "$TARGET_REMOTE_ID" "$MESSAGE" >/dev/null; then
+      verdict=empty
+    else
+      send_rc=$?
+      verdict=send-failed
+    fi
+  elif verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
+    :
+  else
+    send_rc=$?
+  fi
+  if [ "$send_rc" -ne 0 ]; then
+    if [ "$TARGET_BACKEND" = remote ] && [ "$send_rc" -eq 255 ] && [ -n "$PENDING_REPLY_CORR" ]; then
+      fm_pending_reply_mark_delivery_unknown "$STATE" "$PENDING_REPLY_CORR" || true
+      echo "error: text delivery to remote secondmate $TARGET_REMOTE_ID is unknown; do not resend - same-host reconciliation is required" >&2
+      exit 1
+    fi
     if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
       fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
     fi
@@ -360,9 +351,6 @@ else
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
       echo "error: text not submitted to $T (delivery unconfirmed; verdict=${verdict:-unknown}; tried $RESOLUTION_TRIED)" >&2
-      if [ -z "$TARGET_META" ]; then
-        echo "  hint: $T is a raw/unmanaged target with no agent composer to verify a submit against. If this is an ad-hoc shell pane, resend best-effort with: fm-send.sh $RAW_TARGET --raw $MESSAGE (no delivery guarantee). Use fm-<id> for a recorded task/lane to get verified delivery." >&2
-      fi
       exit 1
       ;;
   esac
@@ -386,26 +374,5 @@ else
   # turn before its busy footer shows. Pause so an immediate peek catches the
   # crewmate actually working instead of the stale idle pane. FM_SEND_SETTLE=0
   # disables it. Scoped to this path only, never the shared submit core.
-  if [ "${FM_SEND_VERIFY_TRANSITION:-0}" != 0 ]; then
-    # Optional post-submit transition verification: confirm the turn actually
-    # started, not just that the composer cleared. This uses the backend's own
-    # transition-wait primitives to verify idle→working transition.
-    verify_budget=${FM_SEND_VERIFY_TIMEOUT:-0.6}
-    verify_result=$(fm_backend_wait_for_working "$TARGET_BACKEND" "$T" "$verify_budget" "$TARGET_HARNESS")
-    case "$verify_result" in
-      working)
-        : # Turn confirmed started, proceed normally
-        ;;
-      idle)
-        echo "error: SEND DID NOT LAND - text was submitted to $T but the turn did not start (remains idle; tried $RESOLUTION_TRIED)" >&2
-        exit 1
-        ;;
-      unknown|error)
-        # Could not verify (backend error or unavailable), but composer cleared.
-        # Proceed with warning in verbose mode only. Fail only on definitive idle.
-        [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: text was submitted to $T but turn start could not be verified (tried $RESOLUTION_TRIED)" >&2
-        ;;
-    esac
-  fi
   [ "${FM_SEND_SETTLE:-1}" = 0 ] || sleep "${FM_SEND_SETTLE:-1}"
 fi
