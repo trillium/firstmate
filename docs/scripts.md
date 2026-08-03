@@ -10,9 +10,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-session-start.sh`    | Compose lock, bootstrap, and wake drain into the single ordered session-start digest |
 | `fm-sessionstart-nudge.sh` | Print the native session-start hook nudge when the primary has not already run the digest |
 | `fm-operational-input.sh` | Construct and parse the canonical cross-language operational-input protocol |
-| `fm-isolated-launch.sh`  | Launch `claude` with `HOME` redirected to a fresh isolated home, stripped of global harness config |
-| `claude-account.sh`      | Standalone launcher for `claude` with per-account credential isolation under `~/.claude-homes/account<N>/.claude` |
-| `claude-1.sh`, `claude-2.sh` | One-line direct launchers for `claude-account.sh 1` and `claude-account.sh 2`               |
 | `fm-bootstrap.sh`        | Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools |
 | `fm-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
 | `fm-fleet-snapshot.sh`   | Print the read-only structured fleet snapshot JSON (schema `fm-fleet-snapshot.v1`)   |
@@ -21,19 +18,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-update.sh`           | Fast-forward-only self-update of firstmate and secondmate homes from origin          |
 | `fm-backlog-handoff.sh`  | Validate and delegate queued backlog-item moves into a secondmate home               |
 | `fm-decision-hold.sh`    | Create, verify, complete, and resolve durable captain-held decisions                 |
-| `fm-idea-mine.ts`        | Mine recent chat/context history for uncaptured ideas, re-evaluate them in a second inference pass, and file survivors to the `ideas` store |
-| `fm-groom.sh`            | Rate-limited, opt-in (`FM_GROOM_ENABLED`) idea-to-brief-to-dispatch generator: formulate, classify, and dispatch or file `ideas`-store items |
-| `fm-groom-lib.sh`        | Sourced brief-formulation and safety-classification helpers for `fm-groom.sh`         |
-| `fm-groom-json-field.sh` | Extract one string field from a JSON document on stdin for the groom pipeline        |
-| `fm-review-page.ts`      | Render `review`-store items to interactive, phone-readable Pulse decision pages under `~/pulse-pages/review/` |
-| `fm-review-decision.sh`  | Record a captain's Approve/Decline/Comment decision from a review page and wake firstmate to act on it |
-| `fm-brief.sh`            | Scaffold ship, scout, secondmate-charter, and Herdr-lab briefs; load hooks when FM_HOOK_BEADS_ID or other hook env vars are set |
-| `fm-brief-hooks.d/beads.sh` | Pre-brief extension: emit the Bead Receipt and Bead Closure sections for a `--beads` task |
-| `fm-bead-stamp.sh`       | Stamp a linked bead's dispatch and lifecycle state when a task is spawned with --beads or auto-linked under the beads backend |
-| `fm-ledger.sh`           | List or close likely-dropped beads: claimed, still open, and idle past a staleness window |
+| `fm-brief.sh`            | Scaffold ship (explicit `--mode`), scout, secondmate-charter, and Herdr-lab briefs   |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
-| `fm-herdr-session-cleanup.sh` | Retire stale restored-shell Herdr presentation children at locked session start |
-| `fm-herdr-spur.sh`       | Bridge external (non-firstmate-spawned) Herdr agent completions into firstmate's durable wake queue |
 | `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
 | `fm-install-treehouse.sh`| Install CI's exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees |
 | `fm-herdr-ci-cleanup.sh` | Snapshot and tear down only job-owned `fm-lab-*` sessions in the Herdr CI lane       |
@@ -52,9 +38,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-subagent-pretool-check.sh` | Primary-home delegation-shape PreToolUse guard (docs/subagent-guard.md) |
 | `fm-supervision-instructions.sh` | Render the session-start primary-harness supervision block or the one-line repair instruction |
 | `fm-home-seed.sh`        | Transactionally provision a secondmate home and maintain `data/secondmates.md`       |
-| `fm-project-dir-lib.sh`  | Single owner of how a project argument (bare name, `projects/<name>`, or explicit path) names a clone directory; shared by fm-brief.sh, fm-fleet-sync.sh, and fm-spawn.sh so the two halves of a dispatch cannot disagree |
 | `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend |
-| `fm-spawn-hooks.d/beads.sh` | Post-spawn extension: stamp a `--beads` task's bead and register its bead-close watcher check |
 | `fm-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |
 | `fm-backend-hometag-lib.sh` | Shared per-installation home-tag derivation for zellij tab and cmux workspace titles |
 | `fm-composer-lib.sh`     | Single fleet-wide owner of composer-content classification for all backends          |
@@ -63,10 +47,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `backends/zellij.sh`     | Experimental zellij session-provider adapter                                         |
 | `backends/orca.sh`       | Experimental Orca backend adapter owning both worktree and terminal                  |
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
-| `fm-remote-launch.sh`    | EXPERIMENTAL, explicitly transitional: launch, reclaim, reconcile, and inspect a crewmate on a named mini over the herdr-web bridge, self-contained and outside `fm-backend.sh`'s runtime-backend contract |
 | `fm-config-push.sh`      | Push declared inherited local material to live secondmates mid-session and send a pointer to the literal-content config reread when config changed |
-| `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`           |
-| `fm-fork-origin-check.sh` | Advisory, read-only scan for registered project clones with an unswapped or partially swapped fork-contribution origin/upstream shape |
+| `fm-project-mode.sh`     | Resolve a project's registered delivery posture from `data/projects.md` for fleet sync and home seeding |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
 | `fm-marker-lib.sh`       | Compatibility entry point for the from-firstmate carrier owned by `fm-operational-input.sh` |
@@ -74,7 +56,6 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-secondmate-report.sh` | Optional helper to append a correlated parent status or document-pointer report       |
 | `fm-gate-refuse-lib.sh`  | Shared no-mistakes gate-context refusal for fleet lifecycle entrypoints               |
 | `fm-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
-| `fm-watch-cycle-lib.sh`  | Shared reader for the watcher lifecycle ledger: parses the last cycle row and classifies terminated vs. ended cycles for supervision-down banners |
 | `fm-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
 | `fm-watch.sh`            | Singleton-safe always-on watcher: absorb benign wakes, queue and exit on actionable ones |
 | `fm-afk-start.sh`        | Run the common sourceable away-mode daemon entry in the foreground                      |
@@ -83,21 +64,18 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-supervisor-target-lib.sh` | Resolve the shared supervisor target and backend for the daemon and launcher       |
 | `fm-supervise-daemon.sh` | Presence-gated away-mode sub-supervisor: self-handle routine wakes, guard injection by the detected primary harness, escalate batched digests, alert on failed delivery |
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
-| `fm-no-mistakes-liveness.sh` | Check liveness of no-mistakes runs and match them to tasks; list all running runs or check a specific task |
-| `fm-nm-run-is-live.sh`   | Fast liveness check for a specific no-mistakes run ID; designed for supervision loops |
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |
 | `fm-ff-lib.sh`           | Shared guarded fast-forward helper for origin pulls and local secondmate syncs       |
 | `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
 | `fm-config-inherit-lib.sh` | Shared primary-to-secondmate inherited local-material propagation and config-reread delivery |
-| `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector (tasks-axi/beads/manual), `tasks-axi` compatibility probe, and beads resolve-or-create for auto-linking |
-| `fm-beads-resilience-lib.sh` | Shared beads read-side local mirror and write-side durable queue so a Dolt/beads-store outage degrades instead of wedging firstmate |
+| `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor for the bootstrap diagnostic                  |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Atomically drain queued watcher wakes, emit bounded best-effort status-event annotations, then assert watcher liveness |
 | `fm-wake-lib.sh`         | Shared durable wake queue, portable locks, and watcher identity/health helpers       |
 | `fm-classify-lib.sh`     | Shared captain-relevant and declared-external-wait wake classification vocabulary    |
-| `fm-send.sh`             | Send one verified literal line or supported key through the target's backend; `--raw` sends unverified best-effort to a raw/unmanaged pane |
+| `fm-send.sh`             | Send one verified literal line or supported key through the target's recorded backend |
 | `fm-busy-lib.sh`         | Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources |
 | `fm-busy-event.sh`       | The only writer of a task's semantic busy-state record; arms an incarnation and applies lifecycle events |
 | `fm-tmux-lib.sh`         | Shared tmux pane primitives for composer capture, verified submit, and the submit-time busy check |
@@ -109,9 +87,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-pr-check-migrate.sh` | Quarantine older task polls without execution and rebuild only canonical polls       |
 | `fm-pr-check.sh`         | Record validated `pr=` and `pr_head=` values, then atomically arm a static merge poll |
 | `fm-pr-merge.sh`         | Record PR metadata, then merge a task's canonical full GitHub URL                    |
-| `fm-promote.sh`          | Promote a scout task in place to a protected ship task                               |
+| `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
-| `fm-staleness-file.sh`   | File a triage bead into the `staleness` federated store for a ship task reclaimed unlanded by staleness auto-close |
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-x-lib.sh`            | Shared X-mode config, relay, and reply-threading helpers                             |
