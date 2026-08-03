@@ -25,11 +25,25 @@ make_case() {
   mkdir -p "$home/.claude/skills" "$home/.claude/hooks" "$home/.claude/commands"
   printf '{}\n' > "$home/.claude/settings.json"
   mkdir -p "$home/.claude-homes/account1/.claude"
-  printf '{"token":"acct1-secret"}\n' > "$home/.claude-homes/account1/.claude/.credentials.json"
   fakebin=$(fm_fakebin "$case_dir")
+  # Mock macOS `security`: return a valid setup token ONLY for account 1's
+  # keychain service (ccjuggler-acc1); "not found" (exit 44) for any other
+  # account, so unseeded-account cases exercise the refusal path hermetically
+  # without touching the real login keychain.
+  cat > "$fakebin/security" <<'SECEOF'
+#!/usr/bin/env bash
+svc=""
+while [ $# -gt 0 ]; do
+  case "$1" in -s) svc=$2; shift 2 ;; *) shift ;; esac
+done
+[ "$svc" = "ccjuggler-acc1" ] && { printf 'sk-ant-oat01-TESTTOKEN\n'; exit 0; }
+exit 44
+SECEOF
+  chmod +x "$fakebin/security"
   cat > "$fakebin/claude" <<EOF
 #!/usr/bin/env bash
 printf 'CLAUDE_CONFIG_DIR=%s args=%s\n' "\$CLAUDE_CONFIG_DIR" "\$*" >> '$log'
+printf 'OAUTH=%s\n' "\$CLAUDE_CODE_OAUTH_TOKEN" >> '$log'
 EOF
   chmod +x "$fakebin/claude"
   : > "$log"
@@ -48,25 +62,59 @@ run_launcher() {
   HOME="$home" PATH="$fakebin:$PATH" "$LAUNCHER" "$@" 2>&1
 }
 
-test_missing_credentials_fails_loudly() {
+test_missing_setup_token_fails_loudly() {
   local rec home fakebin log out status
-  rec=$(make_case missing-creds)
+  rec=$(make_case missing-token)
   read_case_record "$rec"
   home=$CASE_HOME fakebin=$CASE_FAKEBIN log=$CASE_LOG
 
+  # Account 2 has no keychain setup token (the security mock only seeds acc1).
   out=$(run_launcher "$home" "$fakebin" 2 /status)
   status=$?
-  expect_code 1 "$status" "an unseeded account should refuse rather than launch claude"
-  assert_contains "$out" "credentials not found at $home/.claude-homes/account2/.claude/.credentials.json" \
-    "refusal did not name the expected credentials path"
-  assert_contains "$out" "CLAUDE_CONFIG_DIR=$home/.claude-homes/account2/.claude claude /login" \
-    "refusal did not show the seeding command"
-  # Interactive auth is per-account OAuth (.credentials.json via /login), never a
-  # setup-token, so the refusal must steer to /login and never mention setup-token.
-  assert_not_contains "$out" "setup-token" \
-    "refusal must not point at setup-token for interactive auth"
-  [ ! -s "$log" ] || fail "claude should never be invoked when credentials are missing"
-  pass "missing credentials refuse loudly with an OAuth /login seeding command, no claude invocation"
+  expect_code 1 "$status" "an account with no keychain setup token should refuse rather than launch claude"
+  assert_contains "$out" "no setup token in keychain service 'ccjuggler-acc2'" \
+    "refusal did not name the expected keychain service"
+  assert_contains "$out" "claude setup-token" \
+    "refusal did not show how to mint a setup token"
+  assert_contains "$out" "security add-generic-password" \
+    "refusal did not show the keychain seeding command"
+  [ ! -s "$log" ] || fail "claude should never be invoked when the setup token is missing"
+  pass "a missing keychain setup token refuses loudly with setup-token seeding, no claude invocation"
+}
+
+test_auth_exports_setup_token_from_keychain() {
+  local rec home fakebin log out status
+  rec=$(make_case token-export)
+  read_case_record "$rec"
+  home=$CASE_HOME fakebin=$CASE_FAKEBIN log=$CASE_LOG
+
+  out=$(run_launcher "$home" "$fakebin" 1 /status)
+  status=$?
+  expect_code 0 "$status" "account 1 with a valid keychain setup token should launch"
+  assert_grep "OAUTH=sk-ant-oat01-TESTTOKEN" "$log" \
+    "the account's setup token was not exported as CLAUDE_CODE_OAUTH_TOKEN for claude"
+  pass "interactive auth exports the per-account setup token from the keychain as CLAUDE_CODE_OAUTH_TOKEN"
+}
+
+test_malformed_setup_token_refused() {
+  local rec home fakebin log out status
+  rec=$(make_case malformed-token)
+  read_case_record "$rec"
+  home=$CASE_HOME fakebin=$CASE_FAKEBIN log=$CASE_LOG
+  # Override the security mock so account 1 returns a NON-oat value.
+  cat > "$fakebin/security" <<'SECEOF'
+#!/usr/bin/env bash
+printf 'not-a-real-token\n'; exit 0
+SECEOF
+  chmod +x "$fakebin/security"
+
+  out=$(run_launcher "$home" "$fakebin" 1 /status)
+  status=$?
+  expect_code 1 "$status" "a non-setup-token value in the keychain must be refused, not launched"
+  assert_contains "$out" "not a setup token" \
+    "refusal did not flag the malformed keychain value"
+  [ ! -s "$log" ] || fail "claude should never be invoked with a malformed token"
+  pass "a malformed keychain value is refused with a clear message, no claude invocation"
 }
 
 test_symlinks_shared_config_idempotently() {
@@ -192,7 +240,9 @@ test_settings_json_flag_set_when_real_per_account_file() {
   pass "a real per-account settings.json gets skipDangerousModePermissionPrompt pre-written"
 }
 
-test_missing_credentials_fails_loudly
+test_missing_setup_token_fails_loudly
+test_auth_exports_setup_token_from_keychain
+test_malformed_setup_token_refused
 test_symlinks_shared_config_idempotently
 test_does_not_symlink_credentials_or_claude_json
 test_prewrites_onboarding_and_trust_dialog
