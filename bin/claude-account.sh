@@ -9,6 +9,24 @@
 # .credentials.json and .claude.json are never in that symlink list - they must
 # stay per-account real files or OAuth tokens leak across accounts.
 #
+# Auth model (current Claude Code, verified against 2.1.x): an INTERACTIVE TUI
+# session authenticates from the per-account OAuth credential file at
+# $CLAUDE_CONFIG_DIR/.credentials.json - the {"claudeAiOauth":{...}} blob that
+# `claude /login` writes (a refreshable subscription token). That is the path
+# this launcher requires and pre-checks below. `claude setup-token` is NOT used:
+# it mints a CLAUDE_CODE_OAUTH_TOKEN for non-interactive/print/CI/API use only,
+# is passed by env var rather than read from the per-account file, and cannot be
+# refreshed - so it is the wrong credential for a long interactive account
+# session. Keep per-account auth in .credentials.json via `claude /login`.
+#
+# Onboarding pre-seed location (current Claude Code): when CLAUDE_CONFIG_DIR is
+# set, Claude Code reads its global config JSON from $CLAUDE_CONFIG_DIR/.claude.json
+# (path = join(CLAUDE_CONFIG_DIR ?? homedir, ".claude.json")), NOT from a
+# .claude.json in the PARENT of that dir. The onboarding gate it checks is a
+# single key, hasCompletedOnboarding===true; the first-run welcome/theme/login
+# flow (and everything under it) is skipped once that is set. We therefore write
+# the pre-seed into $CLAUDE_CONFIG_DIR/.claude.json (see below).
+#
 # flock on a per-account lock file serializes the bootstrap section below so
 # two concurrent first launches on the same account cannot race on the JSON
 # writes and corrupt .claude.json; the lock fd is closed before exec claude so
@@ -32,9 +50,13 @@ esac
 ACCOUNT_HOME="$HOME/.claude-homes/account${ACCOUNT}"
 export CLAUDE_CONFIG_DIR="$ACCOUNT_HOME/.claude"
 
+# Interactive sessions authenticate from the per-account OAuth credential file,
+# not from a setup-token env var. Refuse rather than launch into an onboarding
+# login prompt when the account has never been seeded via `claude /login`.
 if [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
-  echo "error: credentials not found at $CLAUDE_CONFIG_DIR/.credentials.json" >&2
-  echo "seed them with:" >&2
+  echo "error: OAuth credentials not found at $CLAUDE_CONFIG_DIR/.credentials.json" >&2
+  echo "an interactive account session needs per-account OAuth credentials (not a CI/print token)." >&2
+  echo "seed them once with:" >&2
   echo "  CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR claude /login" >&2
   exit 1
 fi
@@ -53,12 +75,15 @@ for item in commands hooks skills mcp-configs settings.json settings.local.json 
   fi
 done
 
-# .claude.json lives in the PARENT of CLAUDE_CONFIG_DIR - a Claude Code
-# convention, not something this pattern invented. Pre-accept onboarding and
-# the trust dialog for the working directory so a headless session doesn't
-# hang on either prompt; CLAUDE_TRUST_DIR overrides which directory gets
-# pre-trusted when it differs from the launcher's own cwd.
-CLAUDE_JSON="$ACCOUNT_HOME/.claude.json"
+# Pre-accept onboarding and the trust dialog so a session doesn't land in the
+# first-run onboarding flow or hang on the trust prompt. When CLAUDE_CONFIG_DIR
+# is set, current Claude Code reads its global config from
+# $CLAUDE_CONFIG_DIR/.claude.json (NOT a .claude.json in the parent dir, which
+# older layouts used and which CC now ignores) - so the pre-seed MUST live
+# there or onboarding is not skipped. The onboarding gate is the single key
+# hasCompletedOnboarding===true. CLAUDE_TRUST_DIR overrides which directory
+# gets pre-trusted when it differs from the launcher's own cwd.
+CLAUDE_JSON="$CLAUDE_CONFIG_DIR/.claude.json"
 CLAUDE_TRUST_DIR="${CLAUDE_TRUST_DIR:-$PWD}" python3 - "$CLAUDE_JSON" <<'PYEOF'
 import json
 import os
