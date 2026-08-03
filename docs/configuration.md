@@ -281,11 +281,16 @@ For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected exec
 ## Multi-account Claude Code (bin/claude-account.sh, --account)
 
 A captain with more than one paid Claude subscription can have claude-harness crewmates draw from a second account's quota instead of competing with the primary session's own account.
-[`bin/claude-account.sh <N> [args...]`](../bin/claude-account.sh) is a standalone launcher (it works with no firstmate checkout on `PATH`) that sets `CLAUDE_CONFIG_DIR` to `~/.claude-homes/account<N>/.claude`, symlinks shared config (`commands`, `hooks`, `skills`, `mcp-configs`, `settings.json`, `settings.local.json`, `rules`, `agents`) in from `~/.claude/` idempotently, and pre-accepts the onboarding and trust-dialog prompts so a headless session doesn't hang.
+[`bin/claude-account.sh <N> [args...]`](../bin/claude-account.sh) is a standalone launcher (it works with no firstmate checkout on `PATH`) that sets `CLAUDE_CONFIG_DIR` to `~/.claude-homes/account<N>/.claude`, symlinks shared config (`commands`, `hooks`, `skills`, `mcp-configs`, `settings.json`, `settings.local.json`, `rules`, `agents`) in from `~/.claude/` idempotently, and pre-accepts the onboarding and trust-dialog prompts so a session isn't dropped into the first-run onboarding flow.
 `.credentials.json` and `.claude.json` are never symlinked - they stay per-account real files, or OAuth tokens leak across accounts.
 `bin/claude-1.sh` and `bin/claude-2.sh` are one-line direct launchers (`claude-1.sh <args>` == `claude-account.sh 1 <args>`) for a human or an orchestrator to call.
 
-Seed an account's credentials once before first use:
+Two current-Claude-Code mechanics the launcher depends on (verified against 2.1.x):
+
+- **Onboarding pre-seed location.** When `CLAUDE_CONFIG_DIR` is set, Claude Code reads its global config JSON from `$CLAUDE_CONFIG_DIR/.claude.json` (path = `join(CLAUDE_CONFIG_DIR ?? homedir, ".claude.json")`), *not* from a `.claude.json` in the parent of that dir. The onboarding gate is the single key `hasCompletedOnboarding: true`; once set, the whole welcome/theme/login first-run flow is skipped. The launcher writes its `hasCompletedOnboarding` + per-project `hasTrustDialogAccepted` pre-seed into `$CLAUDE_CONFIG_DIR/.claude.json` for exactly this reason.
+- **Interactive auth = per-account OAuth, not setup-token.** An interactive TUI session authenticates from the per-account OAuth credential file `$CLAUDE_CONFIG_DIR/.credentials.json` (the `{"claudeAiOauth":{...}}` blob `claude /login` writes, a refreshable subscription token). `claude setup-token` is the wrong tool here: it mints a `CLAUDE_CODE_OAUTH_TOKEN` for non-interactive/print/CI/API use, is supplied by env var rather than the per-account file, and cannot be refreshed. The launcher requires the OAuth file and refuses (pointing at `claude /login`) rather than launching an unauthenticated account into a login prompt.
+
+Seed an account's OAuth credentials once before first use (this writes `$CLAUDE_CONFIG_DIR/.credentials.json`):
 
 ```
 CLAUDE_CONFIG_DIR=~/.claude-homes/account1/.claude claude /login
