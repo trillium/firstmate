@@ -61,8 +61,12 @@ test_missing_credentials_fails_loudly() {
     "refusal did not name the expected credentials path"
   assert_contains "$out" "CLAUDE_CONFIG_DIR=$home/.claude-homes/account2/.claude claude /login" \
     "refusal did not show the seeding command"
+  # Interactive auth is per-account OAuth (.credentials.json via /login), never a
+  # setup-token, so the refusal must steer to /login and never mention setup-token.
+  assert_not_contains "$out" "setup-token" \
+    "refusal must not point at setup-token for interactive auth"
   [ ! -s "$log" ] || fail "claude should never be invoked when credentials are missing"
-  pass "missing credentials refuse loudly with a seeding command, no claude invocation"
+  pass "missing credentials refuse loudly with an OAuth /login seeding command, no claude invocation"
 }
 
 test_symlinks_shared_config_idempotently() {
@@ -107,8 +111,10 @@ test_does_not_symlink_credentials_or_claude_json() {
 
   run_launcher "$home" "$fakebin" 1 /status >/dev/null
   [ ! -L "$home/.claude-homes/account1/.claude/.credentials.json" ] || fail ".credentials.json must never be a symlink"
-  [ ! -L "$home/.claude-homes/account1/.claude.json" ] || fail ".claude.json must never be a symlink"
-  assert_no_grep "acct1-secret" "$home/.claude-homes/account1/.claude.json" \
+  # .claude.json is pre-seeded inside CLAUDE_CONFIG_DIR (where current CC reads
+  # it); it must be a real per-account file, never a symlink into shared config.
+  [ ! -L "$home/.claude-homes/account1/.claude/.claude.json" ] || fail ".claude.json must never be a symlink"
+  assert_no_grep "acct1-secret" "$home/.claude-homes/account1/.claude/.claude.json" \
     ".claude.json should not have been overwritten by any shared file"
   pass "credentials and onboarding state are never symlinked from shared config"
 }
@@ -125,20 +131,28 @@ test_prewrites_onboarding_and_trust_dialog() {
   status=$?
   expect_code 0 "$status" "trust-dialog pre-write launch should succeed"
 
-  assert_present "$home/.claude-homes/account1/.claude.json" ".claude.json should exist in the parent of CLAUDE_CONFIG_DIR"
-  [ ! -L "$home/.claude-homes/account1/.claude/.claude.json" ] || fail ".claude.json must live beside, not inside, CLAUDE_CONFIG_DIR"
-  assert_grep '"hasCompletedOnboarding": true' "$home/.claude-homes/account1/.claude.json" \
-    "onboarding was not pre-accepted"
-  assert_grep "\"$trust_dir\"" "$home/.claude-homes/account1/.claude.json" \
+  # Current Claude Code reads its global config from $CLAUDE_CONFIG_DIR/.claude.json
+  # when CLAUDE_CONFIG_DIR is set - NOT from a .claude.json in the parent dir. The
+  # pre-seed must land at the path CC reads or onboarding is not skipped.
+  local seed="$home/.claude-homes/account1/.claude/.claude.json"
+  assert_present "$seed" ".claude.json pre-seed should exist inside CLAUDE_CONFIG_DIR (where current CC reads it)"
+  assert_absent "$home/.claude-homes/account1/.claude.json" \
+    "the pre-seed must NOT be written to the parent of CLAUDE_CONFIG_DIR (current CC ignores it there)"
+  [ ! -L "$seed" ] || fail ".claude.json pre-seed must be a real file, not a symlink"
+  assert_grep '"hasCompletedOnboarding": true' "$seed" \
+    "onboarding gate hasCompletedOnboarding was not pre-accepted"
+  assert_grep '"numStartups"' "$seed" \
+    "numStartups was not pre-seeded"
+  assert_grep "\"$trust_dir\"" "$seed" \
     "trust dialog was not pre-accepted for CLAUDE_TRUST_DIR"
-  assert_grep '"hasTrustDialogAccepted": true' "$home/.claude-homes/account1/.claude.json" \
+  assert_grep '"hasTrustDialogAccepted": true' "$seed" \
     "trust dialog flag was not set to true"
 
   # Idempotent: a second launch for the same trust dir must not error or duplicate.
   CLAUDE_TRUST_DIR="$trust_dir" HOME="$home" PATH="$fakebin:$PATH" "$LAUNCHER" 1 /status >/dev/null
   status=$?
   expect_code 0 "$status" "a repeat launch for an already-trusted directory should still succeed"
-  pass "onboarding and the trust dialog are pre-accepted for CLAUDE_TRUST_DIR, idempotently"
+  pass "onboarding and the trust dialog are pre-accepted inside CLAUDE_CONFIG_DIR for CLAUDE_TRUST_DIR, idempotently"
 }
 
 test_settings_json_symlink_is_never_replaced() {
