@@ -483,10 +483,6 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       fi
       ;;
     zellij)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy Zellij endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       recorded_session=$(fm_backend_meta_exact_value "$meta" zellij_session) || recorded_session=
       tab=$(fm_backend_meta_exact_value "$meta" zellij_tab_id) || tab=
       pane=$(fm_backend_meta_exact_value "$meta" zellij_pane_id) || pane=
@@ -497,8 +493,29 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         echo "REFUSED: Zellij endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
         return 1
       fi
+      if [ "$binding" = "$id" ]; then
+        :
+      else
+        fm_backend_source zellij || return 1
+        if fm_backend_zellij_pane_verifies_task "$recorded_session" "$tab" "$pane" "$id" 2>/dev/null; then
+          echo "zellij endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
+          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+        else
+          echo "REFUSED: legacy Zellij endpoint metadata for task $id lacks an exact task binding; pane verification failed or pane does not belong to this task; preserving task state." >&2
+          return 1
+        fi
+      fi
       ;;
     orca)
+      # No legacy-metadata self-repair here, unlike herdr/zellij/cmux: Orca
+      # has no verified live-identity-check primitive to prove a recorded
+      # terminal/worktree still belongs to this exact task (see
+      # bin/backends/orca.sh's fm_backend_orca_json_get header - only
+      # worktree-id, worktree-path, terminal-handle, worktree-terminal-handle,
+      # and repo-id fields are verified real shapes; a task-owning label or
+      # title readback is not). Refusing unconditionally when the binding is
+      # absent is the correct, intended behavior here, not a gap: the brief's
+      # own rule is "refuse ONLY when it cannot be verified".
       [ "$binding" = "$id" ] || {
         echo "REFUSED: legacy Orca endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
         return 1
@@ -522,10 +539,6 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       window=$terminal
       ;;
     cmux)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy cmux endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       workspace=$(fm_backend_meta_exact_value "$meta" cmux_workspace_id) || workspace=
       surface=$(fm_backend_meta_exact_value "$meta" cmux_surface_id) || surface=
       if [ -z "$workspace" ] || [ -z "$surface" ] || [ "$window" != "$workspace:$surface" ] \
@@ -533,6 +546,18 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         || ! fm_backend_endpoint_atom_valid "$surface"; then
         echo "REFUSED: cmux endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
         return 1
+      fi
+      if [ "$binding" = "$id" ]; then
+        :
+      else
+        fm_backend_source cmux || return 1
+        if fm_backend_cmux_surface_verifies_task "$workspace" "$surface" "$id" 2>/dev/null; then
+          echo "cmux endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
+          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+        else
+          echo "REFUSED: legacy cmux endpoint metadata for task $id lacks an exact task binding; surface verification failed or surface does not belong to this task; preserving task state." >&2
+          return 1
+        fi
       fi
       ;;
   esac
