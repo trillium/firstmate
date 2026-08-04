@@ -64,7 +64,7 @@
 # like fm-bead-stamp.sh: a missing task CLI or a close the CLI rejects warns on
 # stderr and never blocks or fails an already-confirmed teardown. bin/fm-ledger.sh
 # is the safety net for a bead that was claimed but never reaches this path.
-# Usage: fm-teardown.sh <task-id> [--force | --staleness-autoclose [<idle-since-epoch>]]
+# Usage: fm-teardown.sh <task-id> [--force | --staleness-autoclose [<idle-since-epoch>] | --staleness-file-dead [<idle-since-epoch>]]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -76,6 +76,16 @@
 #   recording the worktree, branch, harness, and idle-since timestamp for later
 #   triage - deletion happens only during that deliberate triage, still under
 #   the never-discard-unlanded-work guard.
+#   --staleness-file-dead is bin/fm-watch.sh's DEAD-window sweep for kind=ship
+#   tasks only: the additive, non-destructive twin of --staleness-autoclose for a
+#   window that DIED on its own with no live process left to reclaim. Unlanded
+#   work files the same bin/fm-staleness-file.sh triage bead (or, when filing
+#   fails, the state/<id>.staleness-unfiled fallback), recording the location for
+#   later triage; landed work files nothing. It NEVER kills an endpoint, removes
+#   the task meta or any tracking state, or touches the worktree, its branch, or
+#   any uncommitted change. Idempotent: a task already filed
+#   (state/<id>.staleness-filed present, or the .staleness-unfiled fallback) is
+#   left untouched, so a repeated sweep never re-files.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
@@ -186,10 +196,24 @@ FORCE=${2:-}
 # take the staleness_chat_only_teardown branch (unlanded - kill only the runtime
 # endpoint, file a staleness-store bead, and never touch the worktree). The
 # optional third argument is the idle-since epoch, recorded on the filed bead.
+# --staleness-file-dead (bin/fm-watch.sh's dead-window sweep): the DEAD-window
+# twin of --staleness-autoclose. A kind=ship task whose window DIED on its own
+# while its worktree still holds committed-but-unlanded or ask-user-parked work
+# is invisible to --staleness-autoclose (there is no live process to reclaim).
+# This mode files the SAME triage record for unlanded work but is strictly
+# ADDITIVE: it kills nothing, removes no meta or tracking state, and never
+# touches the worktree, its branch, or any uncommitted change - the orphan meta
+# and its preserved work stay in place for deliberate triage. It is idempotent
+# via state/<id>.staleness-filed (records the filed bead) or the
+# state/<id>.staleness-unfiled fallback. Also takes the optional idle-since epoch.
 STALENESS_AUTOCLOSE=0
+STALENESS_FILE_DEAD=0
 STALENESS_IDLE_SINCE=${3:-}
 if [ "$FORCE" = "--staleness-autoclose" ]; then
   STALENESS_AUTOCLOSE=1
+  FORCE=""
+elif [ "$FORCE" = "--staleness-file-dead" ]; then
+  STALENESS_FILE_DEAD=1
   FORCE=""
 fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
@@ -434,7 +458,7 @@ KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
-if [ "$STALENESS_AUTOCLOSE" = 1 ] && [ "$KIND" != ship ]; then
+if { [ "$STALENESS_AUTOCLOSE" = 1 ] || [ "$STALENESS_FILE_DEAD" = 1 ]; } && [ "$KIND" != ship ]; then
   echo "error: staleness auto-close only supports kind=ship tasks (task $ID is kind=$KIND)" >&2
   exit 1
 fi
@@ -819,6 +843,61 @@ staleness_chat_only_teardown() {
   rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
     "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
   echo "staleness auto-close $ID: chat reclaimed, worktree $WT preserved for triage"
+}
+
+# --staleness-file-dead, unlanded branch: file the SAME triage record
+# staleness_chat_only_teardown files, for a task whose window DIED on its own
+# rather than being reclaimed while live. Strictly ADDITIVE - unlike the
+# chat-only teardown it kills no endpoint, removes no meta/status/token, and
+# leaves the worktree, its branch, and every uncommitted change exactly as-is:
+# a dead-window orphan's preserved work and its tracking meta both stay in place
+# for deliberate triage later. Reuses work_is_landed and the fail-open
+# fm-staleness-file.sh exactly as staleness_chat_only_teardown does. Idempotent:
+# a task already filed (state/<id>.staleness-filed records the bead, or the
+# state/<id>.staleness-unfiled fallback is present) is left untouched, so a
+# repeated sweep never re-files. Files ONLY for unlanded work; landed work is a
+# no-op the ordinary teardown path handles.
+staleness_file_dead_only() {
+  local harness purpose summary bead_out filed_marker unfiled_marker branch
+  filed_marker="$STATE/$ID.staleness-filed"
+  unfiled_marker="$STATE/$ID.staleness-unfiled"
+  if [ -e "$filed_marker" ] || [ -e "$unfiled_marker" ]; then
+    echo "dead-window triage $ID: already filed, worktree $WT and meta left untouched"
+    return 0
+  fi
+  if [ ! -d "$WT" ]; then
+    echo "dead-window triage $ID: worktree $WT is already gone, nothing to preserve or file"
+    return 0
+  fi
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+  if work_is_landed "$branch"; then
+    echo "dead-window triage $ID: work on $branch is landed, nothing to file"
+    return 0
+  fi
+  harness=$(meta_value "$META" harness)
+  purpose=""
+  if [ -f "$DATA/$ID/brief.md" ]; then
+    purpose=$(awk '/^# Task/{f=1;next} f && NF {print; exit}' "$DATA/$ID/brief.md" 2>/dev/null || true)
+  fi
+  summary=$(staleness_worktree_summary "$WT")
+  bead_out=$("$SCRIPT_DIR/fm-staleness-file.sh" "$ID" "$purpose" "$WT" "$branch" "$PROJ" \
+    "${harness:-unknown}" "$STALENESS_IDLE_SINCE" "$summary" 2>&1) || true
+  [ -z "$bead_out" ] || printf '%s\n' "$bead_out"
+  # fm-staleness-file.sh is fail-open (always exits 0), so a failed filing is
+  # only visible by the absence of its success line. Record a durable idempotency
+  # marker either way so a dead-window orphan is filed at most once: the filed
+  # bead line on success, or the state/<id>.staleness-unfiled fallback (the exact
+  # format staleness_chat_only_teardown writes) on failure, which also preserves
+  # the worktree location a captain needs to find the work.
+  if printf '%s\n' "$bead_out" | grep -q '^filed staleness bead '; then
+    printf '%s\n' "$bead_out" | grep '^filed staleness bead ' | head -1 > "$filed_marker"
+    echo "dead-window triage $ID: filed for triage, worktree $WT and meta preserved"
+  else
+    printf 'task: %s\npurpose: %s\nworktree: %s\nbranch: %s\nproject: %s\nharness: %s\nidle since: %s\n' \
+      "$ID" "${purpose:-unknown}" "$WT" "${branch:-unknown}" "${PROJ:-unknown}" \
+      "${harness:-unknown}" "$STALENESS_IDLE_SINCE" > "$unfiled_marker"
+    echo "dead-window triage $ID: bead filing failed, recorded state/$ID.staleness-unfiled; worktree $WT and meta preserved"
+  fi
 }
 
 # Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
@@ -2237,6 +2316,15 @@ remove_secondmate_registry_entry() {
 }
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
+
+if [ "$STALENESS_FILE_DEAD" = 1 ]; then
+  # Dead-window triage filing only: additive, non-destructive, idempotent. Never
+  # falls through to any teardown branch below - it exits after filing (or
+  # skipping) so the worktree, branch, and meta stay in place. See
+  # staleness_file_dead_only.
+  staleness_file_dead_only
+  exit 0
+fi
 
 if [ "$STALENESS_AUTOCLOSE" = 1 ]; then
   if [ ! -d "$WT" ]; then

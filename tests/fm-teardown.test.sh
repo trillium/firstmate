@@ -2595,6 +2595,166 @@ test_staleness_autoclose_unlanded_chat_only_preserves_worktree_and_files_bead() 
   pass "staleness auto-close on unlanded work reclaims the process only, preserves the worktree, and files a triage bead"
 }
 
+# --- dead-window triage filing (bin/fm-watch.sh dead-window sweep) ----------
+# --staleness-file-dead is the additive, non-destructive twin of
+# --staleness-autoclose for a window that DIED on its own: it files the same
+# triage record for unlanded work but NEVER kills an endpoint, removes the meta,
+# or touches the worktree/branch. Idempotent via state/<id>.staleness-filed (or
+# the .staleness-unfiled fallback).
+
+# Like add_staleness_mock, but the `create` call FAILS (exit 1), simulating a
+# staleness store that is unavailable or rejects the create. This drives
+# fm-staleness-file.sh's fail-open branch so teardown writes the
+# state/<id>.staleness-unfiled fallback instead of a bead. Args: case_dir
+add_staleness_mock_create_fails() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/staleness" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FM_TEST_STALENESS_CALLS_LOG:-/dev/null}"
+[ "${1:-}" = create ] && exit 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/staleness"
+}
+
+test_dead_window_file_unlanded_files_bead_and_preserves_everything() {
+  local case_dir rc wt_head
+  case_dir=$(make_case dead-window-unlanded)
+  write_meta "$case_dir" local-only ship
+  add_staleness_mock "$case_dir"
+  # A real (non-empty) file change so content_in_default cannot mistake it for
+  # already-landed; no fork/push/merge, so the work is genuinely unlanded.
+  wt_commit_file "$case_dir" work.txt "dead-window work in progress"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "dead-window-unlanded: filing should succeed"
+  grep -q "filed for triage" "$case_dir/stdout" \
+    || fail "dead-window-unlanded: did not report a triage filing: $(cat "$case_dir/stdout")"
+  grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "dead-window-unlanded: no bead filed in the staleness store: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  grep -q "fm/task-x1" "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "dead-window-unlanded: filed bead did not record the branch: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  assert_present "$case_dir/state/task-x1.staleness-filed" \
+    "dead-window-unlanded: an idempotency marker should record the filed bead"
+  # Never touches the worktree, its branch, or the task meta.
+  assert_present "$case_dir/state/task-x1.meta" \
+    "dead-window-unlanded: the task meta must be preserved (never auto-closed)"
+  [ -d "$case_dir/wt" ] || fail "dead-window-unlanded: worktree directory was deleted"
+  [ -f "$case_dir/wt/work.txt" ] \
+    || fail "dead-window-unlanded: the unlanded file no longer exists in the worktree"
+  [ "$(git -C "$case_dir/wt" rev-parse HEAD)" = "$wt_head" ] \
+    || fail "dead-window-unlanded: the worktree HEAD was moved"
+  [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)" = fm/task-x1 ] \
+    || fail "dead-window-unlanded: the worktree branch was changed"
+  pass "dead-window filing on unlanded work files a triage bead and leaves the worktree, branch, and meta untouched"
+}
+
+test_dead_window_file_landed_files_nothing() {
+  local case_dir rc wt_head
+  case_dir=$(make_case dead-window-landed)
+  write_meta "$case_dir" local-only ship
+  add_staleness_mock "$case_dir"
+  # Same landed fixture the staleness-landed test uses: an empty commit whose
+  # tree matches main, with local main fast-forwarded to HEAD.
+  wt_commit "$case_dir" "merged work"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "dead-window-landed: should succeed as a no-op"
+  grep -q "nothing to file" "$case_dir/stdout" \
+    || fail "dead-window-landed: did not report a no-op for landed work: $(cat "$case_dir/stdout")"
+  ! grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "dead-window-landed: filed a bead despite landed work: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  assert_absent "$case_dir/state/task-x1.staleness-filed" \
+    "dead-window-landed: no idempotency marker should be written for landed work"
+  assert_absent "$case_dir/state/task-x1.staleness-unfiled" \
+    "dead-window-landed: no fallback record should be written for landed work"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "dead-window-landed: the task meta must be preserved"
+  [ -d "$case_dir/wt" ] || fail "dead-window-landed: worktree directory was deleted"
+  pass "dead-window filing on landed work files nothing and leaves the task untouched"
+}
+
+test_dead_window_file_is_idempotent() {
+  local case_dir rc creates
+  case_dir=$(make_case dead-window-idempotent)
+  write_meta "$case_dir" local-only ship
+  add_staleness_mock "$case_dir"
+  wt_commit_file "$case_dir" work.txt "unlanded work"
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout1" 2> "$case_dir/stderr1"
+  rc=$?
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout2" 2> "$case_dir/stderr2"
+  rc=$(( rc + $? ))
+  set -e
+
+  expect_code 0 "$rc" "dead-window-idempotent: both sweeps should succeed"
+  creates=$(grep -c '^create ' "$case_dir/staleness-calls.log" 2>/dev/null || echo 0)
+  [ "$creates" -eq 1 ] \
+    || fail "dead-window-idempotent: expected exactly one bead filing across two sweeps, got $creates"
+  grep -q "already filed" "$case_dir/stdout2" \
+    || fail "dead-window-idempotent: the second sweep did not skip an already-filed task: $(cat "$case_dir/stdout2")"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "dead-window-idempotent: the task meta must survive both sweeps"
+  [ -f "$case_dir/wt/work.txt" ] \
+    || fail "dead-window-idempotent: the unlanded work was disturbed"
+  pass "a dead-window task already filed is not re-filed on a repeated sweep"
+}
+
+test_dead_window_file_fallback_writes_unfiled_when_store_unavailable() {
+  local case_dir rc
+  case_dir=$(make_case dead-window-fallback)
+  write_meta "$case_dir" local-only ship
+  # Staleness CLI is present but rejects the create (store unavailable) - the
+  # same fail-open branch a fully-absent CLI takes. Teardown must fall back to
+  # the durable state/<id>.staleness-unfiled record.
+  add_staleness_mock_create_fails "$case_dir"
+  wt_commit_file "$case_dir" work.txt "unlanded work needing a fallback record"
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "dead-window-fallback: filing should still succeed (fail-open)"
+  assert_present "$case_dir/state/task-x1.staleness-unfiled" \
+    "dead-window-fallback: a fallback record must be written when the bead cannot be filed"
+  assert_absent "$case_dir/state/task-x1.staleness-filed" \
+    "dead-window-fallback: no success marker should exist when filing failed"
+  grep -q "^task: task-x1$" "$case_dir/state/task-x1.staleness-unfiled" \
+    || fail "dead-window-fallback: fallback record missing the task id: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
+  grep -q "^branch: fm/task-x1$" "$case_dir/state/task-x1.staleness-unfiled" \
+    || fail "dead-window-fallback: fallback record missing the branch: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
+  grep -q "^worktree: $case_dir/wt$" "$case_dir/state/task-x1.staleness-unfiled" \
+    || fail "dead-window-fallback: fallback record missing the worktree path: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "dead-window-fallback: the task meta must be preserved"
+  [ -f "$case_dir/wt/work.txt" ] \
+    || fail "dead-window-fallback: the unlanded work was disturbed"
+  pass "dead-window filing falls back to state/<id>.staleness-unfiled when the store cannot file the bead"
+}
+
 test_beads_linked_task_closes_bead_on_landed_teardown() {
   local case_dir rc
   case_dir=$(make_case beads-close-on-land)

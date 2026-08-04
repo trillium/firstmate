@@ -117,6 +117,7 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
 IDLE_DISCOVERY_INTERVAL=${FM_IDLE_DISCOVERY_INTERVAL:-60}  # seconds between idle-task-discovery attempts
+DEAD_WINDOW_SWEEP_INTERVAL=${FM_DEAD_WINDOW_SWEEP_INTERVAL:-300}  # seconds between dead-window triage sweeps
 # Busy state is decided by the semantic contract in bin/fm-busy-lib.sh, which
 # is the single owner of per-harness sources, source attribution, and the one
 # remaining rendered-text fallback (Grok only).
@@ -882,6 +883,45 @@ discover_and_dispatch_idle_task() {
   return 1
 }
 
+# Dead-window triage sweep. The idle>2h staleness auto-close above reclaims a
+# LIVE idle window; the stale loop below skips any window whose pane capture
+# fails. Neither surfaces a kind=ship task whose window DIED on its own
+# (herdr/zellij pane crashed or closed) while its worktree still holds
+# committed-but-unlanded or ask-user-parked work: that orphan meta just sits with
+# its work preserved but nothing durable filed for triage. This sweep gives that
+# dead-window case the SAME triage filing the live-idle path has. For each
+# kind=ship meta whose recorded endpoint is CONFIDENTLY dead
+# (fm_backend_agent_alive == dead - an ambiguous or transiently unreadable
+# endpoint stays untouched, matching the secondmate liveness sweep's discipline),
+# it delegates to fm-teardown.sh --staleness-file-dead. That mode reuses
+# work_is_landed and the fail-open fm-staleness-file.sh, files a staleness bead
+# (or the state/<id>.staleness-unfiled fallback) ONLY for unlanded work, and
+# NEVER kills anything, removes the meta, or touches the worktree, branch, or any
+# uncommitted change - the never-discard-unlanded-work invariant is preserved.
+# Idempotent: teardown skips a task already filed, so a repeated sweep never
+# re-files. Fail-open like every other sweep here: a delegation failure is logged
+# and never breaks the loop. Runs during afk too - tracking a wasted orphan
+# matters most while nobody is watching - since the filing is non-destructive.
+dead_window_triage_sweep() {
+  local meta id kind window backend
+  [ -d "$STATE" ] || return 0
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    kind=$(grep '^kind=' "$meta" | cut -d= -f2- || true)
+    [ -n "$kind" ] || kind=ship
+    [ "$kind" = ship ] || continue
+    window=$(fm_backend_target_of_meta "$meta")
+    [ -n "$window" ] || continue
+    id=$(basename "$meta" .meta)
+    backend=$(fm_backend_of_meta "$meta")
+    [ "$(fm_backend_agent_alive "$backend" "$window" 2>/dev/null)" = dead ] || continue
+    if ! "$FM_TEARDOWN_BIN" "$id" --staleness-file-dead >>"$STATE/.dead-window-triage.log" 2>&1; then
+      triage_log "dead-window triage FAILED for task $id (see .dead-window-triage.log)"
+    fi
+  done
+  return 0
+}
+
 # --- Main entry: the runtime below runs only when this file is executed as a
 # script. When sourced (unit tests loading the functions above), return here
 # before acquiring the singleton lock or entering the blocking loop.
@@ -935,6 +975,13 @@ FM_WATCH_DELIVERY_IDENTITY=$(fm_pid_identity "$WATCHER_PID" 2>/dev/null || true)
 printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/null || true
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
+# Anchor the dead-window triage cadence at startup so the first sweep runs one
+# DEAD_WINDOW_SWEEP_INTERVAL after this watcher starts, not on the very first
+# poll: a dead-window orphan is never urgent (its work is preserved regardless),
+# and this keeps a freshly-armed watcher from spending its first poll enumerating
+# every meta's endpoint liveness. A restart that finds a stale marker
+# (>= interval old) still sweeps promptly on the next poll.
+[ -e "$STATE/.last-dead-window-sweep" ] || touch "$STATE/.last-dead-window-sweep"
 
 # A merged poll may have queued its terminal wake and then lost the process
 # between receipt publication and fixed-path removal.
@@ -1354,6 +1401,15 @@ EOF
   if [ "$(age_of "$STATE/.last-idle-discovery")" -ge "$IDLE_DISCOVERY_INTERVAL" ]; then
     touch "$STATE/.last-idle-discovery"
     discover_and_dispatch_idle_task || true
+  fi
+
+  # Dead-window triage sweep: file a durable triage record for a kind=ship task
+  # whose window died on its own while holding unlanded work (see
+  # dead_window_triage_sweep). Throttled like idle-discovery so a large fleet's
+  # metas are not re-scanned every poll; non-destructive and idempotent.
+  if [ "$(age_of "$STATE/.last-dead-window-sweep")" -ge "$DEAD_WINDOW_SWEEP_INTERVAL" ]; then
+    touch "$STATE/.last-dead-window-sweep"
+    dead_window_triage_sweep || true
   fi
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
