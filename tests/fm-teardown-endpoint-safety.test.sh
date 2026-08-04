@@ -231,7 +231,7 @@ SH
     fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "legacy zellij metadata whose live tab now belongs to a different task should validate (recycled-pane safety)"
+  [ "$rc" -ne 0 ] || fail "legacy zellij metadata whose live tab now belongs to a different task should refuse (recycled-pane safety)"
   assert_no_grep "endpoint_task_id=" "$dir/home/state/$id.meta" \
     "recycled-pane refusal must not mutate the metadata"
 
@@ -282,7 +282,7 @@ SH
     fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "legacy cmux metadata whose live workspace now belongs to a different task should validate (recycled-surface safety)"
+  [ "$rc" -ne 0 ] || fail "legacy cmux metadata whose live workspace now belongs to a different task should refuse (recycled-surface safety)"
   assert_no_grep "endpoint_task_id=" "$dir/home/state/$id.meta" \
     "recycled-surface refusal must not mutate the metadata"
 
