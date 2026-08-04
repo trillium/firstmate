@@ -87,6 +87,22 @@ Closing a pane leaves an empty tab.
 Cleanup resolves and verifies the owning tab, then uses `close-tab-by-id` so both the task pane and tab disappear.
 Real test cleanup uses only an isolated non-`firstmate` session and the guard in `tests/zellij-test-safety.sh`; it never calls all-session deletion commands.
 
+## Endpoint metadata
+
+```text
+backend=zellij
+window=<session>:<pane-id>
+zellij_session=<session>
+zellij_tab_id=<tab-id>
+zellij_pane_id=<pane-id>
+```
+
+Recorded pane ids are numeric and are never trusted alone after a session recreation.
+Metadata-routed operations also verify the owning tab's expected scoped or unambiguous legacy title.
+An explicit raw `session:pane` target remains a pane-existence-only operator escape hatch.
+
+Legacy Zellij metadata written before `endpoint_task_id=` existed self-repairs at teardown validation time instead of refusing outright: `fm_backend_validate_task_endpoint` verifies the live pane still belongs to its recorded tab via `fm_backend_zellij_pane_verifies_task`, and only when the pane's owning tab still reads exactly `fm-<id>` (or the scoped `fm-<home-label>-<id>` with no ambiguity), appends `endpoint_task_id=<id>` to the metadata file so the task tears down with no manual editing. When the live pane's tab does not match - for example because the pane was recycled to a different tab or the tab was renamed to a different task's label - validation refuses without mutating the metadata, preserving the wrong-pane safety guarantee.
+
 ## Active limits
 
 - Zellij is experimental and explicit-only.
