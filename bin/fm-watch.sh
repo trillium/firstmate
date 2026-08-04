@@ -210,7 +210,12 @@ hash_pane() {
   # than a raw byte count, so two same-size panes with different content
   # cannot collide and mask a real change.
   if command -v md5 >/dev/null 2>&1; then
-    md5 -q
+    # A PATH `md5` is not always BSD md5: Homebrew's coreutils/md5sha1sum `md5`
+    # shadows /sbin/md5 and rejects -q (printing "invalid option" and an empty
+    # hash), which silently breaks pane change-detection. Parse the first
+    # whitespace field instead of trusting -q, so BSD ("<hash>"), GNU/Homebrew
+    # ("<hash>  -") md5 all yield the same real digest.
+    md5 | awk '{ print $1 }'
   elif [ -x "$sbin_md5" ]; then
     "$sbin_md5" -q
   elif command -v md5sum >/dev/null 2>&1; then

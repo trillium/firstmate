@@ -284,7 +284,9 @@ is_live_non_zombie() {
 
 hash_text() {
   if command -v md5 >/dev/null 2>&1; then
-    printf '%s' "$1" | md5 -q
+    # Mirror fm-watch.sh hash_pane: a PATH `md5` (Homebrew/GNU) may reject -q and
+    # emit an empty hash, so parse the first field rather than relying on -q.
+    printf '%s' "$1" | md5 | awk '{ print $1 }'
   else
     printf '%s' "$1" | md5sum | cut -d' ' -f1
   fi
