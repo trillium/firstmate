@@ -2303,6 +2303,48 @@ test_beads_close_failure_queues_for_replay_when_store_unreachable() {
   pass "a bead close attempted against an unreachable store is durably queued for replay"
 }
 
+test_opencode_hook_artifact_does_not_block_teardown() {
+  local case_dir rc
+  case_dir=$(make_case opencode-hook-only)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "fix the thing"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  mkdir -p "$case_dir/wt/.opencode/plugins"
+  printf '%s\n' "// opencode hook" > "$case_dir/wt/.opencode/plugins/fm-busy-state.js"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "opencode-hook-only: teardown should succeed with only the opencode hook untracked"
+  ! grep -q "uncommitted changes" "$case_dir/stderr" || fail "opencode-hook-only: teardown incorrectly refused the opencode hook as dirty: $(cat "$case_dir/stderr")"
+  pass "opencode per-task hook artifact does not block teardown"
+}
+
+test_real_dirty_file_still_refuses_after_opencode_exclusion() {
+  local case_dir rc
+  case_dir=$(make_case real-dirty-with-opencode-hook)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "fix the thing"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  mkdir -p "$case_dir/wt/.opencode/plugins"
+  printf '%s\n' "// opencode hook" > "$case_dir/wt/.opencode/plugins/fm-busy-state.js"
+  printf '%s\n' "uncommitted work" > "$case_dir/wt/real-file.txt"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "real-dirty-with-opencode-hook: teardown should refuse when a real untracked file exists"
+  grep -q REFUSED "$case_dir/stderr" || fail "real-dirty-with-opencode-hook: no REFUSED in stderr"
+  grep -q "uncommitted changes" "$case_dir/stderr" || fail "real-dirty-with-opencode-hook: refusal did not cite uncommitted changes"
+  pass "real untracked file still refuses teardown even with opencode hook present"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -2350,6 +2392,8 @@ test_beads_linked_task_does_not_close_bead_on_force_teardown
 test_beads_linked_task_does_not_close_bead_on_refused_teardown
 test_beads_close_failure_queues_for_replay_when_store_reachable
 test_beads_close_failure_queues_for_replay_when_store_unreachable
+test_opencode_hook_artifact_does_not_block_teardown
+test_real_dirty_file_still_refuses_after_opencode_exclusion
 test_staleness_autoclose_landed_falls_through_to_full_teardown
 test_staleness_autoclose_unlanded_chat_only_preserves_worktree_and_files_bead
 test_dead_window_file_unlanded_files_bead_and_preserves_everything
