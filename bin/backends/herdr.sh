@@ -15,8 +15,9 @@
 # herdr-verification-p2.md "Task container shape", refined by
 # docs/herdr-backend.md "Default task container shape"): ONE herdr workspace PER
 # FIRSTMATE HOME (the primary, and each secondmate, gets its own), ONE herdr TAB
-# per task inside its home's workspace. An optional, default-off presentation
-# flag creates a disposable workspace for a clean fresh task instead. That
+# per task inside its home's workspace. The default-on presentation projection
+# creates a disposable workspace for a clean fresh task instead unless the home
+# opts out. That
 # workspace is a non-authoritative visual projection containing only the normal
 # task pane. Its random token and mutable label never authorize lookup,
 # adoption, reuse, closure, deletion, task ownership, or endpoint selection.
@@ -64,8 +65,8 @@
 # never overrides a real invocation. It exists only so this file's own unit
 # tests, which source it directly without that preamble, resolve to a sane
 # default (the firstmate repo root - never a secondmate home, so
-# fm_backend_herdr_workspace_label falls through to "1M-FIRSTMATE" when a
-# test does not care about home-specific labeling).
+# fm_backend_herdr_workspace_label falls through to "firstmate" exactly like
+# pre-P3 behavior when a test does not care about home-specific labeling).
 FM_BACKEND_HERDR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BACKEND_HERDR_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
@@ -108,8 +109,8 @@ FM_BACKEND_HERDR_ESCALATED_PREFIX=".herdr-escalated-"
 # at a seeded secondmate home's root, containing exactly that secondmate's id.
 # The primary firstmate home never carries this marker.
 FM_BACKEND_HERDR_SECONDMATE_MARKER=".fm-secondmate-home"
-# The default-off presentation projection is intentionally separate from the
-# authoritative task endpoint record.
+# The presentation projection is intentionally separate from the authoritative
+# task endpoint record.
 # A per-task journal lives under state/ as <id>.herdr-presentation.
 # Version 1 records only the attempted projection's random correlator.
 # Version 2 additionally binds the successful projection's exact home,
@@ -118,29 +119,41 @@ FM_BACKEND_HERDR_SECONDMATE_MARKER=".fm-secondmate-home"
 # No send, capture, Treehouse, or general task-ownership path reads it.
 FM_BACKEND_HERDR_PRESENTATION_JOURNAL_SUFFIX=".herdr-presentation"
 
-# fm_backend_herdr_mate_scope: derive the naming-convention "scope" tag from a
-# secondmate id (docs/herdr-backend.md "Mate naming convention"). Pure and
-# independently unit-testable: uppercases, then replaces every character
-# outside A-Z0-9 with "-", squeezes repeats, and trims leading/trailing "-".
-# An id that sanitizes to nothing (empty input, or no surviving alphanumeric)
-# falls back to the literal "UNKNOWN" so a malformed or missing marker never
-# produces an empty workspace label. That fallback only guarantees non-empty,
-# not non-colliding: every malformed marker shares the same "UNKNOWN" scope,
-# so two malformed homes can still collide on "2M-UNKNOWN" - fix the marker
-# rather than relying on this fallback to stay unique.
-fm_backend_herdr_mate_scope() {
-  local id=$1 scope
-  scope=$(printf '%s' "$id" | tr '[:lower:]' '[:upper:]' | LC_ALL=C tr -c 'A-Z0-9' '-' | tr -s '-')
-  scope=${scope#-}
-  scope=${scope%-}
-  printf '%s' "${scope:-UNKNOWN}"
+# The config item a home writes to opt OUT of the projection.
+FM_BACKEND_HERDR_PRESENTATION_CONFIG="herdr-presentation-spaces"
+
+# fm_backend_herdr_presentation_enabled <config-dir>: true when this home's
+# children should be projected into disposable one-task workspaces
+# (docs/herdr-backend.md "Presentation spaces" owns the full contract).
+# Projection is ON by default, so an absent config file enables it; a home opts
+# out by writing "off". Values are read with the whole-file whitespace-stripped
+# convention the other scalar config items already use (config/backlog-backend,
+# config/crew-harness), plus case folding. An empty file is the historical
+# presence-based opt-in form and still means on, so no home that had the
+# projection enabled can be turned off by the default flip. An unrecognized
+# value warns and keeps the default rather than failing a spawn over a purely
+# visual setting, so a typo is visible instead of silently disabling anything.
+fm_backend_herdr_presentation_enabled() {  # <config-dir>
+  local config_dir=${1:-} file value
+  [ -n "$config_dir" ] || return 0
+  file="$config_dir/$FM_BACKEND_HERDR_PRESENTATION_CONFIG"
+  [ -f "$file" ] || return 0
+  value=$(tr -d '[:space:]' < "$file" 2>/dev/null | tr '[:upper:]' '[:lower:]') || value=""
+  case "$value" in
+    off) return 1 ;;
+    ''|on) return 0 ;;
+    *)
+      echo "warning: $file: unrecognized value \"$value\"; herdr presentation spaces stay on (write \"off\" to opt out)" >&2
+      return 0
+      ;;
+  esac
 }
 
 # fm_backend_herdr_workspace_label: the per-firstmate-HOME herdr workspace
-# label (docs/herdr-backend.md "Mate naming convention"), always uppercase
-# "<materank>-<scope>". The PRIMARY home (no secondmate marker) resolves to
-# the constant "1M-FIRSTMATE". A SECONDMATE home resolves to
-# "2M-<fm_backend_herdr_mate_scope-of-its-id>", so its tasks land in their own
+# label (docs/herdr-backend.md "Default task container shape"). The PRIMARY home (no
+# secondmate marker) resolves to the constant "firstmate", byte-identical to
+# every pre-existing task's recorded label - no forced migration. A SECONDMATE
+# home resolves to "2ndmate-<secondmate-id>", so its tasks land in their own
 # workspace, obviously distinguishable from the primary's (and from every
 # other secondmate's) in herdr's spaces sidebar. Read fresh from FM_HOME on
 # every call rather than cached at source time: FM_HOME is the home's own
@@ -152,16 +165,13 @@ fm_backend_herdr_mate_scope() {
 fm_backend_herdr_workspace_label() {
   local marker="$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" id
   if [ -f "$marker" ]; then
-    id=$(cat "$marker" 2>/dev/null)
-    # Trim only outer whitespace here; fm_backend_herdr_mate_scope is what
-    # normalizes any embedded separator (space, newline, ...) to "-", so
-    # stripping it here first would silently merge distinct ids together.
-    id="${id#"${id%%[![:space:]]*}"}"
-    id="${id%"${id##*[![:space:]]}"}"
-    printf '2M-%s' "$(fm_backend_herdr_mate_scope "$id")"
-    return 0
+    id=$(tr -d '[:space:]' < "$marker" 2>/dev/null)
+    if [ -n "$id" ]; then
+      printf '2ndmate-%s' "$id"
+      return 0
+    fi
   fi
-  printf '1M-FIRSTMATE'
+  printf 'firstmate'
 }
 
 # fm_backend_herdr_cli: run `herdr <args...>` scoped to <session>, setting
@@ -962,18 +972,8 @@ fm_backend_herdr_pid_is_bare_shell() {  # <ps-bin> <pid>
 # process-info agrees on the pane id, the shell pid is both the foreground
 # process group and the sole foreground process, the foreground process name
 # and argv0 resolve to the same recognized shell, the operating-system
-# process table shows exactly that one shell row with no child process sharing
-# the shell's own controlling terminal, and the shell sits in a sleeping or
-# idle state.
-# The child requirement is scoped to the shell's own terminal rather than to a
-# flat zero-children count because an interactive rc routinely forks a
-# permanent off-terminal helper: zsh-autosuggestions opens a zpty whose child
-# zsh becomes session leader of a DIFFERENT pty, so a flat count could never
-# converge on such a box and every restored pane stayed uncleanable forever.
-# The safety that count was doing is preserved exactly: any job the pane's
-# shell actually owns - foreground or backgrounded with & - inherits the pane's
-# controlling terminal and still refuses the proof. A child on another terminal,
-# or on none, is not pane work and would survive the shell's death anyway.
+# process table shows exactly that one shell row with no child process, and
+# the shell sits in a sleeping or idle state.
 # An idle interactive shell transiently hosts short-lived prompt helpers
 # (verified on the real 0.7.5 lab: a workspace.move relayout makes zsh redraw
 # its prompt, spawning starship as a second foreground process for a few
@@ -1031,16 +1031,11 @@ fm_backend_herdr_pane_idle_shell_sample() {  # <session> <pane-id>
 
   ps_bin=${FM_HERDR_PS_BIN:-ps}
   command -v "$ps_bin" >/dev/null 2>&1 || return 1
-  rows=$("$ps_bin" -axo pid=,ppid=,tty= 2>/dev/null) || return 1
+  rows=$("$ps_bin" -axo pid=,ppid= 2>/dev/null) || return 1
   printf '%s\n' "$rows" | awk -v shell="$shell_pid" '
-    $1 == shell { found++; shell_tty = $3 }
-    $2 == shell { child_tty[++children] = $3 }
-    END {
-      if (found != 1) exit 1
-      for (i = 1; i <= children; i++)
-        if (child_tty[i] == shell_tty) exit 1
-      exit 0
-    }
+    $1 == shell { found++ }
+    $2 == shell { child++ }
+    END { exit(found == 1 && child == 0 ? 0 : 1) }
   ' || return 1
   stat=$("$ps_bin" -p "$shell_pid" -o stat= 2>/dev/null | tr -d '[:space:]') || return 1
   case "$stat" in S*|I*) ;; *) return 1 ;; esac
@@ -1051,10 +1046,7 @@ fm_backend_herdr_pane_idle_shell_sample() {  # <session> <pane-id>
 # returned by THIS projected create immediately after its owning parent's
 # contiguous child block and before the next parent.
 #
-# <parent-label> is the owning FM_HOME label (docs/herdr-backend.md "Mate
-# naming convention": 1M-FIRSTMATE or 2M-<scope>, or - read-only, for
-# already-adjacent pre-existing workspaces - the legacy firstmate/2ndmate-<id>
-# form).
+# <parent-label> is the owning FM_HOME label (firstmate or 2ndmate-<id>).
 # Optional <parent-workspace-id> is that parent's EXACT id, which the caller
 # already resolved from the launching agent's own herdr identity. When given it
 # anchors the owning parent by id, so two workspaces sharing the home label no
@@ -1094,9 +1086,7 @@ fm_backend_herdr_projection_order_best_effort() {  # <session> <created-workspac
       end;
     def is_top_level_parent:
       (.label | type) == "string"
-      and ((.label == "firstmate")
-           or (.label | test("^2ndmate-[^/]+$"))
-           or (.label | test("^[0-9]+M-[A-Z0-9-]+$")));
+      and ((.label == "firstmate") or (.label | test("^2ndmate-[^/]+$")));
     def is_new_child:
       (.label | type) == "string"
       and (.label | test("^└ .+ · p:[A-Za-z0-9_-]{22}$"));
@@ -1283,7 +1273,7 @@ fm_backend_herdr_workspace_find_all() {  # <session>
   # NOTE: the jq variable is $want, NOT $label - `label` is a jq reserved
   # keyword (label/break), so declaring a jq variable named "label" is a
   # compile error that `2>/dev/null` would silently swallow, making this find
-  # ALWAYS return empty and every spawn mint a fresh "1M-FIRSTMATE" workspace
+  # ALWAYS return empty and every spawn mint a fresh "firstmate" workspace
   # (the workspace leak).
   printf '%s' "$list" | jq -r --arg want "$label" \
     '.result.workspaces[]? | select(.label == $want) | .workspace_id' 2>/dev/null
@@ -2980,24 +2970,6 @@ fm_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <p
   fi
 }
 
-# fm_backend_herdr_wait_for_working_submit: optional post-submit transition
-# confirmation. Uses the same native agent-state polling as the send-submit
-# path: poll <target>'s agent status for up to <budget_secs> to confirm the
-# message drove a turn. Returns 0 and echoes "working" if the agent status went
-# to working; returns 0 and echoes "idle" if idle throughout; returns 0 and
-# echoes "unknown" on read failures. Errors return 0 and echo "error".
-fm_backend_herdr_wait_for_working_submit() {  # <target> <budget_secs>
-  local target=$1 budget=${2:-0.6}
-  fm_backend_herdr_parse_target "$target" || { printf 'error'; return 0; }
-  local session=$FM_BACKEND_HERDR_SESSION pane_id=$FM_BACKEND_HERDR_PANE
-  local result
-  result=$(fm_backend_herdr_wait_for_working "$session" "$pane_id" "$budget" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
-  case "$result" in
-    busy) printf 'working'; return 0 ;;
-    *) printf '%s' "$result"; return 0 ;;
-  esac
-}
-
 # fm_backend_herdr_pane_for_tab: the root pane id for <tab_id> in <workspace_id>
 # of <session>, via one pane list call filtered by tab_id (never assumes a
 # tab-number/pane-number correspondence - herdr numbers them independently).
@@ -3058,18 +3030,6 @@ fm_backend_herdr_list_live() {  # <session>
     [ -n "$pane_id" ] || continue
     printf '%s:%s\t%s\n' "$session" "$pane_id" "$label"
   done < <(printf '%s' "$tabs" | jq -r '.result.tabs[]? | select(.label | startswith("fm-")) | "\(.tab_id)\t\(.label)"' 2>/dev/null)
-}
-
-# fm_backend_herdr_pane_verifies_task: verify that a recorded pane still exists and belongs to the given task.
-# Queries the live herdr pane to confirm its identity matches the expected task label (fm-<id>).
-# Returns 0 if verified, 1 otherwise. This is used to self-repair legacy metadata lacking endpoint_task_id.
-fm_backend_herdr_pane_verifies_task() {  # <session> <pane_id> <task_id>
-  local session=$1 pane_id=$2 task_id=$3 pane_info label
-  [ -n "$session" ] && [ -n "$pane_id" ] && [ -n "$task_id" ] || return 1
-  pane_info=$(fm_backend_herdr_cli "$session" pane get "$pane_id" 2>/dev/null) || return 1
-  label=$(printf '%s' "$pane_info" | jq -r '.result.pane.label // empty' 2>/dev/null)
-  [ "$label" = "fm-$task_id" ] || return 1
-  return 0
 }
 
 # --- native event push: pane.agent_status_changed subscriber -----------------
