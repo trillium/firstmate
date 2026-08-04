@@ -189,6 +189,106 @@ SH
   pass "fm_backend_validate_task_endpoint (herdr): legacy metadata self-repairs when the live pane still matches the task, and refuses without mutation when the pane now belongs to a different (recycled) task"
 }
 
+test_zellij_legacy_meta_self_repair_and_recycled_pane_refusal() {
+  local dir id rc
+  command -v jq >/dev/null 2>&1 || { echo "skip - jq not found (required by the zellij adapter)"; return 0; }
+  dir=$(make_case zellij-legacy-repair)
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-backend.sh"
+
+  cat > "$dir/fakebin/zellij" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *list-panes*)
+    printf '[{"id": %s, "tab_id": %s, "is_plugin": false}]\n' "${FM_TEST_ZELLIJ_PANE_ID:?}" "${FM_TEST_ZELLIJ_OWNING_TAB:?}"
+    exit 0
+    ;;
+  *list-tabs*)
+    printf '[{"tab_id": %s, "name": "%s"}]\n' "${FM_TEST_ZELLIJ_OWNING_TAB:?}" "${FM_TEST_ZELLIJ_TAB_NAME:?}"
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$dir/fakebin/zellij"
+
+  id=zellij-legacy-task
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=lab:7" "worktree=$dir/worktree" "project=$dir/project" \
+    "backend=zellij" "zellij_session=lab" "zellij_tab_id=3" "zellij_pane_id=7"
+  PATH="$dir/fakebin:$PATH" FM_TEST_ZELLIJ_PANE_ID=7 FM_TEST_ZELLIJ_OWNING_TAB=3 FM_TEST_ZELLIJ_TAB_NAME="fm-$id" \
+    fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id" \
+    || fail "legacy zellij metadata with a live matching pane should self-repair, not refuse"
+  assert_grep "endpoint_task_id=$id" "$dir/home/state/$id.meta" \
+    "legacy zellij metadata was not self-repaired with endpoint_task_id"
+
+  id=zellij-recycled-task
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=lab:8" "worktree=$dir/worktree" "project=$dir/project" \
+    "backend=zellij" "zellij_session=lab" "zellij_tab_id=4" "zellij_pane_id=8"
+  set +e
+  PATH="$dir/fakebin:$PATH" FM_TEST_ZELLIJ_PANE_ID=8 FM_TEST_ZELLIJ_OWNING_TAB=4 FM_TEST_ZELLIJ_TAB_NAME="fm-some-other-task" \
+    fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "legacy zellij metadata whose live tab now belongs to a different task should refuse (recycled-pane safety)"
+  assert_no_grep "endpoint_task_id=" "$dir/home/state/$id.meta" \
+    "recycled-pane refusal must not mutate the metadata"
+
+  pass "fm_backend_validate_task_endpoint (zellij): legacy metadata self-repairs when the live pane/tab still matches the task, and refuses without mutation when the tab now belongs to a different (recycled) task"
+}
+
+test_cmux_legacy_meta_self_repair_and_recycled_pane_refusal() {
+  local dir id rc
+  command -v jq >/dev/null 2>&1 || { echo "skip - jq not found (required by the cmux adapter)"; return 0; }
+  dir=$(make_case cmux-legacy-repair)
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-backend.sh"
+
+  cat > "$dir/fakebin/cmux" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *list-panes*)
+    printf '{"panes":[{"surface_ids": ["%s"]}]}\n' "${FM_TEST_CMUX_SURFACE_ID:?}"
+    exit 0
+    ;;
+  *"workspace list"*)
+    printf '{"workspaces":[{"id":"%s","title":"%s"}]}\n' "${FM_TEST_CMUX_WORKSPACE_ID:?}" "${FM_TEST_CMUX_WORKSPACE_TITLE:?}"
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$dir/fakebin/cmux"
+
+  id=cmux-legacy-task
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=workspace-1:surface-2" "worktree=$dir/worktree" "project=$dir/project" \
+    "backend=cmux" "cmux_workspace_id=workspace-1" "cmux_surface_id=surface-2"
+  PATH="$dir/fakebin:$PATH" FM_TEST_CMUX_SURFACE_ID=surface-2 FM_TEST_CMUX_WORKSPACE_ID=workspace-1 \
+    FM_TEST_CMUX_WORKSPACE_TITLE="fm-$id" \
+    fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id" \
+    || fail "legacy cmux metadata with a live matching surface should self-repair, not refuse"
+  assert_grep "endpoint_task_id=$id" "$dir/home/state/$id.meta" \
+    "legacy cmux metadata was not self-repaired with endpoint_task_id"
+
+  id=cmux-recycled-task
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=workspace-9:surface-9" "worktree=$dir/worktree" "project=$dir/project" \
+    "backend=cmux" "cmux_workspace_id=workspace-9" "cmux_surface_id=surface-9"
+  set +e
+  PATH="$dir/fakebin:$PATH" FM_TEST_CMUX_SURFACE_ID=surface-9 FM_TEST_CMUX_WORKSPACE_ID=workspace-9 \
+    FM_TEST_CMUX_WORKSPACE_TITLE="fm-some-other-task" \
+    fm_backend_validate_task_endpoint "$dir/home/state/$id.meta" "$id"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "legacy cmux metadata whose live workspace now belongs to a different task should refuse (recycled-surface safety)"
+  assert_no_grep "endpoint_task_id=" "$dir/home/state/$id.meta" \
+    "recycled-surface refusal must not mutate the metadata"
+
+  pass "fm_backend_validate_task_endpoint (cmux): legacy metadata self-repairs when the live workspace/surface still matches the task, and refuses without mutation when the workspace now belongs to a different (recycled) task"
+}
+
 test_tmux_empty_target_refuses_without_invocation() {
   local dir rc
   dir=$(make_case direct-empty)
@@ -314,6 +414,8 @@ SH
 test_invalid_endpoint_records_refuse_before_mutation
 test_supported_backend_endpoint_records_validate
 test_herdr_legacy_meta_self_repair_and_recycled_pane_refusal
+test_zellij_legacy_meta_self_repair_and_recycled_pane_refusal
+test_cmux_legacy_meta_self_repair_and_recycled_pane_refusal
 test_tmux_empty_target_refuses_without_invocation
 test_recorded_process_identity_cleanup_is_exact
 test_isolated_tmux_invalid_and_valid_cleanup
