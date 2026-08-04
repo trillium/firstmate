@@ -110,6 +110,20 @@ Firstmate does not attempt to close the macOS window because cmux's socket canno
 Real tests share the captain's running app rather than creating an isolated cmux session.
 `tests/cmux-test-safety.sh` permits cleanup only for an exact currently listed `fm-test-` workspace and never enumerates and closes unrelated workspaces or relaunches the app.
 
+## Endpoint metadata
+
+```text
+backend=cmux
+window=<workspace-uuid>:<surface-uuid>
+cmux_workspace_id=<workspace-uuid>
+cmux_surface_id=<surface-uuid>
+```
+
+The UUID pair is the active endpoint authority within one app run.
+Workspace UUIDs are not stable across an app relaunch, so recovery searches by the scoped title and then resolves the current surface id.
+
+Legacy cmux metadata written before `endpoint_task_id=` existed self-repairs at teardown validation time instead of refusing outright: `fm_backend_validate_task_endpoint` verifies the live surface still exists within its recorded workspace and that the workspace still carries the task's label via `fm_backend_cmux_surface_verifies_task`, and only when both the surface membership and the workspace's title are confirmed to match (using `fm_backend_cmux_workspace_matches_label`'s scoped/bare-with-ambiguity rules), appends `endpoint_task_id=<id>` to the metadata file so the task tears down with no manual editing. When the live surface or workspace does not match - for example because the surface was recycled to a different workspace or the workspace was renamed to a different task's label - validation refuses without mutating the metadata, preserving the wrong-surface safety guarantee.
+
 ## Active limits
 
 - cmux is experimental, macOS-only, GUI-first, and requires the app running.
