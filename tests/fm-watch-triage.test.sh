@@ -1371,6 +1371,91 @@ SH
   pass "a persistently-failing reclaim retries a bounded number of times, then falls through to ordinary stale surfacing"
 }
 
+# --- dead-window triage sweep (bin/fm-watch.sh) -----------------------------
+# The idle>2h auto-close reclaims a LIVE idle window; the stale loop skips a
+# window whose pane capture fails. Neither files triage for a kind=ship task
+# whose window DIED on its own while its worktree holds unlanded work.
+# dead_window_triage_sweep gives that orphan the same filing by delegating to
+# bin/fm-teardown.sh --staleness-file-dead for a CONFIDENTLY dead endpoint only
+# (fm_backend_agent_alive == dead). These tests drive the sweep function directly
+# (sourced in an isolated subshell) with the liveness verdict and FM_TEARDOWN_BIN
+# stubbed - the real, non-destructive filing behavior is covered against the real
+# teardown in tests/fm-teardown.test.sh.
+run_dead_window_sweep() {  # <state> <fake-teardown> <liveness-verdict> <calls-log>
+  local state=$1 teardown_bin=$2 verdict=$3 calls_log=$4
+  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" \
+  FM_TEARDOWN_BIN="$teardown_bin" FM_FAKE_AGENT_ALIVE="$verdict" \
+  FM_TEST_TEARDOWN_CALLS_LOG="$calls_log" \
+  bash -c '
+    set -u
+    # shellcheck disable=SC1090,SC1091
+    . "$1/bin/fm-watch.sh"
+    # Override the liveness read so the sweep sees a fixed verdict without a real
+    # backend; every other helper it uses (meta parsing, teardown delegation) is
+    # the real one.
+    fm_backend_agent_alive() { printf "%s" "$FM_FAKE_AGENT_ALIVE"; }
+    dead_window_triage_sweep
+  ' _ "$ROOT"
+}
+
+test_dead_window_sweep_delegates_for_confidently_dead_ship() {
+  local dir state fakebin calls
+  dir=$(make_case dead-sweep-dead-ship); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"
+  add_fake_teardown "$fakebin"
+  printf 'window=test:fm-dead\nkind=ship\n' > "$state/dead-ship.meta"
+
+  run_dead_window_sweep "$state" "$fakebin/fake-teardown" dead "$calls"
+
+  grep -qFx "dead-ship --staleness-file-dead" "$calls" 2>/dev/null \
+    || fail "dead-window sweep did not delegate filing for a confidently dead ship: $(cat "$calls" 2>/dev/null)"
+  pass "the dead-window sweep delegates to teardown --staleness-file-dead for a confidently dead ship task"
+}
+
+test_dead_window_sweep_skips_live_ship() {
+  local dir state fakebin calls
+  dir=$(make_case dead-sweep-live-ship); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"
+  add_fake_teardown "$fakebin"
+  printf 'window=test:fm-live\nkind=ship\n' > "$state/live-ship.meta"
+
+  run_dead_window_sweep "$state" "$fakebin/fake-teardown" alive "$calls"
+
+  [ ! -s "$calls" ] \
+    || fail "dead-window sweep filed triage for a live ship window: $(cat "$calls")"
+  pass "the dead-window sweep leaves a live ship window untouched"
+}
+
+test_dead_window_sweep_skips_ambiguous_endpoint() {
+  local dir state fakebin calls
+  dir=$(make_case dead-sweep-ambiguous); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"
+  add_fake_teardown "$fakebin"
+  printf 'window=test:fm-maybe\nkind=ship\n' > "$state/maybe-ship.meta"
+
+  # fm_backend_agent_alive returns "unknown" for an ambiguous or transiently
+  # unreadable endpoint; the sweep must file only for a confident "dead".
+  run_dead_window_sweep "$state" "$fakebin/fake-teardown" unknown "$calls"
+
+  [ ! -s "$calls" ] \
+    || fail "dead-window sweep filed triage for an ambiguous/unreadable endpoint: $(cat "$calls")"
+  pass "the dead-window sweep preserves an ambiguous or unreadable endpoint (files only for a confident dead)"
+}
+
+test_dead_window_sweep_skips_non_ship_kind() {
+  local dir state fakebin calls
+  dir=$(make_case dead-sweep-secondmate); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"
+  add_fake_teardown "$fakebin"
+  printf 'window=test:fm-sm\nkind=secondmate\n' > "$state/sm.meta"
+
+  run_dead_window_sweep "$state" "$fakebin/fake-teardown" dead "$calls"
+
+  [ ! -s "$calls" ] \
+    || fail "dead-window sweep filed triage for a non-ship (secondmate) task: $(cat "$calls")"
+  pass "the dead-window sweep only files for kind=ship, never a secondmate"
+}
+
 test_busy_pane_stable_hash_escalates_past_turn_age_bound() {
   local dir state fakebin out capture_file window key pane_hash sig pid
   dir=$(make_case busy-stable-hash-turn-age); state="$dir/state"; fakebin="$dir/fakebin"
@@ -2100,3 +2185,7 @@ test_staleness_autoclose_does_not_fire_while_provably_working
 test_staleness_autoclose_does_not_fire_at_needs_decision_gate
 test_staleness_autoclose_fires_during_afk_and_logs_evidence
 test_staleness_autoclose_exhausts_retries_then_surfaces
+test_dead_window_sweep_delegates_for_confidently_dead_ship
+test_dead_window_sweep_skips_live_ship
+test_dead_window_sweep_skips_ambiguous_endpoint
+test_dead_window_sweep_skips_non_ship_kind
