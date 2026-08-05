@@ -25,6 +25,16 @@ TMP_ROOT=$(fm_test_tmproot fm-public-followup)
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
+# `public-followup` is the obligation state machine this whole suite drives, and
+# tasks-axi only grew it in 0.2.3. The bootstrap compatibility probe in
+# bin/fm-tasks-axi-lib.sh does not cover it - that gate owns the backlog-mutation
+# verbs - so an older build on PATH passes the check above and then dies at the
+# first `add` with the opaque "could not create the public commitment". Probe the
+# verb directly and name the real cause instead.
+tasks-axi public-followup --help >/dev/null 2>&1 || {
+  echo "skip: installed tasks-axi has no public-followup command (needs 0.2.3 or newer: npm install -g tasks-axi)"
+  exit 0
+}
 
 # A fakebin `curl` standing in for the relay. It logs every call so a test can
 # prove exactly how many public posts happened, and honours FAKE_FOLLOWUP_CODE so
