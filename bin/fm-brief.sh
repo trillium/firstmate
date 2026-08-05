@@ -460,6 +460,11 @@ The report is the only thing that survives, so anything worth keeping must be in
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+8. You have no terminal a human can type into, so never let git open an editor. Pass \`-m\` or
+   \`--no-edit\`, or prefix the command with \`GIT_EDITOR=true\` (\`GIT_SEQUENCE_EDITOR=true\` for
+   \`rebase -i\`). If a git command produces no output for more than a minute, suspect a blocked
+   editor waiting on a human, not a slow operation: check with \`pgrep -fl 'COMMIT_EDITMSG|--wait'\`
+   and kill the waiter rather than retrying, since each retry stacks another orphaned waiter.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -636,6 +641,18 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+8. You have no terminal a human can type into, so never let git open an editor. Pass \`-m\` or
+   \`--no-edit\`, or prefix the command with \`GIT_EDITOR=true\` (\`GIT_SEQUENCE_EDITOR=true\` for
+   \`rebase -i\`). This covers \`commit\` without \`-m\`, \`rebase --continue\`/\`-i\`, non-fast-forward
+   \`merge\`, \`revert\`, \`tag -a\`, and \`cherry-pick --continue\`. If a git command produces no output
+   for more than a minute, suspect a blocked editor waiting on a human, not a slow operation:
+   check with \`pgrep -fl 'COMMIT_EDITMSG|--wait'\` and kill the waiter rather than retrying, since
+   each retry stacks another orphaned waiter.
+9. If git refuses because your branch is already checked out in another worktree, do NOT remove
+   or modify that worktree - it may hold another agent's uncommitted work. Use a detached HEAD
+   instead: \`git checkout --detach\`, work there, and - where rule 1 permits pushing at all -
+   push explicitly with \`git push --force-with-lease origin HEAD:fm/$ID\`. If that is not
+   possible, append \`blocked: {why}\` and stop.
 $FORK_FIRST
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.

@@ -1844,10 +1844,18 @@ if [ "$KIND" = secondmate ]; then
   sq_primary_home=$(shell_quote "$FM_HOME")
   LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home $LAUNCH"
 fi
-# Export GOTMPDIR into the crewmate's pane shell so the agent and every child
-# process (go build, go test, ...) inherit it. Sent before the launch command so
-# the env is set when the agent starts; the brief sleep lets the export land.
+# Export pane-environment variables into the crewmate's pane shell so the agent
+# and every child process inherit them. Both are sent before the launch command
+# so the env is set when the agent starts; the brief sleep lets both exports land.
+# GOTMPDIR: go build/test inherit the task-local tmp dir (go toolchain).
+# GIT_EDITOR/GIT_SEQUENCE_EDITOR=true: a crewmate has no terminal a human can
+# type into, so any git command that opens an editor (rebase --continue, commit
+# without -m, non-ff merge, revert, tag -a, cherry-pick --continue) otherwise
+# blocks forever on a `code --wait`-style editor: silent, indistinguishable from
+# a thinking pane, made worse by the agent's retry (robots-1xw8). `true` exits 0
+# without touching the file, so git proceeds with the message or todo as written.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+spawn_send_text_line "$T" "export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true"
 sleep 0.3
 spawn_send_literal "$T" "$LAUNCH"
 sleep 0.3
