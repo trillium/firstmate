@@ -28,11 +28,23 @@ Use this one when the *work itself* is a branch that will not merge.
 A conflicting long-lived branch is usually not a merge problem. It is a branch whose purpose was
 partly or wholly overtaken while it sat. Establish that before briefing anyone to rebase.
 
-The diagnostic is one command:
+The diagnostic is two commands (run both, always fetch first):
 
 ```sh
-git diff origin/<default-branch> <branch> --stat
+git fetch origin --prune
+git diff --stat origin/<default-branch> HEAD
 ```
+
+This compares the remote default branch tip to your current HEAD, not your working tree. **A stale `origin/<default-branch>` reference can misclassify the branch; always fetch first.**
+
+Also run:
+
+```sh
+git status --short
+```
+
+This reports any uncommitted changes, which must be resolved before verifying contribution.
+
 
 **Not** the diff since the merge-base, which is what `gh pr diff` and the GitHub PR view show.
 The merge-base diff answers "what did this branch do?"; only the diff against the current default
@@ -41,11 +53,9 @@ branch answers the question that decides the work: **"what does this branch stil
 Read the result and classify:
 
 - **Contributes nothing** — the default branch already satisfies the branch's stated purpose.
-  The PR is obsolete. Verify the purpose is genuinely met (run the check the PR existed to fix and
-  paste the exit code), then close the PR with that evidence and do not dispatch anyone.
+  Make a recommendation with evidence (e.g. exit code/output of the check). Only close the PR if the captain explicitly authorizes it.
 - **Contributes a small subset** — most files are drift, a few are the real work.
-  Do not rebase. Rebuild: reset the branch to the default branch and check out only the
-  contributing paths. Enumerate those exact paths in the brief.
+  Make a recommendation (list the files and evidence). Only reset the branch (after creating a backup ref or saving the worktree) if the captain explicitly authorizes it. See AGENTS.md hard rule 3.
 - **Contributes broadly and genuinely conflicts** — a real rebase or merge is warranted.
   Continue to section 2.
 
@@ -57,8 +67,10 @@ pinned tool versions, deliberate lint-rule disables, dependency bumps, CI runner
 
 This reversion is invisible in review. It arrives as "resolved the conflicts", it is buried in a
 large diff, and nothing fails. Enumerating the contributing paths in the brief — and requiring the
-worker to paste `git diff origin/<default-branch> --stat` showing *exactly* those paths and
-nothing else — is what catches it.
+worker to paste `git diff --stat origin/<default-branch> HEAD` showing *exactly* those paths and
+nothing else (after `git fetch origin --prune`) — is what catches it.
+
+Always run `git status --short` and resolve any working tree changes before triage; a "clean branch" must be truly clean.
 
 Ask "what does this branch still contribute over the default branch?" before ever asking
 "how do I resolve these conflicts?" The answer is usually far smaller than the conflict count
@@ -82,7 +94,7 @@ other languages it can be worse, because it may parse.
 
 Require this check after any agent-resolved conflict, before trusting the branch:
 
-```sh
+```text
 git grep -n -E '^(<<<<<<<|\|\|\|\|\|\|\||=======|>>>>>>>)' HEAD
 ```
 
@@ -98,6 +110,8 @@ delete real code and leave unbalanced blocks. Escalating steers do not help.
 At that point Firstmate resolves the conflict itself **in the scratchpad, never in the project**,
 and hands the worker finished files to copy in. This stays inside hard rule 1: Firstmate writes
 only to its own scratch space, and the crewmate is still the one that changes the project.
+
+**Repair writes must only happen in an isolated disposable worktree. If you are in the primary checkout, stop and refuse the operation. This matches the ship-brief isolation assertion and prevents overwriting another agent’s unlanded work.**
 
 Reconstruct a clean conflict from the three inputs — a partially-scrubbed committed file is not a
 usable starting point:
@@ -138,7 +152,7 @@ delivered on the same screen that printed the failing test count.
 | "commit touches only X" | `git show --stat HEAD` |
 | "pushed" | `git rev-parse HEAD origin/<branch>` — both sides must match |
 | "removed/added <string>" | `grep -n '<the exact string>' <file>` |
-| "tests pass" | read the summary line in the pane, not the worker's sentence about it |
+| "tests pass" | output and exit code of the exact gate/test command, or rerun the gate yourself in the repository |
 | "markers gone" | the four-marker grep in section 2 |
 | "lint clean" | the exit code of the *whole* chained lint command, not one step of it |
 | "conflict resolved as instructed" | `diff` the worktree file against the scratchpad resolution |
@@ -156,9 +170,7 @@ sent back — and follow through, because the alternative is a broken branch tre
   exist: `commit` without `-m`, `rebase --continue`, `merge`, `revert`, `tag -a`,
   `cherry-pick --continue`. It is silent, a wedged pane looks like a thinking pane, and the
   worker's natural retry stacks more orphaned waiters.
-  Diagnose with `ps -eo pid,etime,command | grep COMMIT_EDITMSG`. Killing the waiters lets git
-  read the message file as-is and the operation completes with no loss.
-  Put `GIT_EDITOR=true` in the brief for every such command.
+Diagnose with `ps -eo pid,etime,command | grep COMMIT_EDITMSG`. Killing the waiters unblocks the pane, but the pending git command may fail rather than complete. Capture state with `git status` first, then rerun the pending command with `GIT_EDITOR=true`. Put `GIT_EDITOR=true` in the brief for every such command.
 - **A branch "checked out in another worktree" is not a blocker.** Pushing does not require a
   checkout: `git push origin HEAD:<branch>` works from a detached HEAD, and
   `--force-with-lease=<branch>:<expected-sha>` still applies.
