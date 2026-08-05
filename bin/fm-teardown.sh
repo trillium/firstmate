@@ -55,7 +55,9 @@
 # A clean teardown best-effort deregisters the task from Parlay's live chat
 # panel (see bin/fm-spawn.sh's header for the enrollment contract): the recorded
 # `parlay listen` background pid is always killed, and `parlay agent-down` is
-# called only when `parlay` is on PATH. Neither ever blocks or fails teardown.
+# called only when `parlay` is on PATH and FM_SPAWN_SKIP_PARLAY is unset, since
+# a spawn that skipped enrollment has nothing to deregister. Neither ever blocks
+# or fails teardown.
 # A task linked to a bead (beads_id= in meta, set by fm-spawn.sh --beads or
 # auto-linked under config/backlog-backend=beads) has that
 # bead closed automatically once teardown reaches this point without --force, i.e.
