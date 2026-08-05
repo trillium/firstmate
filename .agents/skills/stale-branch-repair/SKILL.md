@@ -31,7 +31,7 @@ partly or wholly overtaken while it sat. Establish that before briefing anyone t
 The diagnostic is two commands (run both, always fetch first):
 
 ```sh
-git fetch origin --prune
+git fetch origin --prune &&
 git diff --stat origin/<default-branch> HEAD
 ```
 
@@ -68,7 +68,7 @@ pinned tool versions, deliberate lint-rule disables, dependency bumps, CI runner
 This reversion is invisible in review. It arrives as "resolved the conflicts", it is buried in a
 large diff, and nothing fails. Enumerating the contributing paths in the brief — and requiring the
 worker to paste `git diff --stat origin/<default-branch> HEAD` showing *exactly* those paths and
-nothing else (after `git fetch origin --prune`) — is what catches it.
+nothing else (after a successful `git fetch origin --prune`) — is what catches it.
 
 Always run `git status --short` and resolve any working tree changes before triage; a "clean branch" must be truly clean.
 
@@ -95,7 +95,7 @@ other languages it can be worse, because it may parse.
 Require this check after any agent-resolved conflict, before trusting the branch:
 
 ```text
-git grep -n -E '^(<<<<<<<|\|\|\|\|\|\|\||=======|>>>>>>>)' HEAD
+git grep -n -E '^(<<<<<<<|\|\|\|\|\|\|\||=======|>>>>>>>)' -- .
 ```
 
 It must return nothing. Add a syntax check on every touched file — `bash -n` for shell, the
