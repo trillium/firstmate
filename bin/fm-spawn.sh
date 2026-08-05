@@ -144,9 +144,10 @@
 # plus a gitignored .fm-grok-turnend worktree pointer and a state token.
 # A confirmed launch also best-effort enrolls the new agent in Parlay's live chat
 # panel via `parlay listen --agent <task-id>`, backgrounded with its pid recorded to
-# state/<id>.parlay-listen-pid for fm-teardown.sh to stop. Parlay is optional
-# captain tooling, never load-bearing: an absent `parlay` binary or a failed call is
-# logged to stderr and never blocks or fails the spawn.
+# state/<id>.parlay-listen-pid for fm-teardown.sh to stop. Skipped when
+# FM_SPAWN_SKIP_PARLAY=1 (set by tests/lib.sh for all test-suite spawns). Parlay is
+# optional captain tooling, never load-bearing: an absent `parlay` binary, a failed
+# call, or the skip guard never blocks or fails the spawn.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<backend-target> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md for ship/scout tasks;
 # secondmate spawns record mode=secondmate, yolo=off, home=, and projects=.
