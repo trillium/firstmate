@@ -2268,9 +2268,14 @@ test_dead_window_file_fallback_writes_unfiled_when_store_unavailable() {
 # bin/fm-watch.sh's teardown_blocked_sweep needs to name the dirt holding a
 # pooled worktree without restating teardown's dirty / unpushed / not-landed
 # rules. --why-blocked answers by running the production safety predicate and
-# printing its refusal: exit 0 blocked (reason on stdout), exit 1 not blocked.
-# It must mutate nothing, and it must agree with what a real teardown does -
-# including the scratch paths teardown deliberately ignores.
+# printing its refusal. Its exit protocol is three-way (bin/fm-teardown-why-lib.sh):
+# 0 blocked with the reason on stdout, WHY_NOT_BLOCKED (10) not blocked, and
+# EVERY other code indeterminate. The not-blocked code is the only answer that
+# makes the watcher drop a task, so nothing else may ever produce it.
+# --why-blocked must mutate nothing, and it must agree with what a real teardown
+# does - including the scratch paths teardown deliberately ignores.
+WHY_NOT_BLOCKED=10
+WHY_INDETERMINATE=11
 test_why_blocked_reports_uncommitted_dirt() {
   local case_dir rc
   case_dir=$(make_case why-blocked-dirty)
@@ -2317,10 +2322,10 @@ test_why_blocked_is_silent_for_a_tearable_task() {
   rc=$?
   set -e
 
-  expect_code 1 "$rc" "why-blocked-clean: a tearable task must answer not-blocked"
+  expect_code "$WHY_NOT_BLOCKED" "$rc" "why-blocked-clean: a tearable task must answer not-blocked"
   [ ! -s "$case_dir/stdout" ] \
     || fail "why-blocked-clean: a not-blocked answer printed a reason: $(cat "$case_dir/stdout")"
-  pass "--why-blocked answers not-blocked (exit 1, no reason) for a task teardown would tear down"
+  pass "--why-blocked answers not-blocked (its own dedicated code, no reason) for a task teardown would tear down"
 }
 
 test_why_blocked_ignores_the_same_scratch_teardown_ignores() {
@@ -2339,8 +2344,71 @@ test_why_blocked_ignores_the_same_scratch_teardown_ignores() {
   rc=$?
   set -e
 
-  expect_code 1 "$rc" "why-blocked-scratch: harness scratch must not read as blocking dirt"
+  expect_code "$WHY_NOT_BLOCKED" "$rc" "why-blocked-scratch: harness scratch must not read as blocking dirt"
   pass "--why-blocked ignores exactly the harness scratch the teardown safety check ignores"
+}
+
+# The regression behind the three-way protocol: teardown's setup (endpoint
+# validation, Orca worktree resolution, a missing meta) exits 1 long before the
+# query runs. When "not blocked" was also exit 1, a task with a malformed meta
+# read as tearable and the watcher dropped it silently and permanently. A setup
+# failure must be indeterminate so the sweep logs it and retries.
+test_why_blocked_setup_failure_is_never_a_not_blocked_answer() {
+  local case_dir rc
+  case_dir=$(make_case why-blocked-bad-meta)
+  # No worktree= field: fm_backend_validate_task_endpoint rejects this meta and
+  # teardown exits 1 before reaching the query at all.
+  fm_write_meta "$case_dir/state/task-x1.meta" \
+    "window=firstmate:fm-task-x1" \
+    "endpoint_task_id=task-x1" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes"
+
+  set +e
+  run_teardown "$case_dir" --why-blocked > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne "$WHY_NOT_BLOCKED" ] \
+    || fail "why-blocked-bad-meta: a setup failure answered not-blocked, which silences the task forever"
+  [ "$rc" -ne 0 ] \
+    || fail "why-blocked-bad-meta: a setup failure answered blocked: $(cat "$case_dir/stdout")"
+  pass "--why-blocked reports a setup failure as indeterminate, never as not-blocked"
+}
+
+# A git lock stops the safety predicate from reading git state. A real teardown
+# clears a provably-stale lock and re-runs the checks, so answering "blocked"
+# here would wake the captain over a lock the resulting teardown just removes.
+# The query stays read-only and answers indeterminate instead.
+test_why_blocked_is_indeterminate_when_a_git_lock_blocks_the_check() {
+  local case_dir rc lock
+  case_dir=$(make_case why-blocked-locked)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt landed "landed work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  add_lsof_no_holder "$case_dir"
+  add_git_status_lock_failure "$case_dir"
+
+  lock=$(git_index_lock_path "$case_dir/wt")
+  mkdir -p "$(dirname "$lock")"
+  : > "$lock"
+  touch -t 200001010000 "$lock"
+
+  set +e
+  FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=0 FM_STALE_WORKTREE_LOCK_AGE_SECS=1 \
+    run_teardown "$case_dir" --why-blocked > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code "$WHY_INDETERMINATE" "$rc" \
+    "why-blocked-locked: a git-locked safety check must answer indeterminate, not blocked"
+  [ ! -s "$case_dir/stdout" ] \
+    || fail "why-blocked-locked: an indeterminate answer printed a captain-facing reason: $(cat "$case_dir/stdout")"
+  [ -e "$lock" ] \
+    || fail "why-blocked-locked: the read-only query removed the git lock"
+  pass "--why-blocked answers indeterminate for a git-locked safety check and leaves the lock alone"
 }
 
 test_why_blocked_mutates_nothing() {
@@ -3279,4 +3347,6 @@ test_why_blocked_reports_uncommitted_dirt
 test_why_blocked_reports_unlanded_commits
 test_why_blocked_is_silent_for_a_tearable_task
 test_why_blocked_ignores_the_same_scratch_teardown_ignores
+test_why_blocked_setup_failure_is_never_a_not_blocked_answer
+test_why_blocked_is_indeterminate_when_a_git_lock_blocks_the_check
 test_why_blocked_mutates_nothing

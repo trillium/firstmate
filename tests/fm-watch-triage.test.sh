@@ -2145,6 +2145,11 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
 # liveness verdict and FM_TEARDOWN_BIN stubbed; --why-blocked's real read-only
 # behavior against the production safety predicate lives in
 # tests/fm-teardown.test.sh.
+# The query's three-way exit protocol (bin/fm-teardown-why-lib.sh): 0 blocked,
+# WHY_NOT_BLOCKED not blocked, everything else indeterminate. Only the dedicated
+# not-blocked code may silence a task; an incidental exit 1 from teardown's setup
+# must be retried, not mistaken for a clean worktree.
+WHY_NOT_BLOCKED=10
 DIRT_REASON='REFUSED: worktree /wt has uncommitted changes.'
 UNLANDED_REASON='REFUSED: worktree /wt has work not on any remote and not landed.'
 
@@ -2250,13 +2255,15 @@ test_teardown_blocked_sweep_silent_when_not_blocked() {
   printf 'window=test:fm-clean\nkind=ship\n' > "$state/clean-task.meta"
   printf 'done: landed\n' > "$state/clean-task.status"
 
-  # Exit 1 is --why-blocked's "not blocked" answer.
+  # The dedicated not-blocked code is the ONLY answer that silences a task.
   run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
-    1 "" > "$out"
+    "$WHY_NOT_BLOCKED" "" > "$out"
 
   [ ! -s "$out" ] || fail "sweep woke the captain for a task teardown would not refuse: $(cat "$out")"
   [ ! -e "$state/clean-task.teardown-blocked-surfaced" ] \
     || fail "sweep recorded a surfaced blockage for an unblocked task"
+  [ ! -s "$state/.watch-triage.log" ] \
+    || fail "sweep logged a query failure for a plain not-blocked answer: $(cat "$state/.watch-triage.log")"
   pass "the teardown-blocked sweep stays silent when teardown would not refuse"
 }
 
@@ -2275,7 +2282,32 @@ test_teardown_blocked_sweep_fails_open_on_query_error() {
   [ ! -s "$out" ] || fail "a failed teardown-blocked query woke the captain: $(cat "$out")"
   [ ! -e "$state/err-task.teardown-blocked-surfaced" ] \
     || fail "a failed query was recorded as a surfaced blockage, suppressing the real one later"
+  grep -F "teardown-blocked query INDETERMINATE for task err-task" "$state/.watch-triage.log" >/dev/null 2>&1 \
+    || fail "a failed query was dropped without a triage record: $(cat "$state/.watch-triage.log" 2>/dev/null)"
   pass "the teardown-blocked sweep fails open on a query error and retries next sweep"
+}
+
+# The regression: teardown's setup (a rejected endpoint, an unresolvable Orca
+# worktree id, a missing meta) exits 1 before --why-blocked ever runs. When exit
+# 1 also meant "not blocked", the sweep skipped such a task silently on every
+# sweep forever. Exit 1 must now read as an indeterminate query and be retried.
+test_teardown_blocked_sweep_treats_exit_1_as_a_failed_query() {
+  local dir state fakebin calls out
+  dir=$(make_case teardown-blocked-exit1); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"; out="$dir/sweep.out"
+  add_fake_why_blocked_teardown "$fakebin"
+  printf 'window=test:fm-exit1\nkind=ship\n' > "$state/exit1-task.meta"
+  printf 'done: landed\n' > "$state/exit1-task.status"
+
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
+    1 "" > "$out"
+
+  [ ! -s "$out" ] || fail "an exit-1 teardown setup failure woke the captain: $(cat "$out")"
+  [ ! -e "$state/exit1-task.teardown-blocked-surfaced" ] \
+    || fail "an exit-1 query was recorded as a surfaced blockage"
+  grep -F "teardown-blocked query INDETERMINATE for task exit1-task" "$state/.watch-triage.log" >/dev/null 2>&1 \
+    || fail "exit 1 was silently treated as not-blocked instead of a retryable failure: $(cat "$state/.watch-triage.log" 2>/dev/null)"
+  pass "the teardown-blocked sweep treats an exit-1 setup failure as a failed query, not as not-blocked"
 }
 
 test_teardown_blocked_sweep_skips_unfinished_and_non_ship() {
@@ -2360,4 +2392,5 @@ test_teardown_blocked_sweep_surfaces_dead_window_task
 test_teardown_blocked_sweep_dedupes_unchanged_blockage
 test_teardown_blocked_sweep_silent_when_not_blocked
 test_teardown_blocked_sweep_fails_open_on_query_error
+test_teardown_blocked_sweep_treats_exit_1_as_a_failed_query
 test_teardown_blocked_sweep_skips_unfinished_and_non_ship

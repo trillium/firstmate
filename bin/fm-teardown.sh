@@ -90,7 +90,12 @@
 #   teardown_blocked_sweep: it answers "would an ordinary (non-force) teardown of
 #   this task refuse right now, and on exactly what?" by running the production
 #   validate_worktree_teardown_safety predicate and printing its refusal text.
-#   Exit 0 means blocked (stdout carries the reason); exit 1 means not blocked.
+#   Its exit protocol is three-way and is owned by bin/fm-teardown-why-lib.sh:
+#   exit 0 means blocked (stdout carries the reason); exit
+#   TEARDOWN_WHY_NOT_BLOCKED means the predicate ran and passed; EVERY other exit
+#   - including an ordinary exit 1 from the setup above this query (missing meta,
+#   rejected endpoint, unresolvable Orca worktree id) - means indeterminate, so a
+#   caller retries instead of mistaking a broken task for a clean one.
 #   It kills nothing, writes no state, clears no lock, and never falls through to
 #   any teardown branch - it exists so a caller can name the blocking dirt without
 #   restating (and drifting from) the dirty / unpushed / not-landed rules.
@@ -196,6 +201,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-teardown-why-lib.sh
+. "$SCRIPT_DIR/fm-teardown-why-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -1695,18 +1702,38 @@ EOF
 # produced by RUNNING validate_worktree_teardown_safety above and capturing the
 # refusal text it writes to stderr, so the dirty / unpushed / not-landed rules
 # have exactly one owner and a caller can never drift from what teardown actually
-# enforces. Nothing is mutated: the predicate only reads git state, and the
-# lock-blocked return is deliberately reported as blocked too, because an
-# ordinary teardown would stop there as well.
-# 0 = teardown IS blocked, reason lines on stdout. 1 = not blocked (the predicate
-# passed, or it short-circuits because the worktree is gone or the kind is exempt).
+# enforces. Nothing is mutated: the predicate only reads git state.
+#
+# Three answers, per the protocol in bin/fm-teardown-why-lib.sh:
+#   0                        blocked; the predicate's own refusal is on stdout.
+#   TEARDOWN_WHY_NOT_BLOCKED the predicate passed (or short-circuited because the
+#                            worktree is gone or the kind is exempt). This is the
+#                            ONLY answer that makes a caller drop the task, so it
+#                            is emitted only from here and never collides with an
+#                            incidental exit 1 from the setup above.
+#   TEARDOWN_WHY_INDETERMINATE  the predicate could not decide.
+#
+# A git-lock return (TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED) is deliberately
+# INDETERMINATE rather than blocked: a real teardown clears a provably-stale lock
+# and re-runs the safety checks first, so answering "blocked" here would wake the
+# captain over a lock the teardown they then run would simply remove. This query
+# must stay strictly read-only and must never clear a lock itself, so it declines
+# to judge and lets the caller log and retry on the next cadence - a transient
+# lock costs a retry, never a false wake and never permanent silence.
 why_teardown_blocked() {
   local out rc=0
   out=$(validate_worktree_teardown_safety 2>&1 >/dev/null) || rc=$?
-  [ "$rc" -ne 0 ] || return 1
-  [ -n "$out" ] || out="teardown refused (exit $rc) without printing a reason"
-  printf '%s\n' "$out"
-  return 0
+  case "$rc" in
+    0) return "$TEARDOWN_WHY_NOT_BLOCKED" ;;
+    1)
+      [ -n "$out" ] || out="teardown refused without printing a reason"
+      printf '%s\n' "$out"
+      return 0
+      ;;
+  esac
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  echo "teardown --why-blocked: indeterminate for $ID; the worktree safety check could not decide (exit $rc), so this is neither blocked nor tearable" >&2
+  return "$TEARDOWN_WHY_INDETERMINATE"
 }
 
 require_orca_worktree_path_match() {
@@ -2363,12 +2390,13 @@ remove_secondmate_registry_entry() {
 }
 
 # Read-only query: answer and exit before any cleanup, mutation, or teardown
-# branch below can run. See why_teardown_blocked.
+# branch below can run. The three-way exit code is why_teardown_blocked's own, so
+# no ordinary exit 1 from the setup above can be mistaken for its "not blocked"
+# answer. See why_teardown_blocked and bin/fm-teardown-why-lib.sh.
 if [ "$WHY_BLOCKED" = 1 ]; then
-  if why_teardown_blocked; then
-    exit 0
-  fi
-  exit 1
+  WHY_RC=0
+  why_teardown_blocked || WHY_RC=$?
+  exit "$WHY_RC"
 fi
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1

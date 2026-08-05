@@ -88,6 +88,9 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# The `fm-teardown.sh --why-blocked` exit protocol teardown_blocked_sweep speaks.
+# shellcheck source=bin/fm-teardown-why-lib.sh
+. "$SCRIPT_DIR/fm-teardown-why-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -967,8 +970,14 @@ task_is_finished() {
 # like the heartbeat backstop - the wake is queued before the marker is written,
 # so a crash between the two can only re-surface, never swallow. Nothing here
 # mutates a worktree, and the marker is cleared by teardown when the task finally
-# goes. Fail-open: a query that errors is logged and skipped, never breaking the
-# loop.
+# goes.
+# The query's exit protocol is three-way (bin/fm-teardown-why-lib.sh): 0 surfaces
+# the wake, TEARDOWN_WHY_NOT_BLOCKED skips the task silently, and EVERY other
+# code is an indeterminate query that is logged and retried on the next sweep.
+# Only the dedicated not-blocked code can silence a task, so a broken meta or any
+# other incidental exit 1 from teardown's setup keeps being retried instead of
+# dropping a finished task forever; an indeterminate answer never writes the
+# surfaced marker, so it cannot suppress the real blockage later either.
 teardown_blocked_sweep() {
   local meta id kind blocked rc marker prev reason
   [ -d "$STATE" ] || return 0
@@ -981,12 +990,15 @@ teardown_blocked_sweep() {
     task_is_finished "$meta" "$id" || continue
     rc=0
     blocked=$("$FM_TEARDOWN_BIN" "$id" --why-blocked 2>/dev/null) || rc=$?
-    # 1 is the query's "not blocked" answer; anything higher is a failed query.
-    if [ "$rc" -gt 1 ]; then
-      triage_log "teardown-blocked query FAILED for task $id (exit $rc); retrying next sweep"
+    [ "$rc" -ne "$TEARDOWN_WHY_NOT_BLOCKED" ] || continue
+    if [ "$rc" -ne 0 ]; then
+      triage_log "teardown-blocked query INDETERMINATE for task $id (exit $rc); retrying next sweep"
       continue
     fi
-    [ "$rc" -eq 0 ] || continue
+    if [ -z "$blocked" ]; then
+      triage_log "teardown-blocked query for task $id answered blocked with no reason; retrying next sweep"
+      continue
+    fi
     marker="$STATE/$id.teardown-blocked-surfaced"
     prev=$(cat "$marker" 2>/dev/null || true)
     [ "$prev" = "$blocked" ] && continue
