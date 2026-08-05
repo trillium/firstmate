@@ -14,6 +14,11 @@
 #   (f) malformed PR URL fails fast without calling gh-axi
 #   (g) explicit merge method is not overridden by the default --squash
 #   (h) repo override args fail fast because the repo comes from the URL
+#   (i) a rate-limited CodeRabbit (green check, zero reviews) refuses the merge
+#   (j) a real CodeRabbit review lets the merge through
+#   (k) an unreadable CodeRabbit review state refuses rather than merging
+#   (l) FM_CODERABBIT_GATE=skip waives the gate deliberately
+#   (m) the CodeRabbit verdict script classifies reviewed/rate-limited/pending
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -79,6 +84,56 @@ exit 0
 SH
   cat > "$case_dir/fakebin/gh" <<'SH'
 #!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+}
+
+# gh mock whose `api` subcommand answers the three CodeRabbit sub-resources from
+# fixture files in the case dir, and applies the caller's --jq filter with real
+# jq so the verdict script's own filter is exercised rather than stubbed out.
+# A missing fixture answers an empty JSON array; a fixture named `fail` makes
+# that call exit non-zero, which is how the unreadable-state case is built.
+# Args: case_dir head_sha
+add_gh_coderabbit_mock() {
+  local case_dir=$1 head=$2
+  mkdir -p "$case_dir/fakebin" "$case_dir/ghfixtures"
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+exit 0
+SH
+  cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+FIX='$case_dir/ghfixtures'
+HEAD='$head'
+SH
+  cat >> "$case_dir/fakebin/gh" <<'SH'
+if [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
+  case " $* " in *headRefOid*) printf '%s\n' "$HEAD"; exit 0 ;; esac
+  exit 0
+fi
+if [ "${1:-}" = api ]; then
+  path= filter=
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --jq) filter=$2; shift 2 ;;
+      --paginate) shift ;;
+      *) path=$1; shift ;;
+    esac
+  done
+  case "$path" in
+    */reviews) name=reviews ;;
+    */pulls/*/comments) name=review-comments ;;
+    */issues/*/comments) name=issue-comments ;;
+    *) name=unknown ;;
+  esac
+  [ ! -e "$FIX/$name.fail" ] || exit 1
+  [ -f "$FIX/$name.json" ] || { printf '[]' > "$FIX/$name.json"; }
+  jq -r "$filter" < "$FIX/$name.json"
+  exit 0
+fi
 exit 0
 SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
@@ -301,6 +356,173 @@ test_parses_pr_url_for_gh_axi() {
   pass "fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments"
 }
 
+# --- CodeRabbit review gate (robots-6bsj) -----------------------------------
+#
+# The defect these cover: a rate-limited CodeRabbit reports its status check as
+# SUCCESS ("Review rate limited") while submitting no review at all, so a merge
+# policy reading "all checks green" merges unreviewed code on a public repo. The
+# gate must read the reviews API, not the check, and must refuse rather than
+# assume a review happened - including when the API cannot be read at all.
+
+CR_STATE="$ROOT/bin/fm-coderabbit-review-state.sh"
+
+# Build a case whose gh mock reports CodeRabbit as rate limited: zero reviews,
+# zero review comments, and the review-limit issue comment observed on
+# trillium/firstmate#67.
+make_rate_limited_case() {
+  local name=$1 case_dir
+  case_dir=$(make_case "$name")
+  mkdir -p "$case_dir/wt"
+  add_gh_coderabbit_mock "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  cat > "$case_dir/ghfixtures/issue-comments.json" <<'JSON'
+[{"user":{"login":"coderabbitai[bot]"},
+  "body":"> [!WARNING]\n> ## Review limit reached\n> @trillium, you've reached your PR review limit."}]
+JSON
+  : > "$case_dir/gh-axi.log"
+  printf '%s\n' "$case_dir"
+}
+
+test_rate_limited_coderabbit_refuses_merge() {
+  local case_dir rc
+  command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (CodeRabbit gate)"; return 0; }
+  case_dir=$(make_rate_limited_case coderabbit-rate-limited)
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/67 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "coderabbit-rate-limited: fm-pr-merge should refuse an unreviewed PR"
+  assert_grep 'CodeRabbit is rate limited' "$case_dir/stderr" \
+    "coderabbit-rate-limited: refusal did not name the rate limit"
+  assert_grep 'FM_CODERABBIT_GATE=skip' "$case_dir/stderr" \
+    "coderabbit-rate-limited: refusal did not name the deliberate waiver"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "coderabbit-rate-limited: gh-axi pr merge was invoked on an unreviewed PR"
+  assert_no_grep 'pr=https://github.com/example/repo/pull/67' "$case_dir/state/task-x1.meta" \
+    "coderabbit-rate-limited: PR was recorded before the gate refused"
+  assert_absent "$case_dir/state/task-x1.check.sh" \
+    "coderabbit-rate-limited: a refused merge armed a poll"
+  pass "fm-pr-merge refuses to merge when CodeRabbit is rate limited and reviewed nothing"
+}
+
+test_real_coderabbit_review_allows_merge() {
+  local case_dir
+  command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (CodeRabbit gate)"; return 0; }
+  case_dir=$(make_case coderabbit-reviewed)
+  mkdir -p "$case_dir/wt"
+  add_gh_coderabbit_mock "$case_dir" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  cat > "$case_dir/ghfixtures/reviews.json" <<'JSON'
+[{"id":4711,"user":{"login":"coderabbitai[bot]"},"state":"COMMENTED"}]
+JSON
+  : > "$case_dir/gh-axi.log"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/68 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "coderabbit-reviewed: fm-pr-merge should merge a genuinely reviewed PR"
+
+  grep -qxF 'pr merge 68 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "coderabbit-reviewed: a reviewed PR was not merged"
+  pass "fm-pr-merge merges normally once CodeRabbit has actually submitted a review"
+}
+
+test_unreadable_review_state_refuses_merge() {
+  local case_dir rc
+  command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (CodeRabbit gate)"; return 0; }
+  case_dir=$(make_case coderabbit-unreadable)
+  mkdir -p "$case_dir/wt"
+  add_gh_coderabbit_mock "$case_dir" cccccccccccccccccccccccccccccccccccccccc
+  : > "$case_dir/ghfixtures/reviews.fail"
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/69 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "coderabbit-unreadable: an unreadable review state must not merge"
+  assert_grep 'could not be determined' "$case_dir/stderr" \
+    "coderabbit-unreadable: refusal did not report the unknown state"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "coderabbit-unreadable: gh-axi pr merge was invoked on an unknown review state"
+  pass "fm-pr-merge refuses when CodeRabbit review state cannot be read, instead of assuming a review"
+}
+
+test_gate_skip_waives_deliberately() {
+  local case_dir
+  command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (CodeRabbit gate)"; return 0; }
+  case_dir=$(make_rate_limited_case coderabbit-waived)
+
+  FM_CODERABBIT_GATE=skip run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/70 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "coderabbit-waived: an explicit waiver should let the merge through"
+
+  grep -qxF 'pr merge 70 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "coderabbit-waived: FM_CODERABBIT_GATE=skip did not waive the gate"
+  pass "FM_CODERABBIT_GATE=skip waives the CodeRabbit gate deliberately rather than silently"
+}
+
+# Run the verdict script directly against one fixture set. Args: case_dir
+run_cr_state() {
+  local case_dir=$1
+  PATH="$case_dir/fakebin:$PATH" "$CR_STATE" example repo 67
+}
+
+test_review_state_verdicts() {
+  local case_dir rc out
+  command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (CodeRabbit gate)"; return 0; }
+
+  # rate-limited: the exact shape observed on trillium/firstmate#67
+  case_dir=$(make_rate_limited_case cr-state-rate-limited)
+  out=$(run_cr_state "$case_dir")
+  [ "$out" = rate-limited ] || fail "cr-state: rate-limited PR reported '$out'"
+
+  # absent: no CodeRabbit artifact anywhere, so the bot is simply not on the repo
+  case_dir=$(make_case cr-state-absent)
+  add_gh_coderabbit_mock "$case_dir" dddddddddddddddddddddddddddddddddddddddd
+  out=$(run_cr_state "$case_dir")
+  [ "$out" = absent ] || fail "cr-state: repo without CodeRabbit reported '$out'"
+
+  # pending: CodeRabbit has spoken but has not reviewed
+  case_dir=$(make_case cr-state-pending)
+  add_gh_coderabbit_mock "$case_dir" eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  printf '%s\n' '[{"user":{"login":"coderabbitai[bot]"},"body":"Currently reviewing this pull request."}]' \
+    > "$case_dir/ghfixtures/issue-comments.json"
+  out=$(run_cr_state "$case_dir")
+  [ "$out" = pending ] || fail "cr-state: unreviewed-but-present CodeRabbit reported '$out'"
+
+  # a non-CodeRabbit review is not a CodeRabbit review
+  case_dir=$(make_case cr-state-other-reviewer)
+  add_gh_coderabbit_mock "$case_dir" ffffffffffffffffffffffffffffffffffffffff
+  printf '%s\n' '[{"id":9,"user":{"login":"some-human"},"state":"APPROVED"}]' \
+    > "$case_dir/ghfixtures/reviews.json"
+  out=$(run_cr_state "$case_dir")
+  [ "$out" = absent ] || fail "cr-state: a human review was counted as CodeRabbit's ('$out')"
+
+  # inline review comments count as a review
+  case_dir=$(make_case cr-state-inline)
+  add_gh_coderabbit_mock "$case_dir" 1010101010101010101010101010101010101010
+  printf '%s\n' '[{"id":31,"user":{"login":"coderabbitai[bot]"},"body":"nit"}]' \
+    > "$case_dir/ghfixtures/review-comments.json"
+  out=$(run_cr_state "$case_dir")
+  [ "$out" = reviewed ] || fail "cr-state: inline CodeRabbit comments reported '$out'"
+
+  # an unreadable forge is exit 3, never a verdict
+  case_dir=$(make_case cr-state-unreadable)
+  add_gh_coderabbit_mock "$case_dir" 2020202020202020202020202020202020202020
+  : > "$case_dir/ghfixtures/reviews.fail"
+  set +e
+  out=$(run_cr_state "$case_dir" 2>/dev/null)
+  rc=$?
+  set -e
+  expect_code 3 "$rc" "cr-state: an unreadable forge must exit 3"
+  [ -z "$out" ] || fail "cr-state: an unreadable forge printed the verdict '$out'"
+
+  pass "fm-coderabbit-review-state classifies reviewed, rate-limited, pending, absent, and unknown"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -311,3 +533,8 @@ test_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
+test_rate_limited_coderabbit_refuses_merge
+test_real_coderabbit_review_allows_merge
+test_unreadable_review_state_refuses_merge
+test_gate_skip_waives_deliberately
+test_review_state_verdicts
