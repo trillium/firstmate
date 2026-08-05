@@ -10,6 +10,22 @@
 # All hermetic over temp dirs; no real agent session is invoked.
 set -u
 
+# Hermeticity: the guard resolves its home as FM_HOME > FM_ROOT_OVERRIDE >
+# the guard script's own repo root (bin/fm-turnend-guard.sh:62-66), and every
+# fixture here installs the guard into its own <fixture>/bin/. So with these
+# unset, each fixture self-resolves to its own state/ - but if the invoking
+# shell exports any of them (an agent session running inside a live firstmate
+# home exports FM_HOME), the guard reads that REAL home's state instead of the
+# fixture's, and verdicts stop describing the fixture at all.
+#
+# run_hook pins FM_HOME per-fixture so the direct-guard tests were always
+# immune; the harness-adapter tests (Grok/codex) invoke the hook the way the
+# real adapters do - inheriting the ambient environment - and were not. That
+# is what made 'healthy no-supervision-needed native stop must allow' fail on
+# a developer box while passing in CI: CI exports no FM_HOME, so nothing
+# leaked there (robots-qgcg).
+unset FM_HOME FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE
+
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -707,6 +723,22 @@ test_grok_adapter_missing_jq_and_no_supervision_allow() {
   pass "fm-turnend-guard-grok: missing jq and no-supervision-needed stops stay silent and bounded"
 }
 
+# Regression guard for the leak itself (robots-qgcg). The adapter tests invoke
+# the hook exactly as the real harness adapters do - no per-call FM_HOME pin -
+# so their verdicts are only about the fixture while the suite's environment
+# stays scrubbed. Assert that directly: if a future change re-introduces any of
+# these, every adapter verdict silently starts describing the developer's own
+# live home and the suite goes green-or-red for reasons unrelated to the code.
+test_suite_environment_is_hermetic() {
+  local var
+  for var in FM_HOME FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE; do
+    if [ -n "${!var:-}" ]; then
+      fail "$var leaked into the suite (=${!var}); adapter verdicts would read that home, not the fixture"
+    fi
+  done
+  pass "fm-turnend-guard: suite environment is hermetic (no FM_HOME/state overrides leak in)"
+}
+
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root() {
   local settings command dir expected_root outside payload out status
   settings="$ROOT/.codex/hooks.json"
@@ -1134,6 +1166,7 @@ test_hook_silent_in_crewmate_worktree
 test_hook_silent_without_jq
 test_hook_silent_without_stdin
 test_hook_runs_fast
+test_suite_environment_is_hermetic
 test_grok_adapter_forces_one_resume_when_unhealthy
 test_grok_adapter_loop_guard_skips_resume
 test_grok_adapter_native_false_blocks_without_resume
