@@ -27,6 +27,15 @@
 #   - Foreground arm: the owner runs bin/fm-watch-arm.sh in the FOREGROUND of
 #     this hook-owned process tree (never shell &); Claude owns the process
 #     group, so its timeout/session teardown kills arm and watcher together.
+#   - Continuity: a quiet arm close is NOT proof that supervision survived. The
+#     arm's benign "idle" line asserts that "adapter re-arm owns continuity",
+#     and for a Claude primary this hook IS that adapter - so exiting 0 on it
+#     would hand continuity to itself and then quit, leaving zero watchers with
+#     nothing scheduled to notice. This owner therefore VERIFIES continuity
+#     after every quiet close (fm_watcher_healthy, the live lock + identity +
+#     beacon gate) and re-arms in this same foreground tree when no live watcher
+#     survived, bounded by FM_AUTOARM_MAX_REARMS. Never a detached successor:
+#     that would leave a watcher alive with no owner to notify.
 #   - Translation: while supervision is still needed and AFK remains inactive,
 #     an actionable arm close (signal:/stale:/check:/heartbeat) prints one
 #     rewake banner to stderr and exits 2, which wakes Claude even while idle
@@ -76,6 +85,8 @@ esac
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-watch-cycle-lib.sh
+. "$SCRIPT_DIR/fm-watch-cycle-lib.sh"
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
@@ -152,7 +163,7 @@ write_epoch arming
 # shellcheck source=/dev/null
 [ -f "$CONFIG/x-mode.env" ] && . "$CONFIG/x-mode.env"
 
-# --- foreground the real arm wrapper ------------------------------------------
+# --- foreground the real arm wrapper, re-arming behind a quiet close ----------
 # NO shell &: this hook process tree is the harness-owned lifecycle. The arm
 # forks the watcher as its own tracked child exactly as it does for the
 # model-driven background-task path, and propagates the wake reason on close.
@@ -197,11 +208,66 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
   OUT=
 done
 
-# The need may have vanished mid-cycle (fleet torn down, X opted out): nothing
-# left to supervise, so close quietly instead of waking the model.
+  # AFK may have appeared mid-cycle: the daemon owns triage now, so suppress the
+  # rewake even for an actionable close and never re-arm against the daemon.
+  if [ -e "$STATE/.afk" ]; then
+    write_epoch afk
+    drop_output
+    exit 0
+  fi
+
+  ACTIONABLE=0
+  FAILED=0
+  if [ -n "$OUT" ]; then
+    grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null && ACTIONABLE=1
+    grep -q '^watcher: FAILED' "$OUT" 2>/dev/null && FAILED=1
+  fi
+  [ "$RC" -ne 0 ] && FAILED=1
+  { [ "$ACTIONABLE" -eq 1 ] || [ "$FAILED" -eq 1 ]; } && break
+
+  # Quiet close. The need may have vanished mid-cycle (fleet torn down, X opted
+  # out): nothing left to supervise, so close quietly. This also populates
+  # FM_SUP_QUEUE_PENDING for the durable-wake check below.
+  if ! need_supervision; then
+    write_epoch clean
+    drop_output
+    exit 0
+  fi
+
+  # Continuity genuinely held: some other arm's watcher owns the singleton, is
+  # alive, matches this home's identity, and is beating. Only this proves the
+  # arm's "adapter re-arm owns continuity" claim, so only this may exit 0.
+  if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
+    write_epoch clean
+    drop_output
+    exit 0
+  fi
+
+  # Supervision ended with no live successor. A wake already sitting in the
+  # durable queue needs a handling turn, not another silent cycle behind it.
+  if [ "$FM_SUP_QUEUE_PENDING" = true ]; then
+    CONTINUITY_LOST=1
+    break
+  fi
+
+  REARMS=$((REARMS + 1))
+  if [ "$REARMS" -gt "$MAX_REARMS" ]; then
+    CONTINUITY_LOST=1
+    break
+  fi
+  write_epoch rearming
+  drop_output
+  # A healthy cycle blocks; only a watcher that cannot stay up returns straight
+  # away, so pace the retry rather than spinning through the whole budget.
+  sleep 1
+done
+
+# --- classify and translate ---------------------------------------------------
+# The need may have vanished while the final cycle ran: nothing left to
+# supervise, so close quietly instead of waking the model.
 if ! need_supervision; then
   write_epoch clean
-  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  drop_output
   exit 0
 fi
 
