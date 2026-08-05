@@ -2133,6 +2133,172 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
   pass "AFK changed paused panes hand off plain stale identities for daemon-owned pause triage"
 }
 
+# --- teardown-blocked surfacing sweep (bin/fm-watch.sh) ---------------------
+# A FINISHED kind=ship task whose work already LANDED but whose worktree still
+# holds a scrap of uncommitted dirt is silent today: teardown correctly refuses,
+# the dead-window sweep files a record only for UNLANDED work, and the idle>2h
+# auto-close falls through to the same refusal and only writes a log.
+# teardown_blocked_sweep asks bin/fm-teardown.sh --why-blocked and raises a
+# distinct captain-facing check: wake naming the exact blocking dirt, deduped per
+# task so one blockage wakes once and a CHANGED blockage wakes again. These tests
+# drive the sweep function directly (sourced in an isolated subshell) with the
+# liveness verdict and FM_TEARDOWN_BIN stubbed; --why-blocked's real read-only
+# behavior against the production safety predicate lives in
+# tests/fm-teardown.test.sh.
+DIRT_REASON='REFUSED: worktree /wt has uncommitted changes.'
+UNLANDED_REASON='REFUSED: worktree /wt has work not on any remote and not landed.'
+
+add_fake_why_blocked_teardown() {  # <fakebin>
+  local fakebin=$1
+  cat > "$fakebin/fake-why-blocked" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TEARDOWN_CALLS_LOG"
+[ -z "${FM_TEST_WHY_BLOCKED_REASON:-}" ] || printf '%s\n' "$FM_TEST_WHY_BLOCKED_REASON"
+exit "${FM_TEST_WHY_BLOCKED_EXIT:-0}"
+SH
+  chmod +x "$fakebin/fake-why-blocked"
+}
+
+run_teardown_blocked_sweep() {  # <state> <fake-teardown> <liveness-verdict> <calls-log> <why-exit> <why-reason>
+  local state=$1 teardown_bin=$2 verdict=$3 calls_log=$4 why_exit=$5 why_reason=$6
+  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" \
+  FM_TEARDOWN_BIN="$teardown_bin" FM_FAKE_AGENT_ALIVE="$verdict" \
+  FM_TEST_TEARDOWN_CALLS_LOG="$calls_log" \
+  FM_TEST_WHY_BLOCKED_EXIT="$why_exit" FM_TEST_WHY_BLOCKED_REASON="$why_reason" \
+  bash -c '
+    set -u
+    # shellcheck disable=SC1090,SC1091
+    . "$1/bin/fm-watch.sh"
+    # Fix the liveness verdict; every other helper the sweep uses (meta parsing,
+    # status classification, teardown delegation, wake queueing) is the real one.
+    fm_backend_agent_alive() { printf "%s" "$FM_FAKE_AGENT_ALIVE"; }
+    teardown_blocked_sweep
+  ' _ "$ROOT"
+}
+
+test_teardown_blocked_sweep_surfaces_dirt_for_done_task() {
+  local dir state fakebin calls out drain_out
+  dir=$(make_case teardown-blocked-done); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"; out="$dir/sweep.out"; drain_out="$dir/drain.out"
+  add_fake_why_blocked_teardown "$fakebin"
+  printf 'window=test:fm-landed-dirty\nkind=ship\n' > "$state/landed-dirty.meta"
+  printf 'done: PR merged\n' > "$state/landed-dirty.status"
+
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
+    0 "$DIRT_REASON" > "$out"
+
+  grep -qFx "landed-dirty --why-blocked" "$calls" 2>/dev/null \
+    || fail "sweep did not query teardown for a done ship task: $(cat "$calls" 2>/dev/null)"
+  grep -F "teardown blocked for finished task landed-dirty" "$out" >/dev/null \
+    || fail "sweep did not raise a distinct teardown-blocked wake: $(cat "$out")"
+  grep -F "uncommitted changes" "$out" >/dev/null \
+    || fail "sweep wake did not name the blocking dirt: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+    || fail "drain after teardown-blocked wake failed"
+  grep "$(printf '\tcheck\t')" "$drain_out" | grep -F "teardown blocked for finished task landed-dirty" >/dev/null \
+    || fail "teardown-blocked wake was not durably queued: $(cat "$drain_out")"
+  [ -s "$state/landed-dirty.teardown-blocked-surfaced" ] \
+    || fail "sweep did not record the surfaced blockage for dedupe"
+  pass "the teardown-blocked sweep surfaces a done task whose teardown refuses, naming the dirt"
+}
+
+test_teardown_blocked_sweep_surfaces_dead_window_task() {
+  local dir state fakebin calls out
+  dir=$(make_case teardown-blocked-dead); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"; out="$dir/sweep.out"
+  add_fake_why_blocked_teardown "$fakebin"
+  # No done: status at all - the window simply died with the work already landed.
+  printf 'window=test:fm-dead-dirty\nkind=ship\n' > "$state/dead-dirty.meta"
+  printf 'working: still going\n' > "$state/dead-dirty.status"
+
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" dead "$calls" \
+    0 "$DIRT_REASON" > "$out"
+
+  grep -F "teardown blocked for finished task dead-dirty" "$out" >/dev/null \
+    || fail "sweep did not surface a dead-window task whose teardown refuses: $(cat "$out")"
+  pass "the teardown-blocked sweep surfaces a dead-window task whose teardown refuses"
+}
+
+test_teardown_blocked_sweep_dedupes_unchanged_blockage() {
+  local dir state fakebin calls out
+  dir=$(make_case teardown-blocked-dedupe); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"; out="$dir/sweep.out"
+  add_fake_why_blocked_teardown "$fakebin"
+  printf 'window=test:fm-dedupe\nkind=ship\n' > "$state/dedupe-task.meta"
+  printf 'done: landed\n' > "$state/dedupe-task.status"
+
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
+    0 "$DIRT_REASON" >/dev/null
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
+    0 "$DIRT_REASON" > "$out"
+
+  [ ! -s "$out" ] || fail "sweep re-woke the captain for an unchanged blockage: $(cat "$out")"
+
+  # A CHANGED blockage is a new fact and must wake again.
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
+    0 "$UNLANDED_REASON" > "$out"
+  grep -F "not on any remote" "$out" >/dev/null \
+    || fail "sweep did not re-wake for a changed blockage: $(cat "$out")"
+  pass "the teardown-blocked sweep wakes once per blockage and again when the blockage changes"
+}
+
+test_teardown_blocked_sweep_silent_when_not_blocked() {
+  local dir state fakebin calls out
+  dir=$(make_case teardown-blocked-clean); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"; out="$dir/sweep.out"
+  add_fake_why_blocked_teardown "$fakebin"
+  printf 'window=test:fm-clean\nkind=ship\n' > "$state/clean-task.meta"
+  printf 'done: landed\n' > "$state/clean-task.status"
+
+  # Exit 1 is --why-blocked's "not blocked" answer.
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
+    1 "" > "$out"
+
+  [ ! -s "$out" ] || fail "sweep woke the captain for a task teardown would not refuse: $(cat "$out")"
+  [ ! -e "$state/clean-task.teardown-blocked-surfaced" ] \
+    || fail "sweep recorded a surfaced blockage for an unblocked task"
+  pass "the teardown-blocked sweep stays silent when teardown would not refuse"
+}
+
+test_teardown_blocked_sweep_fails_open_on_query_error() {
+  local dir state fakebin calls out
+  dir=$(make_case teardown-blocked-error); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"; out="$dir/sweep.out"
+  add_fake_why_blocked_teardown "$fakebin"
+  printf 'window=test:fm-err\nkind=ship\n' > "$state/err-task.meta"
+  printf 'done: landed\n' > "$state/err-task.status"
+
+  # Exit 2 is a failed query (bad request, missing meta), not a "blocked" answer.
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
+    2 "" > "$out"
+
+  [ ! -s "$out" ] || fail "a failed teardown-blocked query woke the captain: $(cat "$out")"
+  [ ! -e "$state/err-task.teardown-blocked-surfaced" ] \
+    || fail "a failed query was recorded as a surfaced blockage, suppressing the real one later"
+  pass "the teardown-blocked sweep fails open on a query error and retries next sweep"
+}
+
+test_teardown_blocked_sweep_skips_unfinished_and_non_ship() {
+  local dir state fakebin calls out
+  dir=$(make_case teardown-blocked-skips); state="$dir/state"; fakebin="$dir/fakebin"
+  calls="$dir/teardown-calls.log"; out="$dir/sweep.out"
+  add_fake_why_blocked_teardown "$fakebin"
+  # Live window, no done: verb - the crew is still working, nothing to surface.
+  printf 'window=test:fm-working\nkind=ship\n' > "$state/working-task.meta"
+  printf 'working: mid-run\n' > "$state/working-task.status"
+  # Dead secondmate: teardown safety exempts it, and the sweep is kind=ship only.
+  printf 'window=test:fm-sm\nkind=secondmate\n' > "$state/sm-task.meta"
+  printf 'done: child finished\n' > "$state/sm-task.status"
+
+  run_teardown_blocked_sweep "$state" "$fakebin/fake-why-blocked" alive "$calls" \
+    0 "$DIRT_REASON" > "$out"
+
+  [ ! -s "$calls" ] \
+    || fail "sweep queried teardown for an unfinished or non-ship task: $(cat "$calls")"
+  [ ! -s "$out" ] || fail "sweep woke for an unfinished or non-ship task: $(cat "$out")"
+  pass "the teardown-blocked sweep only queries finished kind=ship tasks"
+}
+
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
@@ -2189,3 +2355,9 @@ test_dead_window_sweep_delegates_for_confidently_dead_ship
 test_dead_window_sweep_skips_live_ship
 test_dead_window_sweep_skips_ambiguous_endpoint
 test_dead_window_sweep_skips_non_ship_kind
+test_teardown_blocked_sweep_surfaces_dirt_for_done_task
+test_teardown_blocked_sweep_surfaces_dead_window_task
+test_teardown_blocked_sweep_dedupes_unchanged_blockage
+test_teardown_blocked_sweep_silent_when_not_blocked
+test_teardown_blocked_sweep_fails_open_on_query_error
+test_teardown_blocked_sweep_skips_unfinished_and_non_ship

@@ -2264,6 +2264,110 @@ test_dead_window_file_fallback_writes_unfiled_when_store_unavailable() {
   pass "dead-window filing falls back to state/<id>.staleness-unfiled when the store cannot file the bead"
 }
 
+# --- --why-blocked (the read-only "why would teardown refuse?" query) --------
+# bin/fm-watch.sh's teardown_blocked_sweep needs to name the dirt holding a
+# pooled worktree without restating teardown's dirty / unpushed / not-landed
+# rules. --why-blocked answers by running the production safety predicate and
+# printing its refusal: exit 0 blocked (reason on stdout), exit 1 not blocked.
+# It must mutate nothing, and it must agree with what a real teardown does -
+# including the scratch paths teardown deliberately ignores.
+test_why_blocked_reports_uncommitted_dirt() {
+  local case_dir rc
+  case_dir=$(make_case why-blocked-dirty)
+  write_meta "$case_dir" no-mistakes ship
+  printf 'superseded scratch hack\n' > "$case_dir/wt/vite.config.ts"
+
+  set +e
+  run_teardown "$case_dir" --why-blocked > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "why-blocked-dirty: an uncommitted change must report as blocked"
+  grep -q "uncommitted changes" "$case_dir/stdout" \
+    || fail "why-blocked-dirty: the blocking dirt was not named: $(cat "$case_dir/stdout")"
+  pass "--why-blocked reports uncommitted changes as the reason teardown would refuse"
+}
+
+test_why_blocked_reports_unlanded_commits() {
+  local case_dir rc
+  case_dir=$(make_case why-blocked-unlanded)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" work.txt "committed but never pushed"
+
+  set +e
+  run_teardown "$case_dir" --why-blocked > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "why-blocked-unlanded: unlanded commits must report as blocked"
+  grep -q "not landed" "$case_dir/stdout" \
+    || fail "why-blocked-unlanded: the unlanded work was not named: $(cat "$case_dir/stdout")"
+  pass "--why-blocked reports unlanded commits as the reason teardown would refuse"
+}
+
+test_why_blocked_is_silent_for_a_tearable_task() {
+  local case_dir rc
+  case_dir=$(make_case why-blocked-clean)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "landed work"
+  add_fork_with_pushed_branch "$case_dir"
+
+  set +e
+  run_teardown "$case_dir" --why-blocked > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "why-blocked-clean: a tearable task must answer not-blocked"
+  [ ! -s "$case_dir/stdout" ] \
+    || fail "why-blocked-clean: a not-blocked answer printed a reason: $(cat "$case_dir/stdout")"
+  pass "--why-blocked answers not-blocked (exit 1, no reason) for a task teardown would tear down"
+}
+
+test_why_blocked_ignores_the_same_scratch_teardown_ignores() {
+  local case_dir rc
+  case_dir=$(make_case why-blocked-scratch)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "landed work"
+  add_fork_with_pushed_branch "$case_dir"
+  # Harness scratch teardown deliberately does not count as dirt. The query must
+  # agree, or the watcher would wake the captain over a file teardown ignores.
+  mkdir -p "$case_dir/wt/.claude"
+  printf 'session junk\n' > "$case_dir/wt/.claude/settings.json"
+
+  set +e
+  run_teardown "$case_dir" --why-blocked > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "why-blocked-scratch: harness scratch must not read as blocking dirt"
+  pass "--why-blocked ignores exactly the harness scratch the teardown safety check ignores"
+}
+
+test_why_blocked_mutates_nothing() {
+  local case_dir rc
+  case_dir=$(make_case why-blocked-readonly)
+  write_meta "$case_dir" no-mistakes ship
+  printf 'superseded scratch hack\n' > "$case_dir/wt/vite.config.ts"
+
+  set +e
+  run_teardown "$case_dir" --why-blocked > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "why-blocked-readonly: the dirty case should report blocked"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "why-blocked-readonly: the query removed the task meta"
+  [ -d "$case_dir/wt" ] \
+    || fail "why-blocked-readonly: the query removed the worktree"
+  [ -f "$case_dir/wt/vite.config.ts" ] \
+    || fail "why-blocked-readonly: the query discarded the uncommitted change"
+  assert_absent "$case_dir/state/task-x1.staleness-filed" \
+    "why-blocked-readonly: the query filed a triage record"
+  grep -q "teardown task-x1 complete" "$case_dir/stdout" \
+    && fail "why-blocked-readonly: the query fell through into a real teardown"
+  pass "--why-blocked is read-only: it preserves the meta, worktree, uncommitted work, and files nothing"
+}
+
 test_beads_linked_task_closes_bead_on_landed_teardown() {
   local case_dir rc
   case_dir=$(make_case beads-close-on-land)
@@ -3171,3 +3275,8 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_why_blocked_reports_uncommitted_dirt
+test_why_blocked_reports_unlanded_commits
+test_why_blocked_is_silent_for_a_tearable_task
+test_why_blocked_ignores_the_same_scratch_teardown_ignores
+test_why_blocked_mutates_nothing

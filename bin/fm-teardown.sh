@@ -64,7 +64,7 @@
 # like fm-bead-stamp.sh: a missing task CLI or a close the CLI rejects warns on
 # stderr and never blocks or fails an already-confirmed teardown. bin/fm-ledger.sh
 # is the safety net for a bead that was claimed but never reaches this path.
-# Usage: fm-teardown.sh <task-id> [--force | --staleness-autoclose [<idle-since-epoch>] | --staleness-file-dead [<idle-since-epoch>]]
+# Usage: fm-teardown.sh <task-id> [--force | --staleness-autoclose [<idle-since-epoch>] | --staleness-file-dead [<idle-since-epoch>] | --why-blocked]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -86,6 +86,14 @@
 #   any uncommitted change. Idempotent: a task already filed
 #   (state/<id>.staleness-filed present, or the .staleness-unfiled fallback) is
 #   left untouched, so a repeated sweep never re-files.
+#   --why-blocked is a READ-ONLY query used by bin/fm-watch.sh's
+#   teardown_blocked_sweep: it answers "would an ordinary (non-force) teardown of
+#   this task refuse right now, and on exactly what?" by running the production
+#   validate_worktree_teardown_safety predicate and printing its refusal text.
+#   Exit 0 means blocked (stdout carries the reason); exit 1 means not blocked.
+#   It kills nothing, writes no state, clears no lock, and never falls through to
+#   any teardown branch - it exists so a caller can name the blocking dirt without
+#   restating (and drifting from) the dirty / unpushed / not-landed rules.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
@@ -210,14 +218,21 @@ FORCE=${2:-}
 # and its preserved work stay in place for deliberate triage. It is idempotent
 # via state/<id>.staleness-filed (records the filed bead) or the
 # state/<id>.staleness-unfiled fallback. Also takes the optional idle-since epoch.
+# --why-blocked (bin/fm-watch.sh's teardown-blocked sweep): a read-only query,
+# not a teardown mode. It reports whether an ordinary teardown would refuse and
+# on what, then exits without touching anything. See why_teardown_blocked.
 STALENESS_AUTOCLOSE=0
 STALENESS_FILE_DEAD=0
+WHY_BLOCKED=0
 STALENESS_IDLE_SINCE=${3:-}
 if [ "$FORCE" = "--staleness-autoclose" ]; then
   STALENESS_AUTOCLOSE=1
   FORCE=""
 elif [ "$FORCE" = "--staleness-file-dead" ]; then
   STALENESS_FILE_DEAD=1
+  FORCE=""
+elif [ "$FORCE" = "--why-blocked" ]; then
+  WHY_BLOCKED=1
   FORCE=""
 fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
@@ -845,7 +860,8 @@ staleness_chat_only_teardown() {
       "${harness:-unknown}" "$STALENESS_IDLE_SINCE" > "$STATE/$ID.staleness-unfiled"
   fi
   rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
-    "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
+    "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token" \
+    "$STATE/$ID.teardown-blocked-surfaced"
   echo "staleness auto-close $ID: chat reclaimed, worktree $WT preserved for triage"
 }
 
@@ -1675,6 +1691,24 @@ EOF
   return 1
 }
 
+# --why-blocked: the read-only "why would teardown refuse?" query. The answer is
+# produced by RUNNING validate_worktree_teardown_safety above and capturing the
+# refusal text it writes to stderr, so the dirty / unpushed / not-landed rules
+# have exactly one owner and a caller can never drift from what teardown actually
+# enforces. Nothing is mutated: the predicate only reads git state, and the
+# lock-blocked return is deliberately reported as blocked too, because an
+# ordinary teardown would stop there as well.
+# 0 = teardown IS blocked, reason lines on stdout. 1 = not blocked (the predicate
+# passed, or it short-circuits because the worktree is gone or the kind is exempt).
+why_teardown_blocked() {
+  local out rc=0
+  out=$(validate_worktree_teardown_safety 2>&1 >/dev/null) || rc=$?
+  [ "$rc" -ne 0 ] || return 1
+  [ -n "$out" ] || out="teardown refused (exit $rc) without printing a reason"
+  printf '%s\n' "$out"
+  return 0
+}
+
 require_orca_worktree_path_match() {
   local worktree_id=$1 inspected=$2 resolved inspected_abs resolved_abs
   resolved=$(fm_backend_worktree_path orca "$worktree_id") || {
@@ -2328,6 +2362,15 @@ remove_secondmate_registry_entry() {
   return "$rc"
 }
 
+# Read-only query: answer and exit before any cleanup, mutation, or teardown
+# branch below can run. See why_teardown_blocked.
+if [ "$WHY_BLOCKED" = 1 ]; then
+  if why_teardown_blocked; then
+    exit 0
+  fi
+  exit 1
+fi
+
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
 if [ "$STALENESS_FILE_DEAD" = 1 ]; then
@@ -2345,7 +2388,8 @@ if [ "$STALENESS_AUTOCLOSE" = 1 ]; then
     # state instead of claiming a worktree that is already gone.
     echo "staleness auto-close $ID: worktree $WT is already gone, skipping triage filing"
     rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
-      "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
+      "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token" \
+      "$STATE/$ID.teardown-blocked-surfaced"
     exit 0
   fi
   STALENESS_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
@@ -2613,6 +2657,7 @@ rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \
   "$STATE/$ID.muse-session-current" \
+  "$STATE/$ID.teardown-blocked-surfaced" \
   "$STATE/.$ID.open-decisions-cursor"
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true

@@ -51,6 +51,12 @@
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
 #                          invalid pending retirements were preserved without
 #                          running a check or removing poll artifacts
+#   check: teardown blocked for finished task <id>: <reason>
+#                          a finished kind=ship task (status done, or a dead
+#                          window) whose worktree teardown REFUSES, with the
+#                          exact blocking dirt named. Raised once per distinct
+#                          blockage so a superseded scrap of uncommitted work
+#                          cannot hold a pooled worktree in silence
 #   heartbeat              fleet-scan backstop found an unsurfaced captain-relevant
 #                          status, unless afk is active
 # For normal supervision, resume the session-start primary-harness protocol
@@ -927,6 +933,69 @@ dead_window_triage_sweep() {
   return 0
 }
 
+# 0 if a kind=ship task is FINISHED, i.e. there is nobody left to act on it: its
+# last status verb is `done`, or its window is CONFIDENTLY dead
+# (fm_backend_agent_alive == dead - an ambiguous or transiently unreadable
+# endpoint stays untouched, matching dead_window_triage_sweep's discipline).
+# Pure read, no side effects.
+task_is_finished() {
+  local meta=$1 id=$2 window backend
+  [ "$(status_line_verb "$(last_status_line "$STATE/$id.status")")" = "done" ] && return 0
+  window=$(fm_backend_target_of_meta "$meta")
+  [ -n "$window" ] || return 1
+  backend=$(fm_backend_of_meta "$meta")
+  [ "$(fm_backend_agent_alive "$backend" "$window" 2>/dev/null)" = dead ]
+}
+
+# Teardown-blocked surfacing sweep. A FINISHED kind=ship task whose work already
+# LANDED but whose worktree still carries a scrap of uncommitted dirt goes
+# completely silent today, and holds its pooled worktree indefinitely:
+# fm-teardown.sh correctly REFUSES on the dirt, the dead-window sweep above files
+# a triage record only for UNLANDED work, and the idle>2h staleness auto-close
+# falls through to that same refusal and only writes it to a log nobody reads.
+# Teardown is right to refuse; the gap is that nothing tells the captain. This
+# sweep closes it: for each finished kind=ship task (see task_is_finished) it asks
+# fm-teardown.sh --why-blocked whether an ordinary teardown would refuse, and
+# raises a distinct captain-facing check: wake naming the exact blocking dirt when
+# it would. --why-blocked runs the production safety predicate read-only, so the
+# dirty / unpushed / not-landed rules keep their single owner in
+# bin/fm-teardown.sh and this sweep can never drift from them. Deduped per task
+# via state/<id>.teardown-blocked-surfaced, which stores the blocking text: one
+# wake per blockage, and a CHANGED blockage wakes again. Enqueue-before-suppress
+# like the heartbeat backstop - the wake is queued before the marker is written,
+# so a crash between the two can only re-surface, never swallow. Nothing here
+# mutates a worktree, and the marker is cleared by teardown when the task finally
+# goes. Fail-open: a query that errors is logged and skipped, never breaking the
+# loop.
+teardown_blocked_sweep() {
+  local meta id kind blocked rc marker prev reason
+  [ -d "$STATE" ] || return 0
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    kind=$(grep '^kind=' "$meta" | cut -d= -f2- || true)
+    [ -n "$kind" ] || kind=ship
+    [ "$kind" = ship ] || continue
+    id=$(basename "$meta" .meta)
+    task_is_finished "$meta" "$id" || continue
+    rc=0
+    blocked=$("$FM_TEARDOWN_BIN" "$id" --why-blocked 2>/dev/null) || rc=$?
+    # 1 is the query's "not blocked" answer; anything higher is a failed query.
+    if [ "$rc" -gt 1 ]; then
+      triage_log "teardown-blocked query FAILED for task $id (exit $rc); retrying next sweep"
+      continue
+    fi
+    [ "$rc" -eq 0 ] || continue
+    marker="$STATE/$id.teardown-blocked-surfaced"
+    prev=$(cat "$marker" 2>/dev/null || true)
+    [ "$prev" = "$blocked" ] && continue
+    reason="check: teardown blocked for finished task $id: $(printf '%s' "$blocked" | tr '\n' ' ')"
+    fm_wake_append check "teardown-blocked-$id" "$reason" || exit 1
+    printf '%s' "$blocked" > "$marker"
+    wake "$reason"
+  done
+  return 0
+}
+
 # --- Main entry: the runtime below runs only when this file is executed as a
 # script. When sourced (unit tests loading the functions above), return here
 # before acquiring the singleton lock or entering the blocking loop.
@@ -1415,6 +1484,11 @@ EOF
   if [ "$(age_of "$STATE/.last-dead-window-sweep")" -ge "$DEAD_WINDOW_SWEEP_INTERVAL" ]; then
     touch "$STATE/.last-dead-window-sweep"
     dead_window_triage_sweep || true
+    # Same cadence, same metas: name the blocking dirt for a finished kind=ship
+    # task whose teardown refuses, so a superseded one-line diff cannot hold a
+    # pooled worktree in silence (see teardown_blocked_sweep). This one can wake,
+    # so it runs last - the filing sweep above always completes first.
+    teardown_blocked_sweep || true
   fi
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
