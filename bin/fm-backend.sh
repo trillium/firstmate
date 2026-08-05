@@ -775,6 +775,27 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
   esac
 }
 
+# fm_backend_send_text_line: best-effort, UNVERIFIED atomic send of one line of
+# TEXT then Enter - the escape hatch for driving a raw/unmanaged pane that has
+# no recorded meta and no readable agent composer, so the proof-carrying
+# send-text-submit path cannot verify delivery. Mirrors each backend's fixed
+# spawn-time command send (`tmux send-keys -t T text Enter`). No submit proof,
+# no retry, no marker: callers own the "best-effort, no delivery guarantee"
+# contract (fm-send.sh --raw).
+fm_backend_send_text_line() {  # <backend> <target> <text> [expected-label]
+  local backend=$1
+  shift
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    tmux) fm_backend_tmux_send_text_line "$@" ;;
+    herdr) fm_backend_herdr_send_text_line "$@" ;;
+    zellij) fm_backend_zellij_send_text_line "$@" ;;
+    orca) fm_backend_orca_send_text_line "$@" ;;
+    cmux) fm_backend_cmux_send_text_line "$@" ;;
+    *) echo "error: no send-text-line implementation for backend '$backend'" >&2; return 1 ;;
+  esac
+}
+
 # fm_backend_kill: remove the task's session endpoint (best-effort; a
 # nonexistent/already-gone target is not an error - callers already swallow
 # failures here exactly as the inline `tmux kill-window ... || true` did).
