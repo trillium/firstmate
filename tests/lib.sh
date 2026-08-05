@@ -37,7 +37,7 @@ export FM_GATE_REFUSE_BYPASS=1
 # Skip Parlay enrollment in every spawn driven by a test that sources this
 # library - not in the whole suite, since a spawning test need not source it and
 # must then export the flag itself (bin/fm-spawn.sh's header owns that rule; the
-# enforcing case lives in tests/fm-spawn-parlay.test.sh). The live Parlay relay
+# enforcing case lives in CI's Repo invariants job). The live Parlay relay
 # is not a test fixture; without this guard every test spawn that reaches the
 # enrollment block would permanently register a fake agent ID and leave a
 # listener process running (robots-8ce5).
