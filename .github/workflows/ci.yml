@@ -107,10 +107,17 @@ jobs:
   tests-portable-serial:
     name: Behavior portable serial
     runs-on: ubuntu-latest
-    # Measured serial remainder is ~13 min wall without Herdr. Cap is a hang
+    # Remeasured 2026-08-05 (robots-n978) from run 30973475912: 88 scripts
+    # completed in 18.9 min wall, then the 89th and last
+    # (tests/fm-watcher-lock.test.sh, ~1.8 min) was still running when the old
+    # 20m cap cancelled the job. Healthy wall is now ~21 min, not the ~13 min
+    # this comment claimed before sharding-era growth; the largest inter-line
+    # gap in that whole run was 56s, so nothing was hanging. Cap stays a hang
     # tripwire above observed p99 script cost and suite wall, not the expected
-    # healthy end (interim 25m full-suite slack reduced after sharding).
-    timeout-minutes: 20
+    # healthy end. Re-measure here before adding more serial scripts; when
+    # healthy wall approaches this cap again, shard the serial remainder
+    # across two jobs rather than raising the tripwire toward a real hang.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
