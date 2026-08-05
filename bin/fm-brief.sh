@@ -392,8 +392,8 @@ States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
 Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own; use \`blocked:\` when you are stuck and need firstmate to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, or work ready for review.
 This is also how you return the answer to a marked from-firstmate request above.
-A marked request requires one correlated answer after the work; it does not require a separate receipt or start acknowledgement.
-Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started.
+When a marked request carries corr=<id>, immediately append an intake acknowledgement line to the parent status file containing that corr=<id> token before doing any work; then, after finishing, append the terminal result (also containing corr=<id>) to report completion.
+Never append working: lines merely to acknowledge receipt or announce that a marked request has started.
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>]: {why it is no longer active}\`.
