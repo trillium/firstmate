@@ -52,6 +52,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-subagent-pretool-check.sh` | Primary-home delegation-shape PreToolUse guard (docs/subagent-guard.md) |
 | `fm-supervision-instructions.sh` | Render the session-start primary-harness supervision block or the one-line repair instruction |
 | `fm-home-seed.sh`        | Transactionally provision a secondmate home and maintain `data/secondmates.md`       |
+| `fm-project-dir-lib.sh`  | Single owner of how a project argument (bare name, `projects/<name>`, or explicit path) names a clone directory; shared by fm-brief.sh, fm-fleet-sync.sh, and fm-spawn.sh so the two halves of a dispatch cannot disagree |
 | `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend |
 | `fm-spawn-hooks.d/beads.sh` | Post-spawn extension: stamp a `--beads` task's bead and register its bead-close watcher check |
 | `fm-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |
