@@ -211,12 +211,12 @@ verify_resolution_identity() {
     *) fail "captain hold $id has no retry identity record" ;;
   esac
   case "$resolution_fields" in
-    *'Routed identities: '*'Captain decision:'*) : ;;
+    *'Routed identities: '*'\nCaptain decision:'*) : ;;
     *) fail "captain hold $id has an invalid retry identity record" ;;
   esac
-  recorded_digest=$(printf '%s' "$resolution_fields" | sed -n 's/^\([^[:space:]]*\).*/\1/p')
-  resolution_fields=$(printf '%s' "$resolution_fields" | sed 's/^[^[:space:]]*[[:space:]]*Routed identities: //')
-  recorded_routes=$(printf '%s' "$resolution_fields" | sed -n 's/^\([^[:space:]]*\).*/\1/p')
+  recorded_digest=${resolution_fields%%\\n*}
+  resolution_fields=${resolution_fields#*\\nRouted identities: }
+  recorded_routes=${resolution_fields%%\\n*}
   [ "$recorded_digest" = "$decision_digest" ] \
     || fail "captain hold $id records a different captain decision"
   [ "$recorded_routes" = "$routed_csv" ] \
