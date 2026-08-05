@@ -10,9 +10,15 @@
 #            fm-spawn refuses to launch unless the resolved worktree is isolated.
 #   GUARD 2 (detection)  - fm-guard and fm-bootstrap alarm when the primary is on
 #            a feature branch, and stay silent on the default branch or detached.
-# These cases pin: the shared lib's branch classification, the fm-guard banner,
-# the fm-bootstrap problem line, the brief assertion ordering, and the fm-spawn
-# abort - all hermetic over temp git repos and fakebins.
+# The one case that looks like a tangle but is not: git permits one worktree per
+# branch, so when a linked worktree (a secondmate home) holds the default branch
+# the primary CANNOT be on it. The alarm would then be permanent and its checkout
+# remedy impossible, so fm-guard stays silent and bootstrap reports it once as a
+# no-action fact naming the holder.
+# These cases pin: the shared lib's branch classification and holder lookup, the
+# fm-guard banner, the fm-bootstrap problem line, the holder downgrade on both
+# surfaces, the brief assertion ordering, and the fm-spawn abort - all hermetic
+# over temp git repos and fakebins.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -60,6 +66,40 @@ ROWS
   pass "fm_primary_tangle_branch: feature branch alarms; default/detached/non-git stay silent"
 }
 
+# Turn a repo into the reported steady state: the primary on a feature branch
+# because a linked worktree (standing in for a secondmate home) holds `main`.
+# Echoes the holder worktree path.
+add_default_branch_holder() {
+  local repo=$1 holder=$2 branch=${3:-fm/holder-blocked}
+  git -C "$repo" checkout -q -B "$branch"
+  git -C "$repo" worktree add -q "$holder" main >/dev/null 2>&1
+  printf '%s\n' "$holder"
+}
+
+# fm_branch_holder_worktree is the whole downgrade decision: it must find the
+# OTHER worktree holding the default branch, and find nothing when none does.
+test_lib_branch_holder() {
+  local repo holder out
+  repo=$(make_repo "$TMP_ROOT/holder-repo")
+
+  out=$(fm_branch_holder_worktree "$repo" nosuchbranch || true)
+  [ -z "$out" ] || fail "a branch no worktree holds reported holder '$out'"
+
+  holder=$(add_default_branch_holder "$repo" "$TMP_ROOT/holder-wt")
+  out=$(fm_branch_holder_worktree "$repo" main || true)
+  [ -n "$out" ] || fail "the linked worktree holding main was not reported as its holder"
+  case "$out" in
+    */holder-wt) : ;;
+    *) fail "holder lookup named '$out', expected the linked worktree at $holder" ;;
+  esac
+
+  # A detached linked worktree carries no branch line and must never be a holder.
+  git -C "$repo" worktree add -q --detach "$TMP_ROOT/holder-detached" >/dev/null 2>&1
+  out=$(fm_branch_holder_worktree "$repo" fm/not-checked-out || true)
+  [ -z "$out" ] || fail "a detached worktree was wrongly reported as a branch holder: '$out'"
+  pass "fm_branch_holder_worktree: names the worktree holding a branch; silent for unheld and detached"
+}
+
 # --- GUARD 2a: fm-guard banner ----------------------------------------------
 
 run_guard() {
@@ -90,6 +130,25 @@ test_guard_banner() {
   pass "fm-guard: bordered tangle banner fires only for a feature branch and suppresses repair commands in read-only mode"
 }
 
+# The reported defect: with a secondmate home holding main, the primary is stuck
+# on a feature branch by construction, so the banner became a permanent alarm
+# whose `git checkout main` remedy could never succeed - and, because it prints
+# on every guarded command, it masked the real output of whatever called it.
+# fm-guard must be completely silent in that state, in both modes.
+test_guard_silent_when_default_branch_is_held() {
+  local repo out
+  repo=$(make_repo "$TMP_ROOT/guard-held-repo")
+  add_default_branch_holder "$repo" "$TMP_ROOT/guard-held-wt" fm/held-hh8 >/dev/null
+
+  out=$(run_guard "$repo")
+  assert_not_contains "$out" "WORKTREE TANGLE" "guard alarmed while another worktree held the default branch"
+  assert_not_contains "$out" "checkout main" "guard prescribed a checkout that git cannot perform while main is held"
+  assert_not_contains "$out" "fm/held-hh8" "guard mentioned the primary branch at all in an expected steady state"
+  out=$(FM_GUARD_READ_ONLY=1 run_guard "$repo")
+  assert_not_contains "$out" "WORKTREE TANGLE" "read-only guard alarmed while another worktree held the default branch"
+  pass "fm-guard: silent when the default branch is checked out in another worktree (no impossible remedy)"
+}
+
 # --- GUARD 2b: fm-bootstrap problem line ------------------------------------
 
 run_bootstrap() {
@@ -117,6 +176,33 @@ test_bootstrap_line() {
   assert_contains "$out" "read-only session must leave restore work" "detect-only bootstrap did not explain restore ownership"
   assert_not_contains "$out" "checkout main" "detect-only bootstrap printed a state-changing restore command"
   pass "fm-bootstrap: TANGLE problem line fires only for a feature branch and suppresses repair commands in detect-only mode"
+}
+
+# Session start is where the held-default-branch state is reported, exactly once
+# and as a no-action fact: never a TANGLE problem line (which would send the
+# agent to the bootstrap-diagnostics remediation), never an impossible checkout,
+# and carrying the count of commits the primary holds that main does not, so a
+# crewmate's genuinely stranded work is still visible.
+test_bootstrap_info_when_default_branch_is_held() {
+  local repo out
+  repo=$(make_repo "$TMP_ROOT/bootstrap-held-repo")
+  # git reports worktree paths fully resolved (/private/var on macOS), so assert
+  # on the leaf name rather than the pre-resolution path handed to worktree add.
+  add_default_branch_holder "$repo" "$TMP_ROOT/bootstrap-held-wt" fm/held-ii9 >/dev/null
+  git -C "$repo" commit -q --allow-empty -m "stranded work"
+
+  out=$(run_bootstrap "$repo" | grep '^TANGLE:' || true)
+  [ -z "$out" ] || fail "bootstrap emitted a TANGLE problem line for a held default branch: $out"
+
+  out=$(run_bootstrap "$repo" | grep '^BOOTSTRAP_INFO: primary checkout' || true)
+  assert_contains "$out" "fm/held-ii9" "held-branch fact did not name the primary's branch"
+  assert_contains "$out" "bootstrap-held-wt" "held-branch fact did not name the worktree holding the default branch"
+  assert_contains "$out" "1 commit(s)" "held-branch fact did not count the commits the primary carries beyond main"
+  assert_not_contains "$out" "checkout main" "held-branch fact prescribed a checkout that git cannot perform"
+
+  out=$(FM_ROOT_OVERRIDE="$repo" FM_HOME="$repo" FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null | grep '^TANGLE:' || true)
+  [ -z "$out" ] || fail "detect-only bootstrap emitted a TANGLE problem line for a held default branch: $out"
+  pass "fm-bootstrap: reports a held default branch once as a no-action fact naming the holder, never as TANGLE"
 }
 
 # --- GUARD 1a: brief isolation assertion ------------------------------------
@@ -302,8 +388,11 @@ test_spawn_tmux_window_construction() {
 }
 
 test_lib_classification
+test_lib_branch_holder
 test_guard_banner
+test_guard_silent_when_default_branch_is_held
 test_bootstrap_line
+test_bootstrap_info_when_default_branch_is_held
 test_brief_assertion_precedes_branch
 test_spawn_isolation_abort
 test_spawn_tmux_window_construction
