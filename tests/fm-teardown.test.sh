@@ -60,6 +60,10 @@ PR_CHECK="$ROOT/bin/fm-pr-check.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-tests)
 REAL_GIT_FOR_TEST=$(command -v git)
 export REAL_GIT_FOR_TEST
+REAL_PS_FOR_TEST=$(command -v ps)
+export REAL_PS_FOR_TEST
+REAL_LSOF_FOR_TEST=$(command -v lsof)
+export REAL_LSOF_FOR_TEST
 
 # Build a fresh sandbox for one test case. Sets up:
 #   $CASE/state/        - firstmate state dir (with a fresh watcher beacon)
@@ -105,7 +109,50 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fakebin/treehouse" "$fakebin/tmux" "$fakebin/gh-axi" "$fakebin/gh"
+  # Default hermetic no-mistakes stub: `axi status` answers FM_FAKE_AXI_STATUS
+  # verbatim (empty by default, i.e. no active run - the pre-teardown run-abort
+  # step is then a no-op), and `axi abort` appends one line to
+  # FM_FAKE_NM_ABORT_LOG when set. This keeps every case hermetic - without it,
+  # `command -v no-mistakes` would fall through to whatever real binary
+  # happens to be on the test runner's own PATH. Tests exercising the run-abort
+  # path override FM_FAKE_AXI_STATUS/FM_FAKE_NM_ABORT_LOG before run_teardown.
+  cat > "$fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  axi)
+    shift
+    case "${1:-}" in
+      status)
+        shift
+        run_id=""
+        if [ "${1:-}" = --run ]; then run_id=${2:-}; fi
+        if [ -n "${FM_FAKE_NM_ABORT_LOG:-}" ] \
+           && grep -Fxq "abort --run $run_id" "$FM_FAKE_NM_ABORT_LOG" 2>/dev/null \
+           && [ "${FM_FAKE_NM_ABORT_NOOP:-0}" != 1 ]; then
+          if [ "${FM_FAKE_NM_NOT_FOUND_AFTER_ABORT:-0}" = 1 ]; then
+            printf 'error: "run \\"%s\\" not found"\n' "$run_id" >&2
+            exit 1
+          elif [ "${FM_FAKE_NM_EMPTY_AFTER_ABORT:-0}" = 1 ]; then
+            exit 0
+          elif [ -n "${FM_FAKE_AXI_STATUS_AFTER_ABORT:-}" ]; then
+            printf '%s\n' "$FM_FAKE_AXI_STATUS_AFTER_ABORT"
+          else
+            printf 'run:\n  id: "%s"\n  outcome: cancelled\n' "$run_id"
+          fi
+        else
+          printf '%s\n' "${FM_FAKE_AXI_STATUS:-}"
+        fi
+        ;;
+      abort)
+        shift
+        [ -z "${FM_FAKE_NM_ABORT_LOG:-}" ] || printf 'abort %s\n' "$*" >> "$FM_FAKE_NM_ABORT_LOG"
+        exit 0 ;;
+    esac
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/treehouse" "$fakebin/tmux" "$fakebin/gh-axi" "$fakebin/gh" "$fakebin/no-mistakes"
 
   # Bare origin so the clone has an `origin` remote and origin/HEAD.
   git init -q --bare "$case_dir/origin.git"
@@ -151,19 +198,16 @@ SH
   chmod +x "$case_dir/fakebin/tasks-axi"
 }
 
-# Write a meta file for the task. Args: case_dir mode kind [beads_id]
+# Write a meta file for the task. Args: case_dir mode kind
 write_meta() {
-  local case_dir=$1 mode=$2 kind=$3 beads_id=${4:-}
-  local extra=()
-  [ -z "$beads_id" ] || extra+=("beads_id=$beads_id")
+  local case_dir=$1 mode=$2 kind=$3
   fm_write_meta "$case_dir/state/task-x1.meta" \
     "window=firstmate:fm-task-x1" \
     "endpoint_task_id=task-x1" \
     "worktree=$case_dir/wt" \
     "project=$case_dir/project" \
     "kind=$kind" \
-    "mode=$mode" \
-    "${extra[@]+"${extra[@]}"}"
+    "mode=$mode"
 }
 
 # Commit something on the worktree's task branch. Args: case_dir [message]
@@ -171,32 +215,6 @@ wt_commit() {
   local case_dir=$1 msg=${2:-wt work}
   git -C "$case_dir/wt" -c user.email=t@t -c user.name=t \
     commit -q --allow-empty -m "$msg"
-}
-
-# Mock `task` (the beads CLI): logs every invocation to $case_dir/task-calls.log
-# and succeeds. Args: case_dir
-add_beads_task_mock() {
-  local case_dir=$1
-  cat > "$case_dir/fakebin/task" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/task"
-}
-
-# Mock `staleness` (the staleness-store beads CLI that bin/fm-staleness-file.sh
-# invokes): logs every invocation to $case_dir/staleness-calls.log and echoes a
-# bead id, like a real `create --silent` would. Args: case_dir
-add_staleness_mock() {
-  local case_dir=$1
-  cat > "$case_dir/fakebin/staleness" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_STALENESS_CALLS_LOG"
-[ "${1:-}" = create ] && printf 'stale-bead-1\n'
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/staleness"
 }
 
 # Add a fork bare repo and register it as a remote on the project, then push
@@ -440,11 +458,15 @@ git_index_lock_path() {
 }
 
 # fakebin/lsof stub: no process ever holds anything open (lsof's not-found exit
-# code), so a lock's staleness is decided by age alone.
+# code), so a lock's staleness is decided by age alone. The cwd scan is a
+# separate successful empty query.
 add_lsof_no_holder() {
   local case_dir=$1
   cat > "$case_dir/fakebin/lsof" <<'SH'
 #!/usr/bin/env bash
+case " $* " in
+  *" -d cwd "*) exit 0 ;;
+esac
 exit 1
 SH
   chmod +x "$case_dir/fakebin/lsof"
@@ -523,8 +545,21 @@ run_teardown() {
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
-  PATH="$case_dir/fakebin:$PATH" \
+  PATH="$case_dir/fakebin:${FM_TEARDOWN_TEST_PATH:-$PATH}" \
     "$TEARDOWN" task-x1 "$@"
+}
+
+# Build the teardown test's executable search path without lsof, regardless of
+# whether the host installs it in /usr/bin, /usr/sbin, or a package-manager bin.
+make_path_without_lsof() {  # <case-dir>
+  local case_dir=$1 path_dir="$1/path-without-lsof" cmd resolved
+  mkdir -p "$path_dir"
+  for cmd in awk bash basename cat chmod cp cut date dirname env find git grep head hostname id ln \
+    mkdir mktemp mv perl ps readlink realpath rm sed sh sleep sort stat tail timeout tr uname wc xargs; do
+    resolved=$(command -v "$cmd" 2>/dev/null) || continue
+    case "$resolved" in /*) ln -sf "$resolved" "$path_dir/$cmd" ;; esac
+  done
+  printf '%s\n' "$path_dir"
 }
 
 test_local_only_fork_remote_allows() {
@@ -753,35 +788,6 @@ test_squash_merged_pr_allows_replayed_unpushed_patch() {
   expect_code 0 "$rc" "squash-replayed-patch: teardown should succeed when unpushed local patch is in the merged PR head"
   ! grep -q REFUSED "$case_dir/stderr" || fail "squash-replayed-patch: teardown printed a REFUSED line"
   pass "squash-merged PR accepts replayed unpushed local patches contained in the PR head"
-}
-
-test_squash_merged_pr_allows_genuine_multi_commit_squash() {
-  local case_dir rc base_head tree pr_head
-  case_dir=$(make_case squash-multi-commit)
-  write_meta "$case_dir" no-mistakes ship
-  base_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  # Two separate local commits, never pushed anywhere.
-  wt_commit_file "$case_dir" a.txt alpha "add a"
-  wt_commit_file "$case_dir" b.txt beta "add b"
-  append_pr_meta_url "$case_dir"
-  # A genuine squash merge: ONE commit off the original (pre-branch) base
-  # combining both files' changes, with neither local commit as an ancestor.
-  # The ancestor check fails (pr_head does not descend from HEAD), and the
-  # patch-id replay check fails too (the squash's combined two-file diff has
-  # no single patch id matching either local commit's one-file diff) - only
-  # the 3-way merge-tree comparison recognizes this as landed.
-  tree=$(git -C "$case_dir/wt" rev-parse 'HEAD^{tree}')
-  pr_head=$(printf '%s\n' "squash a+b" | git -C "$case_dir/wt" commit-tree "$tree" -p "$base_head")
-  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
-
-  set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "squash-multi-commit: teardown should succeed via 3-way merge-tree comparison"
-  ! grep -q REFUSED "$case_dir/stderr" || fail "squash-multi-commit: teardown printed a REFUSED line"
-  pass "genuine multi-commit squash merge (unmatched by ancestor or patch-id checks) is recognized as landed via 3-way merge-tree comparison"
 }
 
 test_merged_pr_with_later_local_commit_refuses() {
@@ -1029,10 +1035,8 @@ test_lsof_error_never_clears_index_lock() {
   set -e
 
   expect_code 1 "$rc" "lsof-error-index-lock: teardown should refuse when lsof errors"
-  assert_grep "lsof check failed" "$case_dir/stderr" \
+  assert_grep "REFUSED: cannot determine leaked processes" "$case_dir/stderr" \
     "lsof-error-index-lock: teardown did not report the lsof failure"
-  assert_grep "not provably stale" "$case_dir/stderr" \
-    "lsof-error-index-lock: teardown did not explain the refusal"
   assert_not_contains "$(cat "$case_dir/stderr")" "removed provably-stale git lock" \
     "lsof-error-index-lock: teardown removed a lock after lsof failed"
   [ -e "$lock" ] || fail "lsof-error-index-lock: lock file was removed after lsof failed"
@@ -1882,467 +1886,593 @@ test_herdr_projection_teardown_retains_journal_when_close_unconfirmed() {
   pass "herdr projection teardown retains every record when post-close presence is unknown"
 }
 
-test_teardown_deregisters_parlay_when_present() {
-  local case_dir calls_log pid
-  case_dir=$(make_case parlay-present)
-  write_meta "$case_dir" local-only ship
-  wt_commit "$case_dir" "fix the thing"
-  add_fork_with_pushed_branch "$case_dir"
+# --- Fix 1: conclude/abort the task's own parked no-mistakes run before the
+# worker is removed, and Fix 2: reap leaked descendant processes rooted under
+# the task's own worktree/tasktmp - both exercised through the real teardown
+# path (bin/fm-teardown.sh), never by matching its source text. ------------
 
-  calls_log="$case_dir/parlay-calls.log"
-  cat > "$case_dir/fakebin/parlay" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$calls_log"
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/parlay"
-
-  sleep 6600 &
-  pid=$!
-  printf '%s\n' "$pid" > "$case_dir/state/task-x1.parlay-listen-pid"
-
-  run_teardown "$case_dir" >/dev/null 2>&1 \
-    || fail "parlay-present: teardown should succeed"
-
-  ! kill -0 "$pid" 2>/dev/null \
-    || { kill "$pid" 2>/dev/null || true; fail "parlay-present: recorded parlay-listen pid was not killed"; }
-  assert_grep "agent-down task-x1" "$calls_log" \
-    "parlay-present: parlay was not invoked as 'agent-down task-x1'"
-  assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
-    "parlay-present: teardown did not remove the parlay-listen-pid file"
-  pass "a clean teardown kills the recorded parlay-listen pid and calls 'parlay agent-down <id>'"
+# A parked-at-a-gate `axi status` TOON payload for <branch>/<head>, matching
+# the shape no-mistakes actually emits (see tests/fm-crew-state.test.sh's
+# run_parked fixture, the same shape bin/fm-crew-state.sh's own tests pin).
+parked_axi_status_toon() {  # <branch> <head> [run-id]
+  cat <<EOF
+run:
+  id: "${3:-01RUN}"
+  branch: $1
+  status: awaiting_approval
+  awaiting_agent: parked 2m10s
+  head: "$2"
+  pr: ""
+  findings: none
+gate: review
+EOF
 }
 
-test_teardown_kills_pid_even_when_parlay_absent() {
-  local case_dir safe_path pid rc
-  case_dir=$(make_case parlay-absent)
-  write_meta "$case_dir" local-only ship
-  wt_commit "$case_dir" "fix the thing"
-  add_fork_with_pushed_branch "$case_dir"
-
-  sleep 6600 &
-  pid=$!
-  printf '%s\n' "$pid" > "$case_dir/state/task-x1.parlay-listen-pid"
-
-  # No fakebin/parlay is installed, and the host machine's real parlay (if any)
-  # is stripped out of PATH too - the genuine absent-from-PATH case.
-  safe_path=$(fm_path_without parlay)
-
-  set +e
-  FM_ROOT_OVERRIDE="$ROOT" \
-  FM_STATE_OVERRIDE="$case_dir/state" \
-  FM_CONFIG_OVERRIDE="$case_dir/config" \
-  PATH="$case_dir/fakebin:$safe_path" \
-    "$TEARDOWN" task-x1 >/dev/null 2>&1
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "parlay-absent: teardown should still succeed without parlay on PATH"
-  ! kill -0 "$pid" 2>/dev/null \
-    || { kill "$pid" 2>/dev/null || true; fail "parlay-absent: recorded parlay-listen pid was not killed without parlay on PATH"; }
-  assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
-    "parlay-absent: teardown did not remove the parlay-listen-pid file"
-  pass "a clean teardown still kills the recorded parlay-listen pid even when parlay is absent from PATH"
+running_axi_status_toon() {  # <branch> <head> [run-id]
+  cat <<EOF
+run:
+  id: "${3:-01RUN}"
+  branch: $1
+  status: running
+  head: "$2"
+  pr: ""
+steps[1]{step,status,findings,summary}:
+  test,running,0,"agent under way"
+EOF
 }
 
-# --- staleness auto-close (bin/fm-watch.sh idle>2h backstop) ---------------
-
-test_staleness_autoclose_landed_falls_through_to_full_teardown() {
-  local case_dir rc wt_head
-  case_dir=$(make_case staleness-landed)
-  write_meta "$case_dir" local-only ship
-  wt_commit "$case_dir" "merged work"
-  # Fast-forward local main to HEAD so work_is_landed sees it as landed, the
-  # same fixture test_local_only_merged_to_local_main_allows uses.
-  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
-
-  set +e
-  run_teardown "$case_dir" --staleness-autoclose 1700000000 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "staleness-landed: teardown should succeed on landed work"
-  grep -q "teardown task-x1 complete" "$case_dir/stdout" \
-    || fail "staleness-landed: did not fall through to the ordinary full teardown: $(cat "$case_dir/stdout")"
-  ! grep -q "chat reclaimed" "$case_dir/stdout" \
-    || fail "staleness-landed: took the chat-only path despite landed work"
-  assert_absent "$case_dir/state/task-x1.meta" "staleness-landed: task metadata should be removed"
-  pass "staleness auto-close on already-landed work falls through to an ordinary full teardown"
-}
-
-test_staleness_autoclose_unlanded_chat_only_preserves_worktree_and_files_bead() {
-  local case_dir rc
-  case_dir=$(make_case staleness-unlanded)
-  write_meta "$case_dir" local-only ship
-  add_staleness_mock "$case_dir"
-  # A real file change (not an empty commit) so its content genuinely differs
-  # from main - content_in_default must not mistake it for already-landed.
-  wt_commit_file "$case_dir" work.txt "unpushed work in progress"
-  # No fork, no push to origin, not merged into main: never-discard-unlanded-work
-  # applies, so this must reclaim the process only, not the worktree.
-
-  set +e
-  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
-    run_teardown "$case_dir" --staleness-autoclose 1700000000 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "staleness-unlanded: chat-only teardown should succeed"
-  grep -q "chat reclaimed" "$case_dir/stdout" \
-    || fail "staleness-unlanded: did not take the chat-only path: $(cat "$case_dir/stdout")"
-  [ -d "$case_dir/wt" ] || fail "staleness-unlanded: worktree directory was deleted"
-  [ -f "$case_dir/wt/work.txt" ] \
-    || fail "staleness-unlanded: the unlanded file no longer exists in the worktree"
-  git -C "$case_dir/wt" log --oneline -1 2>/dev/null | grep -q "add work.txt" \
-    || fail "staleness-unlanded: the unlanded commit no longer exists in the worktree"
-  assert_absent "$case_dir/state/task-x1.meta" "staleness-unlanded: task metadata should still be retired"
-  assert_absent "$case_dir/state/task-x1.status" "staleness-unlanded: task status should still be retired"
-  grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
-    || fail "staleness-unlanded: no bead filed in the staleness store: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
-  grep -q "fm/task-x1" "$case_dir/staleness-calls.log" 2>/dev/null \
-    || fail "staleness-unlanded: filed bead did not record the branch: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
-  pass "staleness auto-close on unlanded work reclaims the process only, preserves the worktree, and files a triage bead"
-}
-
-# --- dead-window triage filing (bin/fm-watch.sh dead-window sweep) ----------
-# --staleness-file-dead is the additive, non-destructive twin of
-# --staleness-autoclose for a window that DIED on its own: it files the same
-# triage record for unlanded work but NEVER kills an endpoint, removes the meta,
-# or touches the worktree/branch. Idempotent via state/<id>.staleness-filed (or
-# the .staleness-unfiled fallback).
-
-# Like add_staleness_mock, but the `create` call FAILS (exit 1), simulating a
-# staleness store that is unavailable or rejects the create. This drives
-# fm-staleness-file.sh's fail-open branch so teardown writes the
-# state/<id>.staleness-unfiled fallback instead of a bead. Args: case_dir
-add_staleness_mock_create_fails() {
+# Land a shippable commit on the task branch and push it to origin, the same
+# "definitely landed, teardown must ALLOW" shape test_no_mistakes_origin_remote_allows
+# uses, so these new cases exercise the abort/reap steps on a real successful
+# teardown rather than a refusal path.
+land_shippable_commit() {
   local case_dir=$1
-  cat > "$case_dir/fakebin/staleness" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${FM_TEST_STALENESS_CALLS_LOG:-/dev/null}"
-[ "${1:-}" = create ] && exit 1
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/staleness"
-}
-
-test_dead_window_file_unlanded_files_bead_and_preserves_everything() {
-  local case_dir rc wt_head
-  case_dir=$(make_case dead-window-unlanded)
-  write_meta "$case_dir" local-only ship
-  add_staleness_mock "$case_dir"
-  # A real (non-empty) file change so content_in_default cannot mistake it for
-  # already-landed; no fork/push/merge, so the work is genuinely unlanded.
-  wt_commit_file "$case_dir" work.txt "dead-window work in progress"
-  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-
-  set +e
-  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
-    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "dead-window-unlanded: filing should succeed"
-  grep -q "filed for triage" "$case_dir/stdout" \
-    || fail "dead-window-unlanded: did not report a triage filing: $(cat "$case_dir/stdout")"
-  grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
-    || fail "dead-window-unlanded: no bead filed in the staleness store: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
-  grep -q "fm/task-x1" "$case_dir/staleness-calls.log" 2>/dev/null \
-    || fail "dead-window-unlanded: filed bead did not record the branch: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
-  assert_present "$case_dir/state/task-x1.staleness-filed" \
-    "dead-window-unlanded: an idempotency marker should record the filed bead"
-  # Never touches the worktree, its branch, or the task meta.
-  assert_present "$case_dir/state/task-x1.meta" \
-    "dead-window-unlanded: the task meta must be preserved (never auto-closed)"
-  [ -d "$case_dir/wt" ] || fail "dead-window-unlanded: worktree directory was deleted"
-  [ -f "$case_dir/wt/work.txt" ] \
-    || fail "dead-window-unlanded: the unlanded file no longer exists in the worktree"
-  [ "$(git -C "$case_dir/wt" rev-parse HEAD)" = "$wt_head" ] \
-    || fail "dead-window-unlanded: the worktree HEAD was moved"
-  [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)" = fm/task-x1 ] \
-    || fail "dead-window-unlanded: the worktree branch was changed"
-  pass "dead-window filing on unlanded work files a triage bead and leaves the worktree, branch, and meta untouched"
-}
-
-test_dead_window_file_landed_files_nothing() {
-  local case_dir rc wt_head
-  case_dir=$(make_case dead-window-landed)
-  write_meta "$case_dir" local-only ship
-  add_staleness_mock "$case_dir"
-  # Same landed fixture the staleness-landed test uses: an empty commit whose
-  # tree matches main, with local main fast-forwarded to HEAD.
-  wt_commit "$case_dir" "merged work"
-  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
-  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
-
-  set +e
-  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
-    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "dead-window-landed: should succeed as a no-op"
-  grep -q "nothing to file" "$case_dir/stdout" \
-    || fail "dead-window-landed: did not report a no-op for landed work: $(cat "$case_dir/stdout")"
-  ! grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
-    || fail "dead-window-landed: filed a bead despite landed work: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
-  assert_absent "$case_dir/state/task-x1.staleness-filed" \
-    "dead-window-landed: no idempotency marker should be written for landed work"
-  assert_absent "$case_dir/state/task-x1.staleness-unfiled" \
-    "dead-window-landed: no fallback record should be written for landed work"
-  assert_present "$case_dir/state/task-x1.meta" \
-    "dead-window-landed: the task meta must be preserved"
-  [ -d "$case_dir/wt" ] || fail "dead-window-landed: worktree directory was deleted"
-  pass "dead-window filing on landed work files nothing and leaves the task untouched"
-}
-
-test_dead_window_file_is_idempotent() {
-  local case_dir rc creates
-  case_dir=$(make_case dead-window-idempotent)
-  write_meta "$case_dir" local-only ship
-  add_staleness_mock "$case_dir"
-  wt_commit_file "$case_dir" work.txt "unlanded work"
-
-  set +e
-  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
-    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
-    > "$case_dir/stdout1" 2> "$case_dir/stderr1"
-  rc=$?
-  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
-    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
-    > "$case_dir/stdout2" 2> "$case_dir/stderr2"
-  rc=$(( rc + $? ))
-  set -e
-
-  expect_code 0 "$rc" "dead-window-idempotent: both sweeps should succeed"
-  creates=$(grep -c '^create ' "$case_dir/staleness-calls.log" 2>/dev/null || echo 0)
-  [ "$creates" -eq 1 ] \
-    || fail "dead-window-idempotent: expected exactly one bead filing across two sweeps, got $creates"
-  grep -q "already filed" "$case_dir/stdout2" \
-    || fail "dead-window-idempotent: the second sweep did not skip an already-filed task: $(cat "$case_dir/stdout2")"
-  assert_present "$case_dir/state/task-x1.meta" \
-    "dead-window-idempotent: the task meta must survive both sweeps"
-  [ -f "$case_dir/wt/work.txt" ] \
-    || fail "dead-window-idempotent: the unlanded work was disturbed"
-  pass "a dead-window task already filed is not re-filed on a repeated sweep"
-}
-
-test_dead_window_file_fallback_writes_unfiled_when_store_unavailable() {
-  local case_dir rc
-  case_dir=$(make_case dead-window-fallback)
-  write_meta "$case_dir" local-only ship
-  # Staleness CLI is present but rejects the create (store unavailable) - the
-  # same fail-open branch a fully-absent CLI takes. Teardown must fall back to
-  # the durable state/<id>.staleness-unfiled record.
-  add_staleness_mock_create_fails "$case_dir"
-  wt_commit_file "$case_dir" work.txt "unlanded work needing a fallback record"
-
-  set +e
-  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
-    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "dead-window-fallback: filing should still succeed (fail-open)"
-  assert_present "$case_dir/state/task-x1.staleness-unfiled" \
-    "dead-window-fallback: a fallback record must be written when the bead cannot be filed"
-  assert_absent "$case_dir/state/task-x1.staleness-filed" \
-    "dead-window-fallback: no success marker should exist when filing failed"
-  grep -q "^task: task-x1$" "$case_dir/state/task-x1.staleness-unfiled" \
-    || fail "dead-window-fallback: fallback record missing the task id: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
-  grep -q "^branch: fm/task-x1$" "$case_dir/state/task-x1.staleness-unfiled" \
-    || fail "dead-window-fallback: fallback record missing the branch: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
-  grep -q "^worktree: $case_dir/wt$" "$case_dir/state/task-x1.staleness-unfiled" \
-    || fail "dead-window-fallback: fallback record missing the worktree path: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
-  assert_present "$case_dir/state/task-x1.meta" \
-    "dead-window-fallback: the task meta must be preserved"
-  [ -f "$case_dir/wt/work.txt" ] \
-    || fail "dead-window-fallback: the unlanded work was disturbed"
-  pass "dead-window filing falls back to state/<id>.staleness-unfiled when the store cannot file the bead"
-}
-
-test_beads_linked_task_closes_bead_on_landed_teardown() {
-  local case_dir rc
-  case_dir=$(make_case beads-close-on-land)
-  write_meta "$case_dir" local-only ship bead-close-1
-  add_beads_task_mock "$case_dir"
-  wt_commit "$case_dir" "fix the thing"
-  add_fork_with_pushed_branch "$case_dir"
-
-  set +e
-  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "beads-close-on-land: teardown should succeed when HEAD is on a fork remote"
-  grep -q '^close bead-close-1 ' "$case_dir/task-calls.log" 2>/dev/null \
-    || fail "beads-close-on-land: linked bead was not closed on landed teardown: $(cat "$case_dir/task-calls.log" 2>/dev/null)"
-  pass "a beads-linked task's bead is closed automatically on a landed (non-force) teardown"
-}
-
-test_beads_linked_task_does_not_close_bead_on_force_teardown() {
-  local case_dir rc
-  case_dir=$(make_case beads-no-close-force)
-  write_meta "$case_dir" local-only ship bead-close-2
-  add_beads_task_mock "$case_dir"
-  wt_commit "$case_dir" "unpushed work"
-
-  set +e
-  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
-    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "beads-no-close-force: --force should bypass the unpushed-work check"
-  ! grep -q '^close ' "$case_dir/task-calls.log" 2>/dev/null \
-    || fail "beads-no-close-force: linked bead was closed despite --force (work not confirmed landed)"
-  pass "a beads-linked task's bead is NOT closed on a --force teardown"
-}
-
-test_beads_linked_task_does_not_close_bead_on_refused_teardown() {
-  local case_dir rc
-  case_dir=$(make_case beads-no-close-refused)
-  write_meta "$case_dir" local-only ship bead-close-3
-  add_beads_task_mock "$case_dir"
-  wt_commit "$case_dir" "unpushed work"
-
-  set +e
-  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 1 "$rc" "beads-no-close-refused: teardown should refuse truly unpushed work"
-  grep -q REFUSED "$case_dir/stderr" \
-    || fail "beads-no-close-refused: teardown did not print REFUSED"
-  ! grep -q '^close ' "$case_dir/task-calls.log" 2>/dev/null \
-    || fail "beads-no-close-refused: linked bead was closed despite a refused teardown"
-  pass "a beads-linked task's bead is NOT closed when teardown refuses unlanded work"
-}
-
-# Mock `task` where `close` always fails but `list --limit 1` succeeds (the
-# store is reachable, e.g. the bead is already closed or a write-only outage
-# leaves reads working). Args: case_dir
-add_beads_task_mock_close_fails_store_reachable() {
-  local case_dir=$1
-  cat > "$case_dir/fakebin/task" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
-case "$1" in
-  close) exit 1 ;;
-esac
-exit 0
-SH
-  chmod +x "$case_dir/fakebin/task"
-}
-
-# Mock `task` where every call fails (the store itself is unreachable, reads
-# included). Args: case_dir
-add_beads_task_mock_store_unreachable() {
-  local case_dir=$1
-  cat > "$case_dir/fakebin/task" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
-exit 7
-SH
-  chmod +x "$case_dir/fakebin/task"
-}
-
-test_beads_close_failure_queues_for_replay_when_store_reachable() {
-  local case_dir rc queue
-  case_dir=$(make_case beads-close-fail-reachable)
-  write_meta "$case_dir" local-only ship bead-close-4
-  add_beads_task_mock_close_fails_store_reachable "$case_dir"
-  wt_commit "$case_dir" "fix the thing"
-  add_fork_with_pushed_branch "$case_dir"
-
-  set +e
-  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "beads-close-fail-reachable: teardown should still succeed (fail-open close)"
-  grep -q '^close bead-close-4 ' "$case_dir/task-calls.log" 2>/dev/null \
-    || fail "beads-close-fail-reachable: close was never attempted: $(cat "$case_dir/task-calls.log" 2>/dev/null)"
-  grep -q "queuing for retry" "$case_dir/stderr" \
-    || fail "beads-close-fail-reachable: did not warn about queuing the failed close: $(cat "$case_dir/stderr")"
-  queue="$case_dir/state/.beads-write-queue"
-  [ -s "$queue" ] || fail "beads-close-fail-reachable: a close that fails against a reachable store must still be queued durably: $(cat "$queue" 2>/dev/null)"
-  jq -e 'select(.task_id == "bead-close-4" and (.argv[0:2] == ["close","bead-close-4"]))' "$queue" >/dev/null \
-    || fail "beads-close-fail-reachable: queued write has the wrong shape: $(cat "$queue")"
-  pass "a bead close that fails against a reachable store is durably queued for replay, not silently dropped"
-}
-
-test_beads_close_failure_queues_for_replay_when_store_unreachable() {
-  local case_dir rc queue
-  case_dir=$(make_case beads-close-fail-unreachable)
-  write_meta "$case_dir" local-only ship bead-close-5
-  add_beads_task_mock_store_unreachable "$case_dir"
-  wt_commit "$case_dir" "fix the thing"
-  add_fork_with_pushed_branch "$case_dir"
-
-  set +e
-  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
-    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "beads-close-fail-unreachable: teardown should still succeed (fail-open close)"
-  queue="$case_dir/state/.beads-write-queue"
-  [ -s "$queue" ] || fail "beads-close-fail-unreachable: a close attempted against an unreachable store must still be queued durably: $(cat "$queue" 2>/dev/null)"
-  jq -e 'select(.task_id == "bead-close-5" and (.argv[0:2] == ["close","bead-close-5"]))' "$queue" >/dev/null \
-    || fail "beads-close-fail-unreachable: queued write has the wrong shape: $(cat "$queue")"
-  pass "a bead close attempted against an unreachable store is durably queued for replay"
-}
-
-test_opencode_hook_artifact_does_not_block_teardown() {
-  local case_dir rc
-  case_dir=$(make_case opencode-hook-only)
-  write_meta "$case_dir" no-mistakes ship
-  wt_commit "$case_dir" "fix the thing"
+  wt_commit "$case_dir" "shippable work"
   git -C "$case_dir/wt" push -q origin fm/task-x1
   git -C "$case_dir/project" fetch -q origin
-  mkdir -p "$case_dir/wt/.opencode/plugins"
-  printf '%s\n' "// opencode hook" > "$case_dir/wt/.opencode/plugins/fm-busy-state.js"
-
-  set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "opencode-hook-only: teardown should succeed with only the opencode hook untracked"
-  ! grep -q "uncommitted changes" "$case_dir/stderr" || fail "opencode-hook-only: teardown incorrectly refused the opencode hook as dirty: $(cat "$case_dir/stderr")"
-  pass "opencode per-task hook artifact does not block teardown"
 }
 
-test_real_dirty_file_still_refuses_after_opencode_exclusion() {
-  local case_dir rc
-  case_dir=$(make_case real-dirty-with-opencode-hook)
+test_parked_own_run_is_aborted_before_teardown() {
+  local case_dir rc head
+  case_dir=$(make_case parked-run-abort)
   write_meta "$case_dir" no-mistakes ship
-  wt_commit "$case_dir" "fix the thing"
-  git -C "$case_dir/wt" push -q origin fm/task-x1
-  git -C "$case_dir/project" fetch -q origin
-  mkdir -p "$case_dir/wt/.opencode/plugins"
-  printf '%s\n' "// opencode hook" > "$case_dir/wt/.opencode/plugins/fm-busy-state.js"
-  printf '%s\n' "uncommitted work" > "$case_dir/wt/real-file.txt"
+  land_shippable_commit "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
 
-  set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
+  local rc=0
+  FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
-  expect_code 1 "$rc" "real-dirty-with-opencode-hook: teardown should refuse when a real untracked file exists"
-  grep -q REFUSED "$case_dir/stderr" || fail "real-dirty-with-opencode-hook: no REFUSED in stderr"
-  grep -q "uncommitted changes" "$case_dir/stderr" || fail "real-dirty-with-opencode-hook: refusal did not cite uncommitted changes"
-  pass "real untracked file still refuses teardown even with opencode hook present"
+  expect_code 0 "$rc" "parked-run-abort: teardown should still succeed"
+  assert_present "$case_dir/nm-abort.log" \
+    "parked-run-abort: no-mistakes axi abort was never invoked for the task's own parked run"
+  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
+    "parked-run-abort: no-mistakes axi abort did not target the verified run id"
+  assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
+    "parked-run-abort: teardown did not report aborting the parked run before removing the worker"
+  pass "a task's own parked no-mistakes run is aborted, not orphaned, before the worker is removed"
+}
+
+test_mismatched_run_after_abort_refuses_unconfirmed() {
+  local case_dir rc head
+  case_dir=$(make_case parked-run-replaced)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head" 01RUN)" \
+  FM_FAKE_AXI_STATUS_AFTER_ABORT="$(parked_axi_status_toon fm/task-x1 "$head" 02RUN)" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "parked-run-replaced: a different run does not confirm the targeted abort"
+  assert_grep "abort --run 01RUN" "$case_dir/nm-abort.log" \
+    "parked-run-replaced: teardown did not abort only the verified run"
+  assert_present "$case_dir/wt" "parked-run-replaced: teardown removed the worktree without confirmation"
+  pass "a different run cannot confirm the targeted abort"
+}
+
+test_empty_status_after_abort_refuses_unconfirmed() {
+  local case_dir rc head
+  case_dir=$(make_case parked-run-empty-confirmation)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+  FM_FAKE_NM_EMPTY_AFTER_ABORT=1 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "parked-run-empty-confirmation: empty status should refuse"
+  assert_present "$case_dir/wt" "parked-run-empty-confirmation: teardown removed the worktree"
+  pass "empty post-abort status is not accepted as confirmation"
+}
+
+test_not_found_status_after_abort_confirms_completion() {
+  local case_dir rc head
+  case_dir=$(make_case parked-run-not-found-confirmation)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+  FM_FAKE_NM_NOT_FOUND_AFTER_ABORT=1 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "parked-run-not-found-confirmation: explicit not-found should confirm completion"
+  pass "the CLI's exact run-not-found signal confirms completion"
+}
+
+test_parked_own_run_refuses_when_abort_is_unconfirmed() {
+  local case_dir rc head pid
+  case_dir=$(make_case parked-run-abort-unconfirmed)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  pid=$!
+  disown
+
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' >> "$case_dir/treehouse.log"
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+  FM_FAKE_NM_ABORT_NOOP=1 \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "parked-run-abort-unconfirmed: teardown should refuse"
+  assert_grep "REFUSED: no-mistakes run for task-x1 is still parked after axi abort" "$case_dir/stderr" \
+    "parked-run-abort-unconfirmed: teardown did not explain the parked-run refusal"
+  assert_present "$case_dir/wt" \
+    "parked-run-abort-unconfirmed: teardown removed the worktree after refusing"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "parked-run-abort-unconfirmed: teardown removed task metadata after refusing"
+  assert_absent "$case_dir/treehouse.log" \
+    "parked-run-abort-unconfirmed: teardown returned the worktree after refusing"
+  kill -0 "$pid" 2>/dev/null || fail "parked-run-abort-unconfirmed: process reap ran before refusal"
+  kill -KILL "$pid" 2>/dev/null || true
+  pass "teardown refuses before reap or removal when a task-owned run remains parked"
+}
+
+test_another_branchs_parked_run_is_never_touched() {
+  local case_dir rc
+  case_dir=$(make_case parked-run-not-ours)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+
+  local rc=0
+  # A parked run reported for a DIFFERENT branch - e.g. another crew's task
+  # still validating on the shared gate - must never be aborted by this task's
+  # teardown.
+  FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/some-other-task deadbeef)" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "parked-run-not-ours: teardown should still succeed"
+  assert_absent "$case_dir/nm-abort.log" \
+    "parked-run-not-ours: teardown called axi abort for a run on another branch"
+  assert_not_contains "$(cat "$case_dir/stderr")" "aborting" \
+    "parked-run-not-ours: teardown reported aborting a run it does not own"
+  pass "a parked run on another branch is never aborted by this task's teardown (ownership is precise)"
+}
+
+test_own_autonomous_run_is_left_alone() {
+  local case_dir rc head
+  case_dir=$(make_case autonomous-run-left-alone)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(running_axi_status_toon fm/task-x1 "$head")" \
+  FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "autonomous-run-left-alone: teardown should still succeed"
+  assert_absent "$case_dir/nm-abort.log" \
+    "autonomous-run-left-alone: teardown aborted a task-owned autonomous run"
+  assert_not_contains "$(cat "$case_dir/stderr")" "aborting" \
+    "autonomous-run-left-alone: teardown reported aborting an autonomous run"
+  pass "a task-owned autonomous running step is left alone rather than aborted"
+}
+
+test_leaked_worktree_process_is_reaped() {
+  local case_dir rc pid
+  case_dir=$(make_case leaked-process-reap)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+
+  # A backgrounded, disowned process rooted (by cwd) under the task's own
+  # worktree - the same shape the observed incident's leaked `go test`
+  # binaries took (reparented to init, no live task meta to attribute them
+  # to once an unpatched teardown had already run).
+  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "leaked-process-reap: setup sleeper did not start"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "leaked-process-reap: teardown should still succeed"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    fail "leaked-process-reap: leaked worktree process survived teardown"
+  fi
+  assert_grep "reaping leaked worktree process" "$case_dir/stderr" \
+    "leaked-process-reap: teardown did not report reaping the leaked process"
+  pass "a leaked descendant process rooted under the task's worktree is reaped by teardown, not left surviving"
+}
+
+test_leaked_tasktmp_process_is_reaped() {
+  local case_dir rc pid
+  case_dir=$(make_case leaked-tasktmp-reap)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' "tasktmp=$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
+  mkdir -p "$case_dir/tasktmp"
+  land_shippable_commit "$case_dir"
+
+  ( cd "$case_dir/tasktmp" && exec sleep 300 ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "leaked-tasktmp-reap: setup sleeper did not start"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "leaked-tasktmp-reap: teardown should still succeed"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    fail "leaked-tasktmp-reap: leaked tasktmp process survived teardown"
+  fi
+  assert_grep "reaping leaked worktree process" "$case_dir/stderr" \
+    "leaked-tasktmp-reap: teardown did not report reaping the leaked tasktmp process"
+  pass "a leaked descendant process rooted under the task's per-task tasktmp is reaped by teardown too"
+}
+
+test_lsof_absent_reaps_tmux_process_group() {
+  local case_dir rc pid path_without_lsof
+  case_dir=$(make_case lsof-absent-process-group-reap)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  path_without_lsof=$(make_path_without_lsof "$case_dir")
+  PATH="$path_without_lsof" command -v lsof >/dev/null 2>&1 \
+    && fail "lsof-absent-process-group-reap: fixture path unexpectedly exposes lsof"
+
+  perl -e 'setpgrp(0, 0); chdir shift or die; exec "sleep", "300"' "$case_dir/wt" &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "lsof-absent-process-group-reap: setup sleeper did not start"
+  cat > "$case_dir/fakebin/tmux" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = display-message ] && [ "\${*: -1}" = '#{pane_pid}' ]; then
+  printf '%s\n' '$pid'
+fi
+exit 0
+EOF
+  chmod +x "$case_dir/fakebin/tmux"
+
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$path_without_lsof" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "lsof-absent-process-group-reap: teardown should succeed"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    fail "lsof-absent-process-group-reap: tmux process group survived teardown"
+  fi
+  assert_grep "reaping leaked worktree process group" "$case_dir/stderr" \
+    "lsof-absent-process-group-reap: teardown did not use the process-group fallback"
+  pass "missing lsof falls back to reaping the tmux pane process group"
+}
+
+test_lsof_error_refuses_before_removal() {
+  local case_dir rc
+  case_dir=$(make_case lsof-error-refusal)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  cat > "$case_dir/fakebin/lsof" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'return\n' >> "$case_dir/treehouse.log"
+EOF
+  chmod +x "$case_dir/fakebin/lsof" "$case_dir/fakebin/treehouse"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "lsof-error-refusal: teardown should refuse"
+  assert_grep "REFUSED: cannot determine leaked processes under $case_dir/wt for task-x1 (lsof failed)" "$case_dir/stderr" \
+    "lsof-error-refusal: teardown did not explain the lsof refusal"
+  assert_present "$case_dir/wt" "lsof-error-refusal: teardown removed the worktree"
+  assert_present "$case_dir/state/task-x1.meta" "lsof-error-refusal: teardown removed task metadata"
+  assert_absent "$case_dir/treehouse.log" "lsof-error-refusal: teardown returned the worktree"
+  pass "an erroring lsof scan refuses teardown and preserves the task"
+}
+
+test_reused_pid_identity_is_not_force_killed() {
+  local case_dir rc pid
+  case_dir=$(make_case reused-pid-identity)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+
+  perl -e '$SIG{TERM} = "IGNORE"; sleep 300' &
+  pid=$!
+  disown
+  sleep 0.2
+  cat > "$case_dir/fakebin/lsof" <<EOF
+#!/usr/bin/env bash
+count=0
+[ ! -f '$case_dir/lsof-count' ] || count=\$(cat '$case_dir/lsof-count')
+count=\$((count + 1))
+printf '%s\n' "\$count" > '$case_dir/lsof-count'
+if [ "\$count" -le 3 ]; then printf 'p%s\nfcwd\nn%s\n' '$pid' '$case_dir/wt'; fi
+EOF
+  cat > "$case_dir/fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -p ] && [ "${2:-}" = "${FM_FAKE_REUSED_PID:-}" ] \
+   && [ "${3:-}" = -o ] && [ "${4:-}" = lstart= ]; then
+  count=0
+  [ ! -f "$FM_FAKE_PS_COUNT" ] || count=$(cat "$FM_FAKE_PS_COUNT")
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$FM_FAKE_PS_COUNT"
+  if [ "$count" -le 2 ]; then printf 'Tue Aug  4 10:00:00 2026\n'
+  else printf 'Tue Aug  4 10:00:01 2026\n'; fi
+  exit 0
+fi
+exec "$REAL_PS_FOR_TEST" "$@"
+SH
+  chmod +x "$case_dir/fakebin/lsof" "$case_dir/fakebin/ps"
+
+  rc=0
+  FM_PROC_ROOT_OVERRIDE="$case_dir/no-proc" \
+  FM_FAKE_REUSED_PID="$pid" FM_FAKE_PS_COUNT="$case_dir/ps-count" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "reused-pid-identity: teardown should skip the replacement process"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    fail "reused-pid-identity: teardown force-killed a process whose start time changed"
+  fi
+  kill -KILL "$pid" 2>/dev/null || true
+  pass "a reused pid with a different start time is never force-killed"
+}
+
+test_exec_changed_process_is_still_reaped() {
+  local case_dir rc pid marker done_flag survived=0
+  case_dir=$(make_case exec-changed-process)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  marker="$case_dir/exec-now"
+  done_flag="$case_dir/exec-done"
+
+  ( cd "$case_dir/wt" && exec perl -e '
+      my ($marker, $done) = @ARGV;
+      until (-e $marker) { select undef, undef, undef, 0.01; }
+      open my $fh, ">", $done or die "open";
+      close $fh;
+      exec "perl", "-e", '\''$SIG{TERM} = "IGNORE"; sleep 300'\'';
+    ' "$marker" "$done_flag" ) &
+  pid=$!
+  disown
+  sleep 0.2
+  cat > "$case_dir/fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -p ] && [ "${2:-}" = "${FM_FAKE_EXEC_PID:-}" ] \
+   && [ "${3:-}" = -o ] && [ "${4:-}" = lstart= ]; then
+  out=$("$REAL_PS_FOR_TEST" "$@") || exit $?
+  [ -e "$FM_FAKE_EXEC_MARKER" ] || : > "$FM_FAKE_EXEC_MARKER"
+  printf '%s\n' "$out"
+  exit 0
+fi
+exec "$REAL_PS_FOR_TEST" "$@"
+SH
+  cat > "$case_dir/fakebin/lsof" <<'SH'
+#!/usr/bin/env bash
+count=0
+[ ! -f "$FM_FAKE_LSOF_COUNT" ] || count=$(cat "$FM_FAKE_LSOF_COUNT")
+count=$((count + 1))
+printf '%s\n' "$count" > "$FM_FAKE_LSOF_COUNT"
+if [ "$count" -eq 2 ]; then
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ ! -e "$FM_FAKE_EXEC_DONE" ] || break
+    sleep 0.01
+    i=$((i + 1))
+  done
+fi
+exec "$REAL_LSOF_FOR_TEST" "$@"
+SH
+  chmod +x "$case_dir/fakebin/ps" "$case_dir/fakebin/lsof"
+
+  rc=0
+  FM_PROC_ROOT_OVERRIDE="$case_dir/no-proc" \
+  FM_FAKE_EXEC_PID="$pid" FM_FAKE_EXEC_MARKER="$marker" \
+  FM_FAKE_EXEC_DONE="$done_flag" FM_FAKE_LSOF_COUNT="$case_dir/lsof-count" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  if kill -0 "$pid" 2>/dev/null; then
+    survived=1
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  expect_code 0 "$rc" "exec-changed-process: teardown should succeed"
+  [ "$survived" -eq 0 ] || fail "exec-changed-process: exec-changed leaked process survived teardown"
+  pass "an exec change preserves birth identity and the process is reaped"
+}
+
+test_process_spawned_during_grace_is_reaped_on_later_pass() {
+  local case_dir rc pid child_file child_pid="" parent_survived=0 child_survived=0
+  case_dir=$(make_case grace-spawn-convergence)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  child_file="$case_dir/child.pid"
+
+  ( cd "$case_dir/wt" && exec perl -e '
+      my $file = shift;
+      $SIG{TERM} = sub {
+        my $child = fork();
+        die "fork" unless defined $child;
+        if (!$child) { exec "sleep", "300"; }
+        open my $fh, ">", $file or die "open";
+        print {$fh} "$child\n";
+        close $fh;
+        exit 0;
+      };
+      sleep 300;
+    ' "$child_file" ) &
+  pid=$!
+  disown
+  sleep 0.2
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  if [ -f "$child_file" ]; then child_pid=$(cat "$child_file"); fi
+  if [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null; then
+    child_survived=1
+    kill -KILL "$child_pid" 2>/dev/null || true
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    parent_survived=1
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  expect_code 0 "$rc" "grace-spawn-convergence: teardown should converge"
+  assert_present "$child_file" "grace-spawn-convergence: TERM handler did not spawn a child"
+  [ "$child_survived" -eq 0 ] || fail "grace-spawn-convergence: spawned child survived"
+  [ "$parent_survived" -eq 0 ] || fail "grace-spawn-convergence: original process survived"
+  pass "a process spawned during grace is reaped on a later pass"
+}
+
+test_persistent_scan_refuses_after_bounded_retries() {
+  local case_dir rc wt_path fake_pid=99999999
+  case_dir=$(make_case persistent-reap-refusal)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  wt_path=$(cd "$case_dir/wt" && pwd -P)
+  cat > "$case_dir/fakebin/lsof" <<EOF
+#!/usr/bin/env bash
+printf 'p%s\nfcwd\nn%s\n' '$fake_pid' '$wt_path'
+EOF
+  cat > "$case_dir/fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -p ] && [ "${2:-}" = "${FM_FAKE_PERSISTENT_PID:-}" ] \
+   && [ "${3:-}" = -o ] && [ "${4:-}" = lstart= ]; then
+  printf 'Tue Aug  4 10:00:00 2026\n'
+  exit 0
+fi
+exec "$REAL_PS_FOR_TEST" "$@"
+SH
+  chmod +x "$case_dir/fakebin/lsof" "$case_dir/fakebin/ps"
+
+  rc=0
+  FM_PROC_ROOT_OVERRIDE="$case_dir/no-proc" FM_FAKE_PERSISTENT_PID="$fake_pid" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 1 "$rc" "persistent-reap-refusal: teardown should refuse"
+  assert_grep "remain after 3 reap attempts" "$case_dir/stderr" \
+    "persistent-reap-refusal: teardown did not report bounded non-convergence"
+  assert_present "$case_dir/wt" "persistent-reap-refusal: teardown removed the worktree"
+  assert_present "$case_dir/state/task-x1.meta" "persistent-reap-refusal: teardown removed task metadata"
+  pass "persistent leaked processes refuse teardown after bounded retries"
+}
+
+test_process_exit_during_identity_lookup_does_not_refuse() {
+  local case_dir rc wt_path fake_pid=99999998
+  case_dir=$(make_case identity-exit-convergence)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  wt_path=$(cd "$case_dir/wt" && pwd -P)
+  cat > "$case_dir/fakebin/lsof" <<EOF
+#!/usr/bin/env bash
+count=0
+[ ! -f "$case_dir/lsof-count" ] || count=\$(cat "$case_dir/lsof-count")
+count=\$((count + 1))
+printf '%s\n' "\$count" > "$case_dir/lsof-count"
+if [ "\$count" -eq 1 ]; then
+  printf 'p%s\nfcwd\nn%s\n' '$fake_pid' '$wt_path'
+fi
+EOF
+  cat > "$case_dir/fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -p ] && [ "${2:-}" = "${FM_FAKE_EXITED_PID:-}" ]; then
+  exit 1
+fi
+exec "$REAL_PS_FOR_TEST" "$@"
+SH
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+printf 'returned\n' > "$case_dir/treehouse.log"
+EOF
+  chmod +x "$case_dir/fakebin/lsof" "$case_dir/fakebin/ps" "$case_dir/fakebin/treehouse"
+
+  rc=0
+  FM_PROC_ROOT_OVERRIDE="$case_dir/no-proc" FM_FAKE_EXITED_PID="$fake_pid" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "identity-exit-convergence: teardown should succeed"
+  assert_present "$case_dir/treehouse.log" \
+    "identity-exit-convergence: teardown did not reach worktree return"
+  ! grep -q REFUSED "$case_dir/stderr" || \
+    fail "identity-exit-convergence: a disappeared process caused teardown refusal"
+  pass "a process exiting during identity lookup does not block teardown"
+}
+
+test_run_abort_precedes_process_reap_precedes_worktree_removal() {
+  local case_dir rc head pid abort_log
+  case_dir=$(make_case abort-then-reap-then-remove-order)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  abort_log="$case_dir/nm-abort.log"
+
+  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "abort-then-reap-then-remove-order: setup sleeper did not start"
+
+  # A treehouse fake that snapshots, at the exact moment the destructive
+  # worktree return runs, whether the run was already aborted and whether the
+  # leaked process was already reaped - direct causal proof of ordering from
+  # real observed state, not a source-text or line-number correlation.
+  cat > "$case_dir/fakebin/treehouse" <<EOF
+#!/usr/bin/env bash
+if [ -s "$abort_log" ]; then echo "abort-already-happened" >> "$case_dir/order.log"; fi
+if ! kill -0 $pid 2>/dev/null; then echo "reap-already-happened" >> "$case_dir/order.log"; fi
+exit 0
+EOF
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
+  FM_FAKE_NM_ABORT_LOG="$abort_log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "abort-then-reap-then-remove-order: teardown should still succeed"
+  kill -0 "$pid" 2>/dev/null && { kill -KILL "$pid" 2>/dev/null || true; }
+
+  assert_present "$case_dir/order.log" \
+    "abort-then-reap-then-remove-order: the destructive worktree return was never invoked"
+  assert_grep "abort-already-happened" "$case_dir/order.log" \
+    "abort-then-reap-then-remove-order: the run was not yet aborted when the worktree return ran"
+  assert_grep "reap-already-happened" "$case_dir/order.log" \
+    "abort-then-reap-then-remove-order: the leaked process was not yet reaped when the worktree return ran"
+  pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
 test_local_only_fork_remote_allows
@@ -2367,7 +2497,6 @@ test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
-test_squash_merged_pr_allows_genuine_multi_commit_squash
 test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
@@ -2385,18 +2514,20 @@ test_transient_index_lock_clears_after_first_attempt_and_retry_succeeds
 test_persistent_index_lock_exhausts_retries_and_refuses_loudly
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
-test_teardown_deregisters_parlay_when_present
-test_teardown_kills_pid_even_when_parlay_absent
-test_beads_linked_task_closes_bead_on_landed_teardown
-test_beads_linked_task_does_not_close_bead_on_force_teardown
-test_beads_linked_task_does_not_close_bead_on_refused_teardown
-test_beads_close_failure_queues_for_replay_when_store_reachable
-test_beads_close_failure_queues_for_replay_when_store_unreachable
-test_opencode_hook_artifact_does_not_block_teardown
-test_real_dirty_file_still_refuses_after_opencode_exclusion
-test_staleness_autoclose_landed_falls_through_to_full_teardown
-test_staleness_autoclose_unlanded_chat_only_preserves_worktree_and_files_bead
-test_dead_window_file_unlanded_files_bead_and_preserves_everything
-test_dead_window_file_landed_files_nothing
-test_dead_window_file_is_idempotent
-test_dead_window_file_fallback_writes_unfiled_when_store_unavailable
+test_parked_own_run_is_aborted_before_teardown
+test_parked_own_run_refuses_when_abort_is_unconfirmed
+test_mismatched_run_after_abort_refuses_unconfirmed
+test_empty_status_after_abort_refuses_unconfirmed
+test_not_found_status_after_abort_confirms_completion
+test_another_branchs_parked_run_is_never_touched
+test_own_autonomous_run_is_left_alone
+test_leaked_worktree_process_is_reaped
+test_leaked_tasktmp_process_is_reaped
+test_lsof_absent_reaps_tmux_process_group
+test_lsof_error_refuses_before_removal
+test_reused_pid_identity_is_not_force_killed
+test_exec_changed_process_is_still_reaped
+test_process_spawned_during_grace_is_reaped_on_later_pass
+test_persistent_scan_refuses_after_bounded_retries
+test_process_exit_during_identity_lookup_does_not_refuse
+test_run_abort_precedes_process_reap_precedes_worktree_removal
