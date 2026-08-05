@@ -1849,6 +1849,17 @@ fi
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 sleep 0.3
+# Export non-interactive git editors into the same pane shell. A crewmate has no
+# terminal a human can type into, so any git command that opens an editor
+# (rebase --continue, commit without -m, non-ff merge, revert, tag -a,
+# cherry-pick --continue) otherwise blocks forever on a `code --wait`-style
+# editor that only a human can close: silent, indistinguishable from a thinking
+# pane, and made strictly worse by the agent's natural retry (robots-1xw8).
+# `true` exits 0 without touching the file, so git proceeds with the message or
+# todo list as written instead of waiting. Sent as its own line for the same
+# reason as GOTMPDIR: the env must be set before the agent starts.
+spawn_send_text_line "$T" "export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true"
+sleep 0.3
 spawn_send_literal "$T" "$LAUNCH"
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
