@@ -433,7 +433,8 @@ test_scenario_b() {
 
   echo "done: PR https://example.test/pr/200" > "$STATE_DIR/fake-c1.status"
 
-  sleep 10
+  wait_for_log 'Supervisor escalate' 30 \
+    || fail "Scenario B: digest not injected within 30 seconds"
 
   local marker_count
   marker_count=$(awk -F '\t' '{ hex=$1; count += gsub(/e281a3/, "", hex) } END { print count + 0 }' "$LOG_FILE")
@@ -465,7 +466,9 @@ test_scenario_c() {
   start_daemon
 
   echo "done: PR https://example.test/pr/300" > "$STATE_DIR/fake-c1.status"
-  sleep 8
+
+  wait_for_log 'Supervisor escalate' 30 \
+    || fail "Scenario C: digest not injected within 30 seconds"
 
   local marker_count
   marker_count=$(awk -F '\t' '{ hex=$1; count += gsub(/e281a3/, "", hex) } END { print count + 0 }' "$LOG_FILE")
