@@ -1552,9 +1552,21 @@ TS
       fail "Pi follow-up $label case did not process the monitoring notification"
     fi
 
-    pane=$(tmux -L "$TMUX_SOCKET" capture-pane -p -t "$TMUX_SESSION" -S - 2>/dev/null || true)
-    [ "$(printf '%s\n' "$pane" | grep -Fc "CAPTAIN_ANSWER_$label" || true)" -eq 1 ] \
-      || fail "Pi follow-up $label case rendered a duplicate captain answer"
+    # The session file lands the moment the core persists the turn, but the TUI
+    # repaints on its own schedule, so capturing here can catch a frame drawn
+    # before the turn reached the screen. Wait for the processing response — the
+    # last row of the flow, drawn after the captain answer — so a genuine
+    # duplicate is still on screen by the time the counts below run.
+    i=0
+    while [ "$i" -lt 240 ]; do
+      pane=$(tmux -L "$TMUX_SOCKET" capture-pane -p -t "$TMUX_SESSION" -S - 2>/dev/null || true)
+      printf '%s\n' "$pane" | grep -Fq "MONITOR_HANDLED_${label}_ONE" && break
+      sleep 0.05
+      i=$((i + 1))
+    done
+    captain_rows=$(printf '%s\n' "$pane" | grep -Fc "CAPTAIN_ANSWER_$label" || true)
+    [ "$captain_rows" -eq 1 ] \
+      || fail "Pi follow-up $label case rendered $captain_rows captain answer rows instead of exactly one"
     assert_contains "$pane" "CAPTAIN_PROMPT_$label" "Pi follow-up $label case hid the genuine captain prompt"
     assert_contains "$pane" "MONITOR_HANDLED_${label}_ONE" "Pi follow-up $label case did not render the intended processing result"
     if [ "$calm_state" = on ]; then
