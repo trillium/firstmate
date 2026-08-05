@@ -947,17 +947,19 @@ task_is_finished() {
   [ "$(fm_backend_agent_alive "$backend" "$window" 2>/dev/null)" = dead ]
 }
 
-# Teardown-blocked surfacing sweep. A FINISHED kind=ship task whose work already
-# LANDED but whose worktree still carries a scrap of uncommitted dirt goes
-# completely silent today, and holds its pooled worktree indefinitely:
-# fm-teardown.sh correctly REFUSES on the dirt, the dead-window sweep above files
-# a triage record only for UNLANDED work, and the idle>2h staleness auto-close
-# falls through to that same refusal and only writes it to a log nobody reads.
-# Teardown is right to refuse; the gap is that nothing tells the captain. This
-# sweep closes it: for each finished kind=ship task (see task_is_finished) it asks
-# fm-teardown.sh --why-blocked whether an ordinary teardown would refuse, and
-# raises a distinct captain-facing check: wake naming the exact blocking dirt when
-# it would. --why-blocked runs the production safety predicate read-only, so the
+# Teardown-blocked surfacing sweep. A FINISHED kind=ship task whose teardown
+# REFUSES goes completely silent today, and holds its pooled worktree
+# indefinitely. The motivating case is landed work behind a scrap of uncommitted
+# dirt - the dead-window sweep above files a triage record only for UNLANDED
+# work, and the idle>2h staleness auto-close falls through to that same refusal
+# and only writes it to a log nobody reads - but the sweep is not limited to it:
+# it surfaces EVERY refusal --why-blocked returns, uncommitted dirt and unpushed
+# or unlanded commits alike. Teardown is right to refuse; the gap is that nothing
+# tells the captain. This sweep closes it: for each finished kind=ship task (see
+# task_is_finished) it asks fm-teardown.sh --why-blocked whether an ordinary
+# teardown would refuse, and raises a distinct captain-facing check: wake
+# carrying teardown's own refusal text, which names the exact blocking work.
+# --why-blocked runs the production safety predicate read-only, so the
 # dirty / unpushed / not-landed rules keep their single owner in
 # bin/fm-teardown.sh and this sweep can never drift from them. Deduped per task
 # via state/<id>.teardown-blocked-surfaced, which stores the blocking text: one
