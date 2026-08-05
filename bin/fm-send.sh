@@ -10,6 +10,20 @@
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca currently supports Enter and C-c only, and rejects Escape.
 #
+# Raw/unmanaged pane escape hatch: fm-send.sh <target> --raw <text...>
+#   sends TEXT then Enter best-effort with NO delivery verification and NO
+#   from-firstmate marking. It exists because the default text path verifies
+#   submission by reading the target's agent composer/busy-state, and a raw
+#   shell pane (an explicit backend target with no state/<id>.meta and no agent
+#   composer) has nothing to verify against, so the verified path fails closed.
+#   --raw dispatches the backend's atomic type-then-Enter primitive
+#   (fm_backend_send_text_line) instead. Best-effort means exactly that: a zero
+#   exit proves the send command was issued, never that the pane accepted or
+#   submitted it. Use fm-<id> for any recorded task/lane so delivery IS verified;
+#   reach for --raw only to drive an ad-hoc pane the captain points at. --raw
+#   applies to the text path only and cannot be combined with --key (a raw key
+#   send already works: --key never verifies a composer).
+#
 # Text submission is verified: the line is typed ONCE, then Enter is sent and
 # retried (Enter only, never retyped) until the target backend confirms a
 # submit or reports an inconclusive send. If a swallowed Enter is positively
@@ -251,7 +265,7 @@ MARK_FROM_FIRSTMATE=0
 PENDING_REPLY_CORR=
 PENDING_REPLY_CREATED=0
 TARGET_TASK_ID=
-if [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(fm_meta_get "$TARGET_META" kind)" = secondmate ]; then
+if [ "$RAW_MODE" = 0 ] && [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(fm_meta_get "$TARGET_META" kind)" = secondmate ]; then
   MARK_FROM_FIRSTMATE=1
   TARGET_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
 fi
@@ -281,6 +295,17 @@ if [ "${1:-}" = "--key" ]; then
   fm_send_record_interrupt "$2" || exit 1
 else
   MESSAGE=$*
+  if [ "$RAW_MODE" = 1 ]; then
+    # Best-effort escape hatch: issue the backend's atomic type-then-Enter with
+    # no submit verification and no marker. A zero exit proves only that the send
+    # command was issued, never that the pane accepted or submitted the text.
+    if ! fm_backend_send_text_line "$TARGET_BACKEND" "$T" "$MESSAGE" "$EXPECTED_LABEL"; then
+      echo "error: raw text not sent to $T ($TARGET_BACKEND send failed; tried $RESOLUTION_TRIED)" >&2
+      exit 1
+    fi
+    [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: raw send to $T is best-effort; delivery was not verified" >&2
+    exit 0
+  fi
   if [ "$MARK_FROM_FIRSTMATE" = 1 ]; then
     # Reuse an existing correlation id for recovery resends; otherwise create a
     # durable parent expectation before delivery. Transport success never
@@ -365,6 +390,9 @@ else
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
       echo "error: text not submitted to $T (delivery unconfirmed; verdict=${verdict:-unknown}; tried $RESOLUTION_TRIED)" >&2
+      if [ -z "$TARGET_META" ]; then
+        echo "  hint: $T is a raw/unmanaged target with no agent composer to verify a submit against. If this is an ad-hoc shell pane, resend best-effort with: fm-send.sh $RAW_TARGET --raw $MESSAGE (no delivery guarantee). Use fm-<id> for a recorded task/lane to get verified delivery." >&2
+      fi
       exit 1
       ;;
   esac
