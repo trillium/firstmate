@@ -1900,8 +1900,10 @@ fi
 
 # Best-effort Parlay chat-panel enrollment. Optional captain tooling, never
 # load-bearing: skip silently if `parlay` is not on PATH, and never let a launch
-# failure block or fail an already-confirmed spawn.
-if command -v parlay >/dev/null 2>&1; then
+# failure block or fail an already-confirmed spawn. Skipped when
+# FM_SPAWN_NO_GUARD=1 (test-mode spawns) to prevent leaking listener processes
+# and fake agent registrations into the live Parlay relay.
+if [ -z "${FM_SPAWN_NO_GUARD:-}" ] && command -v parlay >/dev/null 2>&1; then
   parlay listen --agent "$ID" >/dev/null 2>&1 &
   echo $! > "$STATE/$ID.parlay-listen-pid" 2>/dev/null \
     || echo "warning: could not record parlay listen pid for $ID (non-blocking)" >&2
