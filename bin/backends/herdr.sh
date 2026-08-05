@@ -962,8 +962,18 @@ fm_backend_herdr_pid_is_bare_shell() {  # <ps-bin> <pid>
 # process-info agrees on the pane id, the shell pid is both the foreground
 # process group and the sole foreground process, the foreground process name
 # and argv0 resolve to the same recognized shell, the operating-system
-# process table shows exactly that one shell row with no child process, and
-# the shell sits in a sleeping or idle state.
+# process table shows exactly that one shell row with no child process sharing
+# the shell's own controlling terminal, and the shell sits in a sleeping or
+# idle state.
+# The child requirement is scoped to the shell's own terminal rather than to a
+# flat zero-children count because an interactive rc routinely forks a
+# permanent off-terminal helper: zsh-autosuggestions opens a zpty whose child
+# zsh becomes session leader of a DIFFERENT pty, so a flat count could never
+# converge on such a box and every restored pane stayed uncleanable forever.
+# The safety that count was doing is preserved exactly: any job the pane's
+# shell actually owns - foreground or backgrounded with & - inherits the pane's
+# controlling terminal and still refuses the proof. A child on another terminal,
+# or on none, is not pane work and would survive the shell's death anyway.
 # An idle interactive shell transiently hosts short-lived prompt helpers
 # (verified on the real 0.7.5 lab: a workspace.move relayout makes zsh redraw
 # its prompt, spawning starship as a second foreground process for a few
@@ -1021,11 +1031,16 @@ fm_backend_herdr_pane_idle_shell_sample() {  # <session> <pane-id>
 
   ps_bin=${FM_HERDR_PS_BIN:-ps}
   command -v "$ps_bin" >/dev/null 2>&1 || return 1
-  rows=$("$ps_bin" -axo pid=,ppid= 2>/dev/null) || return 1
+  rows=$("$ps_bin" -axo pid=,ppid=,tty= 2>/dev/null) || return 1
   printf '%s\n' "$rows" | awk -v shell="$shell_pid" '
-    $1 == shell { found++ }
-    $2 == shell { child++ }
-    END { exit(found == 1 && child == 0 ? 0 : 1) }
+    $1 == shell { found++; shell_tty = $3 }
+    $2 == shell { child_tty[++children] = $3 }
+    END {
+      if (found != 1) exit 1
+      for (i = 1; i <= children; i++)
+        if (child_tty[i] == shell_tty) exit 1
+      exit 0
+    }
   ' || return 1
   stat=$("$ps_bin" -p "$shell_pid" -o stat= 2>/dev/null | tr -d '[:space:]') || return 1
   case "$stat" in S*|I*) ;; *) return 1 ;; esac

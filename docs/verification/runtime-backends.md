@@ -289,7 +289,7 @@ HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
   tests/fm-herdr-session-cleanup-e2e.test.sh
 ```
 
-Observed guarantee: one exact home-local, journal-correlated, one-tab and one-pane childless idle shell was closed after restoration while the exact non-target focus and default fleet session remained unchanged, and a repeat run was a no-op.
+Observed guarantee: one exact home-local, journal-correlated, one-tab and one-pane idle shell with no job on its own terminal was closed after restoration while the exact non-target focus and default fleet session remained unchanged, and a repeat run was a no-op.
 
 ### Workspace-removal focus safety
 
