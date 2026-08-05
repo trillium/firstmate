@@ -68,7 +68,9 @@ This origin/upstream shape is load-bearing, not cosmetic: `git push origin` and,
 `bin/fm-brief.sh`'s header and `AGENTS.md` section 11 own the resulting brief-scaffold rule and its exact clone-shape detection; do not restate that mechanism here.
 Never initialize a fork-contribution project with `no-mistakes init --fork-url` - that flag implements the opposite workflow (push to a named fork, open the PR against `origin`/upstream), documented for external contributors to firstmate itself in `CONTRIBUTING.md`, and is exactly backwards for a fork-contribution project.
 A clone still carrying the legacy shape (`origin` = upstream, no `upstream` remote) needs this swap before its next `no-mistakes` run; treat discovering one as a project-management fix, not a task for the ship worker mid-brief to attempt.
-Run `bin/fm-fork-origin-check.sh` by hand to advisory-scan every registered clone for a legacy or partially swapped origin/upstream shape; it is read-only and never blocks a spawn or edits a remote.
+Correct remotes alone do not make a clone safe to cut a branch from: its default branch must also track the fork, because a default left sitting on the upstream project's line hands every worktree cut from it upstream's base, which is how a three-file change becomes a conflicting PR carrying dozens of upstream commits.
+Run `bin/fm-fork-origin-check.sh` by hand to advisory-scan every registered clone for both failures - a legacy or partially swapped origin/upstream shape, and a swapped clone whose default branch has diverged onto upstream's line (`DIVERGED-BASE`); it is read-only and never blocks a spawn, edits a remote, or moves a branch.
+A `DIVERGED-BASE` clone needs a decision here rather than a fleet-sync pass, because fleet sync deliberately refuses to touch a diverged default; plain `BEHIND` drift is ordinary and fleet sync fast-forwards it.
 
 ## Create a project
 

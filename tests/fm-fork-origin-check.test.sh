@@ -122,6 +122,135 @@ test_fork_origin_check_missing_registry_is_not_an_error() {
   pass "fm-fork-origin-check.sh: an absent registry is reported, not an error"
 }
 
+# --- base checks ------------------------------------------------------------
+#
+# Correct remotes are not enough: a clone whose default branch sits on the
+# upstream project's line passes every remote check above and still hands every
+# worktree cut from it the wrong base. These fixtures use on-disk repos under
+# <root>/<owner>/<name>.git so `owner_of` still reads "trillium" for origin and
+# the targeted origin/<default> refresh works with no network.
+
+git_q() { git -C "$1" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' "${@:2}"; }
+
+# Make an origin repo at <root>/<owner>/<name>.git with one commit on main, and
+# echo its path.
+make_remote() {
+  local root=$1 owner=$2 name=$3 repo seed
+  repo="$root/$owner/$name.git"
+  seed="$root/$owner/$name.seed"
+  mkdir -p "$root/$owner"
+  git init -q --bare -b main "$repo"
+  git init -q -b main "$seed"
+  echo base > "$seed/README"
+  git_q "$seed" add README
+  git_q "$seed" commit -qm "base"
+  git_q "$seed" push -q "$repo" main
+  printf '%s\n' "$repo"
+}
+
+# Clone <origin> into <dir> and point an upstream remote at <upstream>: the
+# correctly swapped fork-contribution shape the remote check passes in silence.
+make_swapped_clone() {
+  local dir=$1 origin=$2 upstream=$3
+  git clone -q "$origin" "$dir"
+  git -C "$dir" remote add upstream "$upstream"
+}
+
+test_fork_origin_check_flags_a_clone_pinned_to_upstreams_line() {
+  local home root out origin upstream dir
+  home="$TMP_ROOT/base-diverged-home"
+  root="$TMP_ROOT/base-diverged-remotes"
+  mkdir -p "$home/data" "$home/projects"
+  cat > "$home/data/projects.md" <<'EOF'
+- diverged-proj [no-mistakes] - swapped remotes, default pinned to upstream (added 2026-08-05)
+EOF
+  origin=$(make_remote "$root" trillium diverged-proj)
+  upstream=$(make_remote "$root" someowner diverged-proj)
+  dir="$home/projects/diverged-proj"
+  make_swapped_clone "$dir" "$origin" "$upstream"
+  # Local main carries commits origin/main does not: exactly what "reset to
+  # upstream/main" leaves behind.
+  echo upstream-work > "$dir/UPSTREAM"
+  git_q "$dir" add UPSTREAM
+  git_q "$dir" commit -qm "commit only upstream has"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-fork-origin-check.sh" --no-fetch)
+
+  assert_contains "$out" "DIVERGED-BASE: diverged-proj" \
+    "a swapped clone whose default branch is ahead of origin/ must be reported DIVERGED-BASE even though its remotes are correct"
+  assert_contains "$out" "1 commits ahead of origin/main" \
+    "the finding must quantify the divergence so the wrong base is visible, not just asserted"
+  assert_not_contains "$out" "no misconfigured fork-contribution clones found" \
+    "a diverged base is a finding, so the clean bill of health must not also print"
+  pass "fm-fork-origin-check.sh: a correctly-remoted clone pinned to upstream's line is reported DIVERGED-BASE"
+}
+
+test_fork_origin_check_separates_ordinary_behind_from_diverged() {
+  local home root out origin upstream dir seed
+  home="$TMP_ROOT/base-behind-home"
+  root="$TMP_ROOT/base-behind-remotes"
+  mkdir -p "$home/data" "$home/projects"
+  cat > "$home/data/projects.md" <<'EOF'
+- behind-proj [no-mistakes] - swapped remotes, default merely behind origin (added 2026-08-05)
+EOF
+  origin=$(make_remote "$root" trillium behind-proj)
+  upstream=$(make_remote "$root" someowner behind-proj)
+  dir="$home/projects/behind-proj"
+  make_swapped_clone "$dir" "$origin" "$upstream"
+  # origin/main moves ahead; the clone's main stays put and gains nothing.
+  seed="$root/trillium/behind-proj.seed"
+  echo more > "$seed/NEXT"
+  git_q "$seed" add NEXT
+  git_q "$seed" commit -qm "origin moves ahead"
+  git_q "$seed" push -q "$origin" main
+  git -C "$dir" fetch -q origin
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-fork-origin-check.sh" --no-fetch)
+
+  assert_contains "$out" "BEHIND: behind-proj" \
+    "a clone merely behind origin must still be reported, distinctly from a diverged one"
+  assert_not_contains "$out" "DIVERGED-BASE" \
+    "being behind origin is not divergence and must not be reported as the wrong-base defect"
+  assert_contains "$out" "no misconfigured fork-contribution clones found" \
+    "ordinary drift that fleet sync fast-forwards must not count as a misconfiguration"
+  pass "fm-fork-origin-check.sh: behind-origin drift is reported separately and is not a misconfiguration"
+}
+
+test_fork_origin_check_is_silent_on_a_correctly_based_clone() {
+  local home root out origin upstream dir
+  home="$TMP_ROOT/base-ok-home"
+  root="$TMP_ROOT/base-ok-remotes"
+  mkdir -p "$home/data" "$home/projects"
+  cat > "$home/data/projects.md" <<'EOF'
+- in-sync-proj [no-mistakes] - swapped remotes, default in sync with origin (added 2026-08-05)
+- plain-trillium-proj [no-mistakes] - ordinary Trillium project, no fork relationship (added 2026-08-05)
+EOF
+  origin=$(make_remote "$root" trillium in-sync-proj)
+  upstream=$(make_remote "$root" someowner in-sync-proj)
+  make_swapped_clone "$home/projects/in-sync-proj" "$origin" "$upstream"
+
+  # An ordinary Trillium clone with no upstream remote has no fork base to get
+  # wrong; divergence there is fleet sync's business, not this scan's.
+  origin=$(make_remote "$root" trillium plain-trillium-proj)
+  git clone -q "$origin" "$home/projects/plain-trillium-proj"
+  echo local > "$home/projects/plain-trillium-proj/LOCAL"
+  git_q "$home/projects/plain-trillium-proj" add LOCAL
+  git_q "$home/projects/plain-trillium-proj" commit -qm "local-only commit"
+
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-fork-origin-check.sh" --no-fetch)
+
+  assert_not_contains "$out" "in-sync-proj" \
+    "a swapped clone whose default matches origin/ is the target state and must stay silent"
+  assert_not_contains "$out" "plain-trillium-proj" \
+    "an ordinary Trillium clone with no upstream remote must not get a fork base check"
+  assert_contains "$out" "no misconfigured fork-contribution clones found" \
+    "a fleet with correct remotes and correct bases must report a clean bill of health"
+  pass "fm-fork-origin-check.sh: a correctly based swapped clone and an ordinary clone stay silent"
+}
+
 test_fork_origin_check_classifies_every_clone_shape
 test_fork_origin_check_is_read_only_and_never_fails
 test_fork_origin_check_missing_registry_is_not_an_error
+test_fork_origin_check_flags_a_clone_pinned_to_upstreams_line
+test_fork_origin_check_separates_ordinary_behind_from_diverged
+test_fork_origin_check_is_silent_on_a_correctly_based_clone

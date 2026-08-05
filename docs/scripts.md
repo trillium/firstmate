@@ -65,7 +65,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-remote-launch.sh`    | EXPERIMENTAL, explicitly transitional: launch, reclaim, reconcile, and inspect a crewmate on a named mini over the herdr-web bridge, self-contained and outside `fm-backend.sh`'s runtime-backend contract |
 | `fm-config-push.sh`      | Push declared inherited local material to live secondmates mid-session and send a pointer to the literal-content config reread when config changed |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`           |
-| `fm-fork-origin-check.sh` | Advisory, read-only scan for registered project clones with an unswapped or partially swapped fork-contribution origin/upstream shape |
+| `fm-fork-origin-check.sh` | Advisory, read-only scan for registered project clones that cannot cut a correct fork-contribution branch: an unswapped or partially swapped origin/upstream shape, or a swapped clone whose default branch has diverged onto upstream's line |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
 | `fm-marker-lib.sh`       | Compatibility entry point for the from-firstmate carrier owned by `fm-operational-input.sh` |
