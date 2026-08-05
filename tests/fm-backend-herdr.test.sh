@@ -1197,16 +1197,19 @@ test_projection_close_rechecks_required_agent_state_at_boundary() {
 # while a pane-death removal preserves focus whenever the dying workspace
 # sits behind the focused one (or the focused one is last).
 
-# make_death_lab <dir> <shell-pid>: a fake ps and a fake workspace mover for
-# the pane-death close fixtures. The mover appends to $FM_FAKE_MOVER_LOG and
-# exits 9 unless $FM_FAKE_MOVER_RESPONSE names a readable response file.
-make_death_lab() {  # <dir> <shell-pid>
-  local dir=$1 pid=$2
+# make_death_lab <dir> <shell-pid> [extra-process-rows]: a fake ps and a fake
+# workspace mover for the pane-death close fixtures. The shell sits on ttys001;
+# optional <extra-process-rows> are appended verbatim to the process table as
+# "<pid> <ppid> <tty>" lines so a case can give the shell a child. The mover
+# appends to $FM_FAKE_MOVER_LOG and exits 9 unless $FM_FAKE_MOVER_RESPONSE
+# names a readable response file.
+make_death_lab() {  # <dir> <shell-pid> [extra-process-rows]
+  local dir=$1 pid=$2 extra=${3:-}
   mkdir -p "$dir"
   cat > "$dir/ps" <<SH
 #!/usr/bin/env bash
 case "\$*" in
-  "-axo pid=,ppid=") printf '1 0\n$pid 1\n' ;;
+  "-axo pid=,ppid=,tty=") printf '1 0 ??\n$pid 1 ttys001\n$extra' ;;
   "-p $pid -o stat=") printf 'Ss+\n' ;;
   "-p $pid -o comm=") printf -- '-zsh\n' ;;
   *) exit 1 ;;
@@ -1398,6 +1401,61 @@ test_projection_close_non_emptying_stays_plain_without_proof_or_move() {
   kill -0 "$bgpid" 2>/dev/null || fail "non-emptying close signaled the pane's shell"
   kill "$bgpid" 2>/dev/null || true; wait "$bgpid" 2>/dev/null || true
   pass "herdr presentation cleanup: a non-emptying close stays plain with no proof, move, or signal"
+}
+
+# idle_shell_proof_pid <dir> <shell-pid> <process-table-rows>: run the real
+# idle-shell proof against a fake process table. <process-table-rows> is a
+# printf format of "<pid> <ppid> <tty>" lines. The pane always reports one
+# sleeping recognized shell as its sole foreground process, so the process
+# table is the only thing under test. Prints the proved pid, or nothing.
+idle_shell_proof_pid() {  # <dir> <shell-pid> <process-table-rows>
+  local dir=$1 pid=$2 rows=$3 info
+  mkdir -p "$dir"
+  cat > "$dir/ps" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  "-axo pid=,ppid=,tty=") printf '$rows' ;;
+  "-p $pid -o stat=") printf 'Ss\n' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/ps"
+  info=$(printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w2:p1","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"zsh","argv0":"-zsh"}]}}}' \
+    "$pid" "$pid" "$pid")
+  ROOT="$ROOT" FM_TEST_PROCESS_INFO="$info" FM_HERDR_PS_BIN="$dir/ps" \
+    FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS=1 bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    # shellcheck disable=SC2329 # invoked indirectly by the idle-shell proof.
+    fm_backend_herdr_cli() { printf "%s\n" "$FM_TEST_PROCESS_INFO"; }
+    fm_backend_herdr_pane_idle_shell_pid fmtest w2:p1
+  ' 2>/dev/null
+}
+
+test_idle_shell_proof_converges_past_an_off_terminal_rc_helper() {
+  local dir pid=4242 out
+  dir="$TMP_ROOT/idle-proof-off-tty"
+  # An interactive rc that opens a zpty (zsh-autosuggestions is the real case)
+  # leaves a permanent child zsh that is session leader of a DIFFERENT pty.
+  # A flat zero-children count could never converge on such a box, so every
+  # restored pane stayed uncleanable forever.
+  out=$(idle_shell_proof_pid "$dir" "$pid" '1 0 ??\n4242 1 ttys001\n4243 4242 ttys009\n')
+  [ "$out" = "$pid" ] \
+    || fail "the proof refused an idle shell whose only child sits on another terminal: '$out'"
+  pass "herdr idle-shell proof: a permanent rc-forked helper on another terminal still proves the shell idle"
+}
+
+test_idle_shell_proof_refuses_a_background_job_on_the_pane_terminal() {
+  local dir pid=4242 out
+  dir="$TMP_ROOT/idle-proof-same-tty"
+  # A job the pane's shell actually owns - foreground or backgrounded with & -
+  # inherits the pane's controlling terminal, so it must still refuse.
+  out=$(idle_shell_proof_pid "$dir" "$pid" '1 0 ??\n4242 1 ttys001\n4243 4242 ttys001\n')
+  [ -z "$out" ] \
+    || fail "the proof accepted a shell owning a job on the pane's own terminal: '$out'"
+  # A second shell row for the same pid stays a refusal on its own.
+  out=$(idle_shell_proof_pid "$dir" "$pid" '1 0 ??\n4242 1 ttys001\n4242 1 ttys001\n')
+  [ -z "$out" ] || fail "the proof accepted an ambiguous duplicate shell row: '$out'"
+  pass "herdr idle-shell proof: a job on the pane's own terminal, or an ambiguous shell row, still refuses"
 }
 
 test_projection_close_plain_without_move_requires_structured_removal() {
@@ -4051,6 +4109,8 @@ test_projection_close_emptying_before_focus_repositions_then_uses_pane_death
 test_projection_close_emptying_before_last_focus_needs_no_move
 test_projection_close_emptying_last_workspace_needs_no_move
 test_projection_close_non_emptying_stays_plain_without_proof_or_move
+test_idle_shell_proof_converges_past_an_off_terminal_rc_helper
+test_idle_shell_proof_refuses_a_background_job_on_the_pane_terminal
 test_projection_close_plain_without_move_requires_structured_removal
 test_projection_close_ambiguous_positions_fall_back_to_plain_close
 test_projection_close_move_failure_falls_back_to_plain_close
