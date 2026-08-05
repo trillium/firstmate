@@ -266,8 +266,12 @@ export FM_BACKEND_HERDR_WORKSPACE_MOVER="$FAKEBIN/herdr-workspace-mover"
 # their own short bound at the call site, so they still time out promptly.
 export FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS=${FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS:-600}
 export FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL=${FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL:-0.1}
-# Bound used only by the deliberate lock-contention fixtures below.
+# Bound used only by the deliberate lock-contention fixtures below. Both knobs
+# are pinned, not just the poll count: the interval above is overridable, and a
+# large caller-set interval would otherwise stretch these fixtures from a prompt
+# 1s timeout into a long wait even though the poll count is small.
 CONTENDED_LOCK_POLLS=10
+CONTENDED_LOCK_INTERVAL=0.1
 
 # shellcheck source=tests/herdr-test-safety.sh
 . "$ROOT/tests/herdr-test-safety.sh"
@@ -637,6 +641,7 @@ LOCK_CONTENTION_START=$(log_line_count)
 LOCK_CONTENTION_FOCUS_START=$(focus_audit_line_count)
 LOCK_CONTENTION_MOVE_START=$(wc -l < "$MOVE_CALL_LOG" | tr -d '[:space:]')
 if FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS="$CONTENDED_LOCK_POLLS" \
+  FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL="$CONTENDED_LOCK_INTERVAL" \
   spawn_task lock-contended "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/lock-contended.out" 2> "$TMP_ROOT/lock-contended.err"; then
   LOCK_CONTENTION_STATUS=0
 else
@@ -1053,6 +1058,7 @@ while [ ! -e "$CROSS_LOCK_READY" ] && kill -0 "$CROSS_LOCK_PID" 2>/dev/null; do 
 mkdir -p "$SECOND_HOME_A/data/aflat"
 printf 'Flat fallback under session lock contention.\n' > "$SECOND_HOME_A/data/aflat/brief.md"
 if FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS="$CONTENDED_LOCK_POLLS" \
+  FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL="$CONTENDED_LOCK_INTERVAL" \
   spawn_task aflat "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/aflat.out" 2> "$TMP_ROOT/aflat.err"; then
   AFLAT_STATUS=0
 else

@@ -1365,8 +1365,9 @@ FMEOF
   fi
   # Same bounded wait as fm-spawn.sh's projection lock; see docs/configuration.md
   # for FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS / _INTERVAL (default 50 x 0.1 = 5s).
-  lock_max=${FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS:-50}
-  lock_interval=${FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL:-0.1}
+  fm_backend_herdr_presentation_lock_budget
+  lock_max=$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS
+  lock_interval=$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL
   attempt=0
   while [ "$attempt" -lt "$lock_max" ]; do
     if fm_lock_try_acquire "$lock_path"; then

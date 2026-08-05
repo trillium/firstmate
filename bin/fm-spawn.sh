@@ -448,8 +448,9 @@ spawn_herdr_presentation_order_lock_acquire() {
   [ -n "$session" ] || session=$(fm_backend_herdr_session)
   lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
   HERDR_PRESENTATION_ORDER_LOCK="$lock_path"
-  max=${FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS:-50}
-  interval=${FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL:-0.1}
+  fm_backend_herdr_presentation_lock_budget
+  max=$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS
+  interval=$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL
   attempt=0
   while [ "$attempt" -lt "$max" ]; do
     if fm_lock_try_acquire "$HERDR_PRESENTATION_ORDER_LOCK"; then

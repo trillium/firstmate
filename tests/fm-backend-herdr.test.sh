@@ -1890,6 +1890,79 @@ test_kill_refuses_when_presentation_lock_is_unavailable() {
   pass "fm_backend_herdr_kill: unavailable session locks defer every pane close"
 }
 
+test_presentation_lock_budget_rejects_malformed_knobs() {
+  local out
+  # The bound is env-tunable, so a malformed value must never reach the loop: a
+  # non-numeric poll count fails the integer comparison and degrades instantly,
+  # and a non-numeric interval makes sleep fail every iteration, spinning the
+  # wait with no delay at all. Both fall back to the shipped 50 x 0.1 = 5s.
+  out=$(bash -c '
+    . "$0/bin/backends/herdr.sh"
+    check() {  # <label> <polls> <interval> <expected-polls> <expected-interval>
+      FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS=$2 \
+        FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL=$3 fm_backend_herdr_presentation_lock_budget
+      [ "$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS" = "$4" ] \
+        || printf "MISMATCH %s polls: %s expected=%s\n" "$1" "$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS" "$4"
+      [ "$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL" = "$5" ] \
+        || printf "MISMATCH %s interval: %s expected=%s\n" "$1" "$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL" "$5"
+    }
+    check unset "" "" 50 0.1
+    check valid 600 0.25 600 0.25
+    check zero-polls 0 0.1 0 0.1
+    check alpha-polls abc 0.1 50 0.1
+    check negative-polls -5 0.1 50 0.1
+    check float-polls 1.5 0.1 50 0.1
+    check spaced-polls "1 2" 0.1 50 0.1
+    check alpha-interval 600 abc 600 0.1
+    check bare-dot-interval 600 . 600 0.1
+    check trailing-dot-interval 600 "0." 600 0.1
+    check double-dot-interval 600 0.1.2 600 0.1
+    check negative-interval 600 -1 600 0.1
+    check injection-interval 600 "0.1; touch /tmp/fm-should-not-exist" 600 0.1
+  ' "$ROOT" 2>&1)
+  [ -z "$out" ] || fail "presentation lock budget accepted a malformed knob: $out"
+  [ ! -e /tmp/fm-should-not-exist ] || {
+    rm -f /tmp/fm-should-not-exist
+    fail "presentation lock budget let an interval value execute"
+  }
+  pass "fm_backend_herdr_presentation_lock_budget: malformed poll and interval knobs fall back to the shipped bound"
+}
+
+test_kill_reverifies_session_lock_path_before_mutating() {
+  local dir out status
+  dir="$TMP_ROOT/kill-lock-moved"; mkdir -p "$dir"
+  : > "$dir/cli.log"
+  : > "$dir/released"
+  # Acquiring proves only that one directory was taken. The wait is bounded but
+  # not instant, so a session whose lock path moves mid-wait must refuse rather
+  # than close a pane while another holder owns the live path.
+  out=$(ROOT="$ROOT" CLI_LOG="$dir/cli.log" RELEASED="$dir/released" RESOLVES="$dir/resolves" bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    : > "$RESOLVES"
+    fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_presentation_session_lock_path() {
+      printf "x\n" >> "$RESOLVES"
+      if [ "$(wc -l < "$RESOLVES" | tr -d " ")" -le 1 ]; then
+        printf "/tmp/fm-herdr-lock-before"
+      else
+        printf "/tmp/fm-herdr-lock-after"
+      fi
+    }
+    fm_lock_try_acquire() { return 0; }
+    fm_lock_release() { printf "%s\n" "$1" >> "$RELEASED"; }
+    fm_backend_herdr_cli() { printf "%s\n" "$*" >> "$CLI_LOG"; return 0; }
+    fm_backend_herdr_kill fmtest:w2:p2
+  ' 2>&1)
+  status=$?
+  [ "$status" -eq 0 ] || fail "a moved session lock path changed best-effort kill status: $status"
+  [ ! -s "$dir/cli.log" ] || fail "a moved session lock path still mutated Herdr: $(cat "$dir/cli.log")"
+  [ "$(cat "$dir/released")" = "/tmp/fm-herdr-lock-before" ] \
+    || fail "a moved session lock path did not release the acquired lock: $(cat "$dir/released")"
+  assert_contains "$out" "refusing an unlocked pane close" \
+    "a moved session lock path did not report the deferred close"
+  pass "fm_backend_herdr_kill: a session lock path that moves mid-wait refuses the close and releases"
+}
+
 test_endpoint_confirmed_gone_gates_on_structured_presence() {
   local out
   out=$(bash -c '
@@ -4058,6 +4131,8 @@ test_kill_emptying_non_focused_uses_pane_death
 test_kill_focused_workspace_stays_plain_close
 test_endpoint_confirmed_gone_gates_on_structured_presence
 test_kill_refuses_when_presentation_lock_is_unavailable
+test_presentation_lock_budget_rejects_malformed_knobs
+test_kill_reverifies_session_lock_path_before_mutating
 test_projection_seeded_prune_refuses_active_tab
 test_projection_label_builder_uses_corner_and_strips_owner_prefixes
 test_projection_order_moves_only_exact_new_workspace_and_preserves_relative_order
