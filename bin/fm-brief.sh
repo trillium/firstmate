@@ -14,6 +14,12 @@
 # through the marked-status/corr channel).
 # Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--herdr-lab] [--beads <id>]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
+#   <repo-name> is a bare project name or "projects/<name>" resolving under
+#   $FM_HOME/projects (or FM_PROJECTS_OVERRIDE), or an explicit absolute or
+#   relative path. bin/fm-project-dir-lib.sh owns that mapping, shared with
+#   fm-spawn.sh so a name that scaffolds here also spawns there.
+#   An unrecognized --flag is rejected rather than taken as the repo name; pass
+#   "--" first for the rare positional that must itself start with "--".
 #   --beads <id> links the task to a beads issue and is passed to every hook in
 #   fm-brief-hooks.d/ as FM_HOOK_BEADS_ID; the beads.sh hook there owns the
 #   resulting brief content. Applies to ship and scout briefs only.
@@ -113,6 +119,8 @@ esac
 . "$SCRIPT_DIR/fm-marker-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-project-dir-lib.sh
+. "$SCRIPT_DIR/fm-project-dir-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 
 resolve_directory_input() {
@@ -146,7 +154,12 @@ BEADS_ID=""
 BEADS_SET=0
 POS=()
 want_value=
+end_of_flags=0
 for a in "$@"; do
+  if [ "$end_of_flags" -eq 1 ]; then
+    POS+=("$a")
+    continue
+  fi
   if [ -n "$want_value" ]; then
     case "$a" in
       --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
@@ -165,11 +178,30 @@ for a in "$@"; do
     --no-projects) NO_PROJECTS=1 ;;
     --beads) want_value=beads ;;
     --beads=*) BEADS_ID=${a#--beads=}; BEADS_SET=1 ;;
+    -h|--help) usage; exit 0 ;;
+    # An unknown --flag is a caller mistake, never a positional: taking it as
+    # the repo name scaffolds a brief for a project that does not exist, and the
+    # only symptom is a "not in registry" warning that reads like a stale entry.
+    # `--` ends flag parsing for the rare positional that must start with `--`.
+    --) end_of_flags=1 ;;
+    --*) echo "error: unknown option: $a" >&2; exit 2 ;;
     *) POS+=("$a") ;;
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 [ "$BEADS_SET" -eq 0 ] || [ -n "$BEADS_ID" ] || { echo "error: --beads requires a non-empty value" >&2; exit 1; }
+# Named errors for missing positionals: under set -u a bare ${POS[n]} would
+# instead die with "POS[0]: unbound variable" from an internal line number.
+[ "${#POS[@]}" -ge 1 ] || {
+  echo "error: missing <task-id>" >&2
+  echo "usage: fm-brief.sh <task-id> <repo-name> [flags]   (--help for the full contract)" >&2
+  exit 2
+}
+[ "$KIND" = secondmate ] || [ "${#POS[@]}" -ge 2 ] || {
+  echo "error: missing <repo-name> for ${POS[0]}" >&2
+  echo "usage: fm-brief.sh <task-id> <repo-name> [flags]   (--help for the full contract)" >&2
+  exit 2
+}
 ID=${POS[0]}
 
 case "$BEADS_ID" in
@@ -203,16 +235,13 @@ shell_quote() {
 }
 
 # Resolve a project's clone directory exactly as the origin/upstream lookups
-# below need it: an absolute path is used as-is, "projects/<name>" is
-# relative to FM_HOME, and a bare name resolves under $FM_HOME/projects (or
-# FM_PROJECTS_OVERRIDE).
+# below need it. The mapping itself lives in bin/fm-project-dir-lib.sh so this
+# script and fm-spawn.sh cannot disagree about what a project string names -
+# the drift that made a bare name scaffold here and then fail at spawn. No
+# existence check: an absent clone must leave the lookups below silent, not
+# refuse the scaffold.
 project_clone_dir() {
-  local repo=$1
-  case "$repo" in
-    /*) printf '%s\n' "$repo" ;;
-    projects/*) printf '%s\n' "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/${repo#projects/}" ;;
-    *) printf '%s\n' "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/$repo" ;;
-  esac
+  fm_project_dir_candidate "$1" "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 }
 
 # Print "<trillium-repo-name> <state>" for a ship task's fork-contribution

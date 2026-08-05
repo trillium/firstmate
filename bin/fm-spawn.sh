@@ -3,6 +3,14 @@
 # secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--account <N>] [--label <string>] [--beads <id>] [--scout]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--label <string>] --secondmate
+#   <project-dir> takes the same forms fm-brief.sh's <repo-name> takes: a bare
+#   project name or "projects/<name>" resolving under $FM_HOME/projects (or
+#   FM_PROJECTS_OVERRIDE), or an explicit absolute or relative path, which wins
+#   as written. bin/fm-project-dir-lib.sh owns that mapping so the two halves of
+#   a dispatch cannot disagree about what a project string names. A project that
+#   resolves nowhere is a named error here, not a raw cd failure at launch time.
+#   An unrecognized --flag is rejected rather than taken as a positional; pass
+#   "--" first for the rare positional that must itself start with "--".
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
@@ -216,6 +224,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-project-dir-lib.sh
+. "$SCRIPT_DIR/fm-project-dir-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -239,7 +249,12 @@ BEADS_SET=0
 ACCOUNT_SET=0
 POS=()
 want_value=
+end_of_flags=0
 for a in "$@"; do
+  if [ "$end_of_flags" -eq 1 ]; then
+    POS+=("$a")
+    continue
+  fi
   if [ -n "$want_value" ]; then
     case "$a" in
       --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
@@ -274,6 +289,12 @@ for a in "$@"; do
     --beads=*) BEADS_ARG=${a#--beads=}; BEADS_SET=1 ;;
     --account) want_value=account ;;
     --account=*) ACCOUNT=${a#--account=}; ACCOUNT_SET=1 ;;
+    -h|--help) usage; exit 0 ;;
+    # An unknown --flag is a caller mistake, never a positional: swallowing it
+    # as the project or launch command turns a typo into a wrong spawn.
+    # `--` ends flag parsing for the rare positional that must start with `--`.
+    --) end_of_flags=1 ;;
+    --*) echo "error: unknown option: $a" >&2; exit 2 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -477,6 +498,18 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   done
   exit "$rc"
 fi
+# Named errors for missing positionals: under set -u a bare ${POS[n]} would
+# instead die with "POS[0]: unbound variable" from an internal line number.
+[ "${#POS[@]}" -ge 1 ] || {
+  echo "error: missing <task-id>" >&2
+  echo "usage: fm-spawn.sh <task-id> <project-dir> [flags]   (--help for the full contract)" >&2
+  exit 2
+}
+[ "$KIND" = secondmate ] || [ "${#POS[@]}" -ge 2 ] || {
+  echo "error: missing <project-dir> for ${POS[0]}" >&2
+  echo "usage: fm-spawn.sh <task-id> <project-dir> [flags]   (--help for the full contract)" >&2
+  exit 2
+}
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
@@ -767,12 +800,13 @@ resolved_existing_dir() {
   cd "$path" && pwd -P
 }
 
+# Resolve the <project-dir> positional to an existing clone, accepting exactly
+# what fm-brief.sh accepts (bin/fm-project-dir-lib.sh owns the mapping): an
+# absolute path, an explicit relative path, "projects/<name>", or a bare
+# <name> under $PROJECTS. A name that resolves nowhere fails here with a named
+# error instead of surfacing later as a raw `cd` failure from an internal line.
 resolve_project_dir_arg() {
-  local path=$1
-  case "$path" in
-    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
-    *) printf '%s\n' "$path" ;;
-  esac
+  fm_resolve_project_dir "$1" "$PROJECTS" project
 }
 
 path_is_ancestor_of() {
@@ -927,7 +961,10 @@ if [ "$KIND" = secondmate ]; then
     BRIEF="$DATA/$ID/brief.md"
   fi
 else
-  PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
+  # Two steps on purpose: nesting the resolve inside the `cd` substitution would
+  # swallow its failure (`cd ""` succeeds and silently yields the process cwd).
+  PROJ_DIR="$(resolve_project_dir_arg "$PROJ")" || exit 1
+  PROJ_ABS="$(cd "$PROJ_DIR" && pwd)" || exit 1
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
