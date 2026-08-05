@@ -449,7 +449,7 @@ These paths need `jq` to build the JSON payload, but they run before token and n
 ### Promised public replies (state/public-followup)
 
 A relay request that spawns real work can leave firstmate owing a specific public reply in a specific thread.
-That promise is a typed `kind=public-followup` obligation owned entirely by `tasks-axi public-followup`, with the full private request context staying in `state/x-context/`; firstmate keeps no parallel copy of either.
+That promise is a typed `kind=public-followup` obligation owned entirely by `tasks-axi public-followup` (requires `tasks-axi` 0.2.3 or newer; the shared bootstrap probe in `bin/fm-tasks-axi-lib.sh` gates at 0.2.2 for backlog-mutation verbs and does not cover this command), with the full private request context staying in `state/x-context/`; firstmate keeps no parallel copy of either.
 `bin/fm-public-followup.sh` is firstmate's side: it registers a commitment, reconciles typed terminal work results into it, and posts the final reply through `bin/fm-x-reply.sh --followup`.
 Run `bin/fm-public-followup.sh --help` for the exact subcommands and flags.
 
