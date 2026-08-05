@@ -81,7 +81,7 @@ implies, and is sometimes nothing.
 Repositories configured with `diff3` or `zdiff3` conflict style emit **four** marker types, not
 three:
 
-```
+```text
 <<<<<<<      ours
 |||||||      common ancestor      <-- the one agents miss
 =======      theirs
