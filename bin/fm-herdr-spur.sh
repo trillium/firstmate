@@ -39,6 +39,15 @@
 # unusable), it falls back to a lightweight periodic `herdr agent list` poll.
 # Both paths share one normalize + edge-detect + enqueue core.
 #
+# OWNED-AGENT FILTER.
+# EXTERNAL is enforced, not assumed. `herdr agent list` reports every agent in
+# the session, including the panes firstmate itself spawned, so before enqueuing
+# a finish edge the bridge resolves the pane back to a firstmate task through
+# window_owner_task (bin/fm-classify-lib.sh) and drops the edge when one owns it.
+# Without that, every firstmate-owned agent wakes firstmate twice per turn-end -
+# once legitimately via its status append, once spuriously here - and the channel
+# stops meaning "an agent firstmate cannot otherwise see".
+#
 # DEBOUNCE.
 # Edges are computed against a remembered last-status per agent (in-memory for
 # the process). Only working->{idle,done} fires. A subsequent working edge
@@ -68,6 +77,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-transition-lib.sh
 . "$SCRIPT_DIR/fm-transition-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 
 FM_HERDR_SPUR_SESSION="${FM_HERDR_SPUR_SESSION:-default}"
 FM_HERDR_SPUR_POLL_INTERVAL="${FM_HERDR_SPUR_POLL_INTERVAL:-5}"   # seconds between poll passes (poll fallback)
@@ -195,6 +206,40 @@ fm_herdr_spur_edge_policy() {  # <from> <to>
   esac
 }
 
+# fm_herdr_spur_pane_owner: print the firstmate task id that owns <pane_id>, or
+# return 1 (printing nothing) when no task in this home does. Ownership decides
+# the bridge's whole scope: a firstmate-SPAWNED agent already reports completion
+# through its state/<id>.status append and turn-end hook, so spurring on its
+# idle/done edge would wake firstmate TWICE per turn-end and bury the genuinely
+# invisible external agents this channel exists to surface.
+#
+# The lookup is window_owner_task's strict state/*.meta scan
+# (bin/fm-classify-lib.sh) - strict because "nobody owns this pane" must be a
+# real answer, not window_to_task's always-something fallback. herdr records
+# window= as "<session>:<pane-id>" (bin/backends/herdr.sh's target shape) while
+# both `herdr agent list` and the event stream report the BARE pane id, so the
+# bare form alone never matches a herdr-backed task's meta; try both shapes.
+# Checked at each finish EDGE rather than once at subscribe time, so a task
+# spawned or torn down mid-stream is classified against current metadata.
+fm_herdr_spur_pane_owner() {  # <pane_id>
+  local pane=$1
+  [ -n "$pane" ] || return 1
+  window_owner_task "$pane" "$STATE" && return 0
+  window_owner_task "${FM_HERDR_SPUR_SESSION}:${pane}" "$STATE" && return 0
+  return 1
+}
+
+# Enqueue one spur wake for <agent> reaching <status>, unless the pane belongs to
+# a firstmate task (which reports its own completion; see fm_herdr_spur_pane_owner).
+fm_herdr_spur_spur_or_skip() {  # <agent> <status> <pane_id>
+  local agent=$1 status=$2 pane=$3 owner
+  if owner=$(fm_herdr_spur_pane_owner "$pane"); then
+    log "SKIP-OWNED agent=$agent status=$status pane=$pane task=$owner"
+    return 0
+  fi
+  fm_herdr_spur_enqueue "$agent" "$status" "$pane"
+}
+
 # Enqueue one spur wake for <agent> reaching <status>.
 fm_herdr_spur_enqueue() {  # <agent> <status> <pane_id>
   local agent=$1 status=$2 pane=$3 reason
@@ -221,7 +266,7 @@ fm_herdr_spur_reconcile() {  # <watch-set>
     prev_var="LAST_STATUS_${key}"
     prev="${!prev_var:-}"
     if [ -n "$prev" ] && fm_herdr_spur_edge_policy "$prev" "$status"; then
-      fm_herdr_spur_enqueue "$agent" "$status" "$pane"
+      fm_herdr_spur_spur_or_skip "$agent" "$status" "$pane"
     fi
     printf -v "$prev_var" '%s' "$status"
   done < <(fm_herdr_spur_snapshot_any)
@@ -298,7 +343,7 @@ fm_herdr_spur_event_block() {  # <watch-set>
     prev_var="LAST_STATUS_${key}"
     prev="${!prev_var:-}"
     if [ -n "$prev" ] && fm_herdr_spur_edge_policy "$prev" "$ev_status"; then
-      fm_herdr_spur_enqueue "$name" "$ev_status" "$pane_id"
+      fm_herdr_spur_spur_or_skip "$name" "$ev_status" "$pane_id"
     fi
     printf -v "$prev_var" '%s' "$ev_status"
   done < <(python3 "$reader_py" "$sock" "$FM_HERDR_SPUR_EVENT_BUDGET" "$@" 2>/dev/null)
