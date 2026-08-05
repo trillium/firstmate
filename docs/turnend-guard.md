@@ -26,6 +26,16 @@ An unmarked checkout or invalid marker falls through to the git-dir check.
 That check keeps crewmate and scout linked worktrees inert because their git dir differs from their git common dir.
 It also requires `AGENTS.md`, `bin/`, and the effective state directory.
 
+Primary scope is a checkout test, not a session test, so the guard then requires proof that this session is the primary one.
+Any agent launched with its cwd set to the primary checkout loads these same tracked hook files, including a parlay-spawned scout, a captain-run helper session, or a read-only investigation that never needed a worktree.
+The repair banner instructs its reader to arm fleet supervision, which AGENTS.md sections 3 and 8 reserve for the session holding this home's session lock.
+So the guard calls `fm_session_lock_owned_by_self <state-dir>` from `bin/fm-session-lock-lib.sh`, the same identity proof the Claude Stop auto-arm already requires: this process's harness ancestor must be the pid recorded in the effective state directory's `.lock`.
+Every other state exits silently rather than blocking, because none of them describes a session with authority to perform the demanded repair.
+A lock held by another live harness means a crewmate, scout, or helper session inside the primary checkout, and the real primary is guarded by its own turn ends.
+A missing, malformed, or dead-owner lock means no session has yet proven itself this home's primary, and a lock-refused session must not repair supervision.
+An unresolvable harness ancestry is uncertainty, which this guard has always resolved by failing open rather than nagging.
+The genuine-primary blind spot this leaves is one turn wide and self-closing, because `bin/fm-session-start.sh` acquires the lock as its first step and Claude's Stop auto-arm reclaims a dead-owner lock on the same Stop event.
+
 For an in-scope primary, the guard counts in-flight work from `state/*.meta`.
 Registered `state/procevent/*.source` records also require supervision even though they have no task metadata.
 The default cross-harness mode exits silently with no supervision need.
@@ -91,6 +101,7 @@ That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it alwa
 ## Compatibility limits
 
 - Child crewmate and scout worktrees are outside scope.
+- A session inside a primary checkout that does not hold that home's session lock is silent, so crewmates, scouts, and helper sessions launched there are never told to arm fleet supervision.
 - A valid secondmate home is in scope; an idle secondmate endpoint with no Relay poll remains healthy because it has no supervision need.
 - The direct-blocking and bounded passive-follow-up split is limited to the primary integrations listed above.
 - OpenCode headless mode and untrusted Grok project hooks remain fail-open at the host boundary.
@@ -105,7 +116,7 @@ That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it alwa
 
 ## Regression coverage
 
-`tests/fm-turnend-guard.test.sh` covers the predicate, main and secondmate primary scope, child-worktree exclusion, `FM_HOME` and `FM_STATE_OVERRIDE` precedence, the live-lock and fresh-beacon guard predicate, the cooperative `--claude` claim wait, epoch allow, re-block budget, monotonic failed-epoch progression, bounded attended fail-open, post-alarm continuation suppression, positive recovery reset, Pi logical-run latching, missing-`jq` behavior, all five primary registrations, Grok native and legacy selection, typed field precedence, malformed input, exactly-one-path safety, and suite environment hermeticity (ambient `FM_HOME`/state-override leak detection).
+`tests/fm-turnend-guard.test.sh` covers the predicate, main and secondmate primary scope, child-worktree exclusion, session-lock identity in both default and `--claude` mode across the non-owning, absent, dead-owner, and malformed lock states, `FM_HOME` and `FM_STATE_OVERRIDE` precedence, the live-lock and fresh-beacon guard predicate, the cooperative `--claude` claim wait, epoch allow, re-block budget, monotonic failed-epoch progression, bounded attended fail-open, post-alarm continuation suppression, positive recovery reset, Pi logical-run latching, missing-`jq` behavior, all five primary registrations, Grok native and legacy selection, typed field precedence, malformed input, exactly-one-path safety, and suite environment hermeticity (ambient `FM_HOME`/state-override leak detection).
 `tests/fm-guard-stale-banner.test.sh` covers the pull-guard predicate, including the persistent-model fresh-leftover-beacon negative control, the auto-arm model's healthy fresh-beacon-without-a-watcher case and its stale-beacon alarm, the true-reason banner wording, and the reason-keyed episode dedup surviving a beacon mtime change.
 `tests/fm-kimi-harness.test.sh` covers the separate Kimi crew hook's format preservation, idempotence, refusal cases, token guard, spawn registration, and teardown cleanup.
 `tests/fm-supervision-instructions.test.sh` covers recovery-line ownership and pi-signed's identity-preserving reuse of Pi's protocol.
