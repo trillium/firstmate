@@ -34,6 +34,14 @@ FM_TEST_LIB_SOURCED=1
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# Skip Parlay enrollment in all test-suite spawns. The live Parlay relay is not
+# a test fixture; without this guard every test spawn that reaches the enrollment
+# block would permanently register a fake agent ID and leave a listener process
+# running (robots-8ce5). FM_SPAWN_SKIP_PARLAY is distinct from FM_SPAWN_NO_GUARD
+# (watcher-guard bypass) so batch-dispatch production spawns, which also set
+# FM_SPAWN_NO_GUARD, are unaffected.
+export FM_SPAWN_SKIP_PARLAY=1
+
 # Drop an inherited FM_HOME so no test can read the developer's real firstmate
 # home. Every bin/ script resolves "${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}",
 # so an ambient FM_HOME silently outranks the per-call FM_ROOT_OVERRIDE a case

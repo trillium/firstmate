@@ -65,7 +65,7 @@ run_case_spawn() {
   FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
-    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    TMUX="fake,1,0" \
     FM_FAKE_PANE_PATH="$WT_DIR" \
     PATH="$FAKEBIN_DIR:$PATH" \
     "$SPAWN" "$id" "$PROJ_DIR" "$@" 2>&1
@@ -85,7 +85,9 @@ exit 0
 SH
   chmod +x "$FAKEBIN_DIR/parlay"
 
-  out=$(run_case_spawn "$id")
+  # Unset FM_SPAWN_SKIP_PARLAY so this spawn exercises the real enrollment path.
+  # lib.sh exports it globally to protect all other tests from the live relay.
+  out=$(FM_SPAWN_SKIP_PARLAY='' run_case_spawn "$id")
   expect_code 0 "$?" "spawn should succeed with parlay present"
   assert_contains "$out" "spawned $id" "spawn did not report success"
 
@@ -115,11 +117,14 @@ test_spawn_succeeds_when_parlay_absent() {
   # absent-from-PATH case, not just "not shadowed by our mock".
   safe_path=$(fm_path_without parlay)
 
-  out=$(PATH="$FAKEBIN_DIR:$safe_path" \
+  # Unset FM_SPAWN_SKIP_PARLAY so the enrollment block is reached and the
+  # absent-from-PATH branch is the one that suppresses enrollment, not the skip guard.
+  out=$(FM_SPAWN_SKIP_PARLAY='' \
+    PATH="$FAKEBIN_DIR:$safe_path" \
     FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
-    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    TMUX="fake,1,0" \
     FM_FAKE_PANE_PATH="$WT_DIR" \
     "$SPAWN" "$id" "$PROJ_DIR" 2>&1)
   expect_code 0 "$?" "spawn should succeed even when parlay is not on PATH"
@@ -129,7 +134,39 @@ test_spawn_succeeds_when_parlay_absent() {
   pass "a spawn with no 'parlay' on PATH still succeeds and enrolls nothing"
 }
 
+test_parlay_skipped_in_test_mode() {
+  local rec id out calls_log
+  id=spawn-parlay-testmode-z3
+  rec=$(make_spawn_case spawn-parlay-testmode "$id")
+  read_spawn_record "$rec"
+
+  calls_log="$CASE_DIR/parlay-calls.log"
+  cat > "$FAKEBIN_DIR/parlay" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$calls_log"
+exit 0
+SH
+  chmod +x "$FAKEBIN_DIR/parlay"
+
+  # FM_SPAWN_SKIP_PARLAY=1 is exported by lib.sh for all test-suite spawns.
+  # run_case_spawn inherits it without any override, so parlay should be skipped.
+  out=$(run_case_spawn "$id")
+  expect_code 0 "$?" "spawn should succeed with FM_SPAWN_SKIP_PARLAY set"
+  assert_contains "$out" "spawned $id" "spawn did not report success"
+
+  # Give any backgrounded process a moment to write (there should be none).
+  sleep 0.3
+
+  if [ -s "$calls_log" ]; then
+    fail "parlay was invoked despite FM_SPAWN_SKIP_PARLAY=1; calls: $(cat "$calls_log")"
+  fi
+  [ -e "$HOME_DIR/state/$id.parlay-listen-pid" ] \
+    && fail "spawn recorded a parlay-listen-pid with FM_SPAWN_SKIP_PARLAY set"
+  pass "FM_SPAWN_SKIP_PARLAY=1 (from lib.sh) skips Parlay enrollment and leaves no pid file"
+}
+
 test_parlay_listen_enrolled_when_present
 test_spawn_succeeds_when_parlay_absent
+test_parlay_skipped_in_test_mode
 
 echo "# all fm-spawn-parlay tests passed"
