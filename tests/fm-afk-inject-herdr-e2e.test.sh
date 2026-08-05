@@ -316,6 +316,35 @@ reset_state() {
   : > "$LOG_FILE"
 }
 
+# wait_for_log: bounded poll until <pattern> appears in the transcript log.
+# Only for a POSITIVE expectation ("the daemon eventually injects"), never for
+# a negative dwell ("it must not inject while input is pending"), which still
+# needs a fixed wait. A plain `sleep <n>; grep` for an injection is a race
+# against the daemon's next poll plus the composer settling after an Enter,
+# and it is exactly what made Scenario A fail in one full-family run and pass
+# on a standalone re-run of the same commit. Returns 1 on timeout so the
+# caller still owns the failure message.
+wait_for_log() {  # <pattern> [timeout-seconds]
+  local pattern=$1 limit=${2:-30} waited=0
+  while [ "$waited" -lt "$((limit * 10))" ]; do
+    grep -q "$pattern" "$LOG_FILE" && return 0
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+# wait_for_file: the same bounded poll for a state file the daemon writes.
+wait_for_file() {  # <path> [timeout-seconds]
+  local path=$1 limit=${2:-30} waited=0
+  while [ "$waited" -lt "$((limit * 10))" ]; do
+    [ -s "$path" ] && return 0
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
 # --- pane_input_pending environment self-check ------------------------------
 # Verify pane_input_pending (dispatched through fm_backend_composer_state for
 # backend=herdr) can detect typed text in THIS real herdr environment before
@@ -364,12 +393,11 @@ test_scenario_a() {
   fm_backend_herdr_send_key "$SUPERVISOR_TARGET" Enter
   sleep 0.5
 
-  sleep 8
+  wait_for_log 'Supervisor escalate' 30 \
+    || fail "Scenario A: digest not injected after the pane went idle"
 
   grep -q 'human draft text' "$LOG_FILE" \
     || fail "Scenario A: human text not in log after submit"
-  grep -q 'Supervisor escalate' "$LOG_FILE" \
-    || fail "Scenario A: digest not injected after the pane went idle"
   if grep -q 'human draft text.*Supervisor escalate' "$LOG_FILE" || \
      grep -q 'Supervisor escalate.*human draft text' "$LOG_FILE"; then
     fail "Scenario A: human text and digest merged into one line (after idle)"
@@ -503,9 +531,12 @@ test_scenario_d_max_defer() {
 
   echo "needs-decision: pick A or B" > "$STATE_DIR/fake-c1.status"
 
-  sleep 12
-
-  [ -s "$STATE_DIR/.subsuper-inject-wedged" ] \
+  # The alarm is due FM_MAX_DEFER_SECS after the first deferral, but the whole
+  # real-herdr family runs serially against one box, so the daemon's own polls
+  # can be scheduled late enough that a fixed dwell expires first. Wait for the
+  # alarm itself instead - the assertion is unchanged, only the deadline is
+  # generous.
+  wait_for_file "$STATE_DIR/.subsuper-inject-wedged" 45 \
     || fail "Scenario D: a persistently pending real herdr composer never raised the max-defer wedge alarm"
   [ -s "$STATE_DIR/.subsuper-escalations" ] \
     || fail "Scenario D: the buffered escalation was lost instead of preserved during the wedge"
