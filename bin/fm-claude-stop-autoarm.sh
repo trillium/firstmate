@@ -27,11 +27,22 @@
 #   - Foreground arm: the owner runs bin/fm-watch-arm.sh in the FOREGROUND of
 #     this hook-owned process tree (never shell &); Claude owns the process
 #     group, so its timeout/session teardown kills arm and watcher together.
+#   - Continuity: a quiet arm close is NOT proof that supervision survived. The
+#     arm's benign "idle" line asserts that "adapter re-arm owns continuity",
+#     and for a Claude primary this hook IS that adapter - so exiting 0 on it
+#     would hand continuity to itself and then quit, leaving zero watchers with
+#     nothing scheduled to notice. This owner therefore VERIFIES continuity
+#     after every quiet close (fm_watcher_healthy, the live lock + identity +
+#     beacon gate) and re-arms in this same foreground tree when no live watcher
+#     survived, bounded by FM_AUTOARM_MAX_REARMS. Never a detached successor:
+#     that would leave a watcher alive with no owner to notify.
 #   - Translation: while supervision is still needed and AFK remains inactive,
-#     an actionable arm close (signal:/stale:/check:/heartbeat) or a typed
-#     watcher: FAILED prints one rewake banner to stderr and exits 2, which
-#     wakes Claude even while idle ("Stop hook feedback"). A clean close with
-#     no actionable reason and no remaining need exits 0 silently.
+#     an actionable arm close (signal:/stale:/check:/heartbeat), a typed
+#     watcher: FAILED, or an exhausted re-arm budget prints one rewake banner to
+#     stderr and exits 2, which wakes Claude even while idle ("Stop hook
+#     feedback"). Exit 0 is reserved for the cases where supervision is provably
+#     fine: no remaining need, AFK took over, or a live watcher genuinely holds
+#     the singleton.
 #
 # The epoch ledger state/.claude-autoarm-epoch records the latest claim and
 # outcome so the synchronous Stop guard (bin/fm-turnend-guard.sh --claude) can
@@ -53,6 +64,13 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 GRACE=${FM_GUARD_GRACE:-300}
 OWNER_LOCK="$STATE/.claude-autoarm.lock"
 EPOCH="$STATE/.claude-autoarm-epoch"
+WATCH="$SCRIPT_DIR/fm-watch.sh"
+# How many times one firing may re-arm behind a quiet close that left no live
+# watcher. A real cycle blocks until its watcher ends, so this budget is only
+# ever consumed by a watcher that cannot stay up; exhausting it is a genuine
+# failure and becomes a loud exit-2 rewake rather than a silent exit.
+MAX_REARMS=${FM_AUTOARM_MAX_REARMS:-20}
+case "$MAX_REARMS" in ''|*[!0-9]*) MAX_REARMS=20 ;; esac
 
 # shellcheck source=bin/fm-primary-scope-lib.sh
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
@@ -60,6 +78,8 @@ EPOCH="$STATE/.claude-autoarm-epoch"
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-watch-cycle-lib.sh
+. "$SCRIPT_DIR/fm-watch-cycle-lib.sh"
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
@@ -132,54 +152,112 @@ write_epoch arming
 # shellcheck source=/dev/null
 [ -f "$CONFIG/x-mode.env" ] && . "$CONFIG/x-mode.env"
 
-# --- foreground the real arm wrapper ------------------------------------------
+# --- foreground the real arm wrapper, re-arming behind a quiet close ----------
 # NO shell &: this hook process tree is the harness-owned lifecycle. The arm
 # forks the watcher as its own tracked child exactly as it does for the
 # model-driven background-task path, and propagates the wake reason on close.
-OUT=$(mktemp "$STATE/.claude-autoarm-output.XXXXXX") || OUT=
-if [ -n "$OUT" ]; then
-  "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1
-  RC=$?
-else
-  "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1
-  RC=$?
-fi
-
-# --- classify and translate ---------------------------------------------------
-# AFK may have appeared mid-cycle: the daemon owns triage now, so suppress the
-# rewake even for an actionable close.
-if [ -e "$STATE/.afk" ]; then
-  write_epoch afk
+#
+# The loop is the continuity fix. A quiet close (rc 0, no actionable reason) is
+# how the arm reports "this cycle ended and some adapter re-arms behind me" - and
+# on a Claude primary that adapter is this hook. Exiting 0 there ended
+# supervision with nothing scheduled to restart it, so instead: verify whether a
+# live watcher actually survived, and re-arm here when none did.
+OUT=
+drop_output() {
   [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
-  exit 0
-fi
+  OUT=
+}
 
 ACTIONABLE=0
 FAILED=0
-if [ -n "$OUT" ]; then
-  grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null && ACTIONABLE=1
-  grep -q '^watcher: FAILED' "$OUT" 2>/dev/null && FAILED=1
-fi
-[ "$RC" -ne 0 ] && FAILED=1
+CONTINUITY_LOST=0
+REARMS=0
 
-if [ "$ACTIONABLE" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
-  write_epoch clean
-  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
-  exit 0
-fi
+while :; do
+  OUT=$(mktemp "$STATE/.claude-autoarm-output.XXXXXX") || OUT=
+  if [ -n "$OUT" ]; then
+    "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1
+    RC=$?
+  else
+    "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1
+    RC=$?
+  fi
 
-# The need may have vanished mid-cycle (fleet torn down, X opted out): nothing
-# left to supervise, so close quietly instead of waking the model.
+  # AFK may have appeared mid-cycle: the daemon owns triage now, so suppress the
+  # rewake even for an actionable close and never re-arm against the daemon.
+  if [ -e "$STATE/.afk" ]; then
+    write_epoch afk
+    drop_output
+    exit 0
+  fi
+
+  ACTIONABLE=0
+  FAILED=0
+  if [ -n "$OUT" ]; then
+    grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null && ACTIONABLE=1
+    grep -q '^watcher: FAILED' "$OUT" 2>/dev/null && FAILED=1
+  fi
+  [ "$RC" -ne 0 ] && FAILED=1
+  { [ "$ACTIONABLE" -eq 1 ] || [ "$FAILED" -eq 1 ]; } && break
+
+  # Quiet close. The need may have vanished mid-cycle (fleet torn down, X opted
+  # out): nothing left to supervise, so close quietly. This also populates
+  # FM_SUP_QUEUE_PENDING for the durable-wake check below.
+  if ! need_supervision; then
+    write_epoch clean
+    drop_output
+    exit 0
+  fi
+
+  # Continuity genuinely held: some other arm's watcher owns the singleton, is
+  # alive, matches this home's identity, and is beating. Only this proves the
+  # arm's "adapter re-arm owns continuity" claim, so only this may exit 0.
+  if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
+    write_epoch clean
+    drop_output
+    exit 0
+  fi
+
+  # Supervision ended with no live successor. A wake already sitting in the
+  # durable queue needs a handling turn, not another silent cycle behind it.
+  if [ "$FM_SUP_QUEUE_PENDING" = true ]; then
+    CONTINUITY_LOST=1
+    break
+  fi
+
+  REARMS=$((REARMS + 1))
+  if [ "$REARMS" -gt "$MAX_REARMS" ]; then
+    CONTINUITY_LOST=1
+    break
+  fi
+  write_epoch rearming
+  drop_output
+  # A healthy cycle blocks; only a watcher that cannot stay up returns straight
+  # away, so pace the retry rather than spinning through the whole budget.
+  sleep 1
+done
+
+# --- classify and translate ---------------------------------------------------
+# The need may have vanished while the final cycle ran: nothing left to
+# supervise, so close quietly instead of waking the model.
 if ! need_supervision; then
   write_epoch clean
-  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  drop_output
   exit 0
 fi
 
 write_epoch rewake
-if [ "$FAILED" -eq 1 ]; then
+if [ "$CONTINUITY_LOST" -eq 1 ]; then
+  {
+    printf 'firstmate watcher continuity LOST - supervision ended and could not be re-established while this home still needs it.\n'
+    fm_cycle_describe "$STATE" 2>/dev/null || true
+    [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
+    printf 'Run bin/fm-wake-drain.sh first. Then repair supervision with bin/fm-watch-arm.sh as its own Claude Code background task (never shell &). If it will not stay up, treat it as a blocker and report it instead of ending blind.\n'
+  } >&2
+elif [ "$FAILED" -eq 1 ]; then
   {
     printf 'firstmate watcher cycle FAILED - supervision is down while this home still needs it.\n'
+    fm_cycle_describe "$STATE" 2>/dev/null || true
     [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
     printf 'Run bin/fm-wake-drain.sh first. Then repair supervision with bin/fm-watch-arm.sh as its own Claude Code background task (never shell &). If the failure repeats, treat it as a blocker and report it instead of ending blind.\n'
   } >&2
@@ -190,5 +268,5 @@ else
     printf 'Run bin/fm-wake-drain.sh first and handle the wake. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.\n'
   } >&2
 fi
-[ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+drop_output
 exit 2

@@ -40,6 +40,8 @@ STALE_BANNER_MARKER="$STATE/.guard-watcher-stale-banner"
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
 # shellcheck source=bin/fm-supervision-lib.sh
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
+# shellcheck source=bin/fm-watch-cycle-lib.sh
+. "$SCRIPT_DIR/fm-watch-cycle-lib.sh"
 
 # Deterministic episode key from beacon state: same continuous stale beacon
 # (or continuous absence) shares a key; a recovered-then-restale beacon gets a
@@ -188,6 +190,11 @@ if [ "$watcher_fresh" = false ]; then
       printf '●%s\n' "$rule"
       printf '●  WATCHER DOWN - SUPERVISION IS OFF\n'
       printf '●  %s task(s) in flight, but no watcher has a fresh beacon (last beat: %s, grace %ss).\n' "$in_flight" "$beacon_desc" "$GRACE"
+      # Name HOW the last cycle ended. A harness-killed arm and a crashed watcher
+      # look identical from the beacon alone, and only the lifecycle ledger
+      # distinguishes them, so print its classification as evidence.
+      cycle_evidence=$(fm_cycle_describe "$STATE" 2>/dev/null || true)
+      [ -n "$cycle_evidence" ] && printf '●  %s\n' "$cycle_evidence"
       if [ "$READ_ONLY" -eq 1 ]; then
         printf '●  This read-only session should report the lapse, not repair it.\n'
       else
