@@ -172,7 +172,7 @@ block_stop() {
     # A killed watcher leaves a beacon just as fresh as a healthy one, so name how
     # the last cycle actually ended rather than leaving the model to guess.
     cycle_evidence=$(fm_cycle_describe "$STATE" 2>/dev/null || true)
-    [ -n "$cycle_evidence" ] && printf '●  %s' "$cycle_evidence"
+    [ -n "$cycle_evidence" ] && printf '●  %s\n' "$cycle_evidence"
     if [ "$CLAUDE_MODE" -eq 1 ]; then
       printf '●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.\n'
     fi
