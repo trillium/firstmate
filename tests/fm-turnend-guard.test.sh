@@ -473,7 +473,7 @@ test_hook_silent_for_non_owning_session_in_primary_checkout() {
   local dir owner out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-nonowner-live")
   : > "$dir/state/task1.meta"
-  "$FAKE_HARNESS" -c 'sleep 60' &
+  "$FAKE_HARNESS" -c 'sleep 60; exit $?' &
   owner=$!
   out=$(run_hook_unowned "$owner" "$dir" false); status=$?
   kill "$owner" 2>/dev/null || true
@@ -523,7 +523,7 @@ test_hook_claude_mode_silent_for_non_owning_session() {
   local dir owner out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-nonowner-claude")
   : > "$dir/state/task1.meta"
-  "$FAKE_HARNESS" -c 'sleep 60' &
+  "$FAKE_HARNESS" -c 'sleep 60; exit $?' &
   owner=$!
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_unowned "$owner" "$dir" true --claude); status=$?
   kill "$owner" 2>/dev/null || true

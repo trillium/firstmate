@@ -157,10 +157,16 @@ fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 #     supervision (AGENTS.md section 3);
 #   - an unresolvable harness ancestry: uncertainty, which this guard has always
 #     resolved by failing open rather than nagging.
-# The genuine-primary blind spot this leaves is one turn wide and self-closing:
-# bin/fm-session-start.sh acquires the lock as its very first step, and for
-# Claude the Stop auto-arm reclaims a dead-owner lock on this same Stop event,
-# so the next turn end is guarded normally.
+# The genuine-primary blind spot this leaves is bounded differently per harness.
+# bin/fm-session-start.sh acquires the lock as its very first step, so a primary
+# that goes on to hold the lock is unguarded for at most that opening turn. On
+# Claude a later loss of ownership is also at most one turn wide, because the
+# Stop auto-arm reclaims a dead-owner lock on this same Stop event. Codex,
+# OpenCode, Pi, and Grok register no Stop auto-arm, so a primary session that
+# never holds the lock - because bin/fm-lock.sh failed at session start and
+# bin/fm-session-start.sh recorded READ_ONLY and continued, or because another
+# session took the lock first - stays silent for the rest of that session. That
+# is an accepted limitation of scoping this guard to the lock-owning session.
 fm_session_lock_owned_by_self "$STATE" || exit 0
 
 # --- the actual predicate ----------------------------------------------------
