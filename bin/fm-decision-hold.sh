@@ -224,16 +224,16 @@ verify_resolution_identity() {
   local id=$1 hold_body=$2 decision_digest=$3 routed_csv=$4 resolution_prefix resolution_fields recorded_digest recorded_routes
   resolution_prefix='"Resolution recorded by fm-decision-hold.\nDecision digest: '
   case "$hold_body" in
-    "$resolution_prefix"*) resolution_fields=${hold_body#"$resolution_prefix"} ;;
+    "$resolution_prefix"*) resolution_fields=${hold_body#$resolution_prefix} ;;
     *) fail "captain hold $id has no retry identity record" ;;
   esac
   case "$resolution_fields" in
-    *'\nRouted identities: '*'\n\nCaptain decision:'*) : ;;
+    *'Routed identities: '*'Captain decision:'*) : ;;
     *) fail "captain hold $id has an invalid retry identity record" ;;
   esac
-  recorded_digest=${resolution_fields%%\\n*}
-  resolution_fields=${resolution_fields#*\\nRouted identities: }
-  recorded_routes=${resolution_fields%%\\n*}
+  recorded_digest=$(printf '%s' "$resolution_fields" | sed -n 's/^\([^[:space:]]*\).*/\1/p')
+  resolution_fields=$(printf '%s' "$resolution_fields" | sed 's/^[^[:space:]]*[[:space:]]*Routed identities: //')
+  recorded_routes=$(printf '%s' "$resolution_fields" | sed -n 's/^\([^[:space:]]*\).*/\1/p')
   [ "$recorded_digest" = "$decision_digest" ] \
     || fail "captain hold $id records a different captain decision"
   [ "$recorded_routes" = "$routed_csv" ] \
@@ -693,9 +693,7 @@ command_resolve() {
     [ "$state" != "done" ] || [ "$resolution_recorded" = 1 ] \
       || fail "routed task $dep is already done"
     # tasks-axi quotes multi-entry blocked_by as "a,b,c"; strip so edge ids match.
-    blocked=$(show_field "$show" blocked_by | tr -d '[:space:]')
-    blocked=${blocked#\"}
-    blocked=${blocked%\"}
+    blocked=$(show_field "$show" blocked_by | tr -d '[:space:]' | sed 's/^"//;s/"$//')
     case ",$blocked," in
       *",$id,"*) : ;;
       *)
@@ -715,9 +713,7 @@ command_resolve() {
     || fail "could not record the captain decision on $id"
   for dep in $routed; do
     show=$(task_show "$dep") || fail "routed task $dep disappeared before routing"
-    blocked=$(show_field "$show" blocked_by | tr -d '[:space:]')
-    blocked=${blocked#\"}
-    blocked=${blocked%\"}
+    blocked=$(show_field "$show" blocked_by | tr -d '[:space:]' | sed 's/^"//;s/"$//')
     case ",$blocked," in
       *",$id,"*)
         tasks_axi unblock "$dep" --by "$id" >/dev/null \
