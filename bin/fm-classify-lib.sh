@@ -504,22 +504,36 @@ status_open_activities() {  # <status-file-or-dash>
   _fm_status_open_activities_stream < "$f"
 }
 
-# task id from a recorded window target, falling back to the tmux-shaped
-# "<session>:fm-<id>" form when no metadata state is available.
-window_to_task() {
+# OWNERSHIP lookup: print the firstmate task id that actually RECORDS <window> as
+# its endpoint, or return 1 printing nothing when no task does. Unlike
+# window_to_task below, this NEVER guesses - a non-zero return is the positive
+# answer "no task in this home owns that target", which is what an ownership
+# decision needs. Callers that hold a backend-qualified/bare pair (e.g. herdr's
+# "<session>:<pane-id>" meta value versus the bare "<pane-id>" its event stream
+# reports) pass each candidate shape; this function matches literally.
+window_owner_task() {  # <window> [<state-dir>]
   local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}} meta mw mt t
-  if [ -n "$state" ]; then
-    for meta in "$state"/*.meta; do
-      [ -e "$meta" ] || continue
-      mw=$(grep '^window=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-      mt=$(grep '^terminal=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-      [ "$mw" = "$w" ] || [ "$mt" = "$w" ] || continue
-      t=$(basename "$meta")
-      t=${t%.meta}
-      printf '%s' "$t"
-      return 0
-    done
-  fi
+  [ -n "$w" ] || return 1
+  [ -n "$state" ] || return 1
+  for meta in "$state"/*.meta; do
+    [ -e "$meta" ] || continue
+    mw=$(grep '^window=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+    mt=$(grep '^terminal=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+    [ "$mw" = "$w" ] || [ "$mt" = "$w" ] || continue
+    t=$(basename "$meta")
+    t=${t%.meta}
+    printf '%s' "$t"
+    return 0
+  done
+  return 1
+}
+
+# task id from a recorded window target, falling back to the tmux-shaped
+# "<session>:fm-<id>" form when no metadata state is available. Always prints
+# something; use window_owner_task when "nobody owns this" must be answerable.
+window_to_task() {
+  local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}} t
+  window_owner_task "$w" "$state" && return 0
   t="${w##*:}"; t="${t#fm-}"; printf '%s' "$t"
 }
 
