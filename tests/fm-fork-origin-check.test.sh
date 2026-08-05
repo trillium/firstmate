@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-fork-origin-check.sh: the advisory scan that
-# surfaces registered project clones whose remotes look like an unswapped or
-# partially swapped fork-contribution setup (project-management skill's
-# "Fork-contribution projects" convention: origin = the captain's
-# trillium/<repo> fork, upstream = the original project, never the reverse).
+# surfaces registered project clones that cannot cut a correct fork-contribution
+# branch - either because the remotes are wrong (unswapped or partially swapped:
+# origin should be the captain's trillium/<repo> fork, upstream the original
+# project) or because the remotes are right but the clone's default branch has
+# diverged onto upstream's line (DIVERGED-BASE).
 set -u
 
 # shellcheck source=tests/lib.sh
