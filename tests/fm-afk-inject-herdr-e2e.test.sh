@@ -334,6 +334,17 @@ wait_for_log() {  # <pattern> [timeout-seconds]
   return 1
 }
 
+# settle_for_duplicate: a short fixed dwell to run AFTER a positive wait has
+# already fired, before any "exactly one" count. wait_for_log returns on the
+# FIRST match, so counting straight after it would pass even when the daemon
+# wrongly injects a SECOND digest on its next poll - which is precisely the bug
+# Scenarios B and C exist to catch. Their marker_count check is a negative
+# assertion ("nothing further happens"), and a negative has nothing to poll for,
+# so it needs a dwell exactly like Scenario A's pending-input wait. The daemon
+# runs at FM_POLL=1 here, so this covers several poll cycles while staying far
+# shorter than the fixed sleeps the positive waits replaced.
+settle_for_duplicate() { sleep 3; }
+
 # wait_for_file: the same bounded poll for a state file the daemon writes.
 wait_for_file() {  # <path> [timeout-seconds]
   local path=$1 limit=${2:-30} waited=0
@@ -435,6 +446,7 @@ test_scenario_b() {
 
   wait_for_log 'Supervisor escalate' 30 \
     || fail "Scenario B: digest not injected within 30 seconds"
+  settle_for_duplicate
 
   local marker_count
   marker_count=$(awk -F '\t' '{ hex=$1; count += gsub(/e281a3/, "", hex) } END { print count + 0 }' "$LOG_FILE")
@@ -469,6 +481,7 @@ test_scenario_c() {
 
   wait_for_log 'Supervisor escalate' 30 \
     || fail "Scenario C: digest not injected within 30 seconds"
+  settle_for_duplicate
 
   local marker_count
   marker_count=$(awk -F '\t' '{ hex=$1; count += gsub(/e281a3/, "", hex) } END { print count + 0 }' "$LOG_FILE")
