@@ -157,16 +157,25 @@ fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 #     supervision (AGENTS.md section 3);
 #   - an unresolvable harness ancestry: uncertainty, which this guard has always
 #     resolved by failing open rather than nagging.
-# The genuine-primary blind spot this leaves is bounded differently per harness.
+# The genuine-primary blind spot this leaves is bounded in exactly one case.
 # bin/fm-session-start.sh acquires the lock as its very first step, so a primary
-# that goes on to hold the lock is unguarded for at most that opening turn. On
-# Claude a later loss of ownership is also at most one turn wide, because the
-# Stop auto-arm reclaims a dead-owner lock on this same Stop event. Codex,
-# OpenCode, Pi, and Grok register no Stop auto-arm, so a primary session that
-# never holds the lock - because bin/fm-lock.sh failed at session start and
-# bin/fm-session-start.sh recorded READ_ONLY and continued, or because another
-# session took the lock first - stays silent for the rest of that session. That
-# is an accepted limitation of scoping this guard to the lock-owning session.
+# that goes on to hold the lock is unguarded for at most that opening turn.
+# Beyond that, the silence is one turn wide only on Claude, and only when the
+# recorded .lock owner is numeric but dead, the home is not AFK, and there is
+# supervision need: that is the sole path reaching the stale-lock reclaim in
+# bin/fm-claude-stop-autoarm.sh, the fleet's only reclaim mechanism. Three other
+# cases leave EVERY harness including Claude silent for the rest of the session,
+# because the auto-arm exits before that reclaim:
+#   - an absent or malformed .lock, which is what bin/fm-lock.sh leaves when it
+#     fails on an unwritable state dir or unresolvable ancestry and
+#     bin/fm-session-start.sh records READ_ONLY and continues;
+#   - a live foreign owner, i.e. another session took the lock first;
+#   - an AFK home, where the auto-arm exits at its AFK gate while this guard
+#     still blocks in AFK mode with an AFK-flavored reason.
+# Codex, OpenCode, Pi, and Grok register no Stop auto-arm at all, so for them a
+# primary that never holds the lock is silent for the rest of that session in
+# every one of these cases. That is an accepted limitation of scoping this guard
+# to the lock-owning session.
 fm_session_lock_owned_by_self "$STATE" || exit 0
 
 # --- the actual predicate ----------------------------------------------------

@@ -34,11 +34,15 @@ Every other state exits silently rather than blocking, because none of them desc
 A lock held by another live harness means a crewmate, scout, or helper session inside the primary checkout, and the real primary is guarded by its own turn ends.
 A missing, malformed, or dead-owner lock means no session has yet proven itself this home's primary, and a lock-refused session must not repair supervision.
 An unresolvable harness ancestry is uncertainty, which this guard has always resolved by failing open rather than nagging.
-The genuine-primary blind spot this leaves is bounded differently per harness.
+The genuine-primary blind spot this leaves is bounded in exactly one case and unbounded in every other.
 `bin/fm-session-start.sh` acquires the lock as its first step, so a primary that goes on to hold the lock is unguarded for at most that opening turn.
-On Claude a later loss of ownership is also at most one turn wide, because the Stop auto-arm in `bin/fm-claude-stop-autoarm.sh` reclaims a dead-owner lock on the same Stop event.
-Codex, OpenCode, Pi, and Grok register no Stop auto-arm, so a primary session that never holds the lock stays silent for the rest of that session.
-That happens when `bin/fm-lock.sh` fails at session start and `bin/fm-session-start.sh` records `READ_ONLY` and continues, or when another session took the lock first.
+Beyond that, the silence is one turn wide only on Claude, and only when the recorded `state/.lock` owner is numeric but dead, the home is not AFK, and there is supervision need.
+That is the sole path reaching the stale-lock reclaim in `bin/fm-claude-stop-autoarm.sh`, which is the only reclaim mechanism in the fleet.
+Three other cases leave every harness including Claude silent for the rest of the session, because the auto-arm exits before that reclaim.
+An absent or malformed `state/.lock`, which is what `bin/fm-lock.sh` leaves when it fails on an unwritable state directory or unresolvable ancestry and `bin/fm-session-start.sh` records `READ_ONLY` and continues.
+A live foreign owner, meaning another session took the lock first.
+An AFK home, where the auto-arm exits at its AFK gate while this guard still blocks in AFK mode with an AFK-flavored reason.
+Codex, OpenCode, Pi, and Grok register no Stop auto-arm at all, so for them a primary session that never holds the lock is silent for the rest of that session in every one of these cases.
 This is an accepted limitation of scoping the guard to the lock-owning session, not an oversight.
 
 For an in-scope primary, the guard counts in-flight work from `state/*.meta`.
@@ -107,7 +111,8 @@ That warning uses `bin/fm-supervision-instructions.sh --repair-line`, so it alwa
 
 - Child crewmate and scout worktrees are outside scope.
 - A session inside a primary checkout that does not hold that home's session lock is silent, so crewmates, scouts, and helper sessions launched there are never told to arm fleet supervision.
-- On Codex, OpenCode, Pi, and Grok there is no Stop auto-arm to reclaim a dead-owner lock, so a primary session that never holds the session lock is silent for its whole life rather than for one turn; only Claude bounds that silence to a single turn.
+- A primary session that never holds the session lock is silent for the rest of that session on every harness, including Claude, when `state/.lock` is absent or malformed, when a live foreign owner holds it, or when the home is AFK.
+- Claude bounds that silence to a single turn only for a numeric-but-dead lock owner in a non-AFK home with supervision need, which is the one case that reaches its Stop auto-arm reclaim; Codex, OpenCode, Pi, and Grok register no Stop auto-arm and so bound nothing.
 - A valid secondmate home is in scope; an idle secondmate endpoint with no Relay poll remains healthy because it has no supervision need.
 - The direct-blocking and bounded passive-follow-up split is limited to the primary integrations listed above.
 - OpenCode headless mode and untrusted Grok project hooks remain fail-open at the host boundary.

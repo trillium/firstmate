@@ -216,27 +216,40 @@ make_secondmate_linked_home_dir() {
   printf '%s\n' "$dir"
 }
 
-# Both runners below end their -c script with an explicit `exit "$rc"` rather
-# than letting the guard be the last command: bash implicitly execs a final
-# simple command, which would REPLACE the fake harness process and erase the
-# very ancestry these fixtures exist to provide.
+# THE single definition of "run this command line underneath a live fake-harness
+# process". Every fixture that must reach the guard's identity comparison goes
+# through here, including the integrity probe below, so there is exactly one
+# wrapper whose breakage the probe can detect.
+#
+# The body ends with an explicit `exit "$rc"` rather than letting the command be
+# the last one: bash implicitly execs a final simple command, which would
+# REPLACE the fake harness process and erase the very ancestry these fixtures
+# exist to provide.
 #
 # The guard fires only inside the session that owns this home's session lock,
-# the same identity proof bin/fm-claude-stop-autoarm.sh requires. So every
-# invocation that is supposed to reach the predicate must run as a child of a
-# harness-named process whose pid is recorded in the state dir the guard will
-# actually consult. $1 is that state dir; the rest is the command line to run
-# underneath the fake harness.
-run_owning_session() {
+# the same identity proof bin/fm-claude-stop-autoarm.sh requires. $1 is the
+# state dir to claim with the harness pid, or empty to run with no claim at all;
+# the rest is the command line to run underneath the fake harness.
+under_fake_harness() {
   local owned_state=$1
   shift
   FM_TEST_OWNED_STATE="$owned_state" "$FAKE_HARNESS" -c '
-    mkdir -p "$FM_TEST_OWNED_STATE" || exit 1
-    printf "%s\n" "$$" > "$FM_TEST_OWNED_STATE/.lock" || exit 1
+    if [ -n "${FM_TEST_OWNED_STATE:-}" ]; then
+      mkdir -p "$FM_TEST_OWNED_STATE" || exit 1
+      printf "%s\n" "$$" > "$FM_TEST_OWNED_STATE/.lock" || exit 1
+    fi
     "$@"
     rc=$?
     exit "$rc"
   ' _ "$@"
+}
+
+# A harness ancestry that DOES record its own pid as this home's session lock
+# owner: the shape of the captain's real primary session.
+run_owning_session() {
+  local owned_state=$1
+  shift
+  under_fake_harness "$owned_state" "$@"
 }
 
 # The same harness ancestry WITHOUT the session lock: the shape of a crewmate,
@@ -255,11 +268,8 @@ run_hook_unowned() {
     printf '%s\n' "$lock" > "$home/state/.lock"
   fi
   printf '{"stop_hook_active":%s,"session_id":"sess-unowned"}' "$stop_active" \
-    | env CLAUDECODE=1 FM_HOME="$home" "$FAKE_HARNESS" -c '
-        "$@"
-        rc=$?
-        exit "$rc"
-      ' _ bash "$dir/bin/fm-turnend-guard.sh" "$@" 2>&1
+    | under_fake_harness '' env CLAUDECODE=1 FM_HOME="$home" \
+        bash "$dir/bin/fm-turnend-guard.sh" "$@" 2>&1
 }
 
 run_hook() {
@@ -439,18 +449,17 @@ test_hook_blocks_when_unhealthy_in_primary() {
 
 # --- primary SESSION identity (robots-s91c) ----------------------------------
 #
-# Fixture integrity first: the non-owning runner must resolve a REAL harness
-# ancestor. If it resolved none, the guard would exit at its uncertainty branch
-# and every silence assertion below would pass without ever exercising the
-# identity comparison they exist to prove.
+# Fixture integrity first: the shared wrapper every runner below goes through
+# must resolve a REAL harness ancestor. If it resolved none, the guard would
+# exit at its uncertainty branch and every silence assertion below would pass
+# without ever exercising the identity comparison they exist to prove. This
+# probe drives the very same under_fake_harness definition those runners use, so
+# collapsing that wrapper back to a single final simple command fails here.
 test_fixture_unowned_runner_resolves_its_fake_harness() {
   local dir out ancestor parent
   dir=$(make_primary_dir "$TMP_ROOT/hook-fixture-ancestry")
-  out=$("$FAKE_HARNESS" -c '
-      "$@"
-      rc=$?
-      exit "$rc"
-    ' _ bash -c '. "$0"; printf "%s %s\n" "$(fm_harness_ancestry_pid)" "$PPID"' \
+  out=$(under_fake_harness '' \
+      bash -c '. "$0"; printf "%s %s\n" "$(fm_harness_ancestry_pid)" "$PPID"' \
       "$dir/bin/fm-session-lock-lib.sh") || fail "ancestry probe failed to run"
   ancestor=${out%% *}
   parent=${out##* }
