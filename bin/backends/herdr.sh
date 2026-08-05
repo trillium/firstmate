@@ -2816,18 +2816,22 @@ fm_backend_herdr_kill_serialized() {  # <session> <pane>
 fm_backend_herdr_kill() {  # <target>
   fm_backend_herdr_target_ready "$1" || return 0
   local session=$FM_BACKEND_HERDR_SESSION pane=$FM_BACKEND_HERDR_PANE
-  local lock_path attempt=0 lock_held=0
+  local lock_path attempt=0 lock_held=0 lock_max lock_interval
   if ! declare -F fm_lock_try_acquire >/dev/null 2>&1; then
     # shellcheck source=bin/fm-wake-lib.sh
     . "$FM_BACKEND_HERDR_ROOT/bin/fm-wake-lib.sh"
   fi
+  # Same bounded wait as fm-spawn.sh's projection lock; see docs/configuration.md
+  # for FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS / _INTERVAL (default 50 x 0.1 = 5s).
+  lock_max=${FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS:-50}
+  lock_interval=${FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL:-0.1}
   if lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session"); then
-    while [ "$attempt" -lt 50 ]; do
+    while [ "$attempt" -lt "$lock_max" ]; do
       if fm_lock_try_acquire "$lock_path"; then
         lock_held=1
         break
       fi
-      sleep 0.1
+      sleep "$lock_interval"
       attempt=$((attempt + 1))
     done
   fi

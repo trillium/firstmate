@@ -1330,7 +1330,7 @@ teardown_herdr_require_prerequisites() {  # <task-id>
 }
 
 teardown_herdr_preflight_target() {  # <target> <task-id>
-  local target=$1 task_id=$2 session pane presence lock_path verified_lock_path lock_session held_path attempt
+  local target=$1 task_id=$2 session pane presence lock_path verified_lock_path lock_session held_path attempt lock_max lock_interval
   teardown_herdr_require_prerequisites "$task_id" || return 1
   if ! fm_backend_herdr_parse_target "$target"; then
     echo "error: herdr endpoint $target for $task_id could not be parsed exactly; nothing was changed - repair the endpoint metadata and rerun teardown" >&2
@@ -1363,8 +1363,12 @@ teardown_herdr_preflight_target() {  # <target> <task-id>
 $TEARDOWN_HERDR_LOCK_RECORDS
 FMEOF
   fi
+  # Same bounded wait as fm-spawn.sh's projection lock; see docs/configuration.md
+  # for FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS / _INTERVAL (default 50 x 0.1 = 5s).
+  lock_max=${FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS:-50}
+  lock_interval=${FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL:-0.1}
   attempt=0
-  while [ "$attempt" -lt 50 ]; do
+  while [ "$attempt" -lt "$lock_max" ]; do
     if fm_lock_try_acquire "$lock_path"; then
       if ! verified_lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") \
         || [ "$verified_lock_path" != "$lock_path" ]; then
@@ -1381,7 +1385,7 @@ $session	$lock_path"
       trap teardown_release_herdr_locks EXIT
       return 0
     fi
-    sleep 0.1
+    sleep "$lock_interval"
     attempt=$((attempt + 1))
   done
   echo "error: herdr session presentation lock is contended for $task_id; nothing was changed - rerun teardown once the contention clears" >&2

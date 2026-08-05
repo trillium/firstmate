@@ -105,6 +105,10 @@ Ordering failure never fails the task spawn.
 Firstmate does not retry, adopt, reuse, close, delete, or rename anything in response to an unavailable method, lock contention, ambiguous socket, lost response, failed move, or verification mismatch.
 The worker remains on the ordinary flat or Herdr-current-order path.
 
+Spawn, cleanup, and task kill each wait a bounded time for that shared per-session lock before degrading: spawn warns and falls back flat, while cleanup and kill refuse rather than mutating unlocked.
+The bound is `FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS` polls of `FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL` seconds, defaulting to the shipped 50 x 0.1 = 5 seconds (`docs/configuration.md`).
+Raise it when a holder's critical section is legitimately slower than that budget - a heavily loaded box, or an instrumented run such as `tests/fm-backend-herdr-presentation-e2e.test.sh`, where wrapping every Herdr call makes a 5-second wait too tight and turns ordinary contention into a silent flat fallback.
+
 Normal task metadata remains the sole endpoint authority after creation.
 Cleanup closes only the exact recorded task pane and never calls `workspace close`.
 Herdr 0.7.5's explicit close moves focus to a neighbor whenever it empties a non-focused workspace, while its pane-death removal preserves the focused workspace whenever the dying workspace sits behind it or the focused workspace is last; both behaviors are fixed on the upstream default branch but in no release, and the exact rules live in the adapter header of `bin/backends/herdr.sh`.
