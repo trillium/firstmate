@@ -113,6 +113,17 @@ only to its own scratch space, and the crewmate is still the one that changes th
 
 **Repair writes must only happen in an isolated disposable worktree. If you are in the primary checkout, stop and refuse the operation. This matches the ship-brief isolation assertion and prevents overwriting another agent’s unlanded work.**
 
+A stated rule is not evidence any more than a worker's assertion is. Run this before any reset,
+conflict repair, or copy of repaired files into the project, and abort when it fails:
+
+```sh
+[ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ] ||
+  { echo "refusing: primary checkout, not an isolated worktree" >&2; exit 1; }
+```
+
+A linked worktree keeps its own `--git-dir` while sharing `--git-common-dir`; in a primary checkout
+the two are equal, so equality is the refusal condition.
+
 Reconstruct a clean conflict from the three inputs — a partially-scrubbed committed file is not a
 usable starting point:
 
