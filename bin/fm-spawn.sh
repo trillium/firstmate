@@ -152,9 +152,10 @@
 # plus a gitignored .fm-grok-turnend worktree pointer and a state token.
 # A confirmed launch also best-effort enrolls the new agent in Parlay's live chat
 # panel via `parlay listen --agent <task-id>`, backgrounded with its pid recorded to
-# state/<id>.parlay-listen-pid for fm-teardown.sh to stop. Parlay is optional
-# captain tooling, never load-bearing: an absent `parlay` binary or a failed call is
-# logged to stderr and never blocks or fails the spawn.
+# state/<id>.parlay-listen-pid for fm-teardown.sh to stop. Skipped when
+# FM_SPAWN_SKIP_PARLAY=1 (set by tests/lib.sh for all test-suite spawns). Parlay is
+# optional captain tooling, never load-bearing: an absent `parlay` binary, a failed
+# call, or the skip guard never blocks or fails the spawn.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<backend-target> worktree=<path>
 # mode/yolo are resolved per-project from data/projects.md for ship/scout tasks;
 # secondmate spawns record mode=secondmate, yolo=off, home=, and projects=.
@@ -1937,8 +1938,12 @@ fi
 
 # Best-effort Parlay chat-panel enrollment. Optional captain tooling, never
 # load-bearing: skip silently if `parlay` is not on PATH, and never let a launch
-# failure block or fail an already-confirmed spawn.
-if command -v parlay >/dev/null 2>&1; then
+# failure block or fail an already-confirmed spawn. Skipped when
+# FM_SPAWN_SKIP_PARLAY=1 (set by tests/lib.sh for all test-suite spawns) to
+# prevent leaking listener processes and fake agent registrations into the live
+# relay (robots-8ce5). Distinct from FM_SPAWN_NO_GUARD (watcher-guard bypass)
+# so batch-dispatch production spawns, which set FM_SPAWN_NO_GUARD, still enroll.
+if [ -z "${FM_SPAWN_SKIP_PARLAY:-}" ] && command -v parlay >/dev/null 2>&1; then
   parlay listen --agent "$ID" >/dev/null 2>&1 &
   echo $! > "$STATE/$ID.parlay-listen-pid" 2>/dev/null \
     || echo "warning: could not record parlay listen pid for $ID (non-blocking)" >&2
