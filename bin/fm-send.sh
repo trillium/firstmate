@@ -29,6 +29,15 @@
 # submit or reports an inconclusive send. If a swallowed Enter is positively
 # confirmed, fm-send exits NON-ZERO so the caller knows the steer did not land
 # instead of silently leaving an unsubmitted instruction.
+#
+# Every successful send prints an explicit one-line `ok:` receipt on stderr as its
+# last output, and every failure exits non-zero before that line, so a zero exit
+# always carries positive proof of what landed. Without it a caller reading the
+# tail of fm-send's output sees only whatever guard banner printed above and
+# cannot tell a delivered message from one that never arrived. The receipt names
+# the resolved target and backend; the verified text path also names the pending
+# secondmate correlation id when one is open, because delivery is not a reply,
+# and the --raw path's receipt says so explicitly since it verifies nothing.
 # Submission dispatches through the target's recorded backend; the tmux adapter
 # shares its composer/submit core with the away-mode daemon via bin/fm-tmux-lib.sh.
 # Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP (0.4).
@@ -281,6 +290,7 @@ if [ "${1:-}" = "--key" ]; then
     exit 1
   fi
   fm_send_record_interrupt "$2" || exit 1
+  echo "ok: key '$2' sent to $T ($TARGET_BACKEND)" >&2
 else
   MESSAGE=$*
   if [ "$RAW_MODE" = 1 ]; then
@@ -291,7 +301,7 @@ else
       echo "error: raw text not sent to $T ($TARGET_BACKEND send failed; tried $RESOLUTION_TRIED)" >&2
       exit 1
     fi
-    [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: raw send to $T is best-effort; delivery was not verified" >&2
+    echo "ok: raw text issued to $T ($TARGET_BACKEND) - BEST-EFFORT, delivery NOT verified" >&2
     exit 0
   fi
   if [ "$MARK_FROM_FIRSTMATE" = 1 ]; then
@@ -386,6 +396,7 @@ else
   # turn before its busy footer shows. Pause so an immediate peek catches the
   # crewmate actually working instead of the stale idle pane. FM_SEND_SETTLE=0
   # disables it. Scoped to this path only, never the shared submit core.
+  receipt_detail=
   if [ "${FM_SEND_VERIFY_TRANSITION:-0}" != 0 ]; then
     # Optional post-submit transition verification: confirm the turn actually
     # started, not just that the composer cleared. This uses the backend's own
@@ -394,7 +405,7 @@ else
     verify_result=$(fm_backend_wait_for_working "$TARGET_BACKEND" "$T" "$verify_budget" "$TARGET_HARNESS")
     case "$verify_result" in
       working)
-        : # Turn confirmed started, proceed normally
+        receipt_detail='; turn start verified'
         ;;
       idle)
         echo "error: SEND DID NOT LAND - text was submitted to $T but the turn did not start (remains idle; tried $RESOLUTION_TRIED)" >&2
@@ -403,9 +414,20 @@ else
       unknown|error)
         # Could not verify (backend error or unavailable), but composer cleared.
         # Proceed with warning in verbose mode only. Fail only on definitive idle.
+        receipt_detail='; turn start NOT verified'
         [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: text was submitted to $T but turn start could not be verified (tried $RESOLUTION_TRIED)" >&2
         ;;
     esac
   fi
   [ "${FM_SEND_SETTLE:-1}" = 0 ] || sleep "${FM_SEND_SETTLE:-1}"
+  # Explicit delivery receipt, printed last so a zero exit always carries one.
+  # Every failure path above exits non-zero BEFORE this line, so the receipt is
+  # the caller's positive proof that the message landed - reading the tail of
+  # fm-send's output can no longer confuse "delivered" with "a guard banner
+  # printed and nothing else happened". A pending secondmate expectation names
+  # its correlation id here because delivery is not a reply.
+  if [ -n "$PENDING_REPLY_CORR" ]; then
+    receipt_detail="$receipt_detail; awaiting reply corr=$PENDING_REPLY_CORR"
+  fi
+  echo "ok: text delivered and submitted to $T ($TARGET_BACKEND)$receipt_detail" >&2
 fi

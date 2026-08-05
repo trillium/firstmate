@@ -120,10 +120,24 @@ fm_guard_clear_stale_banner() {
 # crewmate's branch/commits landed here instead of in its own isolated worktree,
 # the primary is stranded on a feature branch - surface it loudly on the very next
 # fleet action, the same way the watcher-down banner does. Scoped to the primary
-# only: detached HEAD (linked worktrees, secondmate homes) never trips this.
+# only: detached HEAD (linked worktrees, secondmate homes) never trips this, and
+# neither does a primary that cannot be on the default branch because another
+# worktree of the same repo holds it (see bin/fm-tangle-lib.sh).
 tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" || true)
+tangle_holder=
 if [ -n "$tangle_branch" ]; then
   tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
+  # Not a tangle when another worktree of this same repo holds the default
+  # branch: git permits one worktree per branch, so the primary CANNOT be on it
+  # while that holder exists. Printing the banner then makes an unclearable
+  # permanent alarm out of a repo's normal steady state, and its checkout remedy
+  # can never succeed. Staying silent here is deliberate - this guard runs on
+  # every guarded fleet command, so anything it prints unconditionally becomes
+  # background noise that masks the real output of the command that called it.
+  # Session start reports the condition once instead (bin/fm-bootstrap.sh).
+  tangle_holder=$(fm_branch_holder_worktree "$FM_ROOT" "$tangle_default" || true)
+fi
+if [ -n "$tangle_branch" ] && [ -z "$tangle_holder" ]; then
   trule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
   {
     printf '●%s\n' "$trule"

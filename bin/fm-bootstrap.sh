@@ -892,7 +892,21 @@ gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
 tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" 2>/dev/null || true)
 if [ -n "$tangle_branch" ]; then
   tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
-  if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" = 1 ]; then
+  tangle_holder=$(fm_branch_holder_worktree "$FM_ROOT" "$tangle_default" 2>/dev/null || true)
+  if [ -n "$tangle_holder" ]; then
+    # Expected steady state, not a tangle: another worktree of this repo holds
+    # the default branch, git permits one worktree per branch, so the primary
+    # cannot be on it and no checkout remedy exists (see fm-tangle-lib.sh). This
+    # is the once-per-session report of that condition - fm-guard stays silent
+    # rather than repeating it on every guarded command. It stays a no-action
+    # BOOTSTRAP_INFO fact, never a TANGLE problem line, but it is printed
+    # unconditionally so a crewmate's genuinely stranded commits in the primary
+    # are still visible; the count names them.
+    tangle_ahead=$(git -C "$FM_ROOT" rev-list --count "$tangle_default..$tangle_branch" 2>/dev/null || true)
+    tangle_ahead_note=
+    [ -n "$tangle_ahead" ] && tangle_ahead_note=" ($tangle_ahead commit(s) on '$tangle_branch' not on '$tangle_default')"
+    echo "BOOTSTRAP_INFO: primary checkout is on '$tangle_branch' because '$tangle_default' is checked out in another worktree of this repo ($tangle_holder); git allows one worktree per branch, so this is expected, not a tangle$tangle_ahead_note"
+  elif [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" = 1 ]; then
     echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - read-only session must leave restore work to the session holding the fleet lock"
   else
     echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
