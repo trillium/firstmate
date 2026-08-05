@@ -839,7 +839,7 @@ discover_and_dispatch_idle_task() {
   local windows_count ready_tasks_file ready_task_id task_kind
 
   # Check if fleet is idle: recorded_windows output should be empty
-  windows_count=$(recorded_windows | wc -l)
+  windows_count=$(recorded_windows | wc -l | xargs)
   if [ "$windows_count" -ne 0 ]; then
     # Fleet is not idle, skip auto-discovery
     return 1
