@@ -233,6 +233,7 @@ make_secondmate_linked_home_dir() {
 under_fake_harness() {
   local owned_state=$1
   shift
+  # shellcheck disable=SC2016 # expansion must happen in the child shell so the fake-harness ancestry survives
   FM_TEST_OWNED_STATE="$owned_state" "$FAKE_HARNESS" -c '
     if [ -n "${FM_TEST_OWNED_STATE:-}" ]; then
       mkdir -p "$FM_TEST_OWNED_STATE" || exit 1
@@ -458,6 +459,7 @@ test_hook_blocks_when_unhealthy_in_primary() {
 test_fixture_unowned_runner_resolves_its_fake_harness() {
   local dir out ancestor parent
   dir=$(make_primary_dir "$TMP_ROOT/hook-fixture-ancestry")
+  # shellcheck disable=SC2016 # expansion must happen in the child shell so the fake-harness ancestry survives
   out=$(under_fake_harness '' \
       bash -c '. "$0"; printf "%s %s\n" "$(fm_harness_ancestry_pid)" "$PPID"' \
       "$dir/bin/fm-session-lock-lib.sh") || fail "ancestry probe failed to run"
