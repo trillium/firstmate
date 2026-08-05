@@ -165,8 +165,29 @@ SH
   pass "FM_SPAWN_SKIP_PARLAY=1 (from lib.sh) skips Parlay enrollment and leaves no pid file"
 }
 
+# Static guard against reintroducing the leak this suite exists to prevent.
+# Every test that drives fm-spawn.sh must carry FM_SPAWN_SKIP_PARLAY, either by
+# sourcing tests/lib.sh (or a helper that does) or by exporting it itself.
+# Running under bin/fm-test-run.sh does not count: tests are also run directly as
+# `bash tests/<file>`, and that path is exactly how the fixture IDs reached the
+# live Parlay relay in the first place (robots-8ce5).
+test_every_spawning_test_carries_the_bypass() {
+  local tests_dir f uncovered=""
+  tests_dir="$ROOT/tests"
+  for f in "$tests_dir"/*.test.sh; do
+    grep -q 'fm-spawn\.sh' "$f" || continue
+    grep -qE '^\. "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/(lib|[a-z-]+-helpers)\.sh"' "$f" && continue
+    grep -q 'FM_SPAWN_SKIP_PARLAY' "$f" && continue
+    uncovered="$uncovered $(basename "$f")"
+  done
+  [ -n "$uncovered" ] \
+    && fail "these tests drive fm-spawn.sh without the Parlay enrollment bypass:$uncovered"
+  pass "every test that drives fm-spawn.sh carries the Parlay enrollment bypass"
+}
+
 test_parlay_listen_enrolled_when_present
 test_spawn_succeeds_when_parlay_absent
 test_parlay_skipped_in_test_mode
+test_every_spawning_test_carries_the_bypass
 
 echo "# all fm-spawn-parlay tests passed"

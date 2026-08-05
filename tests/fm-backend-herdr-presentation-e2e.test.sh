@@ -5,6 +5,11 @@
 # The test drives the real spawn and teardown scripts, a real Treehouse pool,
 # and the guarded named-session lab helper.
 set -u
+# This suite drives the real bin/fm-spawn.sh but does not source tests/lib.sh,
+# so it carries the Parlay skip itself: without it a direct `bash tests/<file>`
+# run registers each fixture ID with the live Parlay relay and leaves a listener
+# process behind (robots-8ce5).
+export FM_SPAWN_SKIP_PARLAY=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HERDR_LAB_HELPER=${HERDR_LAB_HELPER:-$ROOT/bin/fm-herdr-lab.sh}
