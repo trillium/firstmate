@@ -1444,7 +1444,7 @@ allocate_remote_worktree() {
   # shellcheck disable=SC2029
   proj_clone_dir_escaped="\$(echo ~)/fm-worktrees/$task_id"
   if ssh "$remote_host" "mkdir -p \"\$(echo ~)/fm-worktrees\" && git clone '$proj_url' '$proj_clone_dir_escaped' && cd '$proj_clone_dir_escaped' && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
-    REMOTE_WORKTREE="$proj_clone_dir"
+    REMOTE_WORKTREE="$HOME/fm-worktrees/$task_id"
     return 0
   fi
 
