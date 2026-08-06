@@ -217,20 +217,12 @@
       "audience": "maintainer-verification"
     },
     {
-      "path": "docs/checksum-probe-inventory.md",
-      "audience": "maintainer-verification"
-    },
-    {
       "path": "docs/calm.md",
       "audience": "operator-current"
     },
     {
       "path": "docs/cd-guard.md",
       "audience": "maintainer-architecture"
-    },
-    {
-      "path": "docs/checksum-probe-inventory.md",
-      "audience": "maintainer-verification"
     },
     {
       "path": "docs/cmux-backend.md",
@@ -342,6 +334,10 @@
     },
     {
       "path": "docs/verification/dispatch-auth.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/muse.md",
       "audience": "maintainer-verification"
     },
     {
