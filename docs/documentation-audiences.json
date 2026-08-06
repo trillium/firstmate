@@ -217,6 +217,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/checksum-probe-inventory.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/calm.md",
       "audience": "operator-current"
     },
