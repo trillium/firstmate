@@ -384,7 +384,7 @@ T_ORCA=
 
 # Export remote_host so backend operations (herdr, etc.) know where to connect
 remote_host=$(fm_meta_get "$META" remote_host)
-[ -z "$remote_host" ] || export FM_HERDR_REMOTE_HOST="$remote_host"
+export FM_HERDR_REMOTE_HOST="$remote_host"
 if [ "${FM_TEARDOWN_GUARD_DONE:-0}" != 1 ]; then
   "$FM_ROOT/bin/fm-guard.sh" || true
 fi

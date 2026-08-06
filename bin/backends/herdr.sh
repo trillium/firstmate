@@ -228,7 +228,8 @@ fm_backend_herdr_tool_check() {
 fm_backend_herdr_version_check() {
   fm_backend_herdr_tool_check || return 1
   local status protocol version remote_host
-  remote_host="${FM_SPAWN_REMOTE_HOST:-}"
+  # Resolve remote_host: FM_HERDR_REMOTE_HOST (recovery sessions) or FM_SPAWN_REMOTE_HOST (spawn)
+  remote_host="${FM_HERDR_REMOTE_HOST:-${FM_SPAWN_REMOTE_HOST:-}}"
   status=$(fm_backend_herdr_remote_cmd "$remote_host" status --json 2>/dev/null) || { echo "error: 'herdr status --json' failed; is herdr installed correctly?" >&2; return 1; }
   protocol=$(printf '%s' "$status" | jq -r '.client.protocol // empty' 2>/dev/null)
   version=$(printf '%s' "$status" | jq -r '.client.version // empty' 2>/dev/null)

@@ -157,6 +157,9 @@
 #   Local spawns never pass it and resolve their own carrier exactly as before.
 set -eu
 
+# Clear any inherited FM_SPAWN_REMOTE_HOST so only --remote flag activates remote dispatch
+unset FM_SPAWN_REMOTE_HOST
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
@@ -1439,7 +1442,7 @@ allocate_remote_worktree() {
   # Single quotes protect expansions from remote re-interpretation.
   # If the branch doesn't exist on remote, use the remote's default branch.
   # shellcheck disable=SC2029
-  if ssh "$remote_host" "git clone '$proj_url' \"\$(echo ~)/fm-worktrees/$task_id\" && cd \"\$(echo ~)/fm-worktrees/$task_id\" && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
+  if ssh "$remote_host" "mkdir -p \"\$(echo ~)/fm-worktrees\" && git clone '$proj_url' \"\$(echo ~)/fm-worktrees/$task_id\" && cd \"\$(echo ~)/fm-worktrees/$task_id\" && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
     REMOTE_WORKTREE="\$(echo ~)/fm-worktrees/$task_id"
     return 0
   fi
@@ -1451,10 +1454,12 @@ allocate_remote_worktree() {
 W="fm-$ID"
 
 # Allocate remote worktree if --remote is set (must happen before herdr pane creation)
-# If remote allocation fails, fall back to local spawn (don't exit)
+# If remote allocation fails, unset FM_SPAWN_REMOTE_HOST to fall back to local spawn
 REMOTE_WORKTREE=""
 if [ -n "${FM_SPAWN_REMOTE_HOST:-}" ]; then
-  allocate_remote_worktree "$FM_SPAWN_REMOTE_HOST" "$ID" || true
+  if ! allocate_remote_worktree "$FM_SPAWN_REMOTE_HOST" "$ID"; then
+    unset FM_SPAWN_REMOTE_HOST
+  fi
 fi
 
 case "$BACKEND" in
