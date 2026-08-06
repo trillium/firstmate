@@ -1422,17 +1422,35 @@ fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$FIRSTMATE_HOME" ] || { echo "error: no firstmate home supplied or registered for $ID" >&2; exit 1; }
   PROJ_ABS=$(validate_firstmate_home_for_spawn "$ID" "$FIRSTMATE_HOME")
+  # This home's own registry must bind $ID to exactly $FIRSTMATE_HOME before the
+  # spawn may publish state/<id>.meta here. $DATA and $STATE both hang off this
+  # process's FM_HOME, so requiring the binding is what keeps the meta in the
+  # SAME home that registers the secondmate. An absent or unreadable registry is
+  # a refusal, not a skip: a home with no registry cannot own this secondmate, and
+  # skipping the check there let a spawn invoked with a stale or inherited FM_HOME
+  # (an ancestor home, or any home that never registered $ID) silently publish the
+  # meta into that wrong home, leaving the registering home unable to supervise it.
+  #
+  # The one home that legitimately holds the meta without a registry of its own is
+  # the private parent-route control directory bin/fm-remote-secondmate-control.sh
+  # points this spawn at ($TARGET_HOME/data/.parent-route, beside
+  # state/parent-route). The registering home is the PARENT on another machine, so
+  # it cannot be consulted from here; it already validated the binding before
+  # delegating, and that directory belongs to exactly one secondmate by
+  # construction. Recognize it structurally - $DATA is the .parent-route child of
+  # the very home being launched, whose own identity marker names $ID - rather
+  # than trusting a caller-supplied flag.
   sm_data_abs=$(resolve_path "$DATA")
   sm_parent_route=$(resolve_path "$PROJ_ABS/data/.parent-route")
   sm_home_marker=
   [ ! -f "$PROJ_ABS/.fm-secondmate-home" ] || sm_home_marker=$(cat "$PROJ_ABS/.fm-secondmate-home")
   if [ "$sm_data_abs" = "$sm_parent_route" ] && [ "$sm_home_marker" = "$ID" ]; then
     : # delegated remote launch into this secondmate's own parent-route directory
-  elif [ -e "$DATA/secondmates.md" ] || [ -L "$DATA/secondmates.md" ]; then
-    if ! secondmate_registry_validate_bindings "$DATA/secondmates.md" resolve_path "$ID" "$FIRSTMATE_HOME"; then
-      echo "error: $SECONDMATE_REGISTRY_ERROR" >&2
-      exit 1
-    fi
+  elif ! secondmate_registry_validate_bindings "$DATA/secondmates.md" resolve_path "$ID" "$FIRSTMATE_HOME"; then
+    echo "error: $SECONDMATE_REGISTRY_ERROR" >&2
+    echo "error: refusing to write state/$ID.meta into $FM_HOME, which does not register secondmate $ID" >&2
+    exit 1
+  else
     SECONDMATE_PROJECTS=$SECONDMATE_REGISTRY_MATCH_PROJECTS
   fi
   WT="$PROJ_ABS"

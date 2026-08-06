@@ -83,7 +83,10 @@ Release happens only on explicit retirement or seed rollback, never on routine r
 
 `bin/fm-home-seed.sh` copies the charter into the secondmate home as `data/charter.md`.
 It also writes the gitignored `.fm-secondmate-parent` durable binding before the required `.fm-secondmate-home` identity marker; the parser header in [`bin/fm-secondmate-parent-lib.sh`](../../../bin/fm-secondmate-parent-lib.sh) owns the record contract, and both files must remain in place.
-`bin/fm-spawn.sh --secondmate` launches it through the secondmate harness path, resolving `config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness unless an explicit per-spawn harness override is passed.
+Critically, `bin/fm-home-seed.sh` also registers the secondmate in the primary home's `data/secondmates.md` registry, binding the secondmate ID to its home.
+`bin/fm-spawn.sh --secondmate` refuses to launch unless the primary home's registry carries this binding — the spawning home must be the home that registers the secondmate, not an ancestor or any other unrelated home.
+This binding is the sole authorization for a spawn to publish `state/<id>.meta` into that home's state directory, preventing a spawn invoked with an inherited or stale `FM_HOME` from silently publishing metadata into the wrong home.
+Launch proceeds through the secondmate harness path, resolving `config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness unless an explicit per-spawn harness override is passed.
 
 `config/secondmate-harness` may also pin a concrete model and effort for the secondmate agent, in the SAME file rather than a new one: the format is a single whitespace-separated line `<harness> [<model>] [<effort>]`, with only the first non-empty, non-comment line parsed.
 A bare `<harness>` (today's format, e.g. `claude`) behaves exactly as before - harness only, no model/effort flag - so this is fully backward-compatible.

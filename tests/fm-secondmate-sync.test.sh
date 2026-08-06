@@ -719,6 +719,9 @@ test_spawn_fast_forwards_before_launch() {
   bump_primary "$w" instr
   c2=$(head_of "$w/main")
   [ "$(head_of "$w/sm")" = "$c1" ] || fail "precondition: home should start behind the primary"
+  # A --secondmate spawn refuses unless the launching home's own registry binds
+  # the id to this home, exactly as fm-home-seed.sh writes it before a real launch.
+  fm_register_secondmate "$w/home/data/secondmates.md" sm "$w/sm"
 
   # tmux stub: accept every subcommand, print nothing (so no window pre-exists).
   fakebin="$w/fakebin"
@@ -753,6 +756,7 @@ test_spawn_warns_when_sync_skipped_before_launch() {
   bump_primary "$w" instr
   printf 'uncommitted local edit\n' >> "$w/sm/AGENTS.md"
   before=$(head_of "$w/sm")
+  fm_register_secondmate "$w/home/data/secondmates.md" sm "$w/sm"
 
   fakebin="$w/fakebin"
   err="$w/spawn.err"
