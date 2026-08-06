@@ -1407,10 +1407,15 @@ allocate_remote_worktree() {
     return 0
   fi
 
-  # SSH transport failure: host unreachable, auth failed, key issues, etc.
-  # Return error code that distinguishes transport failure from command unavailability.
-  if [ $ssh_rc -ne 0 ] && [ $ssh_rc -ne 1 ] && [ $ssh_rc -ne 127 ]; then
-    echo "warning: ssh failed to reach remote host $remote_host (exit status $ssh_rc); falling back to local spawn" >&2
+  # Treehouse command exit codes: 0=success, 1=failed, 127=not found.
+  # SSH transport errors (host unreachable, auth failed) return 255; any other
+  # unexpected code also triggers fallback to local spawn rather than failing hard.
+  if [ $ssh_rc -eq 0 ]; then
+    return 0
+  elif [ $ssh_rc -eq 1 ] || [ $ssh_rc -eq 127 ] || [ $ssh_rc -eq 255 ]; then
+    : # Expected failure codes; continue to git clone fallback
+  else
+    echo "warning: unexpected exit code $ssh_rc from remote treehouse; falling back to local spawn" >&2
     return 1
   fi
 
@@ -1431,7 +1436,8 @@ allocate_remote_worktree() {
   current_branch=$(git -C "$PROJ_ABS" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
   # Clone the project on the remote and check out the current branch.
-  # Use shell quoting to protect the URL and directory from local expansion.
+  # The double quotes allow local variable expansion ($proj_url, $current_branch) before ssh.
+  # Single quotes in the git command protect those expansions from remote shell re-interpretation.
   # If the branch doesn't exist on remote, use the remote's default branch.
   # shellcheck disable=SC2029
   if ssh "$remote_host" "git clone '$proj_url' '$proj_clone_dir' && cd '$proj_clone_dir' && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
