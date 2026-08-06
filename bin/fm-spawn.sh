@@ -1407,14 +1407,13 @@ allocate_remote_worktree() {
     return 0
   fi
 
-  # Treehouse command exit codes: 0=success, 1=failed, 127=not found.
+  # Treehouse command exit codes: 0=success (with output), 1=failed, 127=not found.
   # SSH transport errors (host unreachable, auth failed) return 255; any other
   # unexpected code also triggers fallback to local spawn rather than failing hard.
-  if [ $ssh_rc -eq 0 ]; then
-    return 0
-  elif [ $ssh_rc -eq 1 ] || [ $ssh_rc -eq 127 ] || [ $ssh_rc -eq 255 ]; then
+  # Note: empty output on exit 0 means treehouse ran but returned no path; fall through.
+  if [ $ssh_rc -eq 1 ] || [ $ssh_rc -eq 127 ] || [ $ssh_rc -eq 255 ]; then
     : # Expected failure codes; continue to git clone fallback
-  else
+  elif [ $ssh_rc -ne 0 ]; then
     echo "warning: unexpected exit code $ssh_rc from remote treehouse; falling back to local spawn" >&2
     return 1
   fi
