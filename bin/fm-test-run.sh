@@ -1490,9 +1490,28 @@ record_script_result() {
   TOTAL=$((TOTAL + 1))
 }
 
+# Ambient firstmate environment that a test script must never inherit. A live
+# session exports FM_HOME (and friends) into every command it runs, so a suite
+# launched from inside firstmate would otherwise resolve real paths - e.g.
+# fm-teardown.sh derives SECONDMATE_REG from $FM_HOME/data, so the captain's own
+# secondmate registry answers the fixture's questions and can be rewritten by an
+# allow-path teardown. Both run paths scrub the same list; keeping it in one
+# place is what stops them drifting apart again.
+FM_TEST_AMBIENT_ENV=(
+  FM_HOME
+  FM_STATE_OVERRIDE
+  FM_DATA_OVERRIDE
+  FM_ROOT_OVERRIDE
+  FM_PROJECTS_OVERRIDE
+  FM_CONFIG_OVERRIDE
+  FM_BACKEND
+)
+
 run_one_serial() {
   local script=$1
   local base family expected out begin_iso begin_ms end_ms end_iso duration rc
+  local name
+  local -a scrub
   base=$(basename "$script")
   family=$(family_for_basename "$base")
   expected=$(expected_gate_skip_for_family "$family")
@@ -1503,10 +1522,17 @@ run_one_serial() {
   printf 'FM_TEST_BEGIN %s %s family=%s expected_gate_skip=%s\n' \
     "$begin_iso" "$script" "$family" "$expected"
 
+  # `env -u` rather than `unset`, because the pipe below must stay in this
+  # shell for PIPESTATUS - a scrubbing subshell would hide the script's rc.
+  scrub=()
+  for name in "${FM_TEST_AMBIENT_ENV[@]}"; do
+    scrub+=(-u "$name")
+  done
+
   set +e
   # Stream live output while retaining a copy for gate-skip detection.
   # PIPESTATUS[0] is the test script; tee's exit is ignored for aggregate.
-  bash "$script" 2>&1 | tee "$out"
+  env "${scrub[@]}" bash "$script" 2>&1 | tee "$out"
   rc=${PIPESTATUS[0]}
   set -e
   : "${rc:=1}"
@@ -1609,8 +1635,7 @@ else
       set +e
       export TMPDIR="$work/tmp"
       export TMP="$work/tmp"
-      unset FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_ROOT_OVERRIDE \
-        FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE FM_BACKEND 2>/dev/null || true
+      unset "${FM_TEST_AMBIENT_ENV[@]}" 2>/dev/null || true
       cd "$ROOT" || exit 1
       begin_ms=$(now_ms)
       bash "$script" >"$work/output" 2>&1
