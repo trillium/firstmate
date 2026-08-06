@@ -233,6 +233,12 @@ if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
 fi
 
+# Export remote_host so backend operations (herdr, send, etc.) know where to connect
+if [ -n "$TARGET_META" ]; then
+  remote_host=$(fm_meta_get "$TARGET_META" remote_host)
+  [ -z "$remote_host" ] || export FM_HERDR_REMOTE_HOST="$remote_host"
+fi
+
 # Classify a from-firstmate -> secondmate request. Only a task selector resolved
 # through this home's meta whose authoritative kind is secondmate is marked: the
 # secondmate then routes its reply via the status path (see fm-marker-lib.sh).
