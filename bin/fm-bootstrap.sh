@@ -1053,7 +1053,8 @@ fi
 gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
 # Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
 # default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the
-# primary only; detached-HEAD worktrees and secondmate homes never trip it.
+# primary only; linked worktrees and secondmate homes never trip it, whatever
+# branch they are on.
 tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" 2>/dev/null || true)
 if [ -n "$tangle_branch" ]; then
   tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
