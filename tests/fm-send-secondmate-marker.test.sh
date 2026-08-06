@@ -90,6 +90,102 @@ setup_home() {
   printf '%s\n' "$home"
 }
 
+# Same as run_send but prints fm-send's stderr (the refusal diagnostic) and
+# preserves its exit code, so a refusal can be asserted on both.
+run_send_err() {
+  local fb=$1 home=$2 log=$3; shift 3
+  local errfile="$log.err" rc=0
+  : > "$log"
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" "$@" >/dev/null 2>"$errfile" || rc=$?
+  cat "$errfile"
+  return "$rc"
+}
+
+test_marked_slash_command_is_refused() {
+  local dir fb log home rc err marked
+  dir="$TMP_ROOT/slash"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home slash)
+  fm_write_secondmate_meta "$home/state/domain.meta" "$home" "sess:fm-domain"
+
+  # The carrier sits at column 0, so the harness would read '/exit' as prose and
+  # never run it. A verified submit plus a pending-reply expectation for a command
+  # that did not execute is the exact silent failure this refusal exists to stop.
+  err=$(run_send_err "$fb" "$home" "$log" "fm-domain" "/exit"); rc=$?
+  expect_code 1 "$rc" "a slash command to a secondmate should be refused"
+  [ ! -s "$log" ] || fail "refused slash command still typed text into the composer"$'\n'"$(od -An -c "$log")"
+  assert_contains "$err" "/exit" "refusal should name the slash command"
+  assert_contains "$err" "$FM_FROMFIRST_LABEL" "refusal should name the carrier as the cause"
+  assert_contains "$err" "fm-teardown.sh" "refusal should name the close path"
+  [ -z "$(ls -A "$home/state/pending-replies" 2>/dev/null)" ] \
+    || fail "refused slash command left a pending-reply expectation behind"
+
+  # A command with arguments is refused on the verb alone.
+  err=$(run_send_err "$fb" "$home" "$log" "domain" "/compact keep the build notes"); rc=$?
+  expect_code 1 "$rc" "an argument-bearing slash command should be refused"
+  assert_contains "$err" "/compact" "refusal should name the verb"
+  assert_not_contains "$err" "keep the build notes" "refusal should not echo the whole body"
+
+  # An already marked+correlated recovery resend is judged on its BODY, not its
+  # carrier, so the same command cannot slip through the resend path.
+  marked="${FM_FROMFIRST_MARK}corr=0123456789abcdef /exit"
+  err=$(run_send_err "$fb" "$home" "$log" "domain" "$marked"); rc=$?
+  expect_code 1 "$rc" "an already-marked slash command resend should be refused"
+  assert_contains "$err" "/exit" "resend refusal should name the slash command"
+  [ ! -s "$log" ] || fail "refused marked resend still typed text into the composer"
+  pass "fm-send: a slash command to a marked secondmate is refused, not silently sent as prose"
+}
+
+test_marked_slash_lookalikes_still_send() {
+  local dir fb log home rc got
+  dir="$TMP_ROOT/slash-lookalike"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home slash-lookalike)
+  fm_write_secondmate_meta "$home/state/domain.meta" "$home" "sess:fm-domain"
+
+  # Only a body whose FIRST character is the slash can be a command. Prose that
+  # merely contains or is indented before one is ordinary text and must still go.
+  run_send "$fb" "$home" "$log" "fm-domain" "see /Users/x/log for the failure"; rc=$?
+  expect_code 0 "$rc" "prose containing a path should still send"
+  got=$(cat "$log")
+  case "$got" in
+    *"see /Users/x/log for the failure") : ;;
+    *) fail "prose containing a path was altered"$'\n'"$got" ;;
+  esac
+
+  run_send "$fb" "$home" "$log" "fm-domain" " /exit is what I typed"; rc=$?
+  expect_code 0 "$rc" "leading-blank prose should still send"
+  pass "fm-send: only a leading-slash body is refused; slash-bearing prose is unaffected"
+}
+
+test_unmarked_targets_still_accept_slash_commands() {
+  local dir fb log home rc got
+  dir="$TMP_ROOT/slash-unmarked"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home slash-unmarked)
+  fm_write_meta "$home/state/build.meta" \
+    "window=sess:fm-build" "worktree=$home/wt" "project=$home/p" \
+    "harness=echo" "kind=ship" "mode=no-mistakes" "yolo=off"
+
+  # The refusal is scoped to the marked path. A crewmate never carries the
+  # carrier, so '/no-mistakes' still reaches its composer at column 0.
+  run_send "$fb" "$home" "$log" "fm-build" "/no-mistakes"; rc=$?
+  expect_code 0 "$rc" "a slash command to a crewmate should still send"
+  got=$(cat "$log")
+  [ "$got" = "/no-mistakes" ] || fail "crewmate slash command was altered"$'\n'"$got"
+
+  # The explicit-endpoint escape hatch is likewise never marked, so it remains
+  # the way to drive a secondmate's own harness directly.
+  fm_write_secondmate_meta "$home/state/win.meta" "$home" "other:win"
+  run_send "$fb" "$home" "$log" "other:win" "/exit"; rc=$?
+  expect_code 0 "$rc" "a slash command to an explicit endpoint should still send"
+  got=$(cat "$log")
+  [ "$got" = "/exit" ] || fail "explicit-endpoint slash command was altered"$'\n'"$got"
+  pass "fm-send: crewmate and explicit-endpoint slash commands are unaffected by the refusal"
+}
+
 test_secondmate_target_is_marked() {
   local dir fb log home rc got corr
   dir="$TMP_ROOT/sm"; mkdir -p "$dir"
@@ -255,6 +351,9 @@ test_marked_send_preserves_trailing_newlines() {
 
 test_secondmate_target_is_marked
 test_exact_secondmate_task_id_is_marked
+test_marked_slash_command_is_refused
+test_marked_slash_lookalikes_still_send
+test_unmarked_targets_still_accept_slash_commands
 test_crewmate_target_is_not_marked
 test_explicit_window_is_not_marked
 test_key_path_is_not_marked

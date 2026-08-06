@@ -43,6 +43,13 @@
 # an explicit backend-target escape-hatch target, and the --key path are never
 # marked - their behavior is unchanged.
 #
+# Because that carrier sits at column 0, a marked line can never be a slash
+# command: the harness only parses one when the slash is the first character, so
+# a marked "/..." would arrive as prose and silently not run. fm-send refuses a
+# marked slash command rather than reporting a verified submit for it; use
+# fm-teardown to close a secondmate, or an explicit (never-marked) backend target
+# to drive its harness directly.
+#
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # also receives a privacy-safe correlation id and a durable parent record under
 # state/pending-replies/ before delivery (bin/fm-pending-reply-lib.sh). Delivery
@@ -349,6 +356,22 @@ else
     exit 0
   fi
   if [ "$MARK_FROM_FIRSTMATE" = 1 ]; then
+    # The from-firstmate carrier occupies column 0, and a harness only parses a
+    # slash command when the slash is the FIRST character of the composer line.
+    # A marked "/..." therefore arrives as ordinary prose: the agent reads it,
+    # may narrate compliance, and the command never runs, while fm-send reports a
+    # verified submit and opens a pending-reply expectation for a command that
+    # did not execute (robots-u7gu). Refuse loudly rather than deliver that.
+    # Checked on the body the secondmate would actually read, so an already
+    # marked/correlated recovery resend is judged on its command, not its carrier.
+    fm_pending_reply_carrier_body "$MESSAGE" CARRIER_BODY
+    case "$CARRIER_BODY" in
+      /*)
+        SLASH_VERB=${CARRIER_BODY%%[[:space:]]*}
+        echo "error: refusing to send the slash command '$SLASH_VERB' to secondmate ${TARGET_TASK_ID:-$T}: from-firstmate marked text carries '$FM_FROMFIRST_LABEL' at column 0, so the harness reads the whole line as prose and never runs the command. Recover with one of: bin/fm-teardown.sh to close that agent; an explicit backend target (its own endpoint, e.g. session:window), which is never marked, to drive its harness directly; or the same request as prose." >&2
+        exit 1
+        ;;
+    esac
     # Reuse an existing correlation id for recovery resends; otherwise create a
     # durable parent expectation before delivery. Transport success never
     # resolves that expectation (see fm-pending-reply-lib.sh).
@@ -381,7 +404,9 @@ else
   # starts ordinary text ("$5/month", "$HOME"), so a universal `$` rule would
   # needlessly slow plain text to claude/opencode/pi. The target backend's
   # verified submit retry still backs the settle up either way.
-  case "$*" in
+  # Matched on the FINAL text, not the arguments: a marked secondmate line starts
+  # with the carrier, so no popup opens and the fast settle is the correct one.
+  case "$MESSAGE" in
     /*) settle=1.2 ;;
     \$*)
       if [ "$TARGET_HARNESS" = codex ]; then settle=1.2; else settle=0.3; fi

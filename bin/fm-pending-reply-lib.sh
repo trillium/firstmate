@@ -214,6 +214,29 @@ fm_pending_reply_embed_corr() {  # <message> <corr_id> <result-var>
   printf -v "$result_var" '%s' "${FM_FROMFIRST_MARK}${token} ${body}"
 }
 
+# Inverse of fm_pending_reply_embed_corr's framing: the request body a marked
+# secondmate actually reads, with the from-firstmate carrier and any leading
+# correlation token removed. An unmarked or uncorrelated message yields itself.
+# Byte-exact and non-normalizing on purpose - callers that reason about what the
+# TARGET HARNESS sees (column-0 slash parsing, for example) must not have leading
+# blanks or trailing newlines silently rewritten under them. Use
+# fm_pending_reply_summarize instead when a short human-facing label is wanted.
+fm_pending_reply_carrier_body() {  # <message> <result-var>
+  local message=$1 result_var=$2 body existing
+  [ -n "$result_var" ] || return 2
+  body=${message#"$FM_FROMFIRST_MARK"}
+  # Strip a leading corr=<16hex> plus following blanks (space/tab only).
+  existing=${body:0:21}
+  case "$existing" in
+    corr=[a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9])
+      body=${body:21}
+      while [ "${body# }" != "$body" ]; do body=${body# }; done
+      while [ "${body#$'\t'}" != "$body" ]; do body=${body#$'\t'}; done
+      ;;
+  esac
+  printf -v "$result_var" '%s' "$body"
+}
+
 # Create a durable pending-reply expectation. Prints corr_id on success.
 # Does not deliver anything. Fails if parent paths cannot be prepared.
 fm_pending_reply_create() {  # <parent-home> <state-dir> <task_id> <request-text>
