@@ -1851,6 +1851,20 @@ kimi_spawn_fail() {  # <detail>
 }
 
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  # Pre-flight the pool only when it has nothing left to hand out. A treehouse
+  # pool only shrinks - an endpoint that dies without reaching fm-teardown.sh
+  # leaks its slot, and neither `treehouse prune` nor a later `get` ever takes
+  # one back - so without this sweep the pool eventually empties and every
+  # spawn stalls in the wait loop below until its 60s deadline. Skipping the
+  # sweep while a slot is free keeps the common spawn free of the extra work.
+  # Best-effort throughout: fm-pool-reclaim.sh exits 0 on every failure, and a
+  # sweep that reclaims nothing still lets the get below run and report for
+  # itself, so a reclaim problem can never be why a spawn fails.
+  if [ "${FM_SPAWN_SKIP_POOL_RECLAIM:-}" != 1 ]; then
+    "$SCRIPT_DIR/fm-pool-reclaim.sh" --project "$PROJ" --yes --only-if-exhausted 2>&1 \
+      | sed 's/^/spawn: /' >&2 || true
+  fi
+
   spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
@@ -1894,6 +1908,19 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   done
   if [ -z "$WT" ]; then
     echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
+    # By far the most common cause is an exhausted pool: `treehouse get` has no
+    # worktree to hand out, so the pane never moves and this deadline is the
+    # only symptom. The message alone sends the reader to the wrong place (the
+    # window looks fine), so print the pool itself - which slot is dirty, leased,
+    # or in use is the actual diagnosis, and bin/fm-pool-reclaim.sh is the fix.
+    if command -v treehouse >/dev/null 2>&1; then
+      if pool_status=$( (cd "$PROJ" && treehouse status) 2>/dev/null ) \
+         && [ -n "$pool_status" ]; then
+        echo "error: treehouse pool for $PROJ at the moment of failure:" >&2
+        printf '%s\n' "$pool_status" >&2
+        echo "error: if no worktree is available, reclaim abandoned slots with: $SCRIPT_DIR/fm-pool-reclaim.sh --project $PROJ" >&2
+      fi
+    fi
     exit 1
   fi
 
