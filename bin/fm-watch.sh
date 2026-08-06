@@ -179,7 +179,7 @@ afk_present() { [ -e "$STATE/.afk" ]; }
 
 hash_pane() {
   if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1
-  elif command -v md5 >/dev/null 2>&1; then md5 -q
+  elif printf "" | md5 -q >/dev/null 2>&1; then md5 -q
   elif [ -x /sbin/md5 ]; then /sbin/md5 -q
   else shasum | cut -d' ' -f1
   fi

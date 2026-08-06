@@ -242,7 +242,7 @@ _file_age() {  # seconds since mtime; very large if missing
 }
 
 _hash_text() {
-  if command -v md5 >/dev/null 2>&1; then printf '%s' "$1" | md5 -q
+  if printf "" | md5 -q >/dev/null 2>&1; then printf '%s' "$1" | md5 -q
   else printf '%s' "$1" | md5sum | cut -d ' ' -f1; fi
 }
 
