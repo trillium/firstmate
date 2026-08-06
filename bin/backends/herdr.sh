@@ -189,10 +189,25 @@ fm_backend_herdr_workspace_label() {
 # compatible if a future herdr build honors it. Never used by
 # fm_backend_herdr_version_check, which is intentionally session-independent
 # (reads only .client.* fields).
+# fm_backend_herdr_remote_cmd: Route herdr commands via SSH when FM_SPAWN_REMOTE_HOST is set.
+# When remote_host is empty/unset, runs herdr locally (byte-identical to pre-SSH behavior).
+# When remote_host is set, prepends ssh <host> to execute herdr on the remote.
+# Usage: fm_backend_herdr_remote_cmd <remote-host> <herdr-args...>
+fm_backend_herdr_remote_cmd() {
+  local remote_host=$1
+  shift
+  if [ -z "$remote_host" ]; then
+    herdr "$@"
+  else
+    ssh "$remote_host" herdr "$@"
+  fi
+}
+
 fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
   local session=$1
   shift
-  HERDR_SESSION="$session" herdr "$@" --session "$session"
+  local remote_host="${FM_SPAWN_REMOTE_HOST:-}"
+  HERDR_SESSION="$session" fm_backend_herdr_remote_cmd "$remote_host" "$@" --session "$session"
 }
 
 # fm_backend_herdr_tool_check: refuse loudly if herdr or jq is missing.
@@ -205,10 +220,12 @@ fm_backend_herdr_tool_check() {
 # fm_backend_herdr_version_check: refuse loudly on a missing/incompatible
 # herdr client. Verified locally: v0.7.1, protocol 14 (herdr status --json's
 # .client.protocol; client info is session-independent, unlike .server).
+# When FM_SPAWN_REMOTE_HOST is set, checks the remote herdr version via SSH.
 fm_backend_herdr_version_check() {
   fm_backend_herdr_tool_check || return 1
-  local status protocol version
-  status=$(herdr status --json 2>/dev/null) || { echo "error: 'herdr status --json' failed; is herdr installed correctly?" >&2; return 1; }
+  local status protocol version remote_host
+  remote_host="${FM_SPAWN_REMOTE_HOST:-}"
+  status=$(fm_backend_herdr_remote_cmd "$remote_host" status --json 2>/dev/null) || { echo "error: 'herdr status --json' failed; is herdr installed correctly?" >&2; return 1; }
   protocol=$(printf '%s' "$status" | jq -r '.client.protocol // empty' 2>/dev/null)
   version=$(printf '%s' "$status" | jq -r '.client.version // empty' 2>/dev/null)
   case "$protocol" in
@@ -3050,9 +3067,11 @@ fm_backend_herdr_list_live() {  # <session>
 # `herdr session list --json` (the default session's socket differs from a named
 # session's - verified: default -> ~/.config/herdr/herdr.sock, named ->
 # ~/.config/herdr/sessions/<name>/herdr.sock). Empty on any failure.
+# When FM_SPAWN_REMOTE_HOST is set, queries the remote session socket path via SSH.
 fm_backend_herdr_socket_path() {  # <session>
-  local session=$1
-  herdr session list --json 2>/dev/null \
+  local session=$1 remote_host
+  remote_host="${FM_SPAWN_REMOTE_HOST:-}"
+  fm_backend_herdr_remote_cmd "$remote_host" session list --json 2>/dev/null \
     | jq -r --arg name "$session" '.sessions[]? | select(.name == $name) | .socket_path // empty' 2>/dev/null \
     | head -1
 }
@@ -3067,7 +3086,7 @@ fm_backend_herdr_socket_path() {  # <session>
 # `api schema` read is ~220KB, so callers (the watcher) memoize this per session
 # for a process lifetime rather than probing every poll.
 fm_backend_herdr_events_capable() {  # <session>
-  local session=$1 protocol schema
+  local session=$1 protocol schema remote_host
   case "${FM_BACKEND_HERDR_EVENTS_FORCE:-}" in
     1) return 0 ;;
     0) return 1 ;;
@@ -3076,10 +3095,11 @@ fm_backend_herdr_events_capable() {  # <session>
   if [ -z "${FM_BACKEND_HERDR_EVENT_READER:-}" ]; then
     command -v python3 >/dev/null 2>&1 || return 1
   fi
-  protocol=$(herdr status --json 2>/dev/null | jq -r '.client.protocol // empty' 2>/dev/null)
+  remote_host="${FM_SPAWN_REMOTE_HOST:-}"
+  protocol=$(fm_backend_herdr_remote_cmd "$remote_host" status --json 2>/dev/null | jq -r '.client.protocol // empty' 2>/dev/null)
   case "$protocol" in ''|*[!0-9]*) return 1 ;; esac
   [ "$protocol" -ge "$FM_BACKEND_HERDR_MIN_EVENTS_PROTOCOL" ] || return 1
-  schema=$(herdr api schema --json 2>/dev/null) || return 1
+  schema=$(fm_backend_herdr_remote_cmd "$remote_host" api schema --json 2>/dev/null) || return 1
   printf '%s' "$schema" | grep -Fq 'events.subscribe' || return 1
   printf '%s' "$schema" | grep -Fq 'pane.agent_status_changed' || return 1
   return 0

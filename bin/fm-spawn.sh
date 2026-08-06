@@ -1385,7 +1385,38 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
   esac
 }
 
+# Allocate worktree on remote when FM_SPAWN_REMOTE_HOST is set.
+# Tries treehouse first (if available on remote), falls back to ~/fm-worktrees/<task-id>.
+# Sets REMOTE_WORKTREE to the allocated path on the remote machine.
+allocate_remote_worktree() {
+  local remote_host=$1 task_id=$2
+  local treehouse_path remote_worktree_dir
+
+  # Try treehouse get --lease on the remote
+  if treehouse_path=$(ssh "$remote_host" treehouse get --lease 2>/dev/null); then
+    REMOTE_WORKTREE="$treehouse_path"
+    return 0
+  fi
+
+  # Treehouse not available or failed, create ~/fm-worktrees/<task-id>
+  remote_worktree_dir="$HOME/fm-worktrees/$task_id"
+  if ssh "$remote_host" mkdir -p "$remote_worktree_dir" 2>/dev/null; then
+    REMOTE_WORKTREE="$remote_worktree_dir"
+    return 0
+  fi
+
+  echo "error: could not allocate remote worktree on $remote_host (treehouse failed, mkdir failed)" >&2
+  return 1
+}
+
 W="fm-$ID"
+
+# Allocate remote worktree if --remote is set (must happen before herdr pane creation)
+REMOTE_WORKTREE=""
+if [ -n "${FM_SPAWN_REMOTE_HOST:-}" ]; then
+  allocate_remote_worktree "$FM_SPAWN_REMOTE_HOST" "$ID" || exit 1
+fi
+
 case "$BACKEND" in
   tmux)
     SES=$(fm_backend_tmux_container_ensure)
@@ -1498,8 +1529,10 @@ case "$BACKEND" in
           else
             HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
             HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
+            # Use remote worktree if allocated, otherwise use local project directory
+            HERDR_PROJECTION_CWD="${REMOTE_WORKTREE:-$PROJ_ABS}"
             if ! FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_create_task \
-              "$PROJ_ABS" "$HERDR_PROJECTION_LABEL" "$W"; then
+              "$HERDR_PROJECTION_CWD" "$HERDR_PROJECTION_LABEL" "$W"; then
               if [ "${FM_BACKEND_HERDR_PROJECTION_CLEANUP_SAFE:-0}" = 1 ]; then
                 HERDR_PROJECTION_ABORT_CLEANUP=1
                 HERDR_PROJECTION_ABORT_SESSION=$FM_BACKEND_HERDR_PROJECTION_SESSION
@@ -1552,7 +1585,9 @@ case "$BACKEND" in
       HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
-      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
+      # Use remote worktree if allocated, otherwise use local project directory
+      HERDR_CREATE_CWD="${REMOTE_WORKTREE:-$PROJ_ABS}"
+      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$HERDR_CREATE_CWD" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
 EOF
@@ -1712,53 +1747,59 @@ kimi_spawn_fail() {  # <detail>
 }
 
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  # For remote dispatch, worktree is already allocated on the remote; skip local treehouse get
+  if [ -z "${FM_SPAWN_REMOTE_HOST:-}" ]; then
+    spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
-  # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
-  # Target the stable window id, not the name: if the name is ever lost (e.g. an
-  # automatic-rename slips through), display-message -t <bad-name> falls back to the
-  # active client's window, which would misread firstmate's OWN pane path as the
-  # worktree and tangle a hook into the primary checkout. The window id never lies.
-  # Compare against PROJ_ABS_REAL (physical), not PROJ_ABS: a symlinked project
-  # prefix would otherwise make the pane's OS-level cwd read differ from
-  # PROJ_ABS on the very first poll, before the pane has actually moved.
-  #
-  # A single read that already differs from PROJ_ABS_REAL is not proof the pane
-  # settled there: on some tmux/WSL setups a brand-new window's pane_current_path
-  # transiently reports an unrelated stale path (seen live as another real git
-  # checkout entirely) before the shell catches up with treehouse get's cd. That
-  # stale path still passes the PROJ_ABS_REAL comparison and validate_spawn_worktree
-  # below (it resolves to a real, distinct worktree top-level too), so accepting it
-  # on one read alone silently records the wrong worktree= in state/<id>.meta. Require
-  # two consecutive reads to agree on the same non-project path before accepting it;
-  # a mismatch just becomes the new candidate rather than resetting the wait, so a
-  # pane that is already settled by the first real read only costs the one existing
-  # inter-poll sleep as confirmation, not a whole extra cycle on top.
-  candidate=""
-  for _ in $(seq 1 60); do
-    p=$(spawn_current_path "$WT_TARGET" || true)
-    if [ -n "$p" ]; then
-      p_real=$(real_path_or_raw "$p")
-      if [ "$p_real" != "$PROJ_ABS_REAL" ]; then
-        if [ -n "$candidate" ] && [ "$p_real" = "$candidate" ]; then
-          WT="$p"
-          break
+    # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
+    # Target the stable window id, not the name: if the name is ever lost (e.g. an
+    # automatic-rename slips through), display-message -t <bad-name> falls back to the
+    # active client's window, which would misread firstmate's OWN pane path as the
+    # worktree and tangle a hook into the primary checkout. The window id never lies.
+    # Compare against PROJ_ABS_REAL (physical), not PROJ_ABS: a symlinked project
+    # prefix would otherwise make the pane's OS-level cwd read differ from
+    # PROJ_ABS on the very first poll, before the pane has actually moved.
+    #
+    # A single read that already differs from PROJ_ABS_REAL is not proof the pane
+    # settled there: on some tmux/WSL setups a brand-new window's pane_current_path
+    # transiently reports an unrelated stale path (seen live as another real git
+    # checkout entirely) before the shell catches up with treehouse get's cd. That
+    # stale path still passes the PROJ_ABS_REAL comparison and validate_spawn_worktree
+    # below (it resolves to a real, distinct worktree top-level too), so accepting it
+    # on one read alone silently records the wrong worktree= in state/<id>.meta. Require
+    # two consecutive reads to agree on the same non-project path before accepting it;
+    # a mismatch just becomes the new candidate rather than resetting the wait, so a
+    # pane that is already settled by the first real read only costs the one existing
+    # inter-poll sleep as confirmation, not a whole extra cycle on top.
+    candidate=""
+    for _ in $(seq 1 60); do
+      p=$(spawn_current_path "$WT_TARGET" || true)
+      if [ -n "$p" ]; then
+        p_real=$(real_path_or_raw "$p")
+        if [ "$p_real" != "$PROJ_ABS_REAL" ]; then
+          if [ -n "$candidate" ] && [ "$p_real" = "$candidate" ]; then
+            WT="$p"
+            break
+          fi
+          candidate="$p_real"
+        else
+          candidate=""
         fi
-        candidate="$p_real"
       else
         candidate=""
       fi
-    else
-      candidate=""
+      sleep 1
+    done
+    if [ -z "$WT" ]; then
+      echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
+      exit 1
     fi
-    sleep 1
-  done
-  if [ -z "$WT" ]; then
-    echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
-    exit 1
-  fi
 
-  validate_spawn_worktree "treehouse get" "$T"
+    validate_spawn_worktree "treehouse get" "$T"
+  else
+    # Remote dispatch: use the allocated remote worktree
+    WT="$REMOTE_WORKTREE"
+  fi
 fi
 
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
@@ -2087,6 +2128,9 @@ META_WINDOW=$T
     echo "cmux_workspace_id=$CMUX_WORKSPACE_ID"
     echo "cmux_surface_id=$CMUX_SURFACE_ID"
   fi
+  # Remote dispatch metadata (when --remote is used)
+  [ -z "${FM_SPAWN_REMOTE_HOST:-}" ] || echo "remote_host=$FM_SPAWN_REMOTE_HOST"
+  [ -z "$REMOTE_WORKTREE" ] || echo "remote_worktree=$REMOTE_WORKTREE"
   if [ "$KIND" = secondmate ]; then
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
