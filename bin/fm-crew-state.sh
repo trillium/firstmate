@@ -101,7 +101,11 @@ meta_value() {  # <key>
 WT=$(meta_value worktree)
 KIND=$(meta_value kind)
 HARNESS=$(meta_value harness)
+REMOTE_HOST=$(meta_value remote_host)
 [ -n "$KIND" ] || KIND=ship
+
+# Export remote_host so backend operations (herdr, send, etc.) know where to connect
+[ -z "$REMOTE_HOST" ] || export FM_HERDR_REMOTE_HOST="$REMOTE_HOST"
 
 # A torn-down (or never-created) worktree has no current state to read.
 if [ -z "$WT" ] || [ ! -d "$WT" ]; then

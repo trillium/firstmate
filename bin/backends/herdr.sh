@@ -206,7 +206,9 @@ fm_backend_herdr_remote_cmd() {
 fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
   local session=$1
   shift
-  local remote_host="${FM_SPAWN_REMOTE_HOST:-}"
+  # Resolve remote_host: FM_HERDR_REMOTE_HOST (set by callers who read meta in recovery),
+  # then FM_SPAWN_REMOTE_HOST (set during spawn), then empty (local herdr).
+  local remote_host="${FM_HERDR_REMOTE_HOST:-${FM_SPAWN_REMOTE_HOST:-}}"
   HERDR_SESSION="$session" fm_backend_herdr_remote_cmd "$remote_host" "$@" --session "$session"
 }
 

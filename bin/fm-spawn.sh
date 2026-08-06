@@ -1407,20 +1407,34 @@ allocate_remote_worktree() {
     return 0
   fi
 
-  # If SSH itself failed (host unreachable, auth failed, etc.), report and let caller decide
-  if [ $ssh_rc -ne 0 ] && [ $ssh_rc -ne 1 ]; then
-    echo "error: could not reach remote host $remote_host (ssh exit status $ssh_rc)" >&2
-    return 255
+  # SSH transport failure: host unreachable, auth failed, key issues, etc.
+  # Return error code that distinguishes transport failure from command unavailability.
+  if [ $ssh_rc -ne 0 ] && [ $ssh_rc -ne 1 ] && [ $ssh_rc -ne 127 ]; then
+    echo "warning: ssh failed to reach remote host $remote_host (exit status $ssh_rc); falling back to local spawn" >&2
+    return 1
   fi
 
-  # Treehouse not available on this remote, create ~/fm-worktrees/<task-id>
-  remote_worktree_dir="$HOME/fm-worktrees/$task_id"
-  if ssh "$remote_host" mkdir -p "$remote_worktree_dir"; then
-    REMOTE_WORKTREE="$remote_worktree_dir"
+  # Treehouse not available (exit 1 or 127). Create a real worktree by cloning the
+  # project from its origin remote. This ensures mini2 (which has no treehouse and
+  # no checkout) still gets a usable worktree, not a bare directory.
+  # The project git URL is needed; we get it from the local repo's origin.
+  local proj_url proj_clone_dir
+  proj_url=$(git -C "$PROJ_ABS" remote get-url origin 2>/dev/null || true)
+  if [ -z "$proj_url" ]; then
+    echo "warning: could not get origin URL from local project; falling back to local spawn" >&2
+    return 1
+  fi
+
+  proj_clone_dir="~/fm-worktrees/$task_id"
+  # Clone the project on the remote and check out the current branch.
+  # Use shell quoting to protect the URL and directory from local expansion.
+  # shellcheck disable=SC2029
+  if ssh "$remote_host" "git clone '$proj_url' '$proj_clone_dir' && cd '$proj_clone_dir' && git fetch origin && git checkout -q @{-0}" 2>/dev/null; then
+    REMOTE_WORKTREE="$proj_clone_dir"
     return 0
   fi
 
-  echo "error: could not allocate remote worktree on $remote_host (treehouse and mkdir both failed)" >&2
+  echo "warning: could not clone project on remote host $remote_host; falling back to local spawn" >&2
   return 1
 }
 
