@@ -860,6 +860,30 @@ case "$ARG3" in
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
     done
+    # Every verified adapter template above appends the launch-brief
+    # positional arg itself; a raw command is caller-supplied argv text with
+    # no such placeholder, so it silently launched briefless (robots-v0sh:
+    # the pane comes up alive but the agent starts at an empty prompt, and
+    # nothing distinguishes "worker is thinking" from "worker was never told
+    # anything"). Append the same trailing arg here so the escape hatch gets
+    # the same guarantee as a named adapter. Appended, not spliced in, so the
+    # caller's own command is never re-split or reordered - it stays one
+    # untouched prefix with the brief arg as a new final argv element. Kimi
+    # rejects a positional prompt (see launch_template's kimi case above) and
+    # instead gets an absolute brief pointer after its own TUI readiness gate
+    # further down, keyed off $HARNESS = kimi exactly as a templated kimi
+    # launch is, so it is excluded here. A caller that already placed
+    # __BRIEF__ explicitly (verifying a new adapter's own prompt wiring) is
+    # left alone rather than double-appended.
+    case "$HARNESS" in
+      kimi) : ;;
+      *)
+        case "$LAUNCH" in
+          *__BRIEF__*) : ;;
+          *) LAUNCH=$LAUNCH' "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+        esac
+        ;;
+    esac
     ;;
   '')
     # No explicit harness: resolve from config. A secondmate AGENT launches on the
