@@ -233,6 +233,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/checksum-probe-inventory.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/cd-guard.md",
       "audience": "maintainer-architecture"
     },
