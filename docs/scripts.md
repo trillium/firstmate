@@ -11,6 +11,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-sessionstart-nudge.sh` | Print the native session-start hook nudge when the primary has not already run the digest |
 | `fm-operational-input.sh` | Construct and parse the canonical cross-language operational-input protocol |
 | `fm-isolated-launch.sh`  | Launch `claude` with `HOME` redirected to a fresh isolated home, stripped of global harness config |
+| `claude-account.sh`      | Standalone launcher for `claude` with per-account credential isolation under `~/.claude-homes/account<N>/.claude` |
+| `claude-1.sh`, `claude-2.sh` | One-line direct launchers for `claude-account.sh 1` and `claude-account.sh 2`               |
 | `fm-bootstrap.sh`        | Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools |
 | `fm-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
 | `fm-fleet-snapshot.sh`   | Print the read-only structured fleet snapshot JSON (schema `fm-fleet-snapshot.v1`)   |
@@ -26,6 +28,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-decision-hold.sh`    | Create, verify, complete, and resolve durable captain-held decisions                 |
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`), scout, secondmate-charter, and Herdr-lab briefs   |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
+| `fm-herdr-session-cleanup.sh` | Retire stale restored-shell Herdr presentation children at locked session start |
+| `fm-herdr-spur.sh`       | Bridge external (non-firstmate-spawned) Herdr agent completions into firstmate's durable wake queue |
 | `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
 | `fm-install-treehouse.sh`| Install CI's exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees |
 | `fm-herdr-ci-cleanup.sh` | Snapshot and tear down only job-owned `fm-lab-*` sessions in the Herdr CI lane       |
@@ -47,6 +51,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-remote-home-seed.sh` | Register and provision a whole secondmate home on an SSH-reachable host              |
 | `fm-remote-readiness-lib.sh` | Shared remote second-mate readiness gate: check and, when needed, repair then re-check through `fm-remote-doctor.sh` |
 | `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend |
+| `fm-spawn-hooks.d/beads.sh` | Post-spawn extension: stamp a `--beads` task's bead and register its bead-close watcher check |
 | `fm-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |
 | `fm-backend-hometag-lib.sh` | Shared per-installation home-tag derivation for zellij tab and cmux workspace titles |
 | `fm-composer-lib.sh`     | Single fleet-wide owner of composer-content classification for all backends          |
@@ -65,6 +70,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-procevent-remote-reply.sh` | Relay non-destructive correlated remote-secondmate reply deltas through process events |
 | `fm-gate-refuse-lib.sh`  | Shared no-mistakes gate-context refusal for fleet lifecycle entrypoints               |
 | `fm-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
+| `fm-watch-cycle-lib.sh`  | Shared reader for the watcher lifecycle ledger: parses the last cycle row and classifies terminated vs. ended cycles for supervision-down banners |
 | `fm-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
 | `fm-watch.sh`            | Singleton-safe always-on watcher: absorb benign wakes, queue and exit on actionable ones |
 | `fm-afk-start.sh`        | Run the common sourceable away-mode daemon entry in the foreground                      |
@@ -79,7 +85,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-ff-lib.sh`           | Shared guarded fast-forward helper for origin pulls and local secondmate syncs       |
 | `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
 | `fm-config-inherit-lib.sh` | Shared primary-to-secondmate inherited local-material propagation and config-reread delivery |
-| `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
+| `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector (tasks-axi/beads/manual), `tasks-axi` compatibility probe, and beads resolve-or-create for auto-linking |
+| `fm-beads-resilience-lib.sh` | Shared beads read-side local mirror and write-side durable queue so a Dolt/beads-store outage degrades instead of wedging firstmate |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor for the bootstrap diagnostic                  |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
 | `fm-wake-drain.sh`       | Atomically drain queued watcher wakes, emit bounded best-effort status-event annotations and a fleet-wide OPEN DECISIONS section, then assert supervision health |
@@ -99,6 +106,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-pr-merge.sh`         | Record PR metadata, then merge a task's canonical full GitHub URL                    |
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
+| `fm-staleness-file.sh`   | File a triage bead into the `staleness` federated store for a ship task reclaimed unlanded by staleness auto-close |
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-x-lib.sh`            | Shared X-mode config, relay, and reply-threading helpers                             |

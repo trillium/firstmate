@@ -16,6 +16,14 @@
 # which is how every linked worktree and secondmate home legitimately sits on the
 # default branch. Detached HEAD on the default is fine; a feature branch in a
 # primary checkout is the alarm.
+#
+# One case looks identical to that alarm but is not it: a linked worktree of the
+# SAME repo - typically a secondmate home - can hold the default branch on a real
+# branch rather than detached. Git permits one worktree per branch, so while that
+# holder exists the primary CANNOT be on the default branch and no `git checkout
+# <default>` remedy can ever succeed. fm_branch_holder_worktree identifies that
+# holder so callers downgrade or suppress the alarm instead of prescribing an
+# impossible fix forever.
 
 # Resolve the default branch name of the git repo at <dir>: prefer origin/HEAD,
 # then fall back to a local main/master. Echoes the name, or returns 1.
@@ -50,4 +58,27 @@ fm_primary_tangle_branch() {
   [ "$cur" = "$default" ] && return 1
   printf '%s\n' "$cur"
   return 0
+}
+
+# Echo the path of a worktree of the repo at <root> that currently has <branch>
+# checked out and return 0; echo nothing and return 1 when none does. Callers
+# only ask about a branch the given root is NOT on, so the root can never be
+# reported as its own holder. A bare or detached worktree carries no branch line
+# and is skipped.
+fm_branch_holder_worktree() {
+  local root=$1 branch=$2 line path=""
+  while IFS= read -r line; do
+    case "$line" in
+      'worktree '*) path=${line#worktree } ;;
+      'branch refs/heads/'*)
+        if [ "${line#branch refs/heads/}" = "$branch" ] && [ -n "$path" ]; then
+          printf '%s\n' "$path"
+          return 0
+        fi
+        ;;
+    esac
+  done <<EOF
+$(git -C "$root" worktree list --porcelain 2>/dev/null)
+EOF
+  return 1
 }

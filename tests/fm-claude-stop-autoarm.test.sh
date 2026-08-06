@@ -30,6 +30,7 @@ install_autoarm_scripts() {
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
+  cp "$ROOT/bin/fm-watch-cycle-lib.sh" "$dir/bin/fm-watch-cycle-lib.sh"
   cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
   cp "$ROOT/bin/fm-lock.sh" "$dir/bin/fm-lock.sh"
   chmod +x "$dir/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-lock.sh"
@@ -144,12 +145,65 @@ printf 'stale: fixture-win actionable\n'
 exit 0
 SH
       ;;
+    quiet-then-healthy)
+      # First close is quiet with no successor (supervision ended). The re-arm
+      # then establishes a genuinely healthy watcher, which must end the loop
+      # silently: continuity was restored without waking the model.
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+echo "$$" >> "$FM_HOME/state/arm-ran"
+runs=$(wc -l < "$FM_HOME/state/arm-ran" | tr -d ' ')
+[ "$runs" -ge 2 ] && "$FM_HOME/bin/mk-healthy-watcher.sh"
+printf 'watcher: idle - cycle ended cleanly with a fresh beacon (2s); adapter re-arm owns continuity\n'
+exit 0
+SH
+      ;;
     *)
       echo "unknown arm fixture: $kind" >&2
       return 2
       ;;
   esac
   chmod +x "$dir/bin/fm-watch-arm.sh"
+}
+
+# Publish a watcher singleton that passes the real fm_watcher_healthy gate: a
+# live process recorded in state/.watch.lock with this home's identity fields and
+# a fresh liveness beacon. Used to represent "some other arm's watcher genuinely
+# survived this close", the only state that may exit 0 quietly.
+install_healthy_watcher_helper() {
+  local dir=$1
+  cat > "$dir/bin/mk-healthy-watcher.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_HOME="${FM_HOME:?}"
+STATE="$FM_HOME/state"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+sleep 300 &
+wpid=$!
+echo "$wpid" > "$STATE/fake-watcher-pid"
+lock="$STATE/.watch.lock"
+rm -rf "$lock" 2>/dev/null || true
+mkdir -p "$lock"
+printf '%s\n' "$wpid" > "$lock/pid"
+printf '%s\n' "$FM_HOME" > "$lock/fm-home"
+printf '%s\n' "$SCRIPT_DIR/fm-watch.sh" > "$lock/watcher-path"
+fm_pid_identity "$wpid" > "$lock/pid-identity"
+: > "$STATE/.last-watcher-beat"
+SH
+  chmod +x "$dir/bin/mk-healthy-watcher.sh"
+}
+
+kill_fake_watcher() {
+  local dir=$1 pid
+  pid=$(cat "$dir/state/fake-watcher-pid" 2>/dev/null || true)
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null
+  return 0
+}
+
+arm_run_count() {
+  wc -l < "$1/state/arm-ran" 2>/dev/null | tr -d ' '
 }
 
 epoch_outcome() {
@@ -410,8 +464,10 @@ test_failed_cycles_notify_once_and_keep_retrying() {
 test_unverified_clean_close_exhausts_retries() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/clean")
+  install_healthy_watcher_helper "$dir"
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" clean
+  FM_HOME="$dir" "$dir/bin/mk-healthy-watcher.sh"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   expect_code 2 "$status" "a non-actionable close without a healthy watcher must fail closed"
   assert_contains "$out" "automatic supervision mechanism is broken" "unverified close must report automatic failure"

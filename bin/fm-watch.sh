@@ -116,6 +116,8 @@ CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
+IDLE_DISCOVERY_INTERVAL=${FM_IDLE_DISCOVERY_INTERVAL:-60}  # seconds between idle-task-discovery attempts
+DEAD_WINDOW_SWEEP_INTERVAL=${FM_DEAD_WINDOW_SWEEP_INTERVAL:-300}  # seconds between dead-window triage sweeps
 # Busy state is decided by the semantic contract in bin/fm-busy-lib.sh, which
 # is the single owner of per-harness sources, source attribution, and the one
 # remaining rendered-text fallback (Grok only).
@@ -138,6 +140,30 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
 # daemon owns triage, so this watcher reverts to one-shot (enqueue + exit on every
 # wake) and never double-triages - and never runs the costly provably-working read.
 STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provably-working stale escalates as a possible wedge
+# Idle>2h staleness auto-close backstop (captain design, 2026-07-31): once an
+# ordinary ship task's pane content (.hash-<key>, see staleness_autoclose_reclaim)
+# has sat unchanged this long AND the crew is not provably working (see
+# crew_is_provably_working - a validating crew legitimately sits on a static
+# pane for its whole run), the prompt-cache advantage of keeping its live
+# process around is already gone (Anthropic cache TTL is 5m/1h), so the watcher
+# reclaims it via bin/fm-teardown.sh --staleness-autoclose rather than leaving
+# costly compute idle indefinitely. Also runs while away (state/.afk exists) -
+# reclaiming wasted idle compute matters most while nobody is watching it - and
+# bin/fm-teardown.sh's own landed-check still guarantees unlanded work is only
+# ever chat-reclaimed (worktree, branch, and uncommitted changes preserved),
+# never force-discarded, regardless of afk state.
+STALENESS_AUTOCLOSE_SECS=${FM_STALENESS_AUTOCLOSE_SECS:-7200}
+# A reclaim call that keeps failing (a broken FM_TEARDOWN_BIN, a wedged
+# git/teardown dependency) must not retry silently forever: bounded attempts
+# with doubling backoff, then give up until the pane's hash next changes and
+# let the window fall through to ordinary stale surfacing/escalation below so
+# a stuck reclaim notifies instead of looping invisibly.
+STALENESS_AUTOCLOSE_MAX_RETRIES=${FM_STALENESS_AUTOCLOSE_MAX_RETRIES:-5}
+STALENESS_AUTOCLOSE_RETRY_BASE_SECS=${FM_STALENESS_AUTOCLOSE_RETRY_BASE_SECS:-300}
+STALENESS_AUTOCLOSE_RETRY_MAX_SECS=${FM_STALENESS_AUTOCLOSE_RETRY_MAX_SECS:-3600}
+# FM_TEARDOWN_BIN lets tests stub the reclaim call, matching the
+# FM_CREW_STATE_BIN seam in bin/fm-classify-lib.sh.
+FM_TEARDOWN_BIN="${FM_TEARDOWN_BIN:-$SCRIPT_DIR/fm-teardown.sh}"
 # A busy pane is unconditional proof of liveness with no built-in duration bound,
 # so a hung foreground call can remain hidden even while its rendered busy
 # footer changes every poll. BUSY_TURN_MAX_SECS bounds how long any busy pane
@@ -178,10 +204,38 @@ _event_cap_fails=0
 afk_present() { [ -e "$STATE/.afk" ]; }
 
 hash_pane() {
-  if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1
-  elif command -v md5 >/dev/null 2>&1; then md5 -q
-  elif [ -x /sbin/md5 ]; then /sbin/md5 -q
-  else shasum | cut -d' ' -f1
+  local sbin_md5="${FM_MD5_SBIN_OVERRIDE:-/sbin/md5}"
+  # Only used for change-detection between polls, so any tool that reliably
+  # returns the checksum in its first whitespace-delimited field is
+  # interchangeable here. The chain degrades through progressively more
+  # universal tools rather than hard-erroring when a watcher's PATH is
+  # missing md5/md5sum (observed on a secondmate whose runtime PATH omitted
+  # both): openssl and cksum are near-universal fallbacks, and the final tier
+  # is a pure-shell content digest (od + awk, both POSIX baseline) rather
+  # than a raw byte count, so two same-size panes with different content
+  # cannot collide and mask a real change.
+  if command -v md5 >/dev/null 2>&1; then
+    # A PATH `md5` is not always BSD md5: Homebrew's coreutils/md5sha1sum `md5`
+    # shadows /sbin/md5 and rejects -q (printing "invalid option" and an empty
+    # hash), which silently breaks pane change-detection. Parse the first
+    # whitespace field instead of trusting -q, so BSD ("<hash>"), GNU/Homebrew
+    # ("<hash>  -") md5 all yield the same real digest.
+    md5 | awk '{ print $1 }'
+  elif [ -x "$sbin_md5" ]; then
+    "$sbin_md5" -q
+  elif command -v md5sum >/dev/null 2>&1; then
+    md5sum | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -md5 -r | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum | cut -d' ' -f1
+  elif command -v cksum >/dev/null 2>&1; then
+    printf '%x\n' "$(cksum | cut -d' ' -f1)"
+  else
+    od -An -tu1 -v | awk '
+      { for (i = 1; i <= NF; i++) h = (h * 31 + $i) % 4294967291 }
+      END { printf "%x\n", h }
+    '
   fi
 }
 
@@ -302,6 +356,72 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
       fi
       ;;
   esac
+}
+
+# Idle>2h staleness auto-close (see STALENESS_AUTOCLOSE_SECS above): reclaim an
+# ordinary ship task's expensive live process once its pane has shown zero
+# change for that long, regardless of wedge/pause classification. Delegates the
+# landed-vs-unlanded decision entirely to bin/fm-teardown.sh's
+# --staleness-autoclose mode, which never deletes a worktree that has not
+# landed (git-verified) and instead files it to the staleness triage store.
+# Silent by design (like idle-task-discovery below): this is a deterministic,
+# reversible-for-unlanded-work reclaim, not a captain-actionable wake - except
+# while away (afk_present), when a successful reclaim also appends one line to
+# STALE_AUTOCLOSE_AFK_LOG so bin/fm-afk-return.sh can surface it as durable
+# catch-up evidence the next time the captain returns; nothing reads that log
+# while away, so it never wakes anything. Returns 1 on a failed reclaim so the
+# caller can drive the bounded retry/backoff below.
+STALE_AUTOCLOSE_AFK_LOG="$STATE/.staleness-autoclose-afk.log"
+staleness_autoclose_reclaim() {  # <window> <task> <hash-file>
+  local win=$1 task=$2 hf=$3 idle_since idle_age
+  idle_since=$(stat_mtime "$hf")
+  idle_age=$(age_of "$hf")
+  if "$FM_TEARDOWN_BIN" "$task" --staleness-autoclose "${idle_since:-}" \
+    >>"$STATE/.staleness-autoclose.log" 2>&1; then
+    triage_log "staleness auto-close reclaimed $win (task $task, idle ${idle_age}s)"
+    if afk_present; then
+      printf 'reclaimed %s (task %s, idle %ss)\n' "$win" "$task" "$idle_age" >> "$STALE_AUTOCLOSE_AFK_LOG"
+    fi
+    return 0
+  fi
+  triage_log "staleness auto-close FAILED for $win (task $task); leaving window as-is for the next poll"
+  return 1
+}
+
+# staleness_autoclose_should_retry: 0 (attempt now) unless this key's reclaim
+# has either exhausted STALENESS_AUTOCLOSE_MAX_RETRIES consecutive failures
+# (permanently, until the pane's hash next changes and resets the counters via
+# staleness_autoclose_clear_retries) or is still inside the doubling backoff
+# window set by the last failure.
+staleness_autoclose_should_retry() {  # <key>
+  local key=$1 fails next now
+  fails=$(cat "$STATE/.staleness-fails-$key" 2>/dev/null || echo 0)
+  case "$fails" in ''|*[!0-9]*) fails=0 ;; esac
+  [ "$fails" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ] || return 1
+  next=$(cat "$STATE/.staleness-next-$key" 2>/dev/null || echo 0)
+  case "$next" in ''|*[!0-9]*) next=0 ;; esac
+  now=$(date +%s)
+  [ "$now" -ge "$next" ]
+}
+
+# staleness_autoclose_record_failure: bumps this key's failure count and sets
+# its next-retry time base*2^(fails-1) seconds out (capped), then echoes the
+# new failure count so the caller can tell whether the retry budget is spent.
+staleness_autoclose_record_failure() {  # <key>
+  local key=$1 fails backoff shift_by
+  fails=$(( $(cat "$STATE/.staleness-fails-$key" 2>/dev/null || echo 0) + 1 ))
+  case "$fails" in ''|*[!0-9]*) fails=1 ;; esac
+  echo "$fails" > "$STATE/.staleness-fails-$key"
+  shift_by=$(( fails - 1 ))
+  [ "$shift_by" -lt 16 ] || shift_by=16
+  backoff=$(( STALENESS_AUTOCLOSE_RETRY_BASE_SECS * (1 << shift_by) ))
+  [ "$backoff" -le "$STALENESS_AUTOCLOSE_RETRY_MAX_SECS" ] || backoff=$STALENESS_AUTOCLOSE_RETRY_MAX_SECS
+  echo "$(( $(date +%s) + backoff ))" > "$STATE/.staleness-next-$key"
+  printf '%s' "$fails"
+}
+
+staleness_autoclose_clear_retries() {  # <key>
+  rm -f "$STATE/.staleness-fails-$1" "$STATE/.staleness-next-$1" "$STATE/.staleness-working-$1"
 }
 
 # busy_turn_over_age: 0 iff <task>'s latest completed-turn marker is at least
@@ -702,6 +822,111 @@ event_wait_or_sleep() {
   esac
 }
 
+# Idle-task-discovery: when fleet is idle (no active windows), try to dispatch
+# the next ready task from the backlog autonomously. This reduces captain context
+# switches by letting the watcher pick up ready work automatically.
+# Returns 0 if a task was dispatched, 1 if no ready task or fleet not idle.
+discover_and_dispatch_idle_task() {
+  local windows_count ready_tasks_file ready_task_id task_kind
+
+  # Check if fleet is idle: recorded_windows output should be empty
+  windows_count=$(recorded_windows | wc -l | xargs)
+  if [ "$windows_count" -ne 0 ]; then
+    # Fleet is not idle, skip auto-discovery
+    return 1
+  fi
+
+  # Fleet is idle; check for ready tasks. Use tasks-axi ready to find unblocked tasks
+  if ! command -v tasks-axi >/dev/null 2>&1; then
+    # tasks-axi not available
+    return 1
+  fi
+
+  # Get the first ready task ID using a temp file to parse output
+  ready_tasks_file=$(mktemp "$STATE/.fm-ready-tasks.XXXXXX") || return 1
+  trap 'rm -f "$ready_tasks_file"' RETURN
+
+  tasks-axi ready > "$ready_tasks_file" 2>/dev/null || {
+    return 1
+  }
+
+  # Parse task ID from first ready task. The output looks like:
+  # count: 2
+  # ready[2]{id,state,kind,repo,title}:
+  #   test-p1-a1,queued,ship,"-",Test P1 task
+  #   test-p2-a2,queued,ship,"-",Test P2 task
+  # We extract the first id from the task lines (indented lines with commas)
+  ready_task_id=$(awk -F',' '
+    /^  [a-z0-9]/ { if (!found) { print $1; gsub(/^[[:space:]]+/, ""); print; found=1 } }
+  ' "$ready_tasks_file" | head -1)
+
+  if [ -z "$ready_task_id" ]; then
+    return 1
+  fi
+
+  # Get task metadata: kind to determine how to dispatch it
+  task_kind=$(awk -F',' -v task="$ready_task_id" '
+    /^  [a-z0-9]/ && $1 ~ task { print $3; gsub(/^[[:space:]]+/, ""); exit }
+  ' "$ready_tasks_file")
+
+  # For secondmate tasks, use FM_HOME directly
+  if [ "$task_kind" = secondmate ]; then
+    if "$SCRIPT_DIR/fm-spawn.sh" "$ready_task_id" "$FM_HOME" --secondmate 2>/dev/null >/dev/null; then
+      triage_log "idle-discovery: dispatched secondmate $ready_task_id (first ready when fleet idle)"
+      return 0
+    else
+      triage_log "idle-discovery: failed to dispatch secondmate $ready_task_id"
+      return 1
+    fi
+  fi
+
+  # For ship/scout tasks, we need a project directory.
+  # Infer from data/projects.md or check if task note contains project info.
+  # For now, skip auto-dispatch of ship/scout without explicit project routing.
+  # TODO: implement project-routing from task metadata or dispatch profiles
+  triage_log "idle-discovery: skipping task $ready_task_id (kind=$task_kind, needs project routing)"
+  return 1
+}
+
+# Dead-window triage sweep. The idle>2h staleness auto-close above reclaims a
+# LIVE idle window; the stale loop below skips any window whose pane capture
+# fails. Neither surfaces a kind=ship task whose window DIED on its own
+# (herdr/zellij pane crashed or closed) while its worktree still holds
+# committed-but-unlanded or ask-user-parked work: that orphan meta just sits with
+# its work preserved but nothing durable filed for triage. This sweep gives that
+# dead-window case the SAME triage filing the live-idle path has. For each
+# kind=ship meta whose recorded endpoint is CONFIDENTLY dead
+# (fm_backend_agent_alive == dead - an ambiguous or transiently unreadable
+# endpoint stays untouched, matching the secondmate liveness sweep's discipline),
+# it delegates to fm-teardown.sh --staleness-file-dead. That mode reuses
+# work_is_landed and the fail-open fm-staleness-file.sh, files a staleness bead
+# (or the state/<id>.staleness-unfiled fallback) ONLY for unlanded work, and
+# NEVER kills anything, removes the meta, or touches the worktree, branch, or any
+# uncommitted change - the never-discard-unlanded-work invariant is preserved.
+# Idempotent: teardown skips a task already filed, so a repeated sweep never
+# re-files. Fail-open like every other sweep here: a delegation failure is logged
+# and never breaks the loop. Runs during afk too - tracking a wasted orphan
+# matters most while nobody is watching - since the filing is non-destructive.
+dead_window_triage_sweep() {
+  local meta id kind window backend
+  [ -d "$STATE" ] || return 0
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    kind=$(grep '^kind=' "$meta" | cut -d= -f2- || true)
+    [ -n "$kind" ] || kind=ship
+    [ "$kind" = ship ] || continue
+    window=$(fm_backend_target_of_meta "$meta")
+    [ -n "$window" ] || continue
+    id=$(basename "$meta" .meta)
+    backend=$(fm_backend_of_meta "$meta")
+    [ "$(fm_backend_agent_alive "$backend" "$window" 2>/dev/null)" = dead ] || continue
+    if ! "$FM_TEARDOWN_BIN" "$id" --staleness-file-dead >>"$STATE/.dead-window-triage.log" 2>&1; then
+      triage_log "dead-window triage FAILED for task $id (see .dead-window-triage.log)"
+    fi
+  done
+  return 0
+}
+
 # --- Main entry: the runtime below runs only when this file is executed as a
 # script. When sourced (unit tests loading the functions above), return here
 # before acquiring the singleton lock or entering the blocking loop.
@@ -755,6 +980,13 @@ FM_WATCH_DELIVERY_IDENTITY=$(fm_pid_identity "$WATCHER_PID" 2>/dev/null || true)
 printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/null || true
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
+# Anchor the dead-window triage cadence at startup so the first sweep runs one
+# DEAD_WINDOW_SWEEP_INTERVAL after this watcher starts, not on the very first
+# poll: a dead-window orphan is never urgent (its work is preserved regardless),
+# and this keeps a freshly-armed watcher from spending its first poll enumerating
+# every meta's endpoint liveness. A restart that finds a stale marker
+# (>= interval old) still sweeps promptly on the next poll.
+[ -e "$STATE/.last-dead-window-sweep" ] || touch "$STATE/.last-dead-window-sweep"
 
 # A merged poll may have queued its terminal wake and then lost the process
 # between receipt publication and fixed-path removal.
@@ -829,7 +1061,7 @@ while :; do
           path=$FM_PR_POLL_SNAPSHOT_PATH
           number=$FM_PR_POLL_SNAPSHOT_NUMBER
           run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
-            "$provider" "$url" "$host" "$path" "$number" || exit 1
+            "$provider" "$url" "$host" "$path" "$number" "$STATE/$id.pr-review-seen" || exit 1
           out=$FM_CHECK_RESULT
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
           custom_snapshot=$FM_CUSTOM_CHECK_SNAPSHOT
@@ -949,6 +1181,7 @@ EOF
     ssf="$STATE/.stale-since-$key"
     ewf="$STATE/.wedge-escalations-$key"
     pf="$STATE/.paused-$key"   # flag: this key's stale is using the bounded pause cadence
+    pwf="$STATE/.staleness-working-$key"   # cache: hash last found provably-working by auto-close
     prev=$(cat "$hf" 2>/dev/null || true)
     # Busy match: a backend's native semantic state when available (herdr), else
     # the last 6 non-blank lines only (the TUI footer area, where every verified
@@ -960,6 +1193,49 @@ EOF
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
+        # Idle>2h staleness auto-close backstop, ahead of ordinary
+        # classification below: an ordinary ship task, not declared paused or
+        # captain-held (that wait is deliberate and may legitimately run much
+        # longer than two hours), not parked at a captain-relevant gate (a
+        # needs-decision/blocked/done/failed status means the crew is waiting
+        # on the captain, not idling wastefully - the stale_is_terminal path
+        # below exists to surface that, not have it silently reclaimed out
+        # from under a pending decision), not provably working (a no-mistakes
+        # validation legitimately sits on a static pane for its whole run per
+        # AGENTS.md's sparse status-reporting contract - the same predicate
+        # the terminal-stale path below trusts to avoid the 2026-07 herdr
+        # false-surface incident), and not already out of retry budget for
+        # this stale hash. Runs during afk too - reclaiming wasted idle
+        # compute matters most while away - with a successful reclaim logged
+        # for the returning captain by staleness_autoclose_reclaim itself. See
+        # staleness_autoclose_reclaim above. crew_is_provably_working is only
+        # invoked on the first poll of a given stale hash (cached in $pwf),
+        # matching the first-sighting-only contract every other caller in this
+        # file follows - not re-run on every ~15s poll for the whole time a
+        # provably-working task sits past the threshold.
+        if [ "$kind" = ship ] \
+          && ! status_is_paused_or_captain_held "$last" \
+          && ! status_is_captain_relevant "$last" \
+          && [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ] \
+          && staleness_autoclose_should_retry "$key"; then
+          if [ "$(cat "$pwf" 2>/dev/null || true)" != "$h" ]; then
+            if crew_is_provably_working "$task"; then
+              printf '%s' "$h" > "$pwf"
+            else
+              rm -f "$pwf"
+            fi
+          fi
+          if [ "$(cat "$pwf" 2>/dev/null || true)" != "$h" ]; then
+            if staleness_autoclose_reclaim "$w" "$task" "$hf"; then
+              staleness_autoclose_clear_retries "$key"
+              continue
+            fi
+            if [ "$(staleness_autoclose_record_failure "$key")" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; then
+              continue
+            fi
+            triage_log "staleness auto-close exhausted retries for $w (task $task); falling through to ordinary stale surfacing"
+          fi
+        fi
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
         if [ "$kind" = secondmate ]; then
@@ -1074,6 +1350,7 @@ EOF
     else
       printf '%s' "$h" > "$hf"
       echo 0 > "$cf"
+      staleness_autoclose_clear_retries "$key"
       if [ "$busy_now" -eq 0 ] && busy_turn_over_age "$task"; then
         wedge_timer_check "$w" "$ssf" "busy (no completed turn)" "$ewf"
       else
@@ -1122,6 +1399,22 @@ EOF
       echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
       triage_log "absorbed heartbeat (no captain-relevant change)"
     fi
+  fi
+
+  # Idle-task-discovery: when fleet is idle, try to autonomously dispatch ready tasks.
+  # Throttle to every IDLE_DISCOVERY_INTERVAL seconds to avoid constant polling.
+  if [ "$(age_of "$STATE/.last-idle-discovery")" -ge "$IDLE_DISCOVERY_INTERVAL" ]; then
+    touch "$STATE/.last-idle-discovery"
+    discover_and_dispatch_idle_task || true
+  fi
+
+  # Dead-window triage sweep: file a durable triage record for a kind=ship task
+  # whose window died on its own while holding unlanded work (see
+  # dead_window_triage_sweep). Throttled like idle-discovery so a large fleet's
+  # metas are not re-scanned every poll; non-destructive and idempotent.
+  if [ "$(age_of "$STATE/.last-dead-window-sweep")" -ge "$DEAD_WINDOW_SWEEP_INTERVAL" ]; then
+    touch "$STATE/.last-dead-window-sweep"
+    dead_window_triage_sweep || true
   fi
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),

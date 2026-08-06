@@ -9,6 +9,20 @@
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
+#   <repo-name> is a bare project name or "projects/<name>" resolving under
+#   $FM_HOME/projects (or FM_PROJECTS_OVERRIDE), or an explicit absolute or
+#   relative path. bin/fm-project-dir-lib.sh owns that mapping, shared with
+#   fm-spawn.sh so a name that scaffolds here also spawns there.
+#   An unrecognized --flag is rejected rather than taken as the repo name; pass
+#   "--" first for the rare positional that must itself start with "--".
+#   --beads <id> links the task to a beads issue and is passed to every hook in
+#   fm-brief-hooks.d/ as FM_HOOK_BEADS_ID; the beads.sh hook there owns the
+#   resulting brief content. Applies to ship and scout briefs only.
+#   Before the Brief section is written, every executable in fm-brief-hooks.d/
+#   runs (via `.`, in a subshell) with FM_HOOK_BEADS_ID and FM_HOOK_TASK_ID set;
+#   each hook's captured stdout is prepended to the brief as its own section.
+#   Absent or empty fm-brief-hooks.d/ is a no-op. This is the extension point
+#   for out-of-tree brief content so this file stays a pure addition target.
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
 #   --secondmate writes a persistent secondmate charter. The project list
@@ -75,6 +89,8 @@ esac
 . "$SCRIPT_DIR/fm-marker-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-project-dir-lib.sh
+. "$SCRIPT_DIR/fm-project-dir-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 
 resolve_directory_input() {
@@ -108,7 +124,12 @@ MODE=
 MODE_SET=0
 POS=()
 want_value=
+end_of_flags=0
 for a in "$@"; do
+  if [ "$end_of_flags" -eq 1 ]; then
+    POS+=("$a")
+    continue
+  fi
   if [ -n "$want_value" ]; then
     case "$a" in
       --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
@@ -156,6 +177,16 @@ elif [ "$MODE_SET" -eq 1 ]; then
 fi
 ID=${POS[0]}
 
+case "$BEADS_ID" in
+  ''|*[!A-Za-z0-9._-]*)
+    [ -z "$BEADS_ID" ] || { echo "error: invalid --beads id" >&2; exit 1; }
+    ;;
+esac
+if [ -n "$BEADS_ID" ] && [ "$KIND" = secondmate ]; then
+  echo "error: --beads applies only to crewmate ship or scout briefs" >&2
+  exit 1
+fi
+
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to crewmate ship or scout briefs" >&2
   exit 1
@@ -174,6 +205,50 @@ shell_quote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\\\\''/g"
   printf "'"
+}
+
+# Resolve a project's clone directory exactly as the origin/upstream lookups
+# below need it. The mapping itself lives in bin/fm-project-dir-lib.sh so this
+# script and fm-spawn.sh cannot disagree about what a project string names -
+# the drift that made a bare name scaffold here and then fail at spawn. No
+# existence check: an absent clone must leave the lookups below silent, not
+# refuse the scaffold.
+project_clone_dir() {
+  fm_project_dir_candidate "$1" "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+}
+
+# Print "<trillium-repo-name> <state>" for a ship task's fork-contribution
+# project, where <state> is "legacy" when `origin` is still the upstream repo
+# the worker cannot push to, or "swapped" when `origin` is already the
+# trillium fork and a separate `upstream` remote proves the fork-contribution
+# relationship (the project-management skill's required setup). Prints
+# nothing (and succeeds) for an ordinary captain-owned project - a Trillium
+# origin with no `upstream` remote - or an unreadable or absent clone, so the
+# generated brief stays unchanged in every case that is not a known fork
+# relationship. Detection reads the clone's real git remotes, never
+# data/projects.md prose.
+fork_repo_for_origin() {
+  local repo=$1 dir origin name rest owner upstream
+  dir=$(project_clone_dir "$repo")
+  origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 0
+  [ -n "$origin" ] || return 0
+  origin=${origin%.git}
+  origin=${origin%/}
+  name=${origin##*/}
+  rest=${origin%/*}
+  owner=${rest##*/}     # https://host/owner/repo -> owner
+  owner=${owner##*:}    # git@host:owner/repo    -> owner
+  [ -n "$name" ] || return 0
+  if [ "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')" = trillium ]; then
+    # origin already is the trillium fork; still a fork-contribution project
+    # (and the anti-upstream PR-target rule still applies) only when a
+    # separate `upstream` remote proves the relationship.
+    upstream=$(git -C "$dir" remote get-url upstream 2>/dev/null) || return 0
+    [ -n "$upstream" ] || return 0
+    printf '%s swapped\n' "$name"
+    return 0
+  fi
+  printf '%s legacy\n' "$name"
 }
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
@@ -240,8 +315,8 @@ States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
 Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own; use \`blocked:\` when you are stuck and need firstmate to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, or work ready for review.
 This is also how you return the answer to a marked from-firstmate request above.
-A marked request requires one correlated answer after the work; it does not require a separate receipt or start acknowledgement.
-Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started.
+When a marked request carries corr=<id>, immediately append an intake acknowledgement line to the parent status file containing that corr=<id> token before doing any work; then, after finishing, append the terminal result (also containing corr=<id>) to report completion.
+Never append working: lines merely to acknowledge receipt or announce that a marked request has started.
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>]: {why it is no longer active}\`.
@@ -264,6 +339,37 @@ exit 0
 fi
 
 REPO=${POS[1]}
+
+# beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
+# "Stage 3"): bead minting/resolution under config/backlog-backend=beads happens only
+# in fm-spawn.sh, at actual dispatch time, not here. Minting here at scaffold time
+# would create a bead the moment a brief is written, before the task is ever spawned;
+# if the captain declines after review or spawn fails, that bead would be permanently
+# orphaned in the shared store since no state/<id>.meta ever records its beads_id= for
+# fm-teardown.sh to close. FM_HOOK_BEADS_ID is therefore left exactly as the caller set
+# it (unset unless an explicit --beads workflow pre-populated it).
+
+# Hook system (see header comment above): scripts in fm-brief-hooks.d/ are sourced
+# in a subshell, and any stdout they produce is collected into HOOK_SECTION and
+# inserted into the generated brief. Each hook is self-gating (e.g. the beads hook
+# below exits with no output when FM_HOOK_BEADS_ID is unset), so HOOK_SECTION stays
+# empty and briefs are unchanged when no hook has anything to add.
+# An explicit --beads workflow pre-populates FM_HOOK_BEADS_ID here; otherwise it is
+# left exactly as the caller already set it (see the Stage 3 comment above).
+[ -z "$BEADS_ID" ] || export FM_HOOK_BEADS_ID="$BEADS_ID"
+export FM_HOOK_TASK_ID="$ID"
+HOOK_SECTION=""
+for hook in "$SCRIPT_DIR"/fm-brief-hooks.d/*.sh; do
+  [ -e "$hook" ] || continue
+  # shellcheck disable=SC1090
+  hook_out=$(. "$hook") || continue
+  [ -n "$hook_out" ] || continue
+  if [ -n "$HOOK_SECTION" ]; then
+    HOOK_SECTION="$HOOK_SECTION"$'\n\n'"$hook_out"
+  else
+    HOOK_SECTION="$hook_out"
+  fi
+done
 
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
@@ -296,10 +402,33 @@ Do not add Herdr lifecycle commands to this unguarded brief by hand.
 EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
+[ -z "$HOOK_SECTION" ] || HERDR_SECTION="$HERDR_SECTION"$'\n\n'"$HOOK_SECTION"
+
+# Best-effort Parlay enrollment: the crewmate's first action is to self-enroll in
+# Parlay so firstmate can reach it and it can report back. `parlay listen --agent
+# <id>` is the atomic, idempotent one-call enrollment (register + announce + monitor);
+# `parlay listen --help` documents the canonical persistent Monitor-tool form. Like
+# the spawn-side chat-panel registration (fm-spawn.sh), it is best-effort and never
+# load-bearing: if parlay is absent or the server is unreachable, the crewmate notes
+# the warning and works normally, never blocking on a missing coordination channel.
+# Injected as the first section of every ship and scout brief; secondmate charters are
+# exempt because a secondmate runs its own firstmate home and returns work through the
+# marked-status/corr channel, not the shared panel. The $(printf ...) builder is
+# Bash 3.2 parse-safe: no heredoc is nested in the command substitution
+# (tests/fm-brief.test.sh guards that shape).
+# shellcheck disable=SC2016  # single quotes are deliberate: backtick-wrapped commands and the Monitor snippet must reach the reading agent verbatim; only the '"$ID"' break-outs interpolate the task id.
+PARLAY_SECTION=$(printf '%s\n' \
+'# FIRST ACTION: enroll in Parlay' \
+'Start by enrolling in Parlay so firstmate can reach you and you can report back; this only starts a background listener and touches nothing in the repo, so the Setup isolation check below still governs every repo action.' \
+'Enrollment is one atomic, idempotent call that registers you, announces you are listening, and streams firstmate'"'"'s messages to you: `parlay listen --agent '"$ID"'`.' \
+'Run it as a persistent background listener that stays alive for the whole task: under a harness with a Monitor tool that is `Monitor({ command: "parlay listen --agent '"$ID"'", persistent: true })`, otherwise start it in the background and keep it running.' \
+'Enrollment is best-effort, never a blocker: if parlay is not installed or the Parlay server is unreachable, note the warning briefly and continue with your task normally - do not stop and do not append a blocked status. A missing coordination channel is not a failure.')
 
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+
+$PARLAY_SECTION
 
 # Task
 {TASK}
@@ -333,6 +462,11 @@ The report is the only thing that survives, so anything worth keeping must be in
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+8. You have no terminal a human can type into, so never let git open an editor. Pass \`-m\` or
+   \`--no-edit\`, or prefix the command with \`GIT_EDITOR=true\` (\`GIT_SEQUENCE_EDITOR=true\` for
+   \`rebase -i\`). If a git command produces no output for more than a minute, suspect a blocked
+   editor waiting on a human, not a slow operation: check with \`pgrep -fl 'COMMIT_EDITMSG|--wait'\`
+   and kill the waiter rather than retrying, since each retry stacks another orphaned waiter.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -407,8 +541,69 @@ esac
 # briefs stay byte-identical to the historical Bash 5 output.
 DOD=${DOD%$'\n'}
 
+# Fork-contribution PR-target rule: a project whose PRs must land in the
+# captain's own trillium/<repo> fork, never the upstream project it was
+# forked from. Only direct-PR and no-mistakes push or open a PR; local-only
+# never does, so it is exempt. Rule text lives here exactly once and is empty
+# (no rule) for local-only and for every ordinary captain-owned project,
+# keeping those briefs byte-identical to the pre-rule output.
+#
+# Pushing to the fork does not by itself keep the PR off upstream: `gh pr
+# create` and no-mistakes both default an opened PR's base to the upstream
+# parent unless told otherwise. direct-PR mode gets an explicit `--repo`
+# override that works on either clone shape. no-mistakes mode has no such
+# override - it always opens against whatever `origin` is configured to - so
+# a legacy (unswapped) clone cannot be driven safely at all; the worker is
+# told to stop and escalate instead.
+FORK_FIRST=""
+if [ "$MODE" != local-only ]; then
+  FORK_REPO=""
+  FORK_STATE=""
+  read -r FORK_REPO FORK_STATE <<EOF
+$(fork_repo_for_origin "$REPO")
+EOF
+  if [ -n "$FORK_REPO" ]; then
+    FORK_HEADLINE="# Fork-based project: PRs stay in the fork, never upstream"
+    FORK_TARGET_RULE="This project's PRs must land in the captain's own \`trillium/$FORK_REPO\` fork, NEVER upstream; the PR only goes upstream on the captain's explicit word."
+    if [ "$MODE" = direct-PR ]; then
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+$FORK_HEADLINE
+$FORK_TARGET_RULE
+If the fork does not exist yet, create it with \`gh-axi\` before pushing.
+Push your branch to the fork - \`git push git@github.com:trillium/$FORK_REPO.git fm/$ID:fm/$ID\` if \`origin\` here is still upstream, or plain \`git push origin fm/$ID\` once \`origin\` is the fork.
+Open the PR with an explicit repo override so it can never default to upstream: \`gh pr create --repo trillium/$FORK_REPO --base <fork-default-branch> --head fm/$ID\`.
+Never omit that \`--repo trillium/$FORK_REPO\` override, and never stop to ask fork-vs-local: always target the fork.
+**CRITICAL:** a PR opened against the upstream repo must NEVER happen automatically. If targeting the fork is not possible, stop and get direct captain confirmation before any upstream PR attempt.
+EOF
+    elif [ "$FORK_STATE" = swapped ]; then
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+$FORK_HEADLINE
+$FORK_TARGET_RULE
+\`origin\` here is already the \`trillium/$FORK_REPO\` fork, with \`upstream\` as a separate remote, so no-mistakes's normal PR-open behavior already targets the fork - do not change that.
+Never run \`no-mistakes init --fork-url\` or any similar remote reconfiguration on this project: that flag pushes to the named fork while still opening the PR against \`origin\`, which is the exact wrong direction here.
+Never stop to ask fork-vs-local: always target the fork.
+**CRITICAL:** if no-mistakes ever proposes or opens a PR against anything other than \`trillium/$FORK_REPO\`, stop and escalate immediately rather than letting it proceed.
+EOF
+    else
+      IFS= read -r -d '' FORK_FIRST <<EOF || true
+
+# Fork-based project: origin is not yet the fork - STOP before running no-mistakes
+$FORK_TARGET_RULE
+\`origin\` here is still the upstream repository, not the \`trillium/$FORK_REPO\` fork. no-mistakes opens its PR against whatever \`origin\` is configured to, so running it now would open the PR against upstream.
+This clone's remotes need the captain-approved origin swap (origin -> the \`trillium/$FORK_REPO\` fork, upstream -> the current origin) before no-mistakes can run safely here; that change is outside this task's worktree.
+Do NOT run \`no-mistakes init --fork-url\` as a workaround: it pushes to the named fork while still opening the PR against \`origin\` (upstream), reproducing the same failure.
+Append \`blocked: project clone's origin is not the trillium fork yet, no-mistakes would target upstream\` and stop; do not attempt any workaround that could open a PR against upstream.
+EOF
+    fi
+  fi
+fi
+
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+
+$PARLAY_SECTION
 
 # Task
 {TASK}
@@ -448,7 +643,19 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
-
+8. You have no terminal a human can type into, so never let git open an editor. Pass \`-m\` or
+   \`--no-edit\`, or prefix the command with \`GIT_EDITOR=true\` (\`GIT_SEQUENCE_EDITOR=true\` for
+   \`rebase -i\`). This covers \`commit\` without \`-m\`, \`rebase --continue\`/\`-i\`, non-fast-forward
+   \`merge\`, \`revert\`, \`tag -a\`, and \`cherry-pick --continue\`. If a git command produces no output
+   for more than a minute, suspect a blocked editor waiting on a human, not a slow operation:
+   check with \`pgrep -fl 'COMMIT_EDITMSG|--wait'\` and kill the waiter rather than retrying, since
+   each retry stacks another orphaned waiter.
+9. If git refuses because your branch is already checked out in another worktree, do NOT remove
+   or modify that worktree - it may hold another agent's uncommitted work. Use a detached HEAD
+   instead: \`git checkout --detach\`, work there, and - where rule 1 permits pushing at all -
+   push explicitly with \`git push --force-with-lease origin HEAD:fm/$ID\`. If that is not
+   possible, append \`blocked: {why}\` and stop.
+$FORK_FIRST
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
 Record only project knowledge useful to almost every future session.

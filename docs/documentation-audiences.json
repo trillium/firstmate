@@ -129,6 +129,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/coderabbit-pr-gate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/decision-hold-lifecycle/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -257,6 +261,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/gascity-integration-analysis.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/gitlab-merge-watch.md",
       "audience": "maintainer-verification"
     },
@@ -359,6 +367,14 @@
     {
       "path": "docs/zellij-backend.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/no-mistakes-run-liveness.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "persona.md",
+      "audience": "agent-runtime"
     },
     {
       "path": "skills/stow/SKILL.md",

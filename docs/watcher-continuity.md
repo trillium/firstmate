@@ -19,6 +19,12 @@ Only an exhausted failure with no verified watcher emits one last-resort notice 
 The Claude turn-end guard owns the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
 While supervision is still needed and away mode remains inactive, an actionable close wakes the idle session through exit 2.
 
+The hook is the adapter the arm layer defers to when it prints `watcher: idle`, so it verifies that deferral rather than assuming it.
+After an arm closes quietly - no actionable reason and no failure - the hook rechecks supervision need and then `fm_watcher_healthy`, and re-arms in place whenever no live watcher answers.
+That loop is bounded by `FM_AUTOARM_MAX_REARMS` (default 20) and runs in the hook's own foreground process tree; the hook never spawns a detached successor, because a watcher with no owner to notify converts a loud supervision-down alarm into a silent one.
+Exhausting the budget, or finding a wake already queued, escalates to an exit-2 rewake carrying an explicit continuity-lost banner instead of exiting silently.
+This closes the harness-kill path: `bin/fm-watch-arm.sh` kills its watcher child on TERM and records `reason=arm-interrupted`, which previously ended supervision with a still-fresh beacon and nothing scheduled to notice.
+
 ## Actionable wake ordering
 
 After an actionable Pi or OpenCode child close, the adapter starts and verifies one singleton successor before it delivers the original wake.
@@ -42,7 +48,7 @@ The turn-end guard remains the final backstop rather than the normal continuity 
 
 ## Arm-layer cycle contract
 
-`bin/fm-watch-arm.sh` never returns a clean empty success.
+`bin/fm-watch-arm.sh` never returns a clean empty success off a genuinely down fleet.
 An actionable child output returns that reason normally.
 A zero/empty child return rechecks the home lock and beacon, attaches to a verified healthy successor when one exists, or resolves the close against the watcher's bounded terminal-delivery ledger.
 An attached arm follows verified identity-matched successors and resolves the same way when that chain ends without one, because it holds no handle on the watcher's stdout and cannot read the reason line itself.
@@ -54,6 +60,12 @@ The arm layer appends one tab-separated record per observed cycle to `state/.wat
 Each record includes arm and watcher PIDs, start and end timestamps, exit code and signal, classified reason, beacon age, lock identity before and after close, and successor disposition.
 The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYCLE_LOG_KEEP_LINES`.
 `state/.watch-triage.log` remains only the watcher's bounded absorbed-wake debug log and carries no lifecycle semantics.
+
+`bin/fm-watch-cycle-lib.sh` is the only reader of that ledger.
+It exists because the ledger already classified supervision death correctly while nothing acted on or reported the classification.
+`bin/fm-guard.sh` and `bin/fm-turnend-guard.sh` now print its one-line description inside their supervision-down banners, so every harness - not only Claude - sees whether the last cycle was terminated or ended.
+The reader deliberately never cites `successor=`: only an adapter passing `FM_WATCH_PREDECESSOR_ARM_PID` (the OpenCode plugin and the Pi extension) back-fills that field, so it reads `none` on a Claude primary even when a healthy successor took over.
+It also never classifies from `beacon_age=`, which stays fresh for a watcher killed while healthy; only the reason field separates a kill from a clean end.
 
 The default 300-second grace is unchanged.
 Only the watcher process touches `state/.last-watcher-beat`; no helper process can make a wedged watcher appear healthy.

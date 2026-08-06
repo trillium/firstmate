@@ -96,18 +96,19 @@ fi
 # --- JSON string escaper for the audit record --------------------------------
 # Escape a string for embedding as a JSON value (quotes, backslashes, control
 # chars). Kept dependency-free; correctness over cleverness.
+# shellcheck disable=SC1003
 json_escape() {
   local s=$1 out=""
   local i ch
   for (( i = 0; i < ${#s}; i++ )); do
     ch="${s:i:1}"
     case "$ch" in
-      '"')  out+='\"' ;;
-      '\')  out+='\\' ;;
+      '"')   out+='\"' ;;
+      $'\\') out+='\\' ;;
       $'\n') out+='\n' ;;
       $'\r') out+='\r' ;;
       $'\t') out+='\t' ;;
-      *) out+="$ch" ;;
+      *)     out+="$ch" ;;
     esac
   done
   printf '%s' "$out"

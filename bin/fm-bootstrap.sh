@@ -104,6 +104,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
@@ -656,6 +658,7 @@ install_cmd() {
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
     tasks-axi|quota-axi) echo "npm install -g $1" ;;
+    task) echo "go install github.com/steveyegge/beads/cmd/bd@latest && ln -sf bd ~/go/bin/task" ;;
     *) return 1 ;;
   esac
 }
@@ -1057,7 +1060,21 @@ gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
 tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" 2>/dev/null || true)
 if [ -n "$tangle_branch" ]; then
   tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
-  if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" = 1 ]; then
+  tangle_holder=$(fm_branch_holder_worktree "$FM_ROOT" "$tangle_default" 2>/dev/null || true)
+  if [ -n "$tangle_holder" ]; then
+    # Expected steady state, not a tangle: another worktree of this repo holds
+    # the default branch, git permits one worktree per branch, so the primary
+    # cannot be on it and no checkout remedy exists (see fm-tangle-lib.sh). This
+    # is the once-per-session report of that condition - fm-guard stays silent
+    # rather than repeating it on every guarded command. It stays a no-action
+    # BOOTSTRAP_INFO fact, never a TANGLE problem line, but it is printed
+    # unconditionally so a crewmate's genuinely stranded commits in the primary
+    # are still visible; the count names them.
+    tangle_ahead=$(git -C "$FM_ROOT" rev-list --count "$tangle_default..$tangle_branch" 2>/dev/null || true)
+    tangle_ahead_note=
+    [ -n "$tangle_ahead" ] && tangle_ahead_note=" ($tangle_ahead commit(s) on '$tangle_branch' not on '$tangle_default')"
+    echo "BOOTSTRAP_INFO: primary checkout is on '$tangle_branch' because '$tangle_default' is checked out in another worktree of this repo ($tangle_holder); git allows one worktree per branch, so this is expected, not a tangle$tangle_ahead_note"
+  elif [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" = 1 ]; then
     echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - read-only session must leave restore work to the session holding the fleet lock"
   else
     echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
@@ -1069,11 +1086,38 @@ if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != 
   echo "BOOTSTRAP_INFO: crew harness override active: $crew"
 fi
 crew_dispatch_validate
-if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
-  && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
-  echo "BOOTSTRAP_INFO: tasks-axi available"
-fi
+backlog_backend=$(fm_backlog_backend_value "$CONFIG")
+case "$backlog_backend" in
+  beads)
+    if ! command -v task >/dev/null 2>&1; then
+      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+        echo "DEGRADED: task CLI not found (beads store; install: $(install_cmd task)); using local mirror from $mirror_iso until it is"
+      else
+        echo "MISSING: task CLI (beads store; install: $(install_cmd task))"
+      fi
+    elif ! task list --limit 1 >/dev/null 2>&1; then
+      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+        echo "DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from $mirror_iso until it is"
+      else
+        echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list'), and no usable local mirror"
+      fi
+    elif [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
+      echo "BOOTSTRAP_INFO: beads task store available"
+    fi
+    ;;
+  manual)
+    : # manual backend requires no validation
+    ;;
+  *)
+    if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && fm_tasks_axi_compatible; then
+      echo "BOOTSTRAP_INFO: tasks-axi available"
+    fi
+    ;;
+esac
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
+  if [ "$backlog_backend" = beads ]; then
+    fm_beads_write_queue_reconcile
+  fi
   secondmate_liveness_sweep
   secondmate_sync
   secondmate_handoff_resume

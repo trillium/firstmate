@@ -36,16 +36,26 @@
 #                       locked.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
-#   4. context digest - data/projects.md, data/secondmates.md, data/captain.md,
+#   4. supervision    - emits exactly one operating block for the detected
+#                       primary harness, after the wake queue and before
+#                       persona and context.
+#   5. persona        - the active persona file (config/persona.md local
+#                       override, else tracked persona.md): read-only, always
+#                       safe, always runs (including on lock refusal), and
+#                       prints early - before the context and fleet-state
+#                       digests - so the captain-facing voice is reliably
+#                       in force.
+#   6. context digest - data/projects.md, data/secondmates.md, data/captain.md,
 #                       data/captain-shared.md, data/learnings.md: read-only,
 #                       always safe, always runs.
-#   5. fleet digest   - a compact data/backlog.md identity/metadata listing,
+#   7. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs.
-#   6. closing reminder - prints the context-specific watcher next step; this
+#   8. closing reminder - prints the context-specific watcher next step; this
 #                       script points back to the emitted harness supervision
-#                       block and deliberately never arms the watcher itself.
+#                       block (step 4) and deliberately never arms the watcher
+#                       itself.
 #
 # On a Pi primary, the supervision-block step also checks whether Pi's two
 # tracked primary extensions are loaded and prints a PI_WATCH_EXTENSION
@@ -67,7 +77,7 @@
 # tasks-axi and quota-axi tool checks, and tasks-axi availability - none of
 # which mutate shared state and all of which are safe to compute without
 # verified lock ownership.
-# Only projection cleanup, the five bootstrap mutating sweeps, and the
+# Only projection cleanup, the six bootstrap mutating sweeps, and the
 # wake-queue drain are skipped.
 # The context and fleet-state digests
 # below are always read-only, so they run unconditionally in both modes.
@@ -141,8 +151,61 @@ print_file_or_absent() {
   fi
 }
 
+# resolve_persona_path: prints the active persona file's path, or nothing if
+# neither exists. config/persona.md (local, gitignored, home-specific) fully
+# overrides the tracked FM_ROOT/persona.md default when present - mirrors
+# config/crew-harness's override pattern (AGENTS.md section 2).
+resolve_persona_path() {
+  if [ -f "$CONFIG/persona.md" ]; then
+    printf '%s\n' "$CONFIG/persona.md"
+  elif [ -f "$FM_ROOT/persona.md" ]; then
+    printf '%s\n' "$FM_ROOT/persona.md"
+  fi
+}
+
+# print_persona: the active persona's full contents, labeled by source
+# (local override vs tracked default). Unlike the other context-digest files,
+# an ABSENT persona is not a normal state - the tracked default should always
+# exist - so it is called out as needing repair rather than treated as a
+# quiet fallback-to-defaults signal.
+print_persona() {
+  local path
+  path=$(resolve_persona_path)
+  if [ -z "$path" ]; then
+    subsection "persona.md"
+    printf 'ABSENT (tracked persona.md and config/persona.md both missing - captain-facing address/voice is undefined; this should not happen, restore persona.md)\n'
+    return
+  fi
+  if [ "$path" = "$CONFIG/persona.md" ]; then
+    subsection "persona.md (local override: config/persona.md)"
+  else
+    subsection "persona.md (tracked default)"
+  fi
+  if [ ! -r "$path" ]; then
+    printf 'UNREADABLE (%s exists but could not be read - captain-facing address/voice is undefined; this needs repair, fix its permissions or restore it)\n' "$path"
+    return
+  fi
+  if [ -s "$path" ]; then
+    cat "$path"
+  else
+    printf '(present, empty)\n'
+  fi
+}
+
 print_backlog_pointer() {
-  printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
+  local backend
+  backend=$(fm_backlog_backend_value "$CONFIG")
+  case "$backend" in
+    beads)
+      printf 'Full task bodies remain available on demand: task show <id> (beads task store), or data/backlog.md.\n'
+      ;;
+    manual)
+      printf 'Full task bodies remain available on demand: inspect data/backlog.md directly, or data/backlog.md via tasks-axi when available.\n'
+      ;;
+    *)
+      printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
+      ;;
+  esac
 }
 
 print_backlog_manual_compact() {
@@ -198,10 +261,73 @@ print_backlog_tasks_axi_compact() {
   fi
 }
 
+# print_backlog_beads_compact - beads-authority migration Stage 2 (see
+# data/beads-authority-migration-scout/report.md section 4). Mirrors
+# data/backlog.md's `## In flight`/`## Queued` structure instead of listing
+# only bd's native --ready set, which silently drops in_progress/blocked
+# work from the digest. Both sections are scoped by fm_beads_fleet_label so
+# this stays firstmate's fleet view, not the shared federated store's full
+# cross-project set (same label fm-fleet-snapshot.sh's Stage 1 beads read
+# uses). Any read failure falls back to the whole title-line rendering, same
+# as before Stage 2.
+print_backlog_beads_compact() {
+  local path=$1 label out_inflight rc_inflight out_queued rc_queued
+  local inflight_ok=0 queued_ok=0 inflight_stale_since='' queued_stale_since=''
+  label=$(fm_beads_fleet_label)
+  printf 'compact backlog listing (beads task store; label %s; max %s item(s) per section)\n' "$label" "$BACKLOG_LIMIT"
+
+  out_inflight=$(task list --label "$label" --status in_progress,blocked --limit "$BACKLOG_LIMIT" 2>&1)
+  rc_inflight=$?
+  if [ "$rc_inflight" -eq 0 ]; then
+    fm_beads_mirror_write inflight "$out_inflight" 2>/dev/null || true
+    inflight_ok=1
+  elif fm_beads_mirror_fresh inflight; then
+    out_inflight=$(fm_beads_mirror_read inflight)
+    inflight_stale_since=$(fm_beads_mirror_timestamp_iso inflight)
+    inflight_ok=1
+  fi
+
+  out_queued=$(task list --label "$label" --ready --limit "$BACKLOG_LIMIT" 2>&1)
+  rc_queued=$?
+  if [ "$rc_queued" -eq 0 ]; then
+    fm_beads_mirror_write ready "$out_queued" 2>/dev/null || true
+    queued_ok=1
+  elif fm_beads_mirror_fresh ready; then
+    out_queued=$(fm_beads_mirror_read ready)
+    queued_stale_since=$(fm_beads_mirror_timestamp_iso ready)
+    queued_ok=1
+  fi
+
+  if [ "$inflight_ok" -eq 1 ] && [ "$queued_ok" -eq 1 ]; then
+    if [ -n "$inflight_stale_since" ]; then
+      printf '(stale mirror, beads store unreachable since %s) In flight, as of last successful read:\n' "$inflight_stale_since"
+    else
+      printf '## In flight\n'
+    fi
+    printf '%s\n' "$out_inflight"
+    if [ -n "$queued_stale_since" ]; then
+      printf '(stale mirror, beads store unreachable since %s) Queued, as of last successful read:\n' "$queued_stale_since"
+    else
+      printf '## Queued\n'
+    fi
+    printf '%s\n' "$out_queued"
+  else
+    printf 'beads task listing failed; falling back to title-line rendering.\n'
+    printf '%s\n' "$out_inflight"
+    printf '%s\n' "$out_queued"
+    if [ -f "$path" ]; then
+      print_backlog_manual_compact "$path" "fallback"
+    fi
+  fi
+}
+
 print_backlog_compact() {
   local path=$1 label=$2
   subsection "$label"
-  if [ -f "$path" ]; then
+  if [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+    print_backlog_beads_compact "$path"
+    print_backlog_pointer
+  elif [ -f "$path" ]; then
     if [ -s "$path" ]; then
       if fm_tasks_axi_backend_available "$CONFIG"; then
         print_backlog_tasks_axi_compact "$path"
@@ -344,7 +470,15 @@ fi
   --afk "$AFK_PRESENT" \
   --x-mode "$X_MODE_PRESENT"
 
-# --- 4. context digest -----------------------------------------------------
+# --- 5. persona ----------------------------------------------------------
+# Always-in-force captain-facing voice (AGENTS.md persona pointer): printed
+# every session, unconditionally, so it never depends on a per-reply trigger.
+# config/persona.md (local, gitignored) overrides the tracked persona.md
+# default in full.
+section "PERSONA"
+print_persona
+
+# --- 6. context digest -----------------------------------------------------
 section "CONTEXT"
 print_file_or_absent "$DATA/projects.md" "data/projects.md"
 print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
@@ -352,7 +486,7 @@ print_file_or_absent "$DATA/captain.md" "data/captain.md"
 print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
 print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
 
-# --- 5. fleet-state digest ---------------------------------------------
+# --- 7. fleet-state digest ---------------------------------------------
 section "FLEET STATE"
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
 
@@ -423,7 +557,7 @@ if fm_pf_relay_active "$FM_HOME" \
   fi
 fi
 
-# --- 6. closing reminder -----------------------------------------------
+# --- 8. closing reminder -----------------------------------------------
 section "NEXT STEP"
 if [ "$READ_ONLY" -eq 1 ]; then
   cat <<'EOF'
@@ -455,8 +589,8 @@ EOF
 fi
 cat <<'EOF'
 The digest above is complete for this session start. Do NOT re-read
-data/projects.md, data/secondmates.md, data/captain.md,
-data/captain-shared.md, data/learnings.md,
+persona.md, config/persona.md, data/projects.md, data/secondmates.md,
+data/captain.md, data/captain-shared.md, data/learnings.md,
 or state/*.meta now - they were just printed in full.
 Do NOT bulk-read data/backlog.md now either: the compact identity/metadata
 listing was just printed with a pointer for targeted full-body follow-up.

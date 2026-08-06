@@ -198,16 +198,19 @@ SH
   chmod +x "$case_dir/fakebin/tasks-axi"
 }
 
-# Write a meta file for the task. Args: case_dir mode kind
+# Write a meta file for the task. Args: case_dir mode kind [beads_id]
 write_meta() {
-  local case_dir=$1 mode=$2 kind=$3
+  local case_dir=$1 mode=$2 kind=$3 beads_id=${4:-}
+  local extra=()
+  [ -z "$beads_id" ] || extra+=("beads_id=$beads_id")
   fm_write_meta "$case_dir/state/task-x1.meta" \
     "window=firstmate:fm-task-x1" \
     "endpoint_task_id=task-x1" \
     "worktree=$case_dir/wt" \
     "project=$case_dir/project" \
     "kind=$kind" \
-    "mode=$mode"
+    "mode=$mode" \
+    "${extra[@]+"${extra[@]}"}"
 }
 
 # Commit something on the worktree's task branch. Args: case_dir [message]
@@ -215,6 +218,32 @@ wt_commit() {
   local case_dir=$1 msg=${2:-wt work}
   git -C "$case_dir/wt" -c user.email=t@t -c user.name=t \
     commit -q --allow-empty -m "$msg"
+}
+
+# Mock `task` (the beads CLI): logs every invocation to $case_dir/task-calls.log
+# and succeeds. Args: case_dir
+add_beads_task_mock() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/task" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/task"
+}
+
+# Mock `staleness` (the staleness-store beads CLI that bin/fm-staleness-file.sh
+# invokes): logs every invocation to $case_dir/staleness-calls.log and echoes a
+# bead id, like a real `create --silent` would. Args: case_dir
+add_staleness_mock() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/staleness" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_STALENESS_CALLS_LOG"
+[ "${1:-}" = create ] && printf 'stale-bead-1\n'
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/staleness"
 }
 
 # Add a fork bare repo and register it as a remote on the project, then push
@@ -788,6 +817,35 @@ test_squash_merged_pr_allows_replayed_unpushed_patch() {
   expect_code 0 "$rc" "squash-replayed-patch: teardown should succeed when unpushed local patch is in the merged PR head"
   ! grep -q REFUSED "$case_dir/stderr" || fail "squash-replayed-patch: teardown printed a REFUSED line"
   pass "squash-merged PR accepts replayed unpushed local patches contained in the PR head"
+}
+
+test_squash_merged_pr_allows_genuine_multi_commit_squash() {
+  local case_dir rc base_head tree pr_head
+  case_dir=$(make_case squash-multi-commit)
+  write_meta "$case_dir" no-mistakes ship
+  base_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  # Two separate local commits, never pushed anywhere.
+  wt_commit_file "$case_dir" a.txt alpha "add a"
+  wt_commit_file "$case_dir" b.txt beta "add b"
+  append_pr_meta_url "$case_dir"
+  # A genuine squash merge: ONE commit off the original (pre-branch) base
+  # combining both files' changes, with neither local commit as an ancestor.
+  # The ancestor check fails (pr_head does not descend from HEAD), and the
+  # patch-id replay check fails too (the squash's combined two-file diff has
+  # no single patch id matching either local commit's one-file diff) - only
+  # the 3-way merge-tree comparison recognizes this as landed.
+  tree=$(git -C "$case_dir/wt" rev-parse 'HEAD^{tree}')
+  pr_head=$(printf '%s\n' "squash a+b" | git -C "$case_dir/wt" commit-tree "$tree" -p "$base_head")
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "squash-multi-commit: teardown should succeed via 3-way merge-tree comparison"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "squash-multi-commit: teardown printed a REFUSED line"
+  pass "genuine multi-commit squash merge (unmatched by ancestor or patch-id checks) is recognized as landed via 3-way merge-tree comparison"
 }
 
 test_merged_pr_with_later_local_commit_refuses() {
@@ -2475,6 +2533,406 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+# --- staleness auto-close (bin/fm-watch.sh idle>2h backstop) ---------------
+
+test_staleness_autoclose_landed_falls_through_to_full_teardown() {
+  local case_dir rc wt_head
+  case_dir=$(make_case staleness-landed)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "merged work"
+  # Fast-forward local main to HEAD so work_is_landed sees it as landed, the
+  # same fixture test_local_only_merged_to_local_main_allows uses.
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+
+  set +e
+  run_teardown "$case_dir" --staleness-autoclose 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "staleness-landed: teardown should succeed on landed work"
+  grep -q "teardown task-x1 complete" "$case_dir/stdout" \
+    || fail "staleness-landed: did not fall through to the ordinary full teardown: $(cat "$case_dir/stdout")"
+  ! grep -q "chat reclaimed" "$case_dir/stdout" \
+    || fail "staleness-landed: took the chat-only path despite landed work"
+  assert_absent "$case_dir/state/task-x1.meta" "staleness-landed: task metadata should be removed"
+  pass "staleness auto-close on already-landed work falls through to an ordinary full teardown"
+}
+
+test_staleness_autoclose_unlanded_chat_only_preserves_worktree_and_files_bead() {
+  local case_dir rc
+  case_dir=$(make_case staleness-unlanded)
+  write_meta "$case_dir" local-only ship
+  add_staleness_mock "$case_dir"
+  # A real file change (not an empty commit) so its content genuinely differs
+  # from main - content_in_default must not mistake it for already-landed.
+  wt_commit_file "$case_dir" work.txt "unpushed work in progress"
+  # No fork, no push to origin, not merged into main: never-discard-unlanded-work
+  # applies, so this must reclaim the process only, not the worktree.
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-autoclose 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "staleness-unlanded: chat-only teardown should succeed"
+  grep -q "chat reclaimed" "$case_dir/stdout" \
+    || fail "staleness-unlanded: did not take the chat-only path: $(cat "$case_dir/stdout")"
+  [ -d "$case_dir/wt" ] || fail "staleness-unlanded: worktree directory was deleted"
+  [ -f "$case_dir/wt/work.txt" ] \
+    || fail "staleness-unlanded: the unlanded file no longer exists in the worktree"
+  git -C "$case_dir/wt" log --oneline -1 2>/dev/null | grep -q "add work.txt" \
+    || fail "staleness-unlanded: the unlanded commit no longer exists in the worktree"
+  assert_absent "$case_dir/state/task-x1.meta" "staleness-unlanded: task metadata should still be retired"
+  assert_absent "$case_dir/state/task-x1.status" "staleness-unlanded: task status should still be retired"
+  grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "staleness-unlanded: no bead filed in the staleness store: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  grep -q "fm/task-x1" "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "staleness-unlanded: filed bead did not record the branch: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  pass "staleness auto-close on unlanded work reclaims the process only, preserves the worktree, and files a triage bead"
+}
+
+# --- dead-window triage filing (bin/fm-watch.sh dead-window sweep) ----------
+# --staleness-file-dead is the additive, non-destructive twin of
+# --staleness-autoclose for a window that DIED on its own: it files the same
+# triage record for unlanded work but NEVER kills an endpoint, removes the meta,
+# or touches the worktree/branch. Idempotent via state/<id>.staleness-filed (or
+# the .staleness-unfiled fallback).
+
+# Like add_staleness_mock, but the `create` call FAILS (exit 1), simulating a
+# staleness store that is unavailable or rejects the create. This drives
+# fm-staleness-file.sh's fail-open branch so teardown writes the
+# state/<id>.staleness-unfiled fallback instead of a bead. Args: case_dir
+add_staleness_mock_create_fails() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/staleness" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FM_TEST_STALENESS_CALLS_LOG:-/dev/null}"
+[ "${1:-}" = create ] && exit 1
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/staleness"
+}
+
+test_dead_window_file_unlanded_files_bead_and_preserves_everything() {
+  local case_dir rc wt_head
+  case_dir=$(make_case dead-window-unlanded)
+  write_meta "$case_dir" local-only ship
+  add_staleness_mock "$case_dir"
+  # A real (non-empty) file change so content_in_default cannot mistake it for
+  # already-landed; no fork/push/merge, so the work is genuinely unlanded.
+  wt_commit_file "$case_dir" work.txt "dead-window work in progress"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "dead-window-unlanded: filing should succeed"
+  grep -q "filed for triage" "$case_dir/stdout" \
+    || fail "dead-window-unlanded: did not report a triage filing: $(cat "$case_dir/stdout")"
+  grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "dead-window-unlanded: no bead filed in the staleness store: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  grep -q "fm/task-x1" "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "dead-window-unlanded: filed bead did not record the branch: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  assert_present "$case_dir/state/task-x1.staleness-filed" \
+    "dead-window-unlanded: an idempotency marker should record the filed bead"
+  # Never touches the worktree, its branch, or the task meta.
+  assert_present "$case_dir/state/task-x1.meta" \
+    "dead-window-unlanded: the task meta must be preserved (never auto-closed)"
+  [ -d "$case_dir/wt" ] || fail "dead-window-unlanded: worktree directory was deleted"
+  [ -f "$case_dir/wt/work.txt" ] \
+    || fail "dead-window-unlanded: the unlanded file no longer exists in the worktree"
+  [ "$(git -C "$case_dir/wt" rev-parse HEAD)" = "$wt_head" ] \
+    || fail "dead-window-unlanded: the worktree HEAD was moved"
+  [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)" = fm/task-x1 ] \
+    || fail "dead-window-unlanded: the worktree branch was changed"
+  pass "dead-window filing on unlanded work files a triage bead and leaves the worktree, branch, and meta untouched"
+}
+
+test_dead_window_file_landed_files_nothing() {
+  local case_dir rc wt_head
+  case_dir=$(make_case dead-window-landed)
+  write_meta "$case_dir" local-only ship
+  add_staleness_mock "$case_dir"
+  # Same landed fixture the staleness-landed test uses: an empty commit whose
+  # tree matches main, with local main fast-forwarded to HEAD.
+  wt_commit "$case_dir" "merged work"
+  wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "dead-window-landed: should succeed as a no-op"
+  grep -q "nothing to file" "$case_dir/stdout" \
+    || fail "dead-window-landed: did not report a no-op for landed work: $(cat "$case_dir/stdout")"
+  ! grep -q '^create ' "$case_dir/staleness-calls.log" 2>/dev/null \
+    || fail "dead-window-landed: filed a bead despite landed work: $(cat "$case_dir/staleness-calls.log" 2>/dev/null)"
+  assert_absent "$case_dir/state/task-x1.staleness-filed" \
+    "dead-window-landed: no idempotency marker should be written for landed work"
+  assert_absent "$case_dir/state/task-x1.staleness-unfiled" \
+    "dead-window-landed: no fallback record should be written for landed work"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "dead-window-landed: the task meta must be preserved"
+  [ -d "$case_dir/wt" ] || fail "dead-window-landed: worktree directory was deleted"
+  pass "dead-window filing on landed work files nothing and leaves the task untouched"
+}
+
+test_dead_window_file_is_idempotent() {
+  local case_dir rc creates
+  case_dir=$(make_case dead-window-idempotent)
+  write_meta "$case_dir" local-only ship
+  add_staleness_mock "$case_dir"
+  wt_commit_file "$case_dir" work.txt "unlanded work"
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout1" 2> "$case_dir/stderr1"
+  rc=$?
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout2" 2> "$case_dir/stderr2"
+  rc=$(( rc + $? ))
+  set -e
+
+  expect_code 0 "$rc" "dead-window-idempotent: both sweeps should succeed"
+  creates=$(grep -c '^create ' "$case_dir/staleness-calls.log" 2>/dev/null || echo 0)
+  [ "$creates" -eq 1 ] \
+    || fail "dead-window-idempotent: expected exactly one bead filing across two sweeps, got $creates"
+  grep -q "already filed" "$case_dir/stdout2" \
+    || fail "dead-window-idempotent: the second sweep did not skip an already-filed task: $(cat "$case_dir/stdout2")"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "dead-window-idempotent: the task meta must survive both sweeps"
+  [ -f "$case_dir/wt/work.txt" ] \
+    || fail "dead-window-idempotent: the unlanded work was disturbed"
+  pass "a dead-window task already filed is not re-filed on a repeated sweep"
+}
+
+test_dead_window_file_fallback_writes_unfiled_when_store_unavailable() {
+  local case_dir rc
+  case_dir=$(make_case dead-window-fallback)
+  write_meta "$case_dir" local-only ship
+  # Staleness CLI is present but rejects the create (store unavailable) - the
+  # same fail-open branch a fully-absent CLI takes. Teardown must fall back to
+  # the durable state/<id>.staleness-unfiled record.
+  add_staleness_mock_create_fails "$case_dir"
+  wt_commit_file "$case_dir" work.txt "unlanded work needing a fallback record"
+
+  set +e
+  FM_TEST_STALENESS_CALLS_LOG="$case_dir/staleness-calls.log" \
+    run_teardown "$case_dir" --staleness-file-dead 1700000000 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "dead-window-fallback: filing should still succeed (fail-open)"
+  assert_present "$case_dir/state/task-x1.staleness-unfiled" \
+    "dead-window-fallback: a fallback record must be written when the bead cannot be filed"
+  assert_absent "$case_dir/state/task-x1.staleness-filed" \
+    "dead-window-fallback: no success marker should exist when filing failed"
+  grep -q "^task: task-x1$" "$case_dir/state/task-x1.staleness-unfiled" \
+    || fail "dead-window-fallback: fallback record missing the task id: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
+  grep -q "^branch: fm/task-x1$" "$case_dir/state/task-x1.staleness-unfiled" \
+    || fail "dead-window-fallback: fallback record missing the branch: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
+  grep -q "^worktree: $case_dir/wt$" "$case_dir/state/task-x1.staleness-unfiled" \
+    || fail "dead-window-fallback: fallback record missing the worktree path: $(cat "$case_dir/state/task-x1.staleness-unfiled")"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "dead-window-fallback: the task meta must be preserved"
+  [ -f "$case_dir/wt/work.txt" ] \
+    || fail "dead-window-fallback: the unlanded work was disturbed"
+  pass "dead-window filing falls back to state/<id>.staleness-unfiled when the store cannot file the bead"
+}
+
+test_beads_linked_task_closes_bead_on_landed_teardown() {
+  local case_dir rc
+  case_dir=$(make_case beads-close-on-land)
+  write_meta "$case_dir" local-only ship bead-close-1
+  add_beads_task_mock "$case_dir"
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "beads-close-on-land: teardown should succeed when HEAD is on a fork remote"
+  grep -q '^close bead-close-1 ' "$case_dir/task-calls.log" 2>/dev/null \
+    || fail "beads-close-on-land: linked bead was not closed on landed teardown: $(cat "$case_dir/task-calls.log" 2>/dev/null)"
+  pass "a beads-linked task's bead is closed automatically on a landed (non-force) teardown"
+}
+
+test_beads_linked_task_does_not_close_bead_on_force_teardown() {
+  local case_dir rc
+  case_dir=$(make_case beads-no-close-force)
+  write_meta "$case_dir" local-only ship bead-close-2
+  add_beads_task_mock "$case_dir"
+  wt_commit "$case_dir" "unpushed work"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "beads-no-close-force: --force should bypass the unpushed-work check"
+  ! grep -q '^close ' "$case_dir/task-calls.log" 2>/dev/null \
+    || fail "beads-no-close-force: linked bead was closed despite --force (work not confirmed landed)"
+  pass "a beads-linked task's bead is NOT closed on a --force teardown"
+}
+
+test_beads_linked_task_does_not_close_bead_on_refused_teardown() {
+  local case_dir rc
+  case_dir=$(make_case beads-no-close-refused)
+  write_meta "$case_dir" local-only ship bead-close-3
+  add_beads_task_mock "$case_dir"
+  wt_commit "$case_dir" "unpushed work"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "beads-no-close-refused: teardown should refuse truly unpushed work"
+  grep -q REFUSED "$case_dir/stderr" \
+    || fail "beads-no-close-refused: teardown did not print REFUSED"
+  ! grep -q '^close ' "$case_dir/task-calls.log" 2>/dev/null \
+    || fail "beads-no-close-refused: linked bead was closed despite a refused teardown"
+  pass "a beads-linked task's bead is NOT closed when teardown refuses unlanded work"
+}
+
+# Mock `task` where `close` always fails but `list --limit 1` succeeds (the
+# store is reachable, e.g. the bead is already closed or a write-only outage
+# leaves reads working). Args: case_dir
+add_beads_task_mock_close_fails_store_reachable() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/task" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
+case "$1" in
+  close) exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/task"
+}
+
+# Mock `task` where every call fails (the store itself is unreachable, reads
+# included). Args: case_dir
+add_beads_task_mock_store_unreachable() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/task" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_TASK_CALLS_LOG"
+exit 7
+SH
+  chmod +x "$case_dir/fakebin/task"
+}
+
+test_beads_close_failure_queues_for_replay_when_store_reachable() {
+  local case_dir rc queue
+  case_dir=$(make_case beads-close-fail-reachable)
+  write_meta "$case_dir" local-only ship bead-close-4
+  add_beads_task_mock_close_fails_store_reachable "$case_dir"
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "beads-close-fail-reachable: teardown should still succeed (fail-open close)"
+  grep -q '^close bead-close-4 ' "$case_dir/task-calls.log" 2>/dev/null \
+    || fail "beads-close-fail-reachable: close was never attempted: $(cat "$case_dir/task-calls.log" 2>/dev/null)"
+  grep -q "queuing for retry" "$case_dir/stderr" \
+    || fail "beads-close-fail-reachable: did not warn about queuing the failed close: $(cat "$case_dir/stderr")"
+  queue="$case_dir/state/.beads-write-queue"
+  [ -s "$queue" ] || fail "beads-close-fail-reachable: a close that fails against a reachable store must still be queued durably: $(cat "$queue" 2>/dev/null)"
+  jq -e 'select(.task_id == "bead-close-4" and (.argv[0:2] == ["close","bead-close-4"]))' "$queue" >/dev/null \
+    || fail "beads-close-fail-reachable: queued write has the wrong shape: $(cat "$queue")"
+  pass "a bead close that fails against a reachable store is durably queued for replay, not silently dropped"
+}
+
+test_beads_close_failure_queues_for_replay_when_store_unreachable() {
+  local case_dir rc queue
+  case_dir=$(make_case beads-close-fail-unreachable)
+  write_meta "$case_dir" local-only ship bead-close-5
+  add_beads_task_mock_store_unreachable "$case_dir"
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  set +e
+  FM_TEST_TASK_CALLS_LOG="$case_dir/task-calls.log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "beads-close-fail-unreachable: teardown should still succeed (fail-open close)"
+  queue="$case_dir/state/.beads-write-queue"
+  [ -s "$queue" ] || fail "beads-close-fail-unreachable: a close attempted against an unreachable store must still be queued durably: $(cat "$queue" 2>/dev/null)"
+  jq -e 'select(.task_id == "bead-close-5" and (.argv[0:2] == ["close","bead-close-5"]))' "$queue" >/dev/null \
+    || fail "beads-close-fail-unreachable: queued write has the wrong shape: $(cat "$queue")"
+  pass "a bead close attempted against an unreachable store is durably queued for replay"
+}
+
+test_opencode_hook_artifact_does_not_block_teardown() {
+  local case_dir rc
+  case_dir=$(make_case opencode-hook-only)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "fix the thing"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  mkdir -p "$case_dir/wt/.opencode/plugins"
+  printf '%s\n' "// opencode hook" > "$case_dir/wt/.opencode/plugins/fm-busy-state.js"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "opencode-hook-only: teardown should succeed with only the opencode hook untracked"
+  ! grep -q "uncommitted changes" "$case_dir/stderr" || fail "opencode-hook-only: teardown incorrectly refused the opencode hook as dirty: $(cat "$case_dir/stderr")"
+  pass "opencode per-task hook artifact does not block teardown"
+}
+
+test_real_dirty_file_still_refuses_after_opencode_exclusion() {
+  local case_dir rc
+  case_dir=$(make_case real-dirty-with-opencode-hook)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "fix the thing"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  mkdir -p "$case_dir/wt/.opencode/plugins"
+  printf '%s\n' "// opencode hook" > "$case_dir/wt/.opencode/plugins/fm-busy-state.js"
+  printf '%s\n' "uncommitted work" > "$case_dir/wt/real-file.txt"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "real-dirty-with-opencode-hook: teardown should refuse when a real untracked file exists"
+  grep -q REFUSED "$case_dir/stderr" || fail "real-dirty-with-opencode-hook: no REFUSED in stderr"
+  grep -q "uncommitted changes" "$case_dir/stderr" || fail "real-dirty-with-opencode-hook: refusal did not cite uncommitted changes"
+  pass "real untracked file still refuses teardown even with opencode hook present"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -2497,6 +2955,7 @@ test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
+test_squash_merged_pr_allows_genuine_multi_commit_squash
 test_merged_pr_with_later_local_commit_refuses
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
