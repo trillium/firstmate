@@ -1503,7 +1503,7 @@ case "$BACKEND" in
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
-    if [ "$KIND" != secondmate ] && fm_backend_herdr_presentation_enabled "$CONFIG"; then
+    if [ "$KIND" != secondmate ] && [ -z "${FM_SPAWN_REMOTE_HOST:-}" ] && fm_backend_herdr_presentation_enabled "$CONFIG"; then
       HERDR_SES=$(fm_backend_herdr_session)
       HERDR_PARENT_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_workspace_label)
       if [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; then
