@@ -16,6 +16,12 @@
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
 #
+# A machine-wide admission limit bounds how many ShellCheck processes exist at
+# once across every concurrent lint run, because ShellCheck's peak resident set
+# is set by the heaviest single root's source closure rather than by batch size.
+# Its default equals one bounded run's own worker count, so a lone run and CI are
+# unaffected and only genuine overlap waits.
+#
 # Usage:
 #   fm-lint.sh                         lint the canonical file set
 #   fm-lint.sh <path>...               lint explicit roots with the same config
@@ -24,6 +30,13 @@
 #   fm-lint.sh --required-version      print the ShellCheck pin
 #   fm-lint.sh --list-files            print the canonical file set
 #   fm-lint.sh --help                  print this usage
+#
+# Environment:
+#   FM_LINT_JOBS           bounded worker count, 1 or 2 (default 2)
+#   FM_LINT_TELEMETRY      path for the quiet metrics snapshot
+#   FM_LINT_GLOBAL_LIMIT   machine-wide ShellCheck processes, 0 disables (default 2)
+#   FM_LINT_GLOBAL_WAIT    seconds to wait for a slot before proceeding (default 900)
+#   FM_LINT_STATE_DIR      directory holding the machine-wide slots
 set -u
 
 REQUIRED_SHELLCHECK=0.11.0
@@ -32,13 +45,97 @@ SELF="$SELF_DIR/fm-lint.sh"
 ROOT="$(cd "$SELF_DIR/.." && pwd)"
 cd "$ROOT" || exit 1
 
+FM_LINT_SLOT_LIMIT_DEFAULT=2
+FM_LINT_SLOT_WAIT_DEFAULT=900
+
+# Every knob resolves the same way in the parent and in a private worker, so a
+# worker never has to be told what the parent decided.
+fm_lint_positive_number() {  # <value> <fallback>
+  case "$1" in
+    ''|*[!0-9]*) printf '%s\n' "$2" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+fm_lint_slot_limit() {
+  fm_lint_positive_number "${FM_LINT_GLOBAL_LIMIT:-}" "$FM_LINT_SLOT_LIMIT_DEFAULT"
+}
+
+fm_lint_slot_wait() {
+  fm_lint_positive_number "${FM_LINT_GLOBAL_WAIT:-}" "$FM_LINT_SLOT_WAIT_DEFAULT"
+}
+
+fm_lint_slot_dir() {
+  printf '%s\n' "${FM_LINT_STATE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/fm-lint}/slots"
+}
+
+FM_LINT_WORKER_SLOT=
+FM_LINT_WORKER_SLOT_WAIT=0
+
+# shellcheck disable=SC2329 # Registered by the private worker's signal traps.
+fm_lint_slot_release() {
+  [ -n "$FM_LINT_WORKER_SLOT" ] || return 0
+  rm -f "$FM_LINT_WORKER_SLOT" 2>/dev/null || true
+  FM_LINT_WORKER_SLOT=
+}
+
+# Claim one machine-wide ShellCheck slot. A hard link is the arbiter because it
+# fails when the target exists and publishes the holder's pid in the same step,
+# so a slot is never observable in a half-created state. A slot whose holder is
+# gone is reclaimed by renaming it away, which only one racing reclaimer wins.
+# The wait is bounded and then proceeds anyway: admission control must slow a
+# lint run down, never deadlock one behind a slot that is never released.
+fm_lint_slot_acquire() {
+  local limit dir budget waited slot claim holder index
+  limit=$(fm_lint_slot_limit)
+  [ "$limit" -gt 0 ] || return 0
+  dir=$(fm_lint_slot_dir)
+  mkdir -p "$dir" 2>/dev/null || return 0
+  budget=$(fm_lint_slot_wait)
+  waited=0
+  while :; do
+    index=0
+    while [ "$index" -lt "$limit" ]; do
+      slot="$dir/slot.$index"
+      claim="$dir/.claim.$$.$index"
+      if printf '%s\n' "$$" > "$claim" 2>/dev/null && ln "$claim" "$slot" 2>/dev/null; then
+        rm -f "$claim" 2>/dev/null || true
+        FM_LINT_WORKER_SLOT=$slot
+        FM_LINT_WORKER_SLOT_WAIT=$waited
+        return 0
+      fi
+      rm -f "$claim" 2>/dev/null || true
+      holder=$(cat "$slot" 2>/dev/null || true)
+      if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+        if mv "$slot" "$slot.dead.$$" 2>/dev/null; then
+          rm -f "$slot.dead.$$" 2>/dev/null || true
+          continue
+        fi
+      fi
+      index=$((index + 1))
+    done
+    if [ "$waited" -ge "$budget" ]; then
+      printf 'fm-lint.sh: no ShellCheck slot after %ss; proceeding without one.\n' \
+        "$waited" >&2
+      FM_LINT_WORKER_SLOT_WAIT=$waited
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 FM_LINT_WORKER_SHELLCHECK_PID=
 # shellcheck disable=SC2329 # Registered by the private worker's signal traps.
 fm_lint_worker_stop() {
-  [ -n "$FM_LINT_WORKER_SHELLCHECK_PID" ] || return 0
-  kill "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || true
-  wait "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || true
-  FM_LINT_WORKER_SHELLCHECK_PID=
+  if [ -n "$FM_LINT_WORKER_SHELLCHECK_PID" ]; then
+    kill "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || true
+    wait "$FM_LINT_WORKER_SHELLCHECK_PID" 2>/dev/null || true
+    FM_LINT_WORKER_SHELLCHECK_PID=
+  fi
+  # Released only after ShellCheck is gone, so the slot never admits a successor
+  # while this one still holds its resident set.
+  fm_lint_slot_release
 }
 
 fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
@@ -55,15 +152,18 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
     trap 'fm_lint_worker_stop; exit 129' HUP
     trap 'fm_lint_worker_stop; exit 130' INT
     trap 'fm_lint_worker_stop; exit 143' TERM
+    fm_lint_slot_acquire
     "$FM_LINT_SHELLCHECK" --norc --external-sources -- "${roots[@]}" > "$output.out" 2>&1 &
     FM_LINT_WORKER_SHELLCHECK_PID=$!
     wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
     FM_LINT_WORKER_SHELLCHECK_PID=
+    fm_lint_slot_release
     trap - HUP INT TERM
   else
     : > "$output.out"
   fi
   printf '%s\n' "$rc" > "$output.rc"
+  printf '%s\n' "$FM_LINT_WORKER_SLOT_WAIT" > "$output.slotwait"
   return "$rc"
 }
 
@@ -83,8 +183,10 @@ if [ "${1:-}" = "--required-version" ]; then
   exit 0
 fi
 
+# The header block itself is the usage text, read to its end rather than to a
+# hardcoded line number so documenting a new knob cannot silently truncate it.
 fm_lint_usage() {
-  sed -n '2,26{s/^# \{0,1\}//;p;}' "$SELF"
+  awk 'NR == 1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$SELF"
 }
 
 JOBS=${FM_LINT_JOBS:-2}
@@ -130,6 +232,19 @@ case "$JOBS" in
   1|2) ;;
   *) printf 'fm-lint.sh: jobs must be 1 or 2, got %s.\n' "$JOBS" >&2; exit 2 ;;
 esac
+
+# Reject a malformed admission knob here rather than letting a worker fall back
+# to a default the caller never asked for.
+fm_lint_require_count() {  # <name> <value>
+  case "$2" in
+    ''|*[!0-9]*)
+      printf 'fm-lint.sh: %s must be a non-negative integer, got %s.\n' "$1" "$2" >&2
+      exit 2
+      ;;
+  esac
+}
+[ -z "${FM_LINT_GLOBAL_LIMIT:-}" ] || fm_lint_require_count FM_LINT_GLOBAL_LIMIT "$FM_LINT_GLOBAL_LIMIT"
+[ -z "${FM_LINT_GLOBAL_WAIT:-}" ] || fm_lint_require_count FM_LINT_GLOBAL_WAIT "$FM_LINT_GLOBAL_WAIT"
 
 if [ "$#" -gt 0 ]; then
   ROOTS=("$@")
@@ -339,10 +454,14 @@ fi
 # Replay both stable shards in deterministic order and select the first nonzero
 # shard status. ShellCheck processes every root in a shard after earlier findings.
 overall_rc=0
+max_slot_wait=0
 worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do
   output="$OUTPUT_DIR/shard.$worker"
   [ ! -f "$output.out" ] || cat "$output.out"
+  slot_wait=$(cat "$output.slotwait" 2>/dev/null || printf '0')
+  case "$slot_wait" in ''|*[!0-9]*) slot_wait=0 ;; esac
+  [ "$slot_wait" -le "$max_slot_wait" ] || max_slot_wait=$slot_wait
   if [ -f "$output.rc" ]; then
     rc=$(cat "$output.rc" 2>/dev/null || printf '2')
     case "$rc" in ''|*[!0-9]*) rc=2 ;; esac
@@ -449,6 +568,8 @@ EOF
     printf 'system_seconds\t%s\n' "$timing_system"
     printf 'max_worker_rss_kib\t%s\n' "$max_worker_rss"
     printf 'worker_rss_sum_kib\t%s\n' "$worker_rss_sum"
+    printf 'slot_limit\t%s\n' "$(fm_lint_slot_limit)"
+    printf 'max_slot_wait_seconds\t%s\n' "$max_slot_wait"
     printf 'shellcheck_processes_start\t%s\n' "$TELEMETRY_SHELLCHECK_START"
     printf 'shellcheck_processes_end\t%s\n' "$TELEMETRY_SHELLCHECK_END"
     printf 'load_average_start\t%s\n' "$TELEMETRY_LOAD_START"
