@@ -189,6 +189,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": "docs/checksum-probe-inventory.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "CLAUDE.md",
       "audience": "agent-runtime"
     },
@@ -215,10 +219,6 @@
     {
       "path": "docs/calm.md",
       "audience": "operator-current"
-    },
-    {
-      "path": "docs/checksum-probe-inventory.md",
-      "audience": "maintainer-verification"
     },
     {
       "path": "docs/cd-guard.md",

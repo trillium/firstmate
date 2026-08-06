@@ -6,6 +6,9 @@
 # registered custom checks remain armed, and every other task poll is
 # quarantined for private review. A current X-mode shim is preserved by exact
 # content, while the recognized older byte-static shim is refreshed in place.
+# A watcher lock read mid-handover, when its pid is published but its identity
+# is not yet, settles inside a bounded window before ownership is called
+# ambiguous; a genuine ownership conflict outlives that window and still refuses.
 # Usage: fm-pr-check-migrate.sh [--checks-safe]
 set -u
 
@@ -264,24 +267,50 @@ fi
 # shellcheck source=bin/fm-wake-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
+# Watcher ownership is published in two steps, so a single read can catch a
+# starting watcher mid-handover. bin/fm-wake-lib.sh's fm_lock_claim writes the
+# owner directory's pid when bin/fm-watch.sh acquires $WATCH_LOCK, and
+# bin/fm-watch.sh publishes fm-home, watcher-path, and pid-identity only after
+# that acquisition returns. fm_watcher_lock_matches_pid (bin/fm-wake-lib.sh)
+# needs all three, so between those writes a reader sees a live pid with no
+# published identity and cannot distinguish that normal transient from a real
+# conflict. Re-read the lock until ownership settles - the identity matches, the
+# pid dies, or the lock is released - and declare ambiguity only when the whole
+# settle window passes unresolved, which is exactly what a genuine conflict does.
 stopped_watcher=0
-pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
-if fm_pid_alive "$pid"; then
-  if ! fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$pid" "$FM_HOME"; then
-    echo "PR_CHECK_MIGRATION: watcher ownership is ambiguous; review state/.watch.lock before rearming polls" >&2
-    exit 1
+watcher_pid=
+watcher_settled=0
+i=0
+while [ "$i" -lt 100 ]; do
+  pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
+  if ! fm_pid_alive "$pid"; then
+    watcher_settled=1
+    break
   fi
-  kill -TERM "$pid" 2>/dev/null || {
+  if fm_watcher_lock_matches_pid "$STATE" "$WATCH" "$pid" "$FM_HOME"; then
+    watcher_settled=1
+    watcher_pid=$pid
+    break
+  fi
+  sleep 0.05
+  i=$((i + 1))
+done
+if [ "$watcher_settled" -ne 1 ]; then
+  echo "PR_CHECK_MIGRATION: watcher ownership is ambiguous; review state/.watch.lock before rearming polls" >&2
+  exit 1
+fi
+if [ -n "$watcher_pid" ]; then
+  kill -TERM "$watcher_pid" 2>/dev/null || {
     echo "PR_CHECK_MIGRATION: watcher could not be paused; review state/.watch.lock before rearming polls" >&2
     exit 1
   }
   stopped_watcher=1
   i=0
-  while [ "$i" -lt 100 ] && fm_pid_alive "$pid"; do
+  while [ "$i" -lt 100 ] && fm_pid_alive "$watcher_pid"; do
     sleep 0.05
     i=$((i + 1))
   done
-  if fm_pid_alive "$pid"; then
+  if fm_pid_alive "$watcher_pid"; then
     echo "PR_CHECK_MIGRATION: watcher did not pause; review state/.watch.lock before rearming polls" >&2
     exit 1
   fi
