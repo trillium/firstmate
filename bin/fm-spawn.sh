@@ -342,17 +342,17 @@ for a in "$@"; do
     --account) want_value=account ;;
     --account=*) ACCOUNT=${a#--account=}; ACCOUNT_SET=1 ;;
     -h|--help) usage; exit 0 ;;
-    # An unknown --flag is a caller mistake, never a positional: swallowing it
-    # as the project or launch command turns a typo into a wrong spawn.
-    # `--` ends flag parsing for the rare positional that must start with `--`.
-    --) end_of_flags=1 ;;
-    --*) echo "error: unknown option: $a" >&2; exit 2 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --yolo) want_value=yolo ;;
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
+    # An unknown --flag is a caller mistake, never a positional: swallowing it
+    # as the project or launch command turns a typo into a wrong spawn.
+    # `--` ends flag parsing for the rare positional that must start with `--`.
+    --) end_of_flags=1 ;;
+    --*) echo "error: unknown option: $a" >&2; exit 2 ;;
     *) POS+=("$a") ;;
   esac
 done
