@@ -213,8 +213,8 @@ fm_herdr_spur_enqueue() {  # <agent> <status> <pane_id>
 # a spur. Updates the in-memory last-status. This is the shared core used by
 # BOTH the poll fallback and the post-event level-reconcile.
 fm_herdr_spur_reconcile() {  # <watch-set>
-  local watch_set=$1 line agent pane ws status key prev prev_var
-  while IFS=$'\t' read -r agent pane ws status; do
+  local watch_set=$1 agent pane _ws status key prev prev_var
+  while IFS=$'\t' read -r agent pane _ws status; do
     [ -n "$agent" ] || continue
     fm_herdr_spur_in_watch_set "$agent" "$watch_set" || continue
     key=$(fm_herdr_spur_safekey "$agent")
@@ -257,7 +257,7 @@ fm_herdr_spur_socket_path() {
 # rule in bin/backends/herdr.sh. pane->agent mapping is stored in per-pane
 # dynamic variables PANE_AGENT_<safekey(pane_id)>, read via indirection.
 fm_herdr_spur_event_block() {  # <watch-set>
-  local watch_set=$1 sock reader_py agent pane ws status key
+  local watch_set=$1 sock reader_py agent pane _ws status key
   local pane_ids=""
   sock=$(fm_herdr_spur_socket_path)
   [ -n "$sock" ] || return 2
@@ -266,7 +266,7 @@ fm_herdr_spur_event_block() {  # <watch-set>
 
   # Build pane list for watched agents, seed last-status so the first streamed
   # edge has a `from`, and record each pane's agent name for the reverse lookup.
-  while IFS=$'\t' read -r agent pane ws status; do
+  while IFS=$'\t' read -r agent pane _ws status; do
     [ -n "$agent" ] || continue
     fm_herdr_spur_in_watch_set "$agent" "$watch_set" || continue
     pane_ids="$pane_ids $pane"
@@ -280,8 +280,8 @@ fm_herdr_spur_event_block() {  # <watch-set>
 
   # Stream. herdr-eventwait.py prints "@subscribed" then TAB lines:
   #   <pane_id>\t<workspace_id>\t<agent_status>\t<agent>
-  local pane_id ev_ws ev_status ev_agent name prev prev_var pa_var
-  while IFS=$'\t' read -r pane_id ev_ws ev_status ev_agent; do
+  local pane_id _ev_ws ev_status ev_agent name prev prev_var pa_var
+  while IFS=$'\t' read -r pane_id _ev_ws ev_status ev_agent; do
     [ "$pane_id" = "@subscribed" ] && { log "subscribed panes=$#"; continue; }
     [ -n "$pane_id" ] || continue
     pa_var="PANE_AGENT_$(fm_herdr_spur_safekey "$pane_id")"
