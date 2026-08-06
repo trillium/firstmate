@@ -902,6 +902,90 @@ SH
   pass "migration pauses older watchers and acquires exclusion before its first scan or marker"
 }
 
+test_migration_settles_watcher_handover() {
+  local dir state identity watcher_pid publisher_pid rc
+  dir=$(make_case migration-watcher-handover)
+  state="$dir/home/state"
+  ( while :; do sleep 1; done ) &
+  watcher_pid=$!
+  # bin/fm-watch.sh publishes the owner pid when it acquires the lock and
+  # publishes fm-home, watcher-path, and pid-identity only afterwards, so a
+  # reader can catch a live pid whose identity is not published yet. Reproduce
+  # exactly that window and complete the handover shortly after the read starts.
+  identity=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$ROOT/bin/fm-wake-lib.sh" "$watcher_pid")
+  [ -n "$identity" ] || fail "could not capture mid-handover watcher identity"
+  rm -rf "$state/.watch.lock"
+  mkdir "$state/.watch.lock"
+  printf '%s\n' "$watcher_pid" > "$state/.watch.lock/pid"
+  (
+    sleep 0.3
+    printf '%s\n' "$dir/home" > "$state/.watch.lock/fm-home"
+    printf '%s\n' "$WATCH" > "$state/.watch.lock/watcher-path"
+    printf '%s\n' "$identity" > "$state/.watch.lock/pid-identity"
+  ) &
+  publisher_pid=$!
+
+  set +e
+  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+  wait "$publisher_pid" 2>/dev/null || true
+  kill -TERM "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+
+  [ "$rc" -eq 0 ] || fail "mid-handover watcher lock refused a migration: $(cat "$dir/migrate.err")"
+  assert_no_grep 'watcher ownership is ambiguous' "$dir/migrate.err" \
+    "mid-handover watcher lock was reported as an ownership conflict"
+  assert_valid_migration_marker "$state/.pr-check-migration-v1"
+
+  dir=$(make_case migration-watcher-unsettled)
+  state="$dir/home/state"
+  ( while :; do sleep 1; done ) &
+  watcher_pid=$!
+  rm -rf "$state/.watch.lock"
+  mkdir "$state/.watch.lock"
+  printf '%s\n' "$watcher_pid" > "$state/.watch.lock/pid"
+
+  set +e
+  FM_HOME="$dir/home" PATH="$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+  rc=$?
+  set -e
+  kill -TERM "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+
+  [ "$rc" -eq 1 ] || fail "durable ownership ambiguity did not refuse the migration"
+  [ "$(cat "$dir/migrate.err")" = 'PR_CHECK_MIGRATION: watcher ownership is ambiguous; review state/.watch.lock before rearming polls' ] \
+    || fail "durable ownership ambiguity changed its refusal"
+  [ ! -e "$state/.pr-check-migration-v1" ] && [ ! -L "$state/.pr-check-migration-v1" ] \
+    || fail "refused migration published a completion marker"
+  pass "migration settles a mid-handover watcher lock and still refuses durable ownership ambiguity"
+}
+
+test_blocked_migration_records_without_arming() {
+  local dir state rc
+  dir=$(make_case blocked-migration-record-only)
+  state="$dir/home/state"
+  write_task_meta "$dir"
+  # A private quarantine that is not a directory blocks the non-executing
+  # migration even under --checks-safe, the mode fm-pr-check.sh uses.
+  printf 'not a quarantine directory\n' > "$state/.pr-check-quarantine"
+
+  set +e
+  run_check_entry "$dir" task-a https://github.com/o/r/pull/41 > "$dir/check.out" 2> "$dir/check.err"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 3 ] || fail "blocked migration did not downgrade fm-pr-check.sh to record-only (exit $rc)"
+  grep -qxF 'pr=https://github.com/o/r/pull/41' "$state/task-a.meta" \
+    || fail "record-only run did not record the canonical pr= line"
+  [ "$(file_mode "$state/task-a.meta")" = 600 ] || fail "record-only metadata was not private"
+  assert_poll_absent "$state" task-a
+  assert_grep 'merge poll NOT armed for task-a' "$dir/check.err" \
+    "record-only run did not report the blocked arming"
+  [ ! -s "$dir/check.out" ] || fail "record-only run claimed an armed poll"
+  pass "fm-pr-check.sh records pr= and reports status 3 when a blocked migration forbids arming"
+}
+
 test_migration_initializes_fresh_state() {
   local dir state rc
   dir="$TMP_ROOT/migration-fresh-state"
@@ -3420,6 +3504,8 @@ test_concurrent_watcher_sees_only_complete_publication
 test_postrename_poll_validation_revokes_and_retries
 test_migration_initializes_fresh_state
 test_migration_excludes_older_watcher_before_scan
+test_migration_settles_watcher_handover
+test_blocked_migration_records_without_arming
 test_private_artifact_paths_refuse_symlinks_and_directories
 test_marker_and_diagnostic_rename_fail_closed
 test_postrename_marker_and_diagnostic_validation_retries

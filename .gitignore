@@ -5,6 +5,7 @@ data/
 .lavish/
 .fm-secondmate-home
 .fm-isolated-home
+.fm-secondmate-parent
 .DS_Store
 __pycache__/
 *.pyc

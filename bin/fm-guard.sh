@@ -5,12 +5,19 @@
 # First, always warn if the firstmate primary checkout (FM_ROOT) is on a named
 # non-default branch, because that means firstmate-on-itself work landed in the
 # primary instead of an isolated worktree.
-# Then, if any task is in flight (a state/<id>.meta exists) and the watcher's
-# liveness beacon (state/.last-watcher-beat, touched every poll cycle) is
-# missing or older than FM_GUARD_GRACE seconds, prints a loud, clearly delimited
-# banner so the agent cannot skim past it in the tool output of whatever it was
-# doing - the one channel every harness has. The full banner is emitted once per
-# distinct staleness episode in this FM_HOME (keyed to beacon mtime or absence);
+# Then, if a task is in flight (a state/<id>.meta exists) or X-mode relay
+# polling is active (state/x-watch.check.sh exists) and supervision is not
+# healthy, prints a loud, clearly delimited banner so the agent cannot skim past
+# it in the tool output of whatever it was doing - the one channel every harness
+# has. Supervision health is MODEL-AWARE (fm_watcher_supervision_verdict in
+# bin/fm-wake-lib.sh): under the Claude Stop auto-arm model the watcher runs only
+# between turns, so mid-turn a fresh beacon with no live watcher is healthy and
+# only a stale beacon (beyond FM_GUARD_GRACE) is a genuine lapse; under every
+# persistent-watcher harness a live identity-matched watcher with a fresh beacon
+# is required. The banner names the true failing condition (a missing live
+# watcher process vs a genuinely stale beacon). The full banner is emitted once
+# per distinct down-episode in this FM_HOME (keyed to the failing condition, not
+# the beacon mtime, which a healthy between-turns watcher advances every poll);
 # later guarded commands in the same episode print a one-line reminder instead.
 # Episode state lives only under state/.guard-watcher-stale-banner (volatile,
 # bounded). Independent alarms (queued wakes, worktree tangle) are never
@@ -24,6 +31,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+WATCH="$SCRIPT_DIR/fm-watch.sh"
 GRACE=${FM_GUARD_GRACE:-300}
 queue_pending=false
 READ_ONLY=${FM_GUARD_READ_ONLY:-0}
@@ -43,18 +51,14 @@ STALE_BANNER_MARKER="$STATE/.guard-watcher-stale-banner"
 # shellcheck source=bin/fm-watch-cycle-lib.sh
 . "$SCRIPT_DIR/fm-watch-cycle-lib.sh"
 
-# Deterministic episode key from beacon state: same continuous stale beacon
-# (or continuous absence) shares a key; a recovered-then-restale beacon gets a
-# new mtime and therefore a new episode.
+# Deterministic episode key from the qualitative down-state (the failing
+# condition), NOT the beacon mtime: under the auto-arm model a healthy
+# between-turns watcher advances that mtime every poll, which made the "same
+# episode" key change every turn and re-print the full banner. Keying on the
+# failing condition keeps one continuous down-episode stable, while positive
+# recovery clears the marker (below) and re-arms the next episode.
 fm_guard_stale_episode_key() {
-  local state=$1 beat m
-  beat="$state/.last-watcher-beat"
-  if [ -e "$beat" ]; then
-    m=$(fm_sup_stat_mtime "$beat")
-    printf 'beat:%s\n' "${m:-unknown}"
-  else
-    printf 'beat:absent\n'
-  fi
+  printf '%s\n' "$1"
 }
 
 # Claim the full banner for this episode. Exit 0 = print full banner (this call
@@ -120,7 +124,9 @@ fm_guard_clear_stale_banner() {
 # crewmate's branch/commits landed here instead of in its own isolated worktree,
 # the primary is stranded on a feature branch - surface it loudly on the very next
 # fleet action, the same way the watcher-down banner does. Scoped to the primary
-# only: detached HEAD (linked worktrees, secondmate homes) never trips this.
+# only: fm_primary_tangle_branch checks that FM_ROOT's git dir IS its common dir,
+# so linked worktrees and secondmate homes never trip this - including the ones
+# `git worktree add -b` leaves on a named branch, which is where branches belong.
 tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" || true)
 if [ -n "$tangle_branch" ]; then
   tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
@@ -142,18 +148,21 @@ if [ -n "$tangle_branch" ]; then
   } >&2
 fi
 
-# Compute in-flight count and watcher-beacon freshness via the shared
-# grace-based predicate (bin/fm-supervision-lib.sh). Only act with tasks in
-# flight; count them so the banner can say how much is riding on an absent
-# watcher.
+# Compute supervision need and watcher-beacon freshness via the shared
+# grace-based predicate (bin/fm-supervision-lib.sh). Act when work, an event
+# source, or an X-mode relay poll needs supervision.
 fm_supervision_status "$STATE" "$GRACE"
 in_flight=$FM_SUP_IN_FLIGHT
-watcher_fresh=$FM_SUP_WATCHER_FRESH
+sources=$FM_SUP_SOURCES
+needed=$FM_SUP_NEEDED
 beacon_desc=$FM_SUP_BEACON_DESC
-if [ "$in_flight" -eq 0 ]; then
-  # Leave the unhealthy state (no work riding on the watcher): clear so a later
-  # in-flight + stale combination is a fresh episode even if the beacon is still
-  # absent with the same key string.
+fm_watcher_supervision_verdict "$STATE" "$WATCH" "$GRACE" "$FM_HOME"
+watcher_healthy=$FM_WATCHER_VERDICT_OK
+watcher_down_reason=$FM_WATCHER_VERDICT_REASON
+if [ "$needed" = false ]; then
+  # Leave the unhealthy state (nothing riding on the watcher): clear so a later
+  # work or X-mode need + stale combination is a fresh episode even if the
+  # beacon is still absent with the same key string.
   [ "$READ_ONLY" -eq 1 ] || fm_guard_clear_stale_banner
   exit 0
 fi
@@ -163,8 +172,8 @@ fi
 # No fresh watcher with tasks in flight is the dangerous state: emit a prominent,
 # bordered banner FIRST so it reads as an alarm, not a buried stderr line. Later
 # calls in the same episode get a one-line reminder only.
-if [ "$watcher_fresh" = false ]; then
-  episode_key=$(fm_guard_stale_episode_key "$STATE")
+if [ "$watcher_healthy" = false ]; then
+  episode_key=$(fm_guard_stale_episode_key "$watcher_down_reason")
   episode_key=${episode_key%$'\n'}
   print_full_banner=0
   if [ "$READ_ONLY" -eq 1 ]; then
@@ -189,7 +198,18 @@ if [ "$watcher_fresh" = false ]; then
     {
       printf '●%s\n' "$rule"
       printf '●  WATCHER DOWN - SUPERVISION IS OFF\n'
-      printf '●  %s task(s) in flight, but no watcher has a fresh beacon (last beat: %s, grace %ss).\n' "$in_flight" "$beacon_desc" "$GRACE"
+      if [ "$watcher_down_reason" = no-watcher ]; then
+        watcher_cause=$(printf 'no live watcher process holds this home lock (last beat: %s)' "$beacon_desc")
+      else
+        watcher_cause=$(printf 'no watcher has a fresh beacon (last beat: %s, grace %ss)' "$beacon_desc" "$GRACE")
+      fi
+      if [ "$in_flight" -gt 0 ]; then
+        printf '●  %s task(s) in flight, but %s.\n' "$in_flight" "$watcher_cause"
+      elif [ "$sources" -gt 0 ]; then
+        printf '●  %s process-event source(s) registered, but %s.\n' "$sources" "$watcher_cause"
+      else
+        printf '●  X-mode relay polling needs supervision, but %s.\n' "$watcher_cause"
+      fi
       # Name HOW the last cycle ended. A harness-killed arm and a crashed watcher
       # look identical from the beacon alone, and only the lifecycle ledger
       # distinguishes them, so print its classification as evidence.

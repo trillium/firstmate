@@ -47,7 +47,10 @@
 # The epoch ledger state/.claude-autoarm-epoch records the latest claim and
 # outcome so the synchronous Stop guard (bin/fm-turnend-guard.sh --claude) can
 # allow a stop whose recovery this hook already owns, instead of forcing a
-# duplicate continuation for the same event epoch.
+# duplicate continuation for the same event epoch. The failure marker
+# state/.claude-autoarm-failure-notified deduplicates the last-resort notice,
+# and state/.claude-autoarm-failure-alarmed bounds the attended fail-open and
+# suppresses any later automatic continuation in that unresolved episode.
 #
 # This hook never blocks the Stop decision itself and never prints to stdout:
 # exit 0 is always silent, and exit 2 carries the rewake banner on stderr.
@@ -71,6 +74,13 @@ WATCH="$SCRIPT_DIR/fm-watch.sh"
 # failure and becomes a loud exit-2 rewake rather than a silent exit.
 MAX_REARMS=${FM_AUTOARM_MAX_REARMS:-20}
 case "$MAX_REARMS" in ''|*[!0-9]*) MAX_REARMS=20 ;; esac
+FAILURE_NOTICE="$STATE/.claude-autoarm-failure-notified"
+FAILURE_ALARM="$STATE/.claude-autoarm-failure-alarmed"
+AUTOARM_ATTEMPTS=${FM_CLAUDE_AUTOARM_ATTEMPTS:-2}
+case "$AUTOARM_ATTEMPTS" in
+  1|2|3) : ;;
+  *) AUTOARM_ATTEMPTS=2 ;;
+esac
 
 # shellcheck source=bin/fm-primary-scope-lib.sh
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
@@ -129,6 +139,10 @@ fi
 # owner foregrounds the arm and translates its close; every other firing exits
 # 0 so one watcher cycle maps to at most one exit-2 rewake.
 fm_lock_try_acquire "$OWNER_LOCK" || exit 0
+if ! fm_lock_set_role "$OWNER_LOCK" autoarm; then
+  fm_lock_release "$OWNER_LOCK"
+  exit 0
+fi
 trap 'fm_lock_release "$OWNER_LOCK"' EXIT
 
 write_epoch() {  # <outcome>
@@ -267,6 +281,23 @@ else
     [ -n "$OUT" ] && grep -E '^(signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
     printf 'Run bin/fm-wake-drain.sh first and handle the wake. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.\n'
   } >&2
+  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  exit 2
+fi
+
+# Notify only once for this continuous failure episode; every later invocation
+# still exits 2 so Claude must continue into another Stop-owned retry without
+# creating a repeated operator notice or manual-arm loop.
+if [ ! -e "$FAILURE_NOTICE" ]; then
+  write_epoch failed
+  {
+    printf 'firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after %s bounded attempts, and no live watcher with a fresh beacon was verified.\n' "$attempt"
+    [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
+    printf 'Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.\n'
+  } >&2
+  : > "$FAILURE_NOTICE" 2>/dev/null || true
+  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  exit 2
 fi
 drop_output
 exit 2
