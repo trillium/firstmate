@@ -540,10 +540,18 @@ SH
 }
 
 # Run teardown with PATH mocking. Args: case_dir [extra args...]
+# Every root fm-teardown.sh reads is pinned into the case dir, including the
+# two that are easy to forget: an inherited FM_HOME outranks FM_ROOT_OVERRIDE
+# when the script derives its home, and DATA (hence the secondmate registry it
+# both reads and rewrites) hangs off that home. Left ambient, a suite run from
+# inside a live firstmate session answers from - and can edit - the captain's
+# real registry instead of the fixture's.
 run_teardown() {
   local case_dir=$1; shift
+  FM_HOME= \
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_DATA_OVERRIDE="$case_dir/data" \
   FM_CONFIG_OVERRIDE="$case_dir/config" \
   PATH="$case_dir/fakebin:${FM_TEARDOWN_TEST_PATH:-$PATH}" \
     "$TEARDOWN" task-x1 "$@"
@@ -1558,7 +1566,8 @@ SH
       ;;
   esac
   rc=0
-  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" FM_CONFIG_OVERRIDE="$case_dir/config" \
+  FM_HOME= FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
+    FM_DATA_OVERRIDE="$case_dir/data" FM_CONFIG_OVERRIDE="$case_dir/config" \
     FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_CLOSED="$closed" \
     FM_FAKE_HERDR_SESSION_LIST_GARBAGE="$([ "$mode" = unresolvable-lock ] && printf 1 || printf 0)" \
     PATH="$case_dir/fakebin:$PATH" \
