@@ -880,7 +880,9 @@ case "$ARG3" in
       *)
         case "$LAUNCH" in
           *__BRIEF__*) : ;;
-          *) LAUNCH=$LAUNCH' "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+          *)
+            # shellcheck disable=SC2016  # single quotes are deliberate: $(__OPINPUT__ ...) expands when LAUNCH is evaluated, not here
+            LAUNCH=$LAUNCH' "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
         esac
         ;;
     esac
