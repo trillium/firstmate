@@ -3069,10 +3069,10 @@ fm_backend_herdr_list_live() {  # <session>
 # `herdr session list --json` (the default session's socket differs from a named
 # session's - verified: default -> ~/.config/herdr/herdr.sock, named ->
 # ~/.config/herdr/sessions/<name>/herdr.sock). Empty on any failure.
-# When FM_SPAWN_REMOTE_HOST is set, queries the remote session socket path via SSH.
+# Resolves remote host from FM_HERDR_REMOTE_HOST (recovery sessions) or FM_SPAWN_REMOTE_HOST (spawn).
 fm_backend_herdr_socket_path() {  # <session>
   local session=$1 remote_host
-  remote_host="${FM_SPAWN_REMOTE_HOST:-}"
+  remote_host="${FM_HERDR_REMOTE_HOST:-${FM_SPAWN_REMOTE_HOST:-}}"
   fm_backend_herdr_remote_cmd "$remote_host" session list --json 2>/dev/null \
     | jq -r --arg name "$session" '.sessions[]? | select(.name == $name) | .socket_path // empty' 2>/dev/null \
     | head -1
@@ -3087,6 +3087,7 @@ fm_backend_herdr_socket_path() {  # <session>
 # tests (1 = capable, 0 = incapable) without touching the real binary. The
 # `api schema` read is ~220KB, so callers (the watcher) memoize this per session
 # for a process lifetime rather than probing every poll.
+# Resolves remote host from FM_HERDR_REMOTE_HOST (recovery sessions) or FM_SPAWN_REMOTE_HOST (spawn).
 fm_backend_herdr_events_capable() {  # <session>
   local session=$1 protocol schema remote_host
   case "${FM_BACKEND_HERDR_EVENTS_FORCE:-}" in
@@ -3097,7 +3098,7 @@ fm_backend_herdr_events_capable() {  # <session>
   if [ -z "${FM_BACKEND_HERDR_EVENT_READER:-}" ]; then
     command -v python3 >/dev/null 2>&1 || return 1
   fi
-  remote_host="${FM_SPAWN_REMOTE_HOST:-}"
+  remote_host="${FM_HERDR_REMOTE_HOST:-${FM_SPAWN_REMOTE_HOST:-}}"
   protocol=$(fm_backend_herdr_remote_cmd "$remote_host" status --json 2>/dev/null | jq -r '.client.protocol // empty' 2>/dev/null)
   case "$protocol" in ''|*[!0-9]*) return 1 ;; esac
   [ "$protocol" -ge "$FM_BACKEND_HERDR_MIN_EVENTS_PROTOCOL" ] || return 1

@@ -637,7 +637,7 @@ heartbeat_scan_finds_actionable() {
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
 event_wait_or_sleep() {
-  local w b session first_backend="" first_session="" rec rc
+  local w b session first_backend="" first_session="" first_meta="" rec rc
   local windows=()
   while IFS= read -r w; do
     b=$(window_backend "$w")
@@ -648,7 +648,11 @@ event_wait_or_sleep() {
     # them.
     [ "$(window_kind "$w")" = secondmate ] && continue
     session=${w%%:*}
-    if [ -z "$first_backend" ]; then first_backend=$b; first_session=$session; fi
+    if [ -z "$first_backend" ]; then
+      first_backend=$b
+      first_session=$session
+      first_meta=$(fm_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
+    fi
     # One socket connection covers one backend+session; a home normally has a
     # single herdr session. A window in a different backend/session stays on the
     # poll path this cycle.
@@ -661,6 +665,12 @@ event_wait_or_sleep() {
   if [ "${#windows[@]}" -eq 0 ]; then
     sleep "$POLL"
     return
+  fi
+
+  # Export remote_host from first window's meta so backend operations route to correct host
+  if [ -n "$first_meta" ]; then
+    remote_host=$(grep '^remote_host=' "$first_meta" 2>/dev/null | cut -d= -f2- || true)
+    [ -z "$remote_host" ] || export FM_HERDR_REMOTE_HOST="$remote_host"
   fi
 
   # Memoized capability probe (fm_backend_events_capable runs a heavy schema
