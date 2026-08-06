@@ -101,7 +101,7 @@ json_escape() {
   local i ch
   for (( i = 0; i < ${#s}; i++ )); do
     ch="${s:i:1}"
-    # shellcheck disable=SC1003 # The '\' branch below is a literal single-quoted backslash, not an escape attempt.
+    # shellcheck disable=SC1003
     case "$ch" in
       '"')  out+='\"' ;;
       '\')  out+='\\' ;;
