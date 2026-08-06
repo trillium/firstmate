@@ -1442,8 +1442,9 @@ allocate_remote_worktree() {
   # Single quotes protect expansions from remote re-interpretation.
   # If the branch doesn't exist on remote, use the remote's default branch.
   # shellcheck disable=SC2029
-  if ssh "$remote_host" "mkdir -p \"\$(echo ~)/fm-worktrees\" && git clone '$proj_url' \"\$(echo ~)/fm-worktrees/$task_id\" && cd \"\$(echo ~)/fm-worktrees/$task_id\" && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
-    REMOTE_WORKTREE="\$(echo ~)/fm-worktrees/$task_id"
+  proj_clone_dir_escaped="\$(echo ~)/fm-worktrees/$task_id"
+  if ssh "$remote_host" "mkdir -p \"\$(echo ~)/fm-worktrees\" && git clone '$proj_url' '$proj_clone_dir_escaped' && cd '$proj_clone_dir_escaped' && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
+    REMOTE_WORKTREE="$proj_clone_dir"
     return 0
   fi
 
