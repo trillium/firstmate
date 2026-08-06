@@ -30,6 +30,12 @@
 #   bin/fm-backend.sh's fm_backend_detect, with cmux fallback details in
 #   docs/cmux-backend.md),
 #   then tmux.
+#   --remote <host> routes task creation and all herdr commands via SSH to the
+#   named remote host, allocating a worktree on that host from treehouse
+#   (preferred) or ~/fm-worktrees/<task-id>. Requires herdr backend and sets
+#   FM_SPAWN_REMOTE_HOST for the script. Records remote_host= and
+#   remote_worktree= in task metadata; see docs/configuration.md for metadata
+#   semantics.
 #   Spawn-capable backends are the reference tmux adapter and experimental
 #   herdr, zellij, orca, and cmux. Orca owns both the task worktree and
 #   terminal, so ship/scout Orca spawns do not run treehouse get; cmux is a
