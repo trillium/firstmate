@@ -1507,6 +1507,8 @@ test_secondmate_spawn_requires_registering_home() {
   grep -F 'no registry binding for secondmate domain' "$err" >/dev/null \
     || fail "spawn did not explain the missing registry binding"
   assert_absent "$home/state/domain.meta" "spawn wrote a meta for an unregistered secondmate"
+  grep -F 'new-window' "$log" >/dev/null \
+    && fail "spawn created a window before refusing an unregistered secondmate"
 
   # 3. a binding for this id pointing at a different home: refuse the route swap.
   printf -- '- domain - domain (home: %s; scope: domain work; projects: ; added 2026-08-05)\n' "$elsewhere" \
@@ -1516,6 +1518,8 @@ test_secondmate_spawn_requires_registering_home() {
     fail "secondmate spawn accepted a home that disagrees with its registry binding"
   fi
   assert_absent "$home/state/domain.meta" "spawn wrote a meta for a home its registry does not bind"
+  grep -F 'new-window' "$log" >/dev/null \
+    && fail "spawn created a window before refusing a mismatched registry binding"
 
   pass "secondmate spawn refuses to write its meta into a home that does not register the secondmate"
 }
