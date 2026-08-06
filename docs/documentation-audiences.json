@@ -189,6 +189,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": "CHECKSUM_PROBE_INVENTORY.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "CLAUDE.md",
       "audience": "agent-runtime"
     },
