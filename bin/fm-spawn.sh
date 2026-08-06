@@ -1425,7 +1425,7 @@ allocate_remote_worktree() {
   # project from its origin remote. This ensures mini2 (which has no treehouse and
   # no checkout) still gets a usable worktree, not a bare directory.
   # The project git URL is needed; we get it from the local repo's origin.
-  local proj_url proj_clone_dir
+  local proj_url proj_clone_dir_escaped
   proj_url=$(git -C "$PROJ_ABS" remote get-url origin 2>/dev/null || true)
   if [ -z "$proj_url" ]; then
     echo "warning: could not get origin URL from local project; falling back to local spawn" >&2
