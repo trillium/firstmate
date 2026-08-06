@@ -52,6 +52,81 @@ test_explicit_resolution_closes_it() {
   pass "an explicit resolved [key=X] closes the keyed decision"
 }
 
+test_correlated_resolution_closes_it() {
+  local dir state out
+  dir=$(make_case resolved-corr)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # A secondmate answering a marked parent request writes the correlation token
+  # alongside the key (bin/fm-secondmate-report.sh), so its own resolution line
+  # carries TWO bracketed tokens. That line must close the decision exactly like
+  # a bare "resolved [key=X]:" does; when only "[key=" was stripped from the verb
+  # it did not, and the decision stayed falsely open and re-nagged every drain.
+  printf 'needs-decision [key=herdr-web-proto19]: pick the proto19 rollout\n' > "$state/task9.status"
+  printf 'resolved [corr=462dcd5788f7fad1] [key=herdr-web-proto19]: went with the staged rollout\n' >> "$state/task9.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed after a correlated resolution"
+
+  if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
+    fail "a correlated 'resolved [corr=X] [key=Y]:' left the decision open: $(cat "$out")"
+  fi
+  pass "a correlated resolved [corr=X] [key=Y] closes the keyed decision"
+}
+
+test_correlated_resolution_closes_it_in_either_token_order() {
+  local dir state out
+  dir=$(make_case resolved-corr-order)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # Token order is a writer's choice, not part of the grammar, so neither the
+  # key parser nor the verb parser may depend on it.
+  printf 'needs-decision [corr=0123456789abcdef] [key=api-shape]: pick REST or RPC\n' > "$state/task10.status"
+  printf 'resolved [key=api-shape] [corr=0123456789abcdef]: went with REST\n' >> "$state/task10.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on reversed token order"
+
+  if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
+    fail "a resolution with the corr token after the key left the decision open: $(cat "$out")"
+  fi
+  pass "correlated open/close lines work in either bracketed-token order"
+}
+
+test_correlated_needs_decision_still_opens() {
+  local dir state out
+  dir=$(make_case needs-decision-corr)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # The mirror risk: if the verb parser mis-reads the corr token the OPENING
+  # line is dropped too, and a real decision silently never surfaces at all.
+  printf 'needs-decision [corr=462dcd5788f7fad1] [key=migration]: pick the rollout plan\n' > "$state/task11.status"
+  printf 'working: continuing\n' >> "$state/task11.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a correlated needs-decision"
+
+  grep -F 'task11' "$out" | grep -F '[key=migration]' | grep -F 'pick the rollout plan' >/dev/null \
+    || fail "a correlated needs-decision line did not open a decision"
+  pass "a correlated needs-decision [corr=X] [key=Y] still opens the keyed decision"
+}
+
+test_correlated_resolution_without_a_key_closes_default() {
+  local dir state out
+  dir=$(make_case resolved-corr-default)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # A correlated line with no key token addresses the historical "default" key,
+  # the same as a bare "resolved:" - the corr token must not change which key it
+  # closes, nor stop it from closing at all.
+  printf 'needs-decision: pick the rollout plan\n' > "$state/task12.status"
+  printf 'resolved [corr=462dcd5788f7fad1]: went with the staged rollout\n' >> "$state/task12.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a keyless correlated resolution"
+
+  if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
+    fail "a correlated keyless resolution left the default decision open: $(cat "$out")"
+  fi
+  pass "a correlated resolved [corr=X] with no key still closes the default decision"
+}
+
 test_later_unrelated_terminal_line_does_not_close_it() {
   local dir state out
   dir=$(make_case unrelated-terminal)
@@ -147,6 +222,10 @@ test_status_symlink_is_not_followed() {
 
 test_buried_decision_still_surfaces
 test_explicit_resolution_closes_it
+test_correlated_resolution_closes_it
+test_correlated_resolution_closes_it_in_either_token_order
+test_correlated_needs_decision_still_opens
+test_correlated_resolution_without_a_key_closes_default
 test_later_unrelated_terminal_line_does_not_close_it
 test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake
