@@ -207,7 +207,7 @@ verify_resolution_identity() {
   local id=$1 hold_body=$2 decision_digest=$3 routed_csv=$4 resolution_prefix resolution_fields recorded_digest recorded_routes
   resolution_prefix='"Resolution recorded by fm-decision-hold.\nDecision digest: '
   case "$hold_body" in
-    "$resolution_prefix"*) resolution_fields=${hold_body#$resolution_prefix} ;;
+    "$resolution_prefix"*) resolution_fields=${hold_body#"$resolution_prefix"} ;;
     *) fail "captain hold $id has no retry identity record" ;;
   esac
   case "$resolution_fields" in
