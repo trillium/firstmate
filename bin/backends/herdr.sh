@@ -972,8 +972,18 @@ fm_backend_herdr_pid_is_bare_shell() {  # <ps-bin> <pid>
 # process-info agrees on the pane id, the shell pid is both the foreground
 # process group and the sole foreground process, the foreground process name
 # and argv0 resolve to the same recognized shell, the operating-system
-# process table shows exactly that one shell row with no child process, and
-# the shell sits in a sleeping or idle state.
+# process table shows exactly that one shell row with no child process sharing
+# the shell's own controlling terminal, and the shell sits in a sleeping or
+# idle state.
+# The child requirement is scoped to the shell's own terminal rather than to a
+# flat zero-children count because an interactive rc routinely forks a
+# permanent off-terminal helper: zsh-autosuggestions opens a zpty whose child
+# zsh becomes session leader of a DIFFERENT pty, so a flat count could never
+# converge on such a box and every restored pane stayed uncleanable forever.
+# The safety that count was doing is preserved exactly: any job the pane's
+# shell actually owns - foreground or backgrounded with & - inherits the pane's
+# controlling terminal and still refuses the proof. A child on another terminal,
+# or on none, is not pane work and would survive the shell's death anyway.
 # An idle interactive shell transiently hosts short-lived prompt helpers
 # (verified on the real 0.7.5 lab: a workspace.move relayout makes zsh redraw
 # its prompt, spawning starship as a second foreground process for a few
@@ -1031,11 +1041,16 @@ fm_backend_herdr_pane_idle_shell_sample() {  # <session> <pane-id>
 
   ps_bin=${FM_HERDR_PS_BIN:-ps}
   command -v "$ps_bin" >/dev/null 2>&1 || return 1
-  rows=$("$ps_bin" -axo pid=,ppid= 2>/dev/null) || return 1
+  rows=$("$ps_bin" -axo pid=,ppid=,tty= 2>/dev/null) || return 1
   printf '%s\n' "$rows" | awk -v shell="$shell_pid" '
-    $1 == shell { found++ }
-    $2 == shell { child++ }
-    END { exit(found == 1 && child == 0 ? 0 : 1) }
+    $1 == shell { found++; shell_tty = $3 }
+    $2 == shell { child_tty[++children] = $3 }
+    END {
+      if (found != 1) exit 1
+      for (i = 1; i <= children; i++)
+        if (child_tty[i] == shell_tty) exit 1
+      exit 0
+    }
   ' || return 1
   stat=$("$ps_bin" -p "$shell_pid" -o stat= 2>/dev/null | tr -d '[:space:]') || return 1
   case "$stat" in S*|I*) ;; *) return 1 ;; esac
@@ -2970,6 +2985,24 @@ fm_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <p
   fi
 }
 
+# fm_backend_herdr_wait_for_working_submit: optional post-submit transition
+# confirmation. Uses the same native agent-state polling as the send-submit
+# path: poll <target>'s agent status for up to <budget_secs> to confirm the
+# message drove a turn. Returns 0 and echoes "working" if the agent status went
+# to working; returns 0 and echoes "idle" if idle throughout; returns 0 and
+# echoes "unknown" on read failures. Errors return 0 and echo "error".
+fm_backend_herdr_wait_for_working_submit() {  # <target> <budget_secs>
+  local target=$1 budget=${2:-0.6}
+  fm_backend_herdr_parse_target "$target" || { printf 'error'; return 0; }
+  local session=$FM_BACKEND_HERDR_SESSION pane_id=$FM_BACKEND_HERDR_PANE
+  local result
+  result=$(fm_backend_herdr_wait_for_working "$session" "$pane_id" "$budget" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
+  case "$result" in
+    busy) printf 'working'; return 0 ;;
+    *) printf '%s' "$result"; return 0 ;;
+  esac
+}
+
 # fm_backend_herdr_pane_for_tab: the root pane id for <tab_id> in <workspace_id>
 # of <session>, via one pane list call filtered by tab_id (never assumes a
 # tab-number/pane-number correspondence - herdr numbers them independently).
@@ -3030,6 +3063,18 @@ fm_backend_herdr_list_live() {  # <session>
     [ -n "$pane_id" ] || continue
     printf '%s:%s\t%s\n' "$session" "$pane_id" "$label"
   done < <(printf '%s' "$tabs" | jq -r '.result.tabs[]? | select(.label | startswith("fm-")) | "\(.tab_id)\t\(.label)"' 2>/dev/null)
+}
+
+# fm_backend_herdr_pane_verifies_task: verify that a recorded pane still exists and belongs to the given task.
+# Queries the live herdr pane to confirm its identity matches the expected task label (fm-<id>).
+# Returns 0 if verified, 1 otherwise. This is used to self-repair legacy metadata lacking endpoint_task_id.
+fm_backend_herdr_pane_verifies_task() {  # <session> <pane_id> <task_id>
+  local session=$1 pane_id=$2 task_id=$3 pane_info label
+  [ -n "$session" ] && [ -n "$pane_id" ] && [ -n "$task_id" ] || return 1
+  pane_info=$(fm_backend_herdr_cli "$session" pane get "$pane_id" 2>/dev/null) || return 1
+  label=$(printf '%s' "$pane_info" | jq -r '.result.pane.label // empty' 2>/dev/null)
+  [ "$label" = "fm-$task_id" ] || return 1
+  return 0
 }
 
 # --- native event push: pane.agent_status_changed subscriber -----------------

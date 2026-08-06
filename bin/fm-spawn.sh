@@ -105,6 +105,11 @@
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.
+#   --beads <id> links this task to an external bead item for lifecycle tracking: the
+#   dispatch=sent and lifecycle=sent state dimensions are stamped via fm-bead-stamp.sh
+#   after spawn, and the brief includes Bead Receipt/Closure sections (when FM_HOOK_BEADS_ID
+#   is set) asking the worker to confirm dispatch=claimed/lifecycle=claimed and close the
+#   bead on completion.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
@@ -1392,7 +1397,7 @@ case "$BACKEND" in
     # secondmate's home), so FM_HOME here still names the primary. Shadow it
     # to PROJ_ABS for just these two calls (bash restores it automatically
     # after each prefixed simple-command call) so the secondmate's tab lands
-    # in the secondmate's own workspace, not the primary's "firstmate" one.
+    # in the secondmate's own workspace, not the primary's "1M-FIRSTMATE" one.
     #
     # Placement, separately from labeling: a crewmate/scout belongs in the
     # EXACT herdr workspace this launching process is itself running in, which
@@ -1402,9 +1407,17 @@ case "$BACKEND" in
     # the per-home container instead of inheriting this launcher's.
     HERDR_LABEL_HOME=$FM_HOME
     HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+    # HERDR_TASK_LABEL is the herdr-specific tab label passed to
+    # fm_backend_herdr_create_task below: ordinarily the shared $W (fm-<id>,
+    # identical to every other backend), except a --secondmate spawn's own tab
+    # IS that mate's live agent, so it gets the mate naming convention's
+    # uppercase "<materank>-<scope>" label (docs/herdr-backend.md "Mate naming
+    # convention") instead of a lowercase task-style name.
+    HERDR_TASK_LABEL=$W
     if [ "$KIND" = secondmate ]; then
       HERDR_LABEL_HOME=$PROJ_ABS
       HERDR_LAUNCHER_RELATIONSHIP=other-home
+      HERDR_TASK_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_workspace_label)
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
@@ -1534,13 +1547,13 @@ case "$BACKEND" in
       HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
-      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
+      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$HERDR_TASK_LABEL" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
 EOF
     fi
     if [ -z "$HERDR_TAB_ID" ] || [ -z "$HERDR_PANE_ID" ]; then
-      echo "error: herdr did not return a tab/pane id for $W" >&2
+      echo "error: herdr did not return a tab/pane id for $HERDR_TASK_LABEL" >&2
       exit 1
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
@@ -1800,6 +1813,12 @@ if [ "$KIND" != secondmate ]; then
       fi
       ;;
   esac
+  # Every branch below unconditionally truncates and rewrites its hook
+  # artifact (cat/printf >, never appended or skip-if-exists), so a worktree
+  # treehouse hands back from its reuse pool always gets hooks bound to THIS
+  # incarnation's id and $BUSY_GEN, never a prior tenant's. Keep new adapter
+  # wiring the same way; tests/fm-spawn-reused-worktree-hooks.test.sh guards
+  # the claude case end to end.
   case "$HARNESS" in
     claude*)
       # Semantic busy-state hooks (bin/fm-busy-lib.sh): UserPromptSubmit opens
@@ -2092,6 +2111,16 @@ LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
+# Crewmate panes are created by a long-lived tmux/herdr daemon that does not
+# inherit firstmate's current environment, so a bare `claude` in the pane falls
+# back to the default ~/.claude store even when firstmate itself runs under a
+# different CLAUDE_CONFIG_DIR (for example a work-vs-personal subscription split).
+# Forward firstmate's own resolved store onto the claude launch so the crewmate
+# uses the same credential/config firstmate is authenticated with. Only when set;
+# an unset value is the single-store default and needs no prefix.
+if [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
+fi
 # Crewmate panes are created by a long-lived tmux/herdr daemon that does not
 # inherit firstmate's current environment, so a bare `claude` in the pane falls
 # back to the default ~/.claude store even when firstmate itself runs under a

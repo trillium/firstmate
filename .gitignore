@@ -5,8 +5,10 @@ data/
 .lavish/
 .fm-secondmate-home
 .fm-secondmate-parent
+.fm-isolated-home
 .DS_Store
 __pycache__/
 *.pyc
 .env
 config/
+CHANGELOG.md

@@ -32,7 +32,7 @@ FAKE_PS="$TMP_ROOT/fake-ps"
 cat > "$FAKE_PS" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
-  "-axo pid=,ppid=") printf '1 0\n67 1\n' ;;
+  "-axo pid=,ppid=,tty=") printf '1 0 ??\n67 1 ttys001\n' ;;
   "-p 67 -o stat=") printf 'Ss\n' ;;
   *) exit 1 ;;
 esac

@@ -4,6 +4,10 @@
 # (recovery) into one ordered digest.
 #
 # Coverage:
+#   - persona: the tracked default persona.md is printed every session ahead
+#     of the context digest, a local config/persona.md override fully
+#     replaces it (not a merge), and a fully-absent persona is reported
+#     distinctly as needing repair
 #   - absent-file markers vs empty-but-present files in the context digest
 #   - the lock-refusal read-only path: banner leads, every mutating step is
 #     skipped (including bootstrap's five mutating sweeps, verified by their
@@ -42,6 +46,10 @@ fm_git_identity fmtest fmtest@example.invalid
 # and default-branch checks behave exactly as they do against the real
 # firstmate repo) to use as FM_ROOT_OVERRIDE, plus an empty FM_HOME with
 # state/, data/, config/, and a fakebin. Echoes "<root-dir>|<home-dir>|<fakebin>".
+# Plants a minimal root/persona.md, mirroring the real repo's tracked default,
+# so ordinary tests (not specifically about persona) see a present tracked
+# persona rather than an ABSENT one; persona-specific tests below override or
+# remove it as needed.
 new_world() {
   local name=$1 w root home fakebin
   w="$TMP_ROOT/$name"
@@ -50,6 +58,7 @@ new_world() {
   fakebin="$w/fakebin"
   mkdir -p "$home/state" "$home/data" "$home/config" "$fakebin"
   git init -q -b main "$root"
+  printf '# Persona\n\ntest default persona\n' > "$root/persona.md"
   git -C "$root" commit -q --allow-empty -m init
   printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
 }
@@ -144,6 +153,72 @@ esac
 exit 1
 SH
   chmod +x "$fakebin/tasks-axi"
+}
+
+# make_fake_task_beads_compact <fakebin>: a fake `task` (beads) CLI whose
+# `list --limit 1` (availability probe), `list --label fleet:firstmate
+# --status in_progress,blocked` (In flight section), and `list --label
+# fleet:firstmate --ready` (Queued section) all succeed, each scoped by the
+# firstmate-fleet label so unscoped or wrong-status regressions are caught.
+make_fake_task_beads_compact() {
+  local fakebin=$1
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+log=${FM_FAKE_TASK_LOG:-}
+[ -n "$log" ] && printf '%s\n' "$*" >> "$log"
+case "$*" in
+  'list --limit 1')
+    printf '%s\n' 'fake-ready-1'
+    exit 0
+    ;;
+  *'--label fleet:firstmate'*'--status in_progress,blocked'*)
+    case "$*" in *'--limit 80'*) : ;; *) printf '%s\n' 'missing compact limit' >&2; exit 9 ;; esac
+    printf '%s\n' 'inflight-task-1'
+    printf '%s\n' 'inflight-task-2'
+    exit 0
+    ;;
+  *'--label fleet:firstmate'*'--ready'*)
+    case "$*" in *'--limit 80'*) : ;; *) printf '%s\n' 'missing compact limit' >&2; exit 9 ;; esac
+    printf '%s\n' 'ready-task-1'
+    printf '%s\n' 'ready-task-2'
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+}
+
+# make_fake_task_beads_inflight_read_fails <fakebin>: same availability probe
+# as make_fake_task_beads_compact, but the In flight `--status
+# in_progress,blocked` call fails while the Queued `--ready` call would
+# otherwise succeed, so the whole beads listing must fall back to title-line
+# rendering rather than printing a partial digest.
+make_fake_task_beads_inflight_read_fails() {
+  local fakebin=$1
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+log=${FM_FAKE_TASK_LOG:-}
+[ -n "$log" ] && printf '%s\n' "$*" >> "$log"
+case "$*" in
+  'list --limit 1')
+    printf '%s\n' 'fake-ready-1'
+    exit 0
+    ;;
+  *'--status in_progress,blocked'*)
+    printf '%s\n' 'store timeout' >&2
+    exit 1
+    ;;
+  *'--ready'*)
+    printf '%s\n' 'ready-task-1'
+    exit 0
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
 }
 
 # make_fake_ps_claude <fakebin>: harness_pid()/holder_alive() (fm-lock.sh) walk
@@ -323,15 +398,13 @@ SH
 
 make_fake_herdr_secondmate_recovery() {
   local fakebin=$1
-  # The recovery kill now requires the shared named-session lock and an exact
-  # focus snapshot. Keep a focused sibling tab so this test's husk close is
-  # provably non-workspace-emptying and never needs to signal a fake shell pid.
   cat > "$fakebin/herdr" <<'SH'
 #!/usr/bin/env bash
 set -u
 log=${FM_FAKE_HERDR_LOG:?}
 state=${FM_FAKE_HERDR_STATE:?}
 mate_id=${FM_FAKE_SECOND_MATE_ID:?}
+mate_scope=${FM_FAKE_SECOND_MATE_SCOPE:?}
 killed="${state}.killed"
 spawned="${state}.spawned"
 printf '%s\n' "$*" >> "$log"
@@ -339,19 +412,16 @@ case "${1:-} ${2:-}" in
   "status --json")
     printf '%s\n' '{"client":{"protocol":14,"version":"test"},"server":{"running":true}}'
     ;;
-  "session list")
-    printf '{"sessions":[{"name":"default","running":true,"socket_path":"%s.sock"}]}\n' "$state"
-    ;;
   "workspace list")
-    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2ndmate-%s","focused":true,"active_tab_id":"t-focus"}]}}\n' "$mate_id"
+    printf '{"result":{"workspaces":[{"workspace_id":"ws1","label":"2M-%s"}]}}\n' "$mate_scope"
     ;;
   "tab list")
     if [ -e "$spawned" ]; then
-      printf '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true},{"tab_id":"t-new","workspace_id":"ws1","label":"fm-%s","focused":false}]}}\n' "$mate_id"
+      printf '{"result":{"tabs":[{"tab_id":"t-new","workspace_id":"ws1","label":"fm-%s"}]}}\n' "$mate_id"
     elif [ -e "$killed" ]; then
-      printf '%s\n' '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true}]}}'
+      printf '%s\n' '{"result":{"tabs":[]}}'
     else
-      printf '{"result":{"tabs":[{"tab_id":"t-focus","workspace_id":"ws1","label":"captain","focused":true},{"tab_id":"t-old","workspace_id":"ws1","label":"fm-%s","focused":false}]}}\n' "$mate_id"
+      printf '{"result":{"tabs":[{"tab_id":"t-old","workspace_id":"ws1","label":"fm-%s"}]}}\n' "$mate_id"
     fi
     ;;
   "tab create")
@@ -370,9 +440,9 @@ case "${1:-} ${2:-}" in
   "pane get")
     pane=${3:-}
     if [ "$pane" = p-new ] && [ -e "$spawned" ]; then
-      printf '%s\n' '{"result":{"pane":{"pane_id":"p-new","tab_id":"t-new","workspace_id":"ws1"}}}'
+      printf '%s\n' '{"result":{"pane":{"pane_id":"p-new"}}}'
     elif [ "$pane" = p-old ] && [ ! -e "$killed" ]; then
-      printf '%s\n' '{"result":{"pane":{"pane_id":"p-old","tab_id":"t-old","workspace_id":"ws1"}}}'
+      printf '%s\n' '{"result":{"pane":{"pane_id":"p-old"}}}'
     else
       printf '%s\n' '{"error":{"code":"pane_not_found"}}' >&2
       exit 1
@@ -519,9 +589,12 @@ EOF
 }
 
 run_session_start_herdr_secondmate() {
-  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6
+  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6 scope
+  scope=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_mate_scope "$1"' \
+    "$ROOT" "$SESSION_START_HERDR_SECOND_MATE_ID")
   FM_BACKEND=herdr FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" \
     FM_FAKE_SECOND_MATE_ID="$SESSION_START_HERDR_SECOND_MATE_ID" \
+    FM_FAKE_SECOND_MATE_SCOPE="$scope" \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH"
 }
 
@@ -603,6 +676,105 @@ EOF
   assert_contains "$cap_section" "(present, empty)" "empty-but-present captain.md was not distinguished from ABSENT"
 
   pass "context digest distinguishes ABSENT, empty-but-present, and populated files"
+}
+
+# --- persona: default, local override, ordering, absent ---------------------
+
+test_persona_tracked_default_printed() {
+  local rec root home fakebin out persona_line context_line
+  rec=$(new_world persona-default)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Persona\n\naddress the captain as skipper\n' > "$root/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "PERSONA" "digest did not print a PERSONA section header"
+  assert_contains "$out" "persona.md (tracked default)" "digest did not label the tracked default persona source"
+  assert_contains "$out" "address the captain as skipper" "digest did not print the tracked persona.md content"
+
+  persona_line=$(printf '%s\n' "$out" | grep -n '^PERSONA$' | head -1 | cut -d: -f1)
+  context_line=$(printf '%s\n' "$out" | grep -n '^CONTEXT$' | head -1 | cut -d: -f1)
+  [ -n "$persona_line" ] && [ -n "$context_line" ] || fail "PERSONA or CONTEXT section header missing: $out"
+  [ "$persona_line" -lt "$context_line" ] || fail "PERSONA did not precede CONTEXT"
+
+  pass "session start prints the tracked default persona.md every session, ahead of the context digest"
+}
+
+test_persona_local_override_supersedes_default() {
+  local rec root home fakebin out
+  rec=$(new_world persona-override)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Persona\n\naddress the captain as skipper\n' > "$root/persona.md"
+  printf '# Persona\n\naddress the user as boss, no nautical flavor\n' > "$home/config/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "persona.md (local override: config/persona.md)" "digest did not label the local persona override as active"
+  assert_contains "$out" "address the user as boss, no nautical flavor" "digest did not print the local override's content"
+  case "$out" in
+    *"address the captain as skipper"*) fail "local persona override did not fully replace the tracked default: $out" ;;
+  esac
+
+  pass "a local config/persona.md override fully replaces the tracked default, not merges with it"
+}
+
+test_persona_absent_reports_repair_needed() {
+  local rec root home fakebin out persona_section
+  rec=$(new_world persona-absent)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  rm -f "$root/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "ABSENT (tracked persona.md and config/persona.md both missing" \
+    "digest did not call out a fully-absent persona as needing repair"
+
+  persona_section=$(printf '%s\n' "$out" | awk '/^persona\.md$/{flag=1;next}/^(data\/|CONTEXT)/{flag=0}flag')
+  case "$persona_section" in
+    *$'\n''ABSENT'$'\n'*|ABSENT$'\n'*) fail "an absent persona must not print a bare ABSENT marker like the ordinary context-digest files: $persona_section" ;;
+  esac
+
+  pass "session start reports a fully-absent persona distinctly, as needing repair rather than a quiet defaults fallback"
+}
+
+test_persona_unreadable_reports_repair_needed() {
+  local rec root home fakebin out
+  rec=$(new_world persona-unreadable)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  printf '# Persona\n\naddress the captain as skipper\n' > "$root/persona.md"
+  printf '# Persona\n\naddress the user as boss, no nautical flavor\n' > "$home/config/persona.md"
+  chmod 000 "$home/config/persona.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  chmod 700 "$home/config/persona.md"
+
+  assert_contains "$out" "UNREADABLE (" \
+    "digest did not call out an unreadable active persona file as needing repair"
+  assert_contains "$out" "$home/config/persona.md" \
+    "digest's unreadable-persona message did not name the broken file"
+  case "$out" in
+    *"address the captain as skipper"*) fail "an unreadable local override must not silently fall back to the tracked default: $out" ;;
+    *"address the user as boss, no nautical flavor"*) fail "an unreadable persona file's content must not print: $out" ;;
+  esac
+
+  pass "an unreadable active persona file is reported as needing repair, not silently skipped or fallen back from"
 }
 
 # --- lock refusal: read-only path --------------------------------------------
@@ -1220,6 +1392,60 @@ EOF
   pass "unavailable or incompatible tasks-axi falls back to compact manual backlog rendering"
 }
 
+test_backlog_compact_beads_shows_inflight_and_queued_sections() {
+  local rec root home fakebin out log
+  rec=$(new_world backlog-compact-beads)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_task_beads_compact "$fakebin"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  log="$home/task.log"
+
+  out=$(FM_FAKE_TASK_LOG="$log" run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "compact backlog listing (beads task store; label fleet:firstmate; max 80 item(s) per section)" \
+    "beads backend did not render the labeled compact backlog listing"
+  assert_contains "$out" "## In flight" "beads backend digest is missing the In flight section heading"
+  assert_contains "$out" "inflight-task-1" "beads compact listing omitted an in_progress/blocked item from the In flight section"
+  assert_contains "$out" "inflight-task-2" "beads compact listing omitted a second In flight item"
+  assert_contains "$out" "## Queued" "beads backend digest is missing the Queued section heading"
+  assert_contains "$out" "ready-task-1" "beads compact listing omitted a ready item from the Queued section"
+  assert_contains "$out" "ready-task-2" "beads compact listing omitted a second Queued item"
+  assert_grep "list --label fleet:firstmate --status in_progress,blocked --limit 80" "$log" \
+    "session start did not query beads for its own fleet's in_progress/blocked set with the bounded limit"
+  assert_grep "list --label fleet:firstmate --ready --limit 80" "$log" \
+    "session start did not query beads for its own fleet's ready set with the bounded limit"
+
+  pass "beads backend digest shows In flight (in_progress/blocked) and Queued (ready) sections, both scoped by the fleet label"
+}
+
+test_backlog_compact_beads_partial_failure_falls_back_to_manual() {
+  local rec root home fakebin out
+  rec=$(new_world backlog-compact-beads-partial-failure)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_task_beads_inflight_read_fails "$fakebin"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  write_long_body_backlog "$home/data/backlog.md"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "beads task listing failed; falling back to title-line rendering." \
+    "a failed In flight beads read did not trigger the whole-listing fallback"
+  assert_contains "$out" "- [ ] compact-startup - Compact startup digest" \
+    "beads read failure fallback omitted the In flight backlog title line"
+  assert_contains "$out" "- [ ] blocked-followup - Follow compact startup" \
+    "beads read failure fallback omitted the Queued backlog title line - a partial digest was printed instead of the full title-line fallback"
+
+  pass "a failed In flight beads read falls back to the whole title-line rendering rather than a partial digest"
+}
+
 # --- fleet-state digest: no in-flight tasks ----------------------------------
 
 test_fleet_digest_empty_fleet() {
@@ -1435,6 +1661,10 @@ EOF
 }
 
 test_context_digest_absent_empty_present
+test_persona_tracked_default_printed
+test_persona_local_override_supersedes_default
+test_persona_absent_reports_repair_needed
+test_persona_unreadable_reports_repair_needed
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock
@@ -1454,6 +1684,8 @@ test_composition_invokes_real_scripts
 test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
+test_backlog_compact_beads_shows_inflight_and_queued_sections
+test_backlog_compact_beads_partial_failure_falls_back_to_manual
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon

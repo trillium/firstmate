@@ -37,7 +37,8 @@ Two things about plain `glab` were established by running it, because assuming e
 First, plain `glab` has no field selector.
 `gh` reads one field with `--json state -q .state`; `glab mr view` offers only `-F, --output string  Format output as: text, json`.
 Its JSON would need a JSON processor, and `jq` is not one of firstmate's common tools, so the state is read from glab's own field output instead.
-Only an exact `merged` wakes firstmate, so a changed output format produces no wake rather than a false merge.
+For GitLab, only an exact `merged` wakes firstmate, so a changed output format produces no wake rather than a false merge.
+(On GitHub, both `merged` and `bot-review` wake firstmate: the latter signals a new automated-reviewer PR submission and is GitHub-only because GitLab has no reviews API equivalent.)
 
 Second, `glab` cannot take a merge request URL the way `gh pr view` can.
 That form shells out to git for the current repository, and the watcher runs in no repository:

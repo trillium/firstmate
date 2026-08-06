@@ -365,7 +365,11 @@ fm_backend_target_of_meta() {  # <meta-file>
 # The validation binds the exact task id, selected backend, target, project,
 # and worktree. New non-tmux records carry endpoint_task_id because their
 # opaque runtime ids do not encode the task label. Legacy tmux records remain
-# valid only when their window name itself is exactly fm-<task-id>.
+# valid only when their window name itself is exactly fm-<task-id>. Legacy
+# Herdr records lacking endpoint_task_id self-repair by appending it once the
+# live pane's label is confirmed to still read fm-<task-id>
+# (fm_backend_herdr_pane_verifies_task); otherwise they refuse without
+# mutation. Legacy Zellij and other non-tmux records still refuse outright.
 # On success, sets FM_BACKEND_VALIDATED_BACKEND and
 # FM_BACKEND_VALIDATED_TARGET. On failure, prints one refusal and returns 1.
 fm_backend_meta_exact_value() {  # <meta-file> <key>
@@ -452,10 +456,6 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       fi
       ;;
     herdr)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy Herdr endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       recorded_session=$(fm_backend_meta_exact_value "$meta" herdr_session) || recorded_session=
       workspace=$(fm_backend_meta_exact_value "$meta" herdr_workspace_id) || workspace=
       tab=$(fm_backend_meta_exact_value "$meta" herdr_tab_id) || tab=
@@ -469,12 +469,20 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         echo "REFUSED: Herdr endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
         return 1
       fi
+      if [ "$binding" = "$id" ]; then
+        :
+      else
+        fm_backend_source herdr || return 1
+        if fm_backend_herdr_pane_verifies_task "$recorded_session" "$pane" "$id" 2>/dev/null; then
+          echo "herdr endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
+          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+        else
+          echo "REFUSED: legacy Herdr endpoint metadata for task $id lacks an exact task binding; pane verification failed or pane does not belong to this task; preserving task state." >&2
+          return 1
+        fi
+      fi
       ;;
     zellij)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy Zellij endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       recorded_session=$(fm_backend_meta_exact_value "$meta" zellij_session) || recorded_session=
       tab=$(fm_backend_meta_exact_value "$meta" zellij_tab_id) || tab=
       pane=$(fm_backend_meta_exact_value "$meta" zellij_pane_id) || pane=
@@ -485,8 +493,29 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         echo "REFUSED: Zellij endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
         return 1
       fi
+      if [ "$binding" = "$id" ]; then
+        :
+      else
+        fm_backend_source zellij || return 1
+        if fm_backend_zellij_pane_verifies_task "$recorded_session" "$tab" "$pane" "$id" 2>/dev/null; then
+          echo "zellij endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
+          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+        else
+          echo "REFUSED: legacy Zellij endpoint metadata for task $id lacks an exact task binding; pane verification failed or pane does not belong to this task; preserving task state." >&2
+          return 1
+        fi
+      fi
       ;;
     orca)
+      # No legacy-metadata self-repair here, unlike herdr/zellij/cmux: Orca
+      # has no verified live-identity-check primitive to prove a recorded
+      # terminal/worktree still belongs to this exact task (see
+      # bin/backends/orca.sh's fm_backend_orca_json_get header - only
+      # worktree-id, worktree-path, terminal-handle, worktree-terminal-handle,
+      # and repo-id fields are verified real shapes; a task-owning label or
+      # title readback is not). Refusing unconditionally when the binding is
+      # absent is the correct, intended behavior here, not a gap: the brief's
+      # own rule is "refuse ONLY when it cannot be verified".
       [ "$binding" = "$id" ] || {
         echo "REFUSED: legacy Orca endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
         return 1
@@ -510,10 +539,6 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       window=$terminal
       ;;
     cmux)
-      [ "$binding" = "$id" ] || {
-        echo "REFUSED: legacy cmux endpoint metadata for task $id lacks an exact task binding; preserving task state." >&2
-        return 1
-      }
       workspace=$(fm_backend_meta_exact_value "$meta" cmux_workspace_id) || workspace=
       surface=$(fm_backend_meta_exact_value "$meta" cmux_surface_id) || surface=
       if [ -z "$workspace" ] || [ -z "$surface" ] || [ "$window" != "$workspace:$surface" ] \
@@ -521,6 +546,18 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
         || ! fm_backend_endpoint_atom_valid "$surface"; then
         echo "REFUSED: cmux endpoint metadata for task $id is malformed or inconsistent; preserving task state." >&2
         return 1
+      fi
+      if [ "$binding" = "$id" ]; then
+        :
+      else
+        fm_backend_source cmux || return 1
+        if fm_backend_cmux_surface_verifies_task "$workspace" "$surface" "$id" 2>/dev/null; then
+          echo "cmux endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
+          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+        else
+          echo "REFUSED: legacy cmux endpoint metadata for task $id lacks an exact task binding; surface verification failed or surface does not belong to this task; preserving task state." >&2
+          return 1
+        fi
       fi
       ;;
   esac
@@ -738,6 +775,27 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
   esac
 }
 
+# fm_backend_send_text_line: best-effort, UNVERIFIED atomic send of one line of
+# TEXT then Enter - the escape hatch for driving a raw/unmanaged pane that has
+# no recorded meta and no readable agent composer, so the proof-carrying
+# send-text-submit path cannot verify delivery. Mirrors each backend's fixed
+# spawn-time command send (`tmux send-keys -t T text Enter`). No submit proof,
+# no retry, no marker: callers own the "best-effort, no delivery guarantee"
+# contract (fm-send.sh --raw).
+fm_backend_send_text_line() {  # <backend> <target> <text> [expected-label]
+  local backend=$1
+  shift
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    tmux) fm_backend_tmux_send_text_line "$@" ;;
+    herdr) fm_backend_herdr_send_text_line "$@" ;;
+    zellij) fm_backend_zellij_send_text_line "$@" ;;
+    orca) fm_backend_orca_send_text_line "$@" ;;
+    cmux) fm_backend_cmux_send_text_line "$@" ;;
+    *) echo "error: no send-text-line implementation for backend '$backend'" >&2; return 1 ;;
+  esac
+}
+
 # fm_backend_kill: remove the task's session endpoint (best-effort; a
 # nonexistent/already-gone target is not an error - callers already swallow
 # failures here exactly as the inline `tmux kill-window ... || true` did).
@@ -815,6 +873,29 @@ fm_backend_composer_state() {  # <backend> <target> -> empty|pending|pending-unp
     orca) fm_backend_orca_composer_state "$@" ;;
     cmux) fm_backend_cmux_composer_state "$@" ;;
     *) printf 'unknown' ;;
+  esac
+}
+
+# fm_backend_wait_for_working: optional post-submit assertion. Polls <target>'s
+# agent state up to <budget_secs> to confirm the submitted message drove a turn.
+# Returns 0 and echoes "working" if the agent status transitioned to a working
+# state (confirming the turn started); returns 0 and echoes "idle" if the target
+# remained idle across the full budget (message may have been queued or
+# dropped); returns 0 and echoes "unknown" on read failures (cannot verify).
+# Returns 0 and echoes "error" when the backend adapter cannot be sourced or
+# the backend's own verification hit a hard error (callers fail closed on it).
+# This is an optional add-on confirmation for callers that need explicit proof
+# a submission actually drove execution, distinct from composer-state verification.
+# An optional trailing <harness> lets regex-based backends (tmux) select the
+# harness-specific busy signature; native-state backends (herdr) ignore it.
+fm_backend_wait_for_working() {  # <backend> <target> <budget_secs> [harness]
+  local backend=$1
+  shift
+  fm_backend_source "$backend" || { printf 'error'; return 0; }
+  case "$backend" in
+    herdr) fm_backend_herdr_wait_for_working_submit "$@" ;;
+    tmux) fm_backend_tmux_wait_for_working_submit "$@" ;;
+    *) printf 'unknown'; return 0 ;;
   esac
 }
 

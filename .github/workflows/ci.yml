@@ -350,16 +350,16 @@ jobs:
           snapshot_output=$(/bin/bash tests/fm-fleet-snapshot-view.test.sh)
           printf '%s\n' "$snapshot_output"
           snapshot_count=$(printf '%s\n' "$snapshot_output" | grep -c '^ok - ')
-          [ "$snapshot_count" -eq 15 ] || {
-            echo "::error::expected 15 snapshot/fleet-view tests, got $snapshot_count"
+          [ "$snapshot_count" -eq 19 ] || {
+            echo "::error::expected 19 snapshot/fleet-view tests, got $snapshot_count"
             exit 1
           }
 
           bearings_output=$(/bin/bash tests/fm-bearings-snapshot.test.sh)
           printf '%s\n' "$bearings_output"
           bearings_count=$(printf '%s\n' "$bearings_output" | grep -c '^ok - ')
-          [ "$bearings_count" -eq 41 ] || {
-            echo "::error::expected 41 Bearings tests, got $bearings_count"
+          [ "$bearings_count" -eq 42 ] || {
+            echo "::error::expected 42 Bearings tests, got $bearings_count"
             exit 1
           }
 
@@ -373,6 +373,22 @@ jobs:
           set -eu
           [ "$(readlink CLAUDE.md)" = "AGENTS.md" ] || { echo "::error::CLAUDE.md must be a symlink to AGENTS.md"; exit 1; }
           [ "$(readlink .claude/skills)" = "../.agents/skills" ] || { echo "::error::.claude/skills must be a symlink to ../.agents/skills"; exit 1; }
+      - name: Spawning tests must carry the Parlay enrollment bypass
+        run: |
+          set -eu
+          # fm-spawn.sh enrollment must never reach the live Parlay relay from a test, and a test
+          # file that drives fm-spawn.sh without the flag reintroduces the leak (robots-8ce5).
+          uncovered=""
+          for f in tests/*.test.sh; do
+            grep -q 'fm-spawn\.sh' "$f" || continue
+            grep -qE '^\. "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/(lib|[a-z-]+-helpers)\.sh"' "$f" && continue
+            grep -q 'FM_SPAWN_SKIP_PARLAY' "$f" && continue
+            uncovered="$uncovered $(basename "$f")"
+          done
+          if [ -n "$uncovered" ]; then
+            echo "::error::These tests drive fm-spawn.sh without the Parlay enrollment bypass:$uncovered"
+            exit 1
+          fi
       - name: Personal fleet paths must not be tracked
         run: |
           set -eu

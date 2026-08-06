@@ -494,12 +494,12 @@ test_secondmate_marked_request_reporting_contract() {
     "$ROOT/bin/fm-brief.sh" marked-request-reporting --secondmate --no-projects >/dev/null 2>&1
   brief="$home/data/marked-request-reporting/brief.md"
 
-  assert_grep 'A marked request requires one correlated answer after the work' "$brief" \
-    "secondmate charter did not require the correlated answer after the work"
-  assert_grep 'does not require a separate receipt or start acknowledgement' "$brief" \
-    "secondmate charter did not reject a separate receipt/start acknowledgement"
-  assert_grep "Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started." "$brief" \
-    "secondmate charter did not forbid a generic working acknowledgement"
+  assert_grep 'immediately append an intake acknowledgement line to the parent status file containing that corr=<id>' "$brief" \
+    "secondmate charter did not require an intake acknowledgement containing corr=<id>"
+  assert_grep 'after finishing, append the terminal result (also containing corr=<id>) to report completion.' "$brief" \
+    "secondmate charter did not require the terminal corr= outcome line"
+  assert_grep "Never append working: lines merely to acknowledge receipt or announce that a marked request has started." "$brief" \
+    "secondmate charter did not forbid working: for non-marked routine status updates"
   assert_no_grep "Give every routed-work phase a stable key: open it with \`working" "$brief" \
     "secondmate charter retained the unconditional working opener"
   assert_grep 'When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above' "$brief" \
@@ -688,6 +688,105 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# Fork-contribution PR-target rule: a ship task on a project whose PRs must
+# land in the captain's own trillium/<repo> fork, never upstream. Detection
+# reads the clone's real git remotes in two shapes - a legacy clone whose
+# `origin` is still the upstream repo, or the correct swapped setup where
+# `origin` is already the trillium fork with a separate `upstream` remote -
+# and the generated rule differs by push mode and clone shape:
+#   direct-PR             -> explicit `gh pr create --repo trillium/<repo>` form
+#   no-mistakes + swapped  -> confirms origin already targets the fork, forbids `--fork-url`
+#   no-mistakes + legacy   -> STOP: no-mistakes cannot be driven safely, escalate
+# An ordinary captain-owned project (Trillium origin, no `upstream` remote)
+# gets no such rule (byte-identical to pre-rule output), and local-only never
+# pushes so it stays exempt even on an upstream origin.
+make_clone() {
+  local dir=$1 origin=$2
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  git -C "$dir" remote add origin "$origin"
+}
+
+test_fork_first_push_rule() {
+  local home brief
+  home="$TMP_ROOT/fork-first-home"
+  mkdir -p "$home/data" "$home/projects"
+  # local-only fixture project (for the exemption case) needs the registry mode.
+  cat > "$home/data/projects.md" <<'EOF'
+- upstream-local [local-only] - upstream fork on a local-only project (added 2026-07-01)
+EOF
+  make_clone "$home/projects/upstream-proj" "https://github.com/kunchenguid/gnhf.git"
+  make_clone "$home/projects/upstream-ssh" "git@github.com:david-tejada/rango.git"
+  make_clone "$home/projects/trillium-proj" "git@github.com:trillium/firstmate.git"
+  make_clone "$home/projects/upstream-local" "https://github.com/gastownhall/gascity.git"
+  make_clone "$home/projects/swapped-proj" "git@github.com:trillium/rango.git"
+  git -C "$home/projects/swapped-proj" remote add upstream "git@github.com:david-tejada/rango.git"
+
+  # no-mistakes on a legacy (non-Trillium, unswapped) origin: the worker must
+  # stop rather than let no-mistakes default the PR to upstream.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm upstream-proj >/dev/null 2>&1
+  brief="$home/data/fork-nm/brief.md"
+  assert_grep "# Fork-based project: origin is not yet the fork - STOP before running no-mistakes" "$brief" \
+    "no-mistakes brief on a legacy upstream origin lost the stop-before-running rule"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'own `trillium/gnhf` fork, NEVER upstream' "$brief" \
+    "no-mistakes fork rule named the wrong fork or dropped the never-upstream wording"
+  assert_grep "the PR only goes upstream on the captain's explicit word" "$brief" \
+    "fork rule dropped the captain's-explicit-word wording"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'Do NOT run `no-mistakes init --fork-url`' "$brief" \
+    "legacy no-mistakes rule dropped the --fork-url warning"
+  assert_grep "blocked: project clone's origin is not the trillium fork yet" "$brief" \
+    "legacy no-mistakes rule dropped the explicit blocked-status instruction"
+
+  # no-mistakes on the correctly swapped setup (origin = fork, upstream =
+  # separate remote): origin already targets the fork, so no-mistakes may run,
+  # but --fork-url is still forbidden since it would redirect the PR upstream.
+  cat >> "$home/data/projects.md" <<'EOF'
+- swapped-proj [no-mistakes] - correctly swapped fork-contribution project (added 2026-08-01)
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm-swapped swapped-proj >/dev/null 2>&1
+  brief="$home/data/fork-nm-swapped/brief.md"
+  assert_grep "# Fork-based project: PRs stay in the fork, never upstream" "$brief" \
+    "swapped no-mistakes brief lost the fork-target rule"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'already the `trillium/rango` fork, with `upstream` as a separate remote' "$brief" \
+    "swapped no-mistakes rule did not confirm the origin/upstream setup"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'Never run `no-mistakes init --fork-url`' "$brief" \
+    "swapped no-mistakes rule dropped the --fork-url warning"
+
+  # direct-PR pushes too; SSH origin still resolves the fork name, with an
+  # explicit --repo override so gh cannot default the PR base to upstream.
+  cat >> "$home/data/projects.md" <<'EOF'
+- upstream-ssh [direct-PR] - upstream fork reached over SSH (added 2026-07-01)
+EOF
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-dp upstream-ssh >/dev/null 2>&1
+  brief="$home/data/fork-dp/brief.md"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'own `trillium/rango` fork, NEVER upstream' "$brief" \
+    "direct-PR fork rule did not resolve the SSH-origin fork name or dropped never-upstream wording"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'gh pr create --repo trillium/rango --base' "$brief" \
+    "direct-PR fork rule dropped the explicit --repo override in the gh pr create form"
+  assert_grep "never stop to ask fork-vs-local" "$brief" \
+    "fork rule dropped the never-ask-fork-vs-local instruction"
+
+  # Trillium-owned origin with no upstream remote: an ordinary captain-owned
+  # project, no fork-contribution rule at all.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-tr trillium-proj >/dev/null 2>&1
+  brief="$home/data/fork-tr/brief.md"
+  assert_no_grep "# Fork-based project" "$brief" \
+    "Trillium-origin brief wrongly carried a fork-contribution rule"
+
+  # local-only never pushes: exempt even though the origin is upstream.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-lo upstream-local >/dev/null 2>&1
+  brief="$home/data/fork-lo/brief.md"
+  assert_no_grep "# Fork-based project" "$brief" \
+    "local-only brief wrongly carried a fork-contribution rule"
+  pass "fm-brief.sh: fork-contribution PR-target rule covers legacy, swapped, direct-PR, and exempt clone shapes"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -706,6 +805,155 @@ test_scout_and_secondmate_scaffold() {
   assert_grep "persistent second mate" "$brief" \
     "secondmate charter must declare its role"
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
+}
+
+# Every ship and scout crewmate brief must open with the Parlay enrollment
+# section, so enrolling is the crewmate's first action, the command carries the
+# task id, and the section is ordered before # Task. Enrollment is best-effort:
+# it must NOT tell the crewmate to block or fail when Parlay is down. Secondmate
+# charters are exempt: they return work through the marked-status/corr channel,
+# not the shared chat panel.
+test_crewmate_briefs_enroll_in_parlay_first() {
+  local home brief order
+  home="$TMP_ROOT/parlay-enroll-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout; do
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "enroll-$kind" someproj --scout >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "enroll-$kind" someproj >/dev/null 2>&1
+    fi
+    brief="$home/data/enroll-$kind/brief.md"
+    assert_present "$brief" "$kind: brief was not scaffolded"
+    assert_grep "# FIRST ACTION: enroll in Parlay" "$brief" \
+      "$kind: brief missing the Parlay enrollment section"
+    # The enrollment command must carry this task's id, not a placeholder.
+    # shellcheck disable=SC2016  # literal backticks and command must stay unexpanded
+    assert_grep '`parlay listen --agent enroll-'"$kind"'`' "$brief" \
+      "$kind: enrollment command missing or not bound to the task id"
+    # shellcheck disable=SC2016  # literal Monitor snippet must stay unexpanded
+    assert_grep 'Monitor({ command: "parlay listen --agent enroll-'"$kind"'", persistent: true })' "$brief" \
+      "$kind: enrollment missing the persistent Monitor-tool form"
+    # Best-effort contract: enrollment is explicitly non-blocking.
+    assert_grep "Enrollment is best-effort, never a blocker" "$brief" \
+      "$kind: enrollment missing the best-effort, never-a-blocker contract"
+    assert_grep "continue with your task normally" "$brief" \
+      "$kind: enrollment must tell the crewmate to continue when Parlay is down"
+    # It must NOT reintroduce the fail-loudly block-on-failure posture.
+    # shellcheck disable=SC2016  # literal blocked-status wording must stay unexpanded
+    assert_no_grep '`blocked: parlay enrollment failed' "$brief" \
+      "$kind: enrollment must not tell the crewmate to block when enrollment fails"
+    assert_no_grep "No agent starts work without enrollment." "$brief" \
+      "$kind: enrollment must not carry the mandatory no-work-without-enrollment posture"
+    # Enrollment must precede the task so it is genuinely the first action.
+    order=$(awk '/FIRST ACTION: enroll in Parlay/{e=NR} /^# Task/{t=NR} END{print (e && t && e<t)?"ok":"bad"}' "$brief")
+    [ "$order" = ok ] || fail "$kind: Parlay enrollment section is not ordered before # Task"
+  done
+
+  # Secondmate charters do not enroll in the shared chat panel.
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" enroll-sm --secondmate alpha >/dev/null 2>&1
+  brief="$home/data/enroll-sm/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded"
+  assert_no_grep "# FIRST ACTION: enroll in Parlay" "$brief" \
+    "secondmate charter wrongly carried the crewmate Parlay enrollment section"
+  pass "fm-brief.sh: ship/scout briefs enroll in Parlay first (best-effort); secondmate charters are exempt"
+}
+
+# add_beads_task_mock_resolve <fakebin_dir> <minted_id> <calls_log>: a fake `task`
+# CLI reporting no existing task:<id>-labeled bead, so `create` mints <minted_id>,
+# logging every invocation so a test can assert it was never called.
+add_beads_task_mock_resolve() {
+  local fakebin_dir=$1 minted_id=$2 calls_log=$3
+  cat > "$fakebin_dir/task" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$calls_log"
+case "\$1" in
+  list) printf '[]\n' ;;
+  create) printf '%s\n' "$minted_id" ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin_dir/task"
+}
+
+# Test: under config/backlog-backend=beads, fm-brief.sh does NOT mint or resolve
+# a bead at scaffold time (beads-authority migration Stage 3 defers that to
+# fm-spawn.sh, at actual dispatch time) - a brief that is scaffolded but never
+# spawned must never leave an orphaned bead in the shared store. Covers ship and
+# scout briefs; secondmate charters stay exempt as before.
+test_beads_backend_does_not_mint_at_brief_time() {
+  local home fakebin brief calls_log
+  home="$TMP_ROOT/beads-backend-home"
+  mkdir -p "$home/data" "$home/config"
+  printf 'beads\n' > "$home/config/backlog-backend"
+  write_registry "$home"
+  fakebin=$(fm_fakebin "$TMP_ROOT/beads-backend-fake")
+  calls_log="$TMP_ROOT/beads-backend-fake-calls.log"
+  add_beads_task_mock_resolve "$fakebin" bead-auto-brief-1 "$calls_log"
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-ship no-registry-proj >/dev/null 2>&1
+  brief="$home/data/beads-auto-ship/brief.md"
+  assert_present "$brief" "ship brief was not scaffolded under the beads backend"
+  assert_no_grep "# Bead Receipt" "$brief" \
+    "ship brief wrongly minted/rendered a Bead Receipt section at scaffold time under the beads backend"
+  assert_no_grep "# Bead Closure" "$brief" \
+    "ship brief wrongly minted/rendered a Bead Closure section at scaffold time under the beads backend"
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-scout no-registry-proj --scout >/dev/null 2>&1
+  brief="$home/data/beads-auto-scout/brief.md"
+  assert_present "$brief" "scout brief was not scaffolded under the beads backend"
+  assert_no_grep "# Bead Receipt" "$brief" \
+    "scout brief wrongly minted/rendered a Bead Receipt section at scaffold time under the beads backend"
+
+  # Secondmate charters stay exempt too.
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-sm --secondmate alpha >/dev/null 2>&1
+  brief="$home/data/beads-auto-sm/brief.md"
+  assert_present "$brief" "secondmate charter was not scaffolded under the beads backend"
+  assert_no_grep "# Bead Receipt" "$brief" \
+    "secondmate charter wrongly picked up bead auto-linking under the beads backend"
+
+  # An explicit FM_HOOK_BEADS_ID still renders the hook sections under the beads
+  # backend (the pre-existing --beads opt-in path is unaffected by deferring
+  # auto-minting); it must not trigger any task CLI lookup/mint either.
+  FM_HOOK_BEADS_ID=bead-explicit-under-beads-backend \
+    PATH="$fakebin:$PATH" FM_HOME="$home" \
+    "$ROOT/bin/fm-brief.sh" beads-explicit-ship no-registry-proj >/dev/null 2>&1
+  brief="$home/data/beads-explicit-ship/brief.md"
+  assert_grep "task set-state bead-explicit-under-beads-backend dispatch=claimed" "$brief" \
+    "an explicit FM_HOOK_BEADS_ID did not render the Bead Receipt section under the beads backend"
+
+  [ -e "$calls_log" ] \
+    && fail "fm-brief.sh invoked the task CLI under the beads backend, minting a bead at scaffold time: $(cat "$calls_log")"
+  pass "fm-brief.sh: under config/backlog-backend=beads, briefs never mint/resolve a bead at scaffold time (deferred to fm-spawn.sh); an explicit FM_HOOK_BEADS_ID still renders hook sections; secondmate charters stay exempt"
+}
+
+# Test: under the default (non-beads) backend, briefs are unchanged - no Bead
+# Receipt/Closure sections appear absent an explicit FM_HOOK_BEADS_ID, exactly
+# as before this backend existed.
+test_default_backend_omits_hook_sections() {
+  local home brief
+  home="$TMP_ROOT/default-backend-home"
+  write_registry "$home"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" no-beads-ship no-registry-proj >/dev/null 2>&1
+  brief="$home/data/no-beads-ship/brief.md"
+  assert_present "$brief" "ship brief was not scaffolded under the default backend"
+  assert_no_grep "# Bead Receipt" "$brief" \
+    "ship brief wrongly carried a Bead Receipt section under the default backend"
+  assert_no_grep "# Bead Closure" "$brief" \
+    "ship brief wrongly carried a Bead Closure section under the default backend"
+
+  # An explicit FM_HOOK_BEADS_ID still works under the default backend (the
+  # pre-existing --beads opt-in path, now that the hook loop is actually wired).
+  FM_HOOK_BEADS_ID=bead-explicit-99 FM_HOME="$home" \
+    "$ROOT/bin/fm-brief.sh" explicit-beads-ship no-registry-proj >/dev/null 2>&1
+  brief="$home/data/explicit-beads-ship/brief.md"
+  assert_grep "task set-state bead-explicit-99 dispatch=claimed" "$brief" \
+    "an explicit FM_HOOK_BEADS_ID did not render the Bead Receipt section under the default backend"
+  pass "fm-brief.sh: default backend omits Bead Receipt/Closure sections unless FM_HOOK_BEADS_ID is explicitly set"
 }
 
 test_script_parses
@@ -727,4 +975,8 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
+test_fork_first_push_rule
 test_scout_and_secondmate_scaffold
+test_crewmate_briefs_enroll_in_parlay_first
+test_beads_backend_does_not_mint_at_brief_time
+test_default_backend_omits_hook_sections

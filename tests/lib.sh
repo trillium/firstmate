@@ -34,6 +34,30 @@ FM_TEST_LIB_SOURCED=1
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# Skip Parlay enrollment in every spawn driven by a test that sources this
+# library - not in the whole suite, since a spawning test need not source it and
+# must then export the flag itself (bin/fm-spawn.sh's header owns that rule; the
+# enforcing case lives in CI's Repo invariants job). The live Parlay relay
+# is not a test fixture; without this guard every test spawn that reaches the
+# enrollment block would permanently register a fake agent ID and leave a
+# listener process running (robots-8ce5).
+# FM_SPAWN_SKIP_PARLAY is distinct from FM_SPAWN_NO_GUARD
+# (watcher-guard bypass) so batch-dispatch production spawns, which also set
+# FM_SPAWN_NO_GUARD, are unaffected.
+export FM_SPAWN_SKIP_PARLAY=1
+
+# Drop an inherited FM_HOME so no test can read the developer's real firstmate
+# home. Every bin/ script resolves "${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}",
+# so an ambient FM_HOME silently outranks the per-call FM_ROOT_OVERRIDE a case
+# sets, and FM_HOME-derived paths (notably CONFIG) then point at the captain's
+# live home instead of the fixture. That is invisible on CI, where FM_HOME is
+# unset, and only bites a box that exports it - the shape of the guard-xmode
+# case in tests/fm-watcher-lock.test.sh, which writes config/x-mode.env under
+# its FM_ROOT_OVERRIDE and asserts the guard's repair line sources it.
+# Unsetting here makes the local environment match CI. Cases that genuinely
+# need an FM_HOME set it per invocation, which this cannot affect.
+unset FM_HOME
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
@@ -156,6 +180,21 @@ fm_fakebin() {
   local dir=$1 fakebin="$1/fakebin"
   mkdir -p "$fakebin"
   printf '%s\n' "$fakebin"
+}
+
+# fm_path_without <cmd>: echo $PATH with every directory containing an
+# executable named <cmd> removed. Lets a test simulate <cmd> being genuinely
+# absent from PATH even when the host machine has it installed (e.g. parlay).
+fm_path_without() {
+  local cmd=$1 dir
+  local -a kept_dirs=()
+  local IFS=:
+  # shellcheck disable=SC2086
+  for dir in $PATH; do
+    [ -x "$dir/$cmd" ] && continue
+    kept_dirs+=("$dir")
+  done
+  printf '%s\n' "${kept_dirs[*]}"
 }
 
 fm_fake_exit0() {

@@ -73,6 +73,13 @@ set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
+# Skip Parlay enrollment for every spawn this runner drives (robots-8ce5).
+# tests/lib.sh exports the same flag, but ten spawning tests never source it, so
+# a suite run would still register fixture IDs with the live Parlay relay and
+# leave a listener per spawn. Exporting here covers the whole selected set; the
+# per-file exports in those tests cover a direct `bash tests/<file>` run.
+export FM_SPAWN_SKIP_PARLAY=1
+
 MODE=
 LIST_ONLY=0
 LIST_FAMILIES=0
