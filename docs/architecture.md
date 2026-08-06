@@ -138,11 +138,12 @@ Crewmates never intentionally touch your project clone; [treehouse](https://gith
 For ship and scout work, `fm-spawn.sh` refuses to launch unless the resolved task path is a real git worktree root that is distinct from the project primary checkout.
 
 The firstmate repo has one extra exposure because it can dispatch crewmates to work on itself.
-Its operating checkout (`FM_ROOT`) and the disposable crewmate worktrees are all linked git worktrees of the same repository, so the valid discriminator is branch state, not whether the checkout is linked.
-The primary checkout is healthy on its default branch, and linked worktrees or secondmate homes are healthy at detached HEAD.
-Only a named non-default branch checked out in `FM_ROOT` is a worktree tangle.
+Its operating checkout (`FM_ROOT`) is the primary checkout of that repository, and the disposable crewmate worktrees and secondmate homes are linked git worktrees of it, so the discriminator is both facts together: primary checkout AND a named non-default branch.
+Branch state alone is not enough, because the sanctioned crew flow `git worktree add <dir> -b <branch>` legitimately leaves a linked worktree on a named feature branch.
+The primary checkout is healthy on its default branch; linked worktrees are healthy detached or on their own branch.
+Only a named non-default branch checked out in a primary `FM_ROOT` is a worktree tangle.
 
-`fm-tangle-lib.sh` resolves the default branch from `origin/HEAD`, then local `main` or `master`, and classifies that named non-default primary branch as the tangle.
+`fm-tangle-lib.sh` resolves the default branch from `origin/HEAD`, then local `main` or `master`, confirms the checkout is primary by comparing `--git-dir` against `--git-common-dir` (they differ for every linked worktree), and classifies that named non-default primary branch as the tangle.
 `fm-guard.sh` prints the repair command on the next mutable fleet action, while `bin/fm-session-start.sh` reports the same condition through bootstrap as a `TANGLE:` line at session start.
 If another live session holds the fleet lock, both surfaces keep the alarm but switch to read-only wording with no repair command.
 Ship briefs also tell the crewmate to verify `pwd -P` and `git rev-parse --show-toplevel` before creating `fm/<id>`, then stop with a blocked status if it landed in the primary checkout.
