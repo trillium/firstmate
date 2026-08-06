@@ -22,6 +22,12 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
+#   --account <N> is the optional per-account Claude Code isolation index (see
+#   docs/configuration.md "Multi-account Claude Code"). It requires the claude
+#   harness, records account=N in the task's meta, sets CLAUDE_TRUST_DIR to the
+#   task's worktree in the crewmate's launch environment, and launches through
+#   bin/claude-account.sh N instead of the plain claude binary. Absent means
+#   current behavior: plain claude, no account isolation.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -42,6 +48,11 @@
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
+#   --label <string> overrides the default tab/window label for the spawned task.
+#   Without --label, the window is named by the task ID in the form fm-<task-id>.
+#   With --label, the window is named fm-<label> instead. Task meta conditionally
+#   records label= only when --label was passed at spawn; an absent label= means
+#   the default task-ID-derived label was used.
 #   A herdr crewmate or scout is placed in the exact workspace of the firstmate
 #   or secondmate process launching it, resolved from that process's own herdr
 #   pane rather than from a workspace label (herdr enforces no label uniqueness,
@@ -105,6 +116,19 @@
 #   --scout records kind=scout in the task's meta (report deliverable, scratch worktree;
 #   see AGENTS.md task lifecycle); --secondmate records kind=secondmate and launches in a
 #   provisioned firstmate home; the default is kind=ship.
+#   --beads <id> links this task to an external bead item for lifecycle tracking: the id is
+#   recorded as beads_id= in the task's meta (fm-teardown.sh reads it to close the bead once
+#   this task's work is confirmed landed), the dispatch=sent and lifecycle=sent state
+#   dimensions are stamped via fm-bead-stamp.sh after spawn, and the brief includes Bead
+#   Receipt/Closure sections (when FM_HOOK_BEADS_ID is set) asking the worker to confirm
+#   dispatch=claimed/lifecycle=claimed and close the bead on completion. Under
+#   config/backlog-backend=beads, this whole linkage is automatic for every ship/scout
+#   spawn (an explicit --beads still wins): fm_beads_resolve_or_create looks up or mints a
+#   bead labeled task:<task-id> (bin/fm-tasks-axi-lib.sh), so beads_id= is always populated
+#   and the claim/close lifecycle applies to every dispatch, not just opted-in ones
+#   (beads-authority migration Stage 3). --secondmate launches stay exempt (a secondmate
+#   home is an operational entity, not a backlog work item). Under the default tasks-axi
+#   or manual backends, --beads remains the deliberate opt-in cross-reference, unchanged.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
@@ -234,7 +258,12 @@ YOLO_SET=0
 TRACEPARENT_SET=0
 POS=()
 want_value=
+end_of_flags=0
 for a in "$@"; do
+  if [ "$end_of_flags" -eq 1 ]; then
+    POS+=("$a")
+    continue
+  fi
   if [ -n "$want_value" ]; then
     case "$a" in
       --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
@@ -297,6 +326,12 @@ case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
+if [ "$ACCOUNT_SET" -eq 1 ]; then
+  case "$ACCOUNT" in
+    ''|*[!0-9]*) echo "error: --account requires a positive integer" >&2; exit 1 ;;
+    0) echo "error: --account requires a positive integer" >&2; exit 1 ;;
+  esac
+fi
 
 # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
 # firstmate's per-task decision, so they are required and closed-set validated
@@ -769,6 +804,18 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   done
   exit "$rc"
 fi
+# Named errors for missing positionals: under set -u a bare ${POS[n]} would
+# instead die with "POS[0]: unbound variable" from an internal line number.
+[ "${#POS[@]}" -ge 1 ] || {
+  echo "error: missing <task-id>" >&2
+  echo "usage: fm-spawn.sh <task-id> <project-dir> [flags]   (--help for the full contract)" >&2
+  exit 2
+}
+[ "$KIND" = secondmate ] || [ "${#POS[@]}" -ge 2 ] || {
+  echo "error: missing <project-dir> for ${POS[0]}" >&2
+  echo "usage: fm-spawn.sh <task-id> <project-dir> [flags]   (--help for the full contract)" >&2
+  exit 2
+}
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
 SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
@@ -777,6 +824,18 @@ if ! fm_lock_try_acquire "$SPAWN_TASK_LOCK"; then
   exit 1
 fi
 SPAWN_TASK_LOCK_HELD=1
+# beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
+# "Stage 3"): under config/backlog-backend=beads, bead-linking is the backend
+# itself rather than an opt-in cross-reference, so resolve or mint the bead
+# automatically instead of requiring --beads. Secondmate homes are operational
+# entities, not backlog work items, so they stay exempt. Fails open: a resolve
+# failure (task/jq missing, store unreachable) leaves BEADS_ARG empty and spawn
+# proceeds exactly as it did before this backend existed.
+AUTO_BEADS_LINKED=0
+if [ "$BEADS_SET" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+  BEADS_ARG=$(fm_beads_resolve_or_create "$ID") || BEADS_ARG=
+  [ -z "$BEADS_ARG" ] || AUTO_BEADS_LINKED=1
+fi
 PROJ=
 ARG3=
 FIRSTMATE_HOME=
@@ -820,7 +879,7 @@ launch_template() {
     # does NOT suppress the interactive ghost text (verified empirically), so the env
     # var is the correct control. The dim-aware composer reader in fm-tmux-lib.sh is
     # the defense-in-depth backstop for any pane this flag cannot reach.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false __CLAUDEBIN__ --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -892,6 +951,11 @@ esac
 case "$HARNESS" in
   pi|pi-signed) LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH" ;;
 esac
+
+if [ -n "$ACCOUNT" ] && [ "$HARNESS" != claude ]; then
+  echo "error: --account requires the claude harness (got '$HARNESS')" >&2
+  exit 1
+fi
 
 # pi-signed is an explicitly selected executable identity, not an alias that may
 # silently fall back to pi. Resolve it from PATH before creating an endpoint and
@@ -1031,12 +1095,13 @@ resolved_existing_dir() {
   cd "$path" && pwd -P
 }
 
+# Resolve the <project-dir> positional to an existing clone, accepting exactly
+# what fm-brief.sh accepts (bin/fm-project-dir-lib.sh owns the mapping): an
+# absolute path, an explicit relative path, "projects/<name>", or a bare
+# <name> under $PROJECTS. A name that resolves nowhere fails here with a named
+# error instead of surfacing later as a raw `cd` failure from an internal line.
 resolve_project_dir_arg() {
-  local path=$1
-  case "$path" in
-    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
-    *) printf '%s\n' "$path" ;;
-  esac
+  fm_resolve_project_dir "$1" "$PROJECTS" project
 }
 
 path_is_ancestor_of() {
@@ -1201,7 +1266,10 @@ if [ "$KIND" = secondmate ]; then
     BRIEF="$DATA/$ID/brief.md"
   fi
 else
-  PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
+  # Two steps on purpose: nesting the resolve inside the `cd` substitution would
+  # swallow its failure (`cd ""` succeeds and silently yields the process cwd).
+  PROJ_DIR="$(resolve_project_dir_arg "$PROJ")" || exit 1
+  PROJ_ABS="$(cd "$PROJ_DIR" && pwd)" || exit 1
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
@@ -1367,7 +1435,11 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
   esac
 }
 
-W="fm-$ID"
+if [ -n "$LABEL_ARG" ]; then
+  W="fm-$LABEL_ARG"
+else
+  W="fm-$ID"
+fi
 case "$BACKEND" in
   tmux)
     SES=$(fm_backend_tmux_container_ensure)
@@ -1392,7 +1464,7 @@ case "$BACKEND" in
     # secondmate's home), so FM_HOME here still names the primary. Shadow it
     # to PROJ_ABS for just these two calls (bash restores it automatically
     # after each prefixed simple-command call) so the secondmate's tab lands
-    # in the secondmate's own workspace, not the primary's "firstmate" one.
+    # in the secondmate's own workspace, not the primary's "1M-FIRSTMATE" one.
     #
     # Placement, separately from labeling: a crewmate/scout belongs in the
     # EXACT herdr workspace this launching process is itself running in, which
@@ -1402,9 +1474,17 @@ case "$BACKEND" in
     # the per-home container instead of inheriting this launcher's.
     HERDR_LABEL_HOME=$FM_HOME
     HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+    # HERDR_TASK_LABEL is the herdr-specific tab label passed to
+    # fm_backend_herdr_create_task below: ordinarily the shared $W (fm-<id>,
+    # identical to every other backend), except a --secondmate spawn's own tab
+    # IS that mate's live agent, so it gets the mate naming convention's
+    # uppercase "<materank>-<scope>" label (docs/herdr-backend.md "Mate naming
+    # convention") instead of a lowercase task-style name.
+    HERDR_TASK_LABEL=$W
     if [ "$KIND" = secondmate ]; then
       HERDR_LABEL_HOME=$PROJ_ABS
       HERDR_LAUNCHER_RELATIONSHIP=other-home
+      HERDR_TASK_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_workspace_label)
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
@@ -1534,13 +1614,13 @@ case "$BACKEND" in
       HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
-      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
+      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$HERDR_TASK_LABEL" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
 EOF
     fi
     if [ -z "$HERDR_TAB_ID" ] || [ -z "$HERDR_PANE_ID" ]; then
-      echo "error: herdr did not return a tab/pane id for $W" >&2
+      echo "error: herdr did not return a tab/pane id for $HERDR_TASK_LABEL" >&2
       exit 1
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
@@ -1800,6 +1880,12 @@ if [ "$KIND" != secondmate ]; then
       fi
       ;;
   esac
+  # Every branch below unconditionally truncates and rewrites its hook
+  # artifact (cat/printf >, never appended or skip-if-exists), so a worktree
+  # treehouse hands back from its reuse pool always gets hooks bound to THIS
+  # incarnation's id and $BUSY_GEN, never a prior tenant's. Keep new adapter
+  # wiring the same way; tests/fm-spawn-reused-worktree-hooks.test.sh guards
+  # the claude case end to end.
   case "$HARNESS" in
     claude*)
       # Semantic busy-state hooks (bin/fm-busy-lib.sh): UserPromptSubmit opens
@@ -2044,6 +2130,9 @@ META_WINDOW=$T
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  # account= is written only when --account was passed, matching the backend=
+  # convention below: absent means no per-account Claude Code isolation.
+  [ -z "$ACCOUNT" ] || echo "account=$ACCOUNT"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   # Default-off writes no traceparent= line (meta stays byte-identical).
   # backend= is written only for a non-default (non-tmux) backend, so the
@@ -2084,6 +2173,8 @@ sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
+CLAUDEBIN=claude
+[ -z "$ACCOUNT" ] || CLAUDEBIN="$(shell_quote "$FM_ROOT/bin/claude-account.sh") $ACCOUNT"
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
@@ -2092,6 +2183,21 @@ LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
+LAUNCH=${LAUNCH//__CLAUDEBIN__/$CLAUDEBIN}
+if [ -n "$ACCOUNT" ]; then
+  sq_trust_dir=$(shell_quote "$WT")
+  LAUNCH="CLAUDE_TRUST_DIR=$sq_trust_dir $LAUNCH"
+fi
+# Crewmate panes are created by a long-lived tmux/herdr daemon that does not
+# inherit firstmate's current environment, so a bare `claude` in the pane falls
+# back to the default ~/.claude store even when firstmate itself runs under a
+# different CLAUDE_CONFIG_DIR (for example a work-vs-personal subscription split).
+# Forward firstmate's own resolved store onto the claude launch so the crewmate
+# uses the same credential/config firstmate is authenticated with. Only when set;
+# an unset value is the single-store default and needs no prefix.
+if [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
+fi
 # Crewmate panes are created by a long-lived tmux/herdr daemon that does not
 # inherit firstmate's current environment, so a bare `claude` in the pane falls
 # back to the default ~/.claude store even when firstmate itself runs under a
@@ -2118,9 +2224,16 @@ if [ "$KIND" = secondmate ]; then
   # injected carrier and this on/off snapshot are guaranteed to agree.
   LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE FM_SUPERVISION_MODEL=$supervision_model $LAUNCH"
 fi
-# Export GOTMPDIR into the crewmate's pane shell so the agent and every child
-# process (go build, go test, ...) inherit it. Sent before the launch command so
-# the env is set when the agent starts; the brief sleep lets the export land.
+# Export pane-environment variables into the crewmate's pane shell so the agent
+# and every child process inherit them. Both are sent before the launch command
+# so the env is set when the agent starts; the brief sleep lets both exports land.
+# GOTMPDIR: go build/test inherit the task-local tmp dir (go toolchain).
+# GIT_EDITOR/GIT_SEQUENCE_EDITOR=true: a crewmate has no terminal a human can
+# type into, so any git command that opens an editor (rebase --continue, commit
+# without -m, non-ff merge, revert, tag -a, cherry-pick --continue) otherwise
+# blocks forever on a `code --wait`-style editor: silent, indistinguishable from
+# a thinking pane, made worse by the agent's retry (robots-1xw8). `true` exits 0
+# without touching the file, so git proceeds with the message or todo as written.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
