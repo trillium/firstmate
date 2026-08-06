@@ -38,20 +38,25 @@
 #                       when locked.
 #   4. supervision-instructions - the one emitted operating block for the
 #                       detected primary harness.
-#   5. read-once contract - the do-not-re-read contract covering every source
-#                       represented by the two digests below.
-#   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
+#   5. read-once contract - the do-not-re-read contract covering the persona
+#                       and every source represented by the two digests below.
+#   6. persona        - the active persona file (config/persona.md local
+#                       override, else tracked persona.md): read-only, always
+#                       safe, always runs (including on lock refusal), and
+#                       prints ahead of the fleet and context digests so the
+#                       captain-facing voice is reliably in force.
+#   7. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs.
-#   7. context digest - data/projects.md, data/secondmates.md, data/captain.md,
+#   8. context digest - data/projects.md, data/secondmates.md, data/captain.md,
 #                       data/captain-shared.md, data/learnings.md: read-only,
 #                       always safe, always runs.
-#   8. closing reminder - prints the context-specific watcher next step; this
+#   9. closing reminder - prints the context-specific watcher next step; this
 #                       script points back to the emitted harness supervision
 #                       block and deliberately never arms the watcher itself.
 #
-# Those eight names are also the runtime-bound stage list below, so a truncated
+# Those nine names are also the runtime-bound stage list below, so a truncated
 # startup can name exactly which of them never ran.
 #
 # ORDERING, and why FLEET STATE now runs before CONTEXT: this digest is
@@ -201,7 +206,7 @@ done
 # The ordered stage list is the contract behind the truncation banner: the child
 # names the stage it is entering, and the parent reports every stage at or after
 # that one as never emitted. Keep it in the exact order the digest prints.
-SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions read-once fleet-state context next-step'
+SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions read-once persona fleet-state context next-step'
 
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${FM_SESSION_START_STAGE_FILE:-}" ] || return 0
@@ -293,6 +298,47 @@ print_file_or_absent() {
     fi
   else
     printf 'ABSENT\n'
+  fi
+}
+
+# resolve_persona_path: prints the active persona file's path, or nothing if
+# neither exists. config/persona.md (local, gitignored, home-specific) fully
+# overrides the tracked FM_ROOT/persona.md default when present - mirrors
+# config/crew-harness's override pattern (AGENTS.md section 2).
+resolve_persona_path() {
+  if [ -f "$CONFIG/persona.md" ]; then
+    printf '%s\n' "$CONFIG/persona.md"
+  elif [ -f "$FM_ROOT/persona.md" ]; then
+    printf '%s\n' "$FM_ROOT/persona.md"
+  fi
+}
+
+# print_persona: the active persona's full contents, labeled by source
+# (local override vs tracked default). Unlike the other context-digest files,
+# an ABSENT persona is not a normal state - the tracked default should always
+# exist - so it is called out as needing repair rather than treated as a
+# quiet fallback-to-defaults signal.
+print_persona() {
+  local path
+  path=$(resolve_persona_path)
+  if [ -z "$path" ]; then
+    subsection "persona.md"
+    printf 'ABSENT (tracked persona.md and config/persona.md both missing - captain-facing address/voice is undefined; this should not happen, restore persona.md)\n'
+    return
+  fi
+  if [ "$path" = "$CONFIG/persona.md" ]; then
+    subsection "persona.md (local override: config/persona.md)"
+  else
+    subsection "persona.md (tracked default)"
+  fi
+  if [ ! -r "$path" ]; then
+    printf 'UNREADABLE (%s exists but could not be read - captain-facing address/voice is undefined; this needs repair, fix its permissions or restore it)\n' "$path"
+    return
+  fi
+  if [ -s "$path" ]; then
+    cat "$path"
+  else
+    printf '(present, empty)\n'
   fi
 }
 
@@ -593,7 +639,8 @@ fi
 stage read-once
 section "READ-ONCE CONTRACT"
 cat <<'EOF'
-Everything below is printed in full for this session start: every state/*.meta,
+Everything below is printed in full for this session start: the active persona
+file (persona.md or its config/persona.md override), every state/*.meta,
 a compact data/backlog.md listing, a bounded tail of every state/*.status,
 data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
 and data/learnings.md.
@@ -613,7 +660,17 @@ Go to a source directly only when:
     which case that stage's sources were never emitted and must be reconciled.
 EOF
 
-# --- 6. fleet-state digest ---------------------------------------------
+# --- 6. persona ----------------------------------------------------------
+# Always-in-force captain-facing voice (AGENTS.md persona pointer): printed
+# every session, unconditionally, so it never depends on a per-reply trigger.
+# config/persona.md (local, gitignored) overrides the tracked persona.md
+# default in full. Prints ahead of the fleet and context digests so the voice
+# survives a truncated tail.
+stage persona
+section "PERSONA"
+print_persona
+
+# --- 7. fleet-state digest ---------------------------------------------
 # Before CONTEXT: see this file's ORDERING note. Live fleet identity is what a
 # truncated tail must never take.
 stage fleet-state
@@ -687,7 +744,7 @@ if fm_pf_relay_active "$FM_HOME" \
   fi
 fi
 
-# --- 7. context digest -----------------------------------------------------
+# --- 8. context digest -----------------------------------------------------
 # Last of the bulk sections deliberately: curated memory is stable session to
 # session, already governed by config/startup-memory-budget, and recoverable
 # with one targeted read, so it is the cheapest thing for a truncated tail to
@@ -700,7 +757,7 @@ print_file_or_absent "$DATA/captain.md" "data/captain.md"
 print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
 print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
 
-# --- 8. closing reminder -----------------------------------------------
+# --- 9. closing reminder -----------------------------------------------
 stage next-step
 section "NEXT STEP"
 if [ "$READ_ONLY" -eq 1 ]; then
