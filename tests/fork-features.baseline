@@ -1,0 +1,62 @@
+# Fork Features Baseline
+# This file documents the expected state of fork feature assertions.
+# Format: <status> <assertion-name>
+# status: "pass" = feature exists (expected to pass), "gap" = feature missing (expected to fail)
+#
+# Regression detection:
+# - pass assertions failing = silent feature drop (CRITICAL)
+# - gap assertions deleted without being fixed = evidence removal (CRITICAL)
+# - count mismatch = accounting guard (CRITICAL)
+# - gap assertions passing = restoration (OK, print as restore)
+
+# Multi-account Claude Code (5 assertions, all expected-gap)
+gap fm-spawn.sh --account flag
+gap bin/claude-account.sh exists
+gap Multi-account documented
+gap fm-spawn.sh parses ACCOUNT
+gap bin/claude-account.sh executable
+
+# Remote Dispatch (2 assertions: 1 pass, 1 gap)
+pass Remote SSH transport
+gap fm-spawn.sh --remote flag
+
+# Beads Integration (7 assertions: 2 pass, 5 gap)
+gap bin/fm-brief-hooks.d/beads.sh
+gap bin/fm-beads-resilience-lib.sh
+gap bin/fm-bead-stamp.sh
+gap bin/fm-spawn-hooks/beads
+pass Decision hold support
+pass .tasks.toml beads backend
+gap fm-brief.sh loads beads
+
+# Fork-local Skills (5 assertions: 4 pass, 1 gap)
+pass .agents/skills directory
+pass firstmate-orca skill
+gap herdr-navigation skill
+pass .claude/skills symlink
+pass Skill loader integration
+
+# Fork-origin Validation (1 assertion, expected-gap)
+gap Fork-origin check
+
+# Decision Hold Lifecycle (2 assertions, both pass)
+pass decision-hold-lifecycle skill
+pass OPEN DECISIONS display
+
+# Beads Task-Store Backend (3 assertions: 2 pass, 1 gap)
+pass bin/fm-backlog-handoff.sh
+pass bin/fm-backlog-receive.sh
+gap Beads backend configured
+
+# X-mode Integration (3 assertions, all pass)
+pass fmx-respond skill
+pass bin/fm-x-lib.sh
+pass X-mode documented
+
+# Herdr Backend Support (4 assertions: 3 pass, 1 gap)
+pass bin/backends/herdr.sh
+pass Herdr backend support
+gap herdr-navigation skill (Herdr backend integration)
+pass docs/herdr-backend.md
+
+# Summary: 17 expected-pass, 17 expected-gap, 34 total
