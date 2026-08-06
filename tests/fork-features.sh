@@ -22,14 +22,14 @@ if ! [[ -f "$SCRIPT_DIR/fork-features.baseline" ]]; then
   exit 1
 fi
 
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 PASS=0
 FAIL=0
-REGRESSION_FAILURES=()
 RESTORES=()
 ASSERTIONS_EXECUTED=0
 
+# shellcheck disable=SC2120,SC2034
 test_pass() {
   PASS=$((PASS+1))
   ASSERTIONS_EXECUTED=$((ASSERTIONS_EXECUTED+1))
@@ -51,14 +51,14 @@ SELF_TEST_PASS=$PASS
 SELF_TEST_FAIL=$FAIL
 
 # Known-true: this script itself exists
-[[ -f tests/fork-features.sh ]] && test_pass || test_fail "SELF-TEST: script exists"
+if [[ -f tests/fork-features.sh ]]; then test_pass; else test_fail "SELF-TEST: script exists"; fi
 if [[ $PASS -ne $((SELF_TEST_PASS+1)) ]]; then
   echo "ERROR: test_pass did not increment PASS correctly"
   exit 1
 fi
 
 # Known-false: definitely nonexistent file
-[[ -f /this/file/does/not/exist/anywhere/ever.txt ]] && test_pass || test_fail "SELF-TEST: nonexistent file"
+if [[ -f /this/file/does/not/exist/anywhere/ever.txt ]]; then test_pass; else test_fail "SELF-TEST: nonexistent file"; fi
 if [[ $FAIL -ne $((SELF_TEST_FAIL+1)) ]]; then
   echo "ERROR: test_fail did not increment FAIL correctly"
   exit 1
@@ -74,66 +74,65 @@ echo ""
 PASS=0
 FAIL=0
 ASSERTIONS_EXECUTED=0
-FAILURES_LIST=()
 echo ""
 
 echo "Testing: Multi-account Claude Code"
-  grep -q '\-\-account' bin/fm-spawn.sh && test_pass || test_fail "fm-spawn.sh --account flag"
-  [[ -f bin/claude-account.sh ]] && test_pass || test_fail "bin/claude-account.sh exists"
-  grep -q "Multi-account\|claude-account" docs/configuration.md 2>/dev/null && test_pass || test_fail "Multi-account documented"
-  grep -q 'ACCOUNT.*=' bin/fm-spawn.sh && test_pass || test_fail "fm-spawn.sh parses ACCOUNT"
-  [[ -x bin/claude-account.sh ]] 2>/dev/null && test_pass || test_fail "bin/claude-account.sh executable"
+  if grep -q '\-\-account' bin/fm-spawn.sh; then test_pass; else test_fail "fm-spawn.sh --account flag"; fi
+  if [[ -f bin/claude-account.sh ]]; then test_pass; else test_fail "bin/claude-account.sh exists"; fi
+  if grep -q "Multi-account\|claude-account" docs/configuration.md 2>/dev/null; then test_pass; else test_fail "Multi-account documented"; fi
+  if grep -q 'ACCOUNT.*=' bin/fm-spawn.sh; then test_pass; else test_fail "fm-spawn.sh parses ACCOUNT"; fi
+  if [[ -x bin/claude-account.sh ]] 2>/dev/null; then test_pass; else test_fail "bin/claude-account.sh executable"; fi
 
 echo ""
 echo "Testing: Remote Dispatch (SSH-based)"
-  grep -q '\-\-remote' bin/fm-spawn.sh && test_pass || test_fail "fm-spawn.sh --remote flag"
-  { [[ -f bin/fm-remote-ssh.sh ]] || grep -q 'fm-remote\|remote.*ssh' bin/fm-spawn.sh; } && test_pass || test_fail "Remote SSH transport"
+  if grep -q '\-\-remote' bin/fm-spawn.sh; then test_pass; else test_fail "fm-spawn.sh --remote flag"; fi
+  if { [[ -f bin/fm-remote-ssh.sh ]] || grep -q 'fm-remote\|remote.*ssh' bin/fm-spawn.sh; }; then test_pass; else test_fail "Remote SSH transport"; fi
 
 echo ""
 echo "Testing: Beads Integration"
-  [[ -f bin/fm-brief-hooks.d/beads.sh ]] && test_pass || test_fail "bin/fm-brief-hooks.d/beads.sh"
-  [[ -f bin/fm-beads-resilience-lib.sh ]] && test_pass || test_fail "bin/fm-beads-resilience-lib.sh"
-  [[ -f bin/fm-bead-stamp.sh ]] && test_pass || test_fail "bin/fm-bead-stamp.sh"
-  { [[ -d bin/fm-spawn-hooks ]] && [[ -f bin/fm-spawn-hooks/beads ]]; } && test_pass || test_fail "bin/fm-spawn-hooks/beads"
-  { [[ -f bin/fm-classify-lib.sh ]] && grep -q 'open_decisions\|status_open' bin/fm-classify-lib.sh; } && test_pass || test_fail "Decision hold support"
-  { [[ -f .tasks.toml ]] && grep -q 'beads\|backend' .tasks.toml; } && test_pass || test_fail ".tasks.toml beads backend"
-  grep -q 'fm-brief-hooks.d' bin/fm-brief.sh && test_pass || test_fail "fm-brief.sh loads beads"
+  if [[ -f bin/fm-brief-hooks.d/beads.sh ]]; then test_pass; else test_fail "bin/fm-brief-hooks.d/beads.sh"; fi
+  if [[ -f bin/fm-beads-resilience-lib.sh ]]; then test_pass; else test_fail "bin/fm-beads-resilience-lib.sh"; fi
+  if [[ -f bin/fm-bead-stamp.sh ]]; then test_pass; else test_fail "bin/fm-bead-stamp.sh"; fi
+  if { [[ -d bin/fm-spawn-hooks ]] && [[ -f bin/fm-spawn-hooks/beads ]]; }; then test_pass; else test_fail "bin/fm-spawn-hooks/beads"; fi
+  if { [[ -f bin/fm-classify-lib.sh ]] && grep -q 'open_decisions\|status_open' bin/fm-classify-lib.sh; }; then test_pass; else test_fail "Decision hold support"; fi
+  if { [[ -f .tasks.toml ]] && grep -q 'beads\|backend' .tasks.toml; }; then test_pass; else test_fail ".tasks.toml beads backend"; fi
+  if grep -q 'fm-brief-hooks.d' bin/fm-brief.sh; then test_pass; else test_fail "fm-brief.sh loads beads"; fi
 
 echo ""
 echo "Testing: Fork-local Skills"
-  [[ -d .agents/skills ]] && test_pass || test_fail ".agents/skills directory"
-  [[ -f .agents/skills/firstmate-orca/SKILL.md ]] && test_pass || test_fail "firstmate-orca skill"
-  [[ -f .agents/skills/herdr-navigation/SKILL.md ]] && test_pass || test_fail "herdr-navigation skill"
-  { [[ -L .claude/skills ]] && [[ -d .claude/skills ]]; } && test_pass || test_fail ".claude/skills symlink"
-  grep -r 'agents/skills\|\.agents/skills' bin/ >/dev/null 2>&1 && test_pass || test_fail "Skill loader integration"
+  if [[ -d .agents/skills ]]; then test_pass; else test_fail ".agents/skills directory"; fi
+  if [[ -f .agents/skills/firstmate-orca/SKILL.md ]]; then test_pass; else test_fail "firstmate-orca skill"; fi
+  if [[ -f .agents/skills/herdr-navigation/SKILL.md ]]; then test_pass; else test_fail "herdr-navigation skill"; fi
+  if { [[ -L .claude/skills ]] && [[ -d .claude/skills ]]; }; then test_pass; else test_fail ".claude/skills symlink"; fi
+  if grep -r 'agents/skills\|\.agents/skills' bin/ >/dev/null 2>&1; then test_pass; else test_fail "Skill loader integration"; fi
 
 echo ""
 echo "Testing: Fork-origin Validation"
-  grep -q 'fork-origin\|upstream\|trillium' bin/fm-spawn.sh && test_pass || test_fail "Fork-origin check"
+  if grep -q 'fork-origin\|upstream\|trillium' bin/fm-spawn.sh; then test_pass; else test_fail "Fork-origin check"; fi
 
 echo ""
 echo "Testing: Decision Hold Lifecycle"
-  [[ -f .agents/skills/decision-hold-lifecycle/SKILL.md ]] && test_pass || test_fail "decision-hold-lifecycle skill"
-  { [[ -f bin/fm-session-start.sh ]] && grep -q 'OPEN DECISIONS\|open_decisions' bin/fm-session-start.sh; } && test_pass || test_fail "OPEN DECISIONS display"
+  if [[ -f .agents/skills/decision-hold-lifecycle/SKILL.md ]]; then test_pass; else test_fail "decision-hold-lifecycle skill"; fi
+  if { [[ -f bin/fm-session-start.sh ]] && grep -q 'OPEN DECISIONS\|open_decisions' bin/fm-session-start.sh; }; then test_pass; else test_fail "OPEN DECISIONS display"; fi
 
 echo ""
 echo "Testing: Beads Task-Store Backend"
-  [[ -f bin/fm-backlog-handoff.sh ]] && test_pass || test_fail "bin/fm-backlog-handoff.sh"
-  [[ -f bin/fm-backlog-receive.sh ]] && test_pass || test_fail "bin/fm-backlog-receive.sh"
-  grep -q 'backend.*beads\|beads.*backend' .tasks.toml 2>/dev/null && test_pass || test_fail "Beads backend configured"
+  if [[ -f bin/fm-backlog-handoff.sh ]]; then test_pass; else test_fail "bin/fm-backlog-handoff.sh"; fi
+  if [[ -f bin/fm-backlog-receive.sh ]]; then test_pass; else test_fail "bin/fm-backlog-receive.sh"; fi
+  if grep -q 'backend.*beads\|beads.*backend' .tasks.toml 2>/dev/null; then test_pass; else test_fail "Beads backend configured"; fi
 
 echo ""
 echo "Testing: X-mode Integration"
-  [[ -f .agents/skills/fmx-respond/SKILL.md ]] && test_pass || test_fail "fmx-respond skill"
-  [[ -f bin/fm-x-lib.sh ]] && test_pass || test_fail "bin/fm-x-lib.sh"
-  grep -q 'FMX_PAIRING_TOKEN\|x-mode\|X mode' docs/configuration.md 2>/dev/null && test_pass || test_fail "X-mode documented"
+  if [[ -f .agents/skills/fmx-respond/SKILL.md ]]; then test_pass; else test_fail "fmx-respond skill"; fi
+  if [[ -f bin/fm-x-lib.sh ]]; then test_pass; else test_fail "bin/fm-x-lib.sh"; fi
+  if grep -q 'FMX_PAIRING_TOKEN\|x-mode\|X mode' docs/configuration.md 2>/dev/null; then test_pass; else test_fail "X-mode documented"; fi
 
 echo ""
 echo "Testing: Herdr Backend Support"
-  [[ -f bin/backends/herdr.sh ]] && test_pass || test_fail "bin/backends/herdr.sh"
-  { grep -q '\-\-backend' bin/fm-spawn.sh && grep -q 'herdr' bin/fm-spawn.sh; } && test_pass || test_fail "Herdr backend support"
-  [[ -f .agents/skills/herdr-navigation/SKILL.md ]] && test_pass || test_fail "herdr-navigation skill (Herdr backend integration)"
-  [[ -f docs/herdr-backend.md ]] && test_pass || test_fail "docs/herdr-backend.md"
+  if [[ -f bin/backends/herdr.sh ]]; then test_pass; else test_fail "bin/backends/herdr.sh"; fi
+  if { grep -q '\-\-backend' bin/fm-spawn.sh && grep -q 'herdr' bin/fm-spawn.sh; }; then test_pass; else test_fail "Herdr backend support"; fi
+  if [[ -f .agents/skills/herdr-navigation/SKILL.md ]]; then test_pass; else test_fail "herdr-navigation skill (Herdr backend integration)"; fi
+  if [[ -f docs/herdr-backend.md ]]; then test_pass; else test_fail "docs/herdr-backend.md"; fi
 
 echo ""
 echo "=== Regression Analysis ==="
@@ -148,7 +147,7 @@ while IFS= read -r line; do
     assertion_results["${BASH_REMATCH[1]}"]="fail"
   fi
 done < <(
-  cd "$REPO_ROOT"
+  cd "$REPO_ROOT" || exit 1
   {
     echo "Testing: Multi-account Claude Code"
       grep -q '\-\-account' bin/fm-spawn.sh && echo "  ✓ fm-spawn.sh --account flag" || echo "  ✗ fm-spawn.sh --account flag"
@@ -244,7 +243,6 @@ if [[ $CRITICAL_REGRESSION -eq 1 ]]; then
 fi
 
 # Check for gaps deleted from baseline without being fixed
-baseline_gaps=$(grep "^gap " tests/fork-features.baseline | cut -d' ' -f2- | sort)
 actual_gaps=$(for name in "${!assertion_results[@]}"; do
   [[ "${assertion_results[$name]}" == "fail" ]] && echo "$name"
 done | sort)
