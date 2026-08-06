@@ -224,7 +224,7 @@ verify_resolution_identity() {
   local id=$1 hold_body=$2 decision_digest=$3 routed_csv=$4 resolution_prefix resolution_fields recorded_digest recorded_routes
   resolution_prefix='"Resolution recorded by fm-decision-hold.\nDecision digest: '
   case "$hold_body" in
-    "$resolution_prefix"*) resolution_fields=${hold_body#$resolution_prefix} ;;
+    "$resolution_prefix"*) resolution_fields=${hold_body#"$resolution_prefix"} ;;
     *) fail "captain hold $id has no retry identity record" ;;
   esac
   case "$resolution_fields" in
@@ -709,8 +709,10 @@ command_resolve() {
   for dep in $routed; do
     body="${body}- ${dep}"$'\n'
   done
-  tasks_axi update "$id" --body "$body" >/dev/null \
-    || fail "could not record the captain decision on $id"
+  if [ "$resolution_recorded" -ne 1 ]; then
+    tasks_axi update "$id" --body "$body" >/dev/null \
+      || fail "could not record the captain decision on $id"
+  fi
   for dep in $routed; do
     show=$(task_show "$dep") || fail "routed task $dep disappeared before routing"
     blocked=$(show_field "$show" blocked_by | tr -d '[:space:]' | sed 's/^"//;s/"$//')
