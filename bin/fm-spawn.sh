@@ -225,6 +225,7 @@ BACKEND_ARG=
 MODE=
 YOLO=
 TRACEPARENT_ARG=
+REMOTE_HOST=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -232,6 +233,7 @@ BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
+REMOTE_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -247,6 +249,7 @@ for a in "$@"; do
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
       traceparent) TRACEPARENT_ARG=$a; TRACEPARENT_SET=1 ;;
+      remote) REMOTE_HOST=$a; REMOTE_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -269,6 +272,8 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --traceparent) want_value=traceparent ;;
     --traceparent=*) TRACEPARENT_ARG=${a#--traceparent=}; TRACEPARENT_SET=1 ;;
+    --remote) want_value=remote ;;
+    --remote=*) REMOTE_HOST=${a#--remote=}; REMOTE_SET=1 ;;
     *) POS+=("$a") ;;
   esac
 done
@@ -280,6 +285,7 @@ done
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
+[ "$REMOTE_SET" -eq 0 ] || [ -n "$REMOTE_HOST" ] || { echo "error: --remote requires a non-empty value" >&2; exit 1; }
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -598,8 +604,20 @@ if [ "$BACKEND_SET" -eq 1 ]; then
 else
   BACKEND=$(fm_backend_name)
 fi
+# When --remote is set, force herdr backend (remote minis have herdr running)
+if [ "$REMOTE_SET" -eq 1 ]; then
+  [ "$BACKEND_SET" -eq 0 ] || [ "$BACKEND_ARG" = "herdr" ] || {
+    echo "error: --remote requires herdr backend (got --backend $BACKEND_ARG)" >&2
+    exit 1
+  }
+  BACKEND=herdr
+fi
 fm_backend_validate_spawn "$BACKEND" || exit 1
 fm_backend_source "$BACKEND" || exit 1
+# Export REMOTE_HOST for backend to use when --remote is set
+if [ "$REMOTE_SET" -eq 1 ]; then
+  export FM_SPAWN_REMOTE_HOST="$REMOTE_HOST"
+fi
 if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
   echo "error: backend=orca does not support --secondmate spawns yet" >&2
   exit 1
