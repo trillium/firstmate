@@ -1387,25 +1387,34 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
 
 # Allocate worktree on remote when FM_SPAWN_REMOTE_HOST is set.
 # Tries treehouse first (if available on remote), falls back to ~/fm-worktrees/<task-id>.
+# On SSH failure, returns error to allow caller to handle fallback to local spawn.
 # Sets REMOTE_WORKTREE to the allocated path on the remote machine.
 allocate_remote_worktree() {
   local remote_host=$1 task_id=$2
-  local treehouse_path remote_worktree_dir
+  local treehouse_path remote_worktree_dir ssh_rc
 
   # Try treehouse get --lease on the remote
-  if treehouse_path=$(ssh "$remote_host" treehouse get --lease 2>/dev/null); then
+  treehouse_path=$(ssh "$remote_host" treehouse get --lease 2>/dev/null)
+  ssh_rc=$?
+  if [ $ssh_rc -eq 0 ] && [ -n "$treehouse_path" ]; then
     REMOTE_WORKTREE="$treehouse_path"
     return 0
   fi
 
-  # Treehouse not available or failed, create ~/fm-worktrees/<task-id>
+  # If SSH itself failed (host unreachable, auth failed, etc.), report and let caller decide
+  if [ $ssh_rc -ne 0 ] && [ $ssh_rc -ne 1 ]; then
+    echo "error: could not reach remote host $remote_host (ssh exit status $ssh_rc)" >&2
+    return 255
+  fi
+
+  # Treehouse not available on this remote, create ~/fm-worktrees/<task-id>
   remote_worktree_dir="$HOME/fm-worktrees/$task_id"
-  if ssh "$remote_host" mkdir -p "$remote_worktree_dir" 2>/dev/null; then
+  if ssh "$remote_host" mkdir -p "$remote_worktree_dir"; then
     REMOTE_WORKTREE="$remote_worktree_dir"
     return 0
   fi
 
-  echo "error: could not allocate remote worktree on $remote_host (treehouse failed, mkdir failed)" >&2
+  echo "error: could not allocate remote worktree on $remote_host (treehouse and mkdir both failed)" >&2
   return 1
 }
 
