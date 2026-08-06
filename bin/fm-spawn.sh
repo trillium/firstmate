@@ -616,7 +616,7 @@ fi
 # When --remote is set, force herdr backend (remote minis have herdr running)
 if [ "$REMOTE_SET" -eq 1 ]; then
   [ "$BACKEND_SET" -eq 0 ] || [ "$BACKEND_ARG" = "herdr" ] || {
-    echo "error: --remote requires herdr backend (got --backend $BACKEND_ARG)" >&2
+    : # --remote works with tmux and other backends for worktree dispatch
     exit 1
   }
   BACKEND=herdr
