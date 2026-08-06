@@ -161,11 +161,18 @@ status_is_paused_or_captain_held() {  # <status-line>
 #   resolved       [key=api-shape]: <how it was decided>
 # A line with no token uses the key "default", preserving the historical
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
-# The three parsers are pure reads of a single line; the verb parser strips any
-# key token before the colon so the leading word is recovered cleanly.
+# The three parsers are pure reads of a single line; the verb parser strips ANY
+# bracket token before the colon - not just "[key=...]" - so the leading word is
+# recovered cleanly no matter what annotation an author attached. Stripping only
+# the recognized token used to leave a near-miss such as
+#   resolved [corr=abc123]: fixed it
+# parsing as the literal verb "resolved [corr=abc123]", which matched no case in
+# _fm_decision_fold_line and silently dropped the line instead of closing the
+# decision it plainly meant to close; an unrecognized token still yields the
+# "default" key from _fm_decision_key, so verb and key now agree on such a line.
 status_line_verb() {  # <status-line> -> leading verb word
   local v=${1%%:*}
-  v=${v%%\[key=*}
+  v=${v%%\[*}
   v=${v#"${v%%[![:space:]]*}"}
   v=${v%"${v##*[![:space:]]}"}
   printf '%s' "$v"

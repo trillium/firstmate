@@ -125,6 +125,60 @@ test_buried_decision_surfaces_on_the_empty_queue_fast_path() {
   pass "a buried open decision surfaces even when the wake queue itself is empty"
 }
 
+test_unrecognized_bracket_token_still_closes_the_default_decision() {
+  local dir state out
+  dir=$(make_case unrecognized-token-closes)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # The near-miss the verb parser used to swallow whole: a bracket token that is
+  # not [key=...] left the verb parsing as the literal "resolved [corr=abc123]",
+  # which matched no fold case, so the resolution silently did nothing and the
+  # decision re-presented on every drain.
+  printf 'blocked: something needs attention\n' > "$state/task9.status"
+  printf 'resolved [corr=abc123]: fixed it\n' >> "$state/task9.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on an unrecognized bracket token"
+
+  if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
+    fail "a resolution carrying a non-[key=] bracket token did not close the decision: $(cat "$out")"
+  fi
+  pass "a resolved line with an unrecognized bracket token still closes the default decision"
+}
+
+test_unrecognized_bracket_token_still_opens_a_decision() {
+  local dir state out
+  dir=$(make_case unrecognized-token-opens)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # The same parse failure on the OPENING side silently dropped the decision
+  # instead of recording it, so nothing was ever surfaced to reconcile.
+  printf 'needs-decision [corr=abc123]: pick REST or RPC\n' > "$state/task10.status"
+  printf 'working: continuing\n' >> "$state/task10.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed opening on an unrecognized bracket token"
+
+  grep -F 'task10' "$out" | grep -F 'needs-decision: pick REST or RPC' >/dev/null \
+    || fail "a needs-decision carrying a non-[key=] bracket token was silently dropped: $(cat "$out")"
+  pass "a needs-decision line with an unrecognized bracket token still opens the default decision"
+}
+
+test_unrecognized_bracket_token_does_not_close_a_keyed_decision() {
+  local dir state out
+  dir=$(make_case unrecognized-token-keyed)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # Recovering the verb must not widen what a line closes: an unrecognized token
+  # carries no key, so it resolves "default" only and leaves keyed work open.
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$state/task11.status"
+  printf 'resolved [corr=abc123]: closed something else\n' >> "$state/task11.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed mixing a keyed and unrecognized token"
+
+  grep -F 'task11' "$out" | grep -F '[key=api-shape]' | grep -F 'pick REST or RPC' >/dev/null \
+    || fail "an unrecognized bracket token wrongly cleared a keyed decision: $(cat "$out")"
+  pass "an unrecognized bracket token resolves only the default key, never a keyed decision"
+}
+
 test_status_symlink_is_not_followed() {
   local dir state out
   dir=$(make_case status-symlink)
@@ -151,4 +205,7 @@ test_later_unrelated_terminal_line_does_not_close_it
 test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake
 test_buried_decision_surfaces_on_the_empty_queue_fast_path
+test_unrecognized_bracket_token_still_closes_the_default_decision
+test_unrecognized_bracket_token_still_opens_a_decision
+test_unrecognized_bracket_token_does_not_close_a_keyed_decision
 test_status_symlink_is_not_followed
