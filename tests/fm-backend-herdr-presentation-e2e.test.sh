@@ -411,10 +411,18 @@ register_secondmate() {  # <id> <home>
   # the id to that home, exactly as bin/fm-home-seed.sh writes it before a real
   # launch. The home is recorded physically resolved because fm-spawn compares
   # it against the resolved path.
-  local id=$1 home=$2
+  local id=$1 home=$2 home_abs tmp
+  home_abs=$(cd "$home" 2>/dev/null && pwd -P) || home_abs=$home
   mkdir -p "$HOME_DIR/data"
+  tmp="$HOME_DIR/data/secondmates.md.tmp.$$"
+  if [ -f "$HOME_DIR/data/secondmates.md" ]; then
+    grep -v "^- $id " "$HOME_DIR/data/secondmates.md" > "$tmp" 2>/dev/null || :
+  else
+    : > "$tmp"
+  fi
   printf -- '- %s - projection fixture (home: %s; scope: projection fixture; projects: ; added 2026-08-05)\n' \
-    "$id" "$(cd "$home" && pwd -P)" >> "$HOME_DIR/data/secondmates.md"
+    "$id" "$home_abs" >> "$tmp"
+  mv "$tmp" "$HOME_DIR/data/secondmates.md"
 }
 
 spawn_secondmate_task() {
