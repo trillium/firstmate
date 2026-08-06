@@ -1147,7 +1147,13 @@ fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$FIRSTMATE_HOME" ] || { echo "error: no firstmate home supplied or registered for $ID" >&2; exit 1; }
   PROJ_ABS=$(validate_firstmate_home_for_spawn "$ID" "$FIRSTMATE_HOME")
-  if [ -e "$DATA/secondmates.md" ] || [ -L "$DATA/secondmates.md" ]; then
+  sm_data_abs=$(resolve_path "$DATA")
+  sm_parent_route=$(resolve_path "$PROJ_ABS/data/.parent-route")
+  sm_home_marker=
+  [ ! -f "$PROJ_ABS/.fm-secondmate-home" ] || sm_home_marker=$(cat "$PROJ_ABS/.fm-secondmate-home")
+  if [ "$sm_data_abs" = "$sm_parent_route" ] && [ "$sm_home_marker" = "$ID" ]; then
+    : # delegated remote launch into this secondmate's own parent-route directory
+  elif [ -e "$DATA/secondmates.md" ] || [ -L "$DATA/secondmates.md" ]; then
     if ! secondmate_registry_validate_bindings "$DATA/secondmates.md" resolve_path "$ID" "$FIRSTMATE_HOME"; then
       echo "error: $SECONDMATE_REGISTRY_ERROR" >&2
       exit 1
