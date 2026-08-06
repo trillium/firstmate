@@ -179,16 +179,6 @@ for a in "$@"; do
     esac
     case "$want_value" in
       beads) BEADS_ID=$a; BEADS_SET=1 ;;
-      *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
-    esac
-    want_value=
-    continue
-  fi
-  if [ -n "$want_value" ]; then
-    case "$a" in
-      --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
-    esac
-    case "$want_value" in
       mode) MODE=$a; MODE_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
@@ -203,18 +193,18 @@ for a in "$@"; do
     --beads) want_value=beads ;;
     --beads=*) BEADS_ID=${a#--beads=}; BEADS_SET=1 ;;
     -h|--help) usage; exit 0 ;;
-    # An unknown --flag is a caller mistake, never a positional: taking it as
-    # the repo name scaffolds a brief for a project that does not exist, and the
-    # only symptom is a "not in registry" warning that reads like a stale entry.
-    # `--` ends flag parsing for the rare positional that must start with `--`.
-    --) end_of_flags=1 ;;
-    --*) echo "error: unknown option: $a" >&2; exit 2 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     # yolo never reaches the worker: it is firstmate's approval authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
     --yolo|--yolo=*) echo "error: --yolo is not a brief input; pass it to bin/fm-spawn.sh, which records the task's approval posture" >&2; exit 1 ;;
+    # An unknown --flag is a caller mistake, never a positional: taking it as
+    # the repo name scaffolds a brief for a project that does not exist, and the
+    # only symptom is a "not in registry" warning that reads like a stale entry.
+    # `--` ends flag parsing for the rare positional that must start with `--`.
+    --) end_of_flags=1 ;;
+    --*) echo "error: unknown option: $a" >&2; exit 2 ;;
     *) POS+=("$a") ;;
   esac
 done
