@@ -1,0 +1,58 @@
+# provenance/register.toml - the fork-feature provenance register.
+#
+# One [[feature]] block per fork-only feature that must survive fast-moving
+# upstream merges. This file lives in the fork-owned provenance/ namespace that
+# upstream firstmate never writes, so a merge can never silently clobber it.
+#
+# Each feature carries:
+#   id      - stable slug (also names tests/provenance/<id>/).
+#   story   - the user-story / Given-When-Then spec, in human prose. Reviewed in
+#             PRs like any doc; this is the honest-keeping anchor.
+#   test    - a command whose scrubbed combined output + exit code is diffed
+#             against the approved golden master at tests/provenance/<id>/approved.txt.
+#             THIS is the load-bearing guarantee ("the feature still works as approved").
+#   [[feature.anchor]] - one or more locators + deletion tripwires:
+#             path   - file the feature lives in. A vanished path is a FAIL.
+#             symbol - optional bash function name; a vanished symbol is a FAIL.
+#                      Omit to anchor the whole file (existence tripwire only).
+#             sig    - normalized fingerprint of the anchored region. A drift is a
+#                      WARN, not a FAIL: upstream edits legitimately shift code
+#                      without deleting the feature. Re-bless with `check.sh --regen`.
+#
+# Adding a feature = one [[feature]] block here + one snapshot (via --regen).
+
+version = 1
+
+[[feature]]
+id    = "launch-tracked-agent"
+story = "As the captain, I want to launch an agent and have firstmate track it, so fork work runs in an isolated worktree with a recorded launch contract."
+test  = "bin/fm-spawn.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-spawn.sh"
+symbol = "usage"
+sig    = "70eb6ba9abdc98a9"
+[[feature.anchor]]
+path   = "bin/fm-spawn.sh"
+symbol = "launch_template"
+sig    = "13fc0c1c3bc75e38"
+
+[[feature]]
+id    = "decision-hold"
+story = "As the captain, I want firstmate to record durable decision holds so an unresolved decision survives across sessions instead of being lost."
+test  = "bin/fm-decision-hold.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-decision-hold.sh"
+symbol = "hold_id"
+sig    = "2ec7fbd85debc2f1"
+[[feature.anchor]]
+path   = "bin/fm-decision-hold.sh"
+symbol = "validate_slug"
+sig    = "ba2c327a60dca27e"
+
+[[feature]]
+id    = "claude-multi-account"
+story = "As the captain, I want to launch Claude Code crewmates under isolated per-account credentials so accounts never leak OAuth tokens across each other."
+test  = "bin/claude-account.sh not-an-index"
+[[feature.anchor]]
+path   = "bin/claude-account.sh"
+sig    = "cf3c9bbe5cdc7735"
