@@ -637,7 +637,7 @@ heartbeat_scan_finds_actionable() {
 # supervision cycle: the reader is a short-lived subprocess of THIS watcher, not
 # a second watcher, so every guard/beacon/arm/turn-end mechanism is unchanged.
 event_wait_or_sleep() {
-  local w b session first_backend="" first_session="" first_meta="" rec rc
+  local w b session first_backend="" first_session="" first_meta="" first_remote_host="" rec rc
   local windows=()
   while IFS= read -r w; do
     b=$(window_backend "$w")
@@ -652,11 +652,13 @@ event_wait_or_sleep() {
       first_backend=$b
       first_session=$session
       first_meta=$(fm_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)
+      first_remote_host=$(grep '^remote_host=' "$first_meta" 2>/dev/null | cut -d= -f2- || true)
     fi
-    # One socket connection covers one backend+session; a home normally has a
-    # single herdr session. A window in a different backend/session stays on the
-    # poll path this cycle.
-    if [ "$b" != "$first_backend" ] || [ "$session" != "$first_session" ]; then
+    # One socket connection covers one backend+session+host; a home normally has a
+    # single herdr session. When hosts differ (local vs remote mini), windows must
+    # stay separate to avoid routing local windows to remote herdr or vice versa.
+    # A window in a different backend/session/host stays on the poll path this cycle.
+    if [ "$b" != "$first_backend" ] || [ "$session" != "$first_session" ] || [ "$(grep '^remote_host=' "$(fm_backend_meta_for_window "$w" "$STATE" 2>/dev/null || true)" 2>/dev/null | cut -d= -f2- || true)" != "$first_remote_host" ]; then
       continue
     fi
     windows+=("$w")
@@ -667,16 +669,15 @@ event_wait_or_sleep() {
     return
   fi
 
-  # Export remote_host from first window's meta so backend operations route to correct host
-  if [ -n "$first_meta" ]; then
-    remote_host=$(grep '^remote_host=' "$first_meta" 2>/dev/null | cut -d= -f2- || true)
-    [ -z "$remote_host" ] || export FM_HERDR_REMOTE_HOST="$remote_host"
-  fi
+  # Always export remote_host from first window so backend operations route to correct host.
+  # Must export even when empty to ensure it doesn't persist from previous cycles.
+  export FM_HERDR_REMOTE_HOST="$first_remote_host"
 
   # Memoized capability probe (fm_backend_events_capable runs a heavy schema
-  # read); re-probed only when the backend/session key changes.
-  if [ "$_event_cap_key" != "$first_backend:$first_session" ]; then
-    _event_cap_key="$first_backend:$first_session"
+  # read); re-probed only when the backend/session/host key changes. Include
+  # remote_host in the key so local and remote windows don't share memoization.
+  if [ "$_event_cap_key" != "$first_backend:$first_session:$first_remote_host" ]; then
+    _event_cap_key="$first_backend:$first_session:$first_remote_host"
     if fm_backend_events_capable "$first_backend" "$first_session"; then
       _event_cap_ok=1
     else
