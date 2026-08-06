@@ -1426,10 +1426,15 @@ allocate_remote_worktree() {
   fi
 
   proj_clone_dir="~/fm-worktrees/$task_id"
+  # Get the current branch name from local project to check out on remote
+  local current_branch
+  current_branch=$(git -C "$PROJ_ABS" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
   # Clone the project on the remote and check out the current branch.
   # Use shell quoting to protect the URL and directory from local expansion.
+  # If the branch doesn't exist on remote, use the remote's default branch.
   # shellcheck disable=SC2029
-  if ssh "$remote_host" "git clone '$proj_url' '$proj_clone_dir' && cd '$proj_clone_dir' && git fetch origin && git checkout -q @{-0}" 2>/dev/null; then
+  if ssh "$remote_host" "git clone '$proj_url' '$proj_clone_dir' && cd '$proj_clone_dir' && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
     REMOTE_WORKTREE="$proj_clone_dir"
     return 0
   fi
@@ -1441,9 +1446,10 @@ allocate_remote_worktree() {
 W="fm-$ID"
 
 # Allocate remote worktree if --remote is set (must happen before herdr pane creation)
+# If remote allocation fails, fall back to local spawn (don't exit)
 REMOTE_WORKTREE=""
 if [ -n "${FM_SPAWN_REMOTE_HOST:-}" ]; then
-  allocate_remote_worktree "$FM_SPAWN_REMOTE_HOST" "$ID" || exit 1
+  allocate_remote_worktree "$FM_SPAWN_REMOTE_HOST" "$ID" || true
 fi
 
 case "$BACKEND" in
@@ -1776,8 +1782,12 @@ kimi_spawn_fail() {  # <detail>
 }
 
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  # For remote dispatch, worktree is already allocated on the remote; skip local treehouse get
-  if [ -z "${FM_SPAWN_REMOTE_HOST:-}" ]; then
+  # For remote dispatch with successful allocation, worktree is on remote; skip local treehouse get
+  if [ -n "$REMOTE_WORKTREE" ]; then
+    # Remote worktree successfully allocated; use it directly
+    WT="$REMOTE_WORKTREE"
+  else
+    # Local worktree: run treehouse get to allocate a worktree
     spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
     # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
@@ -1825,9 +1835,6 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     fi
 
     validate_spawn_worktree "treehouse get" "$T"
-  else
-    # Remote dispatch: use the allocated remote worktree
-    WT="$REMOTE_WORKTREE"
   fi
 fi
 
