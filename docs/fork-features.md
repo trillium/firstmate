@@ -152,25 +152,25 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 - Commits: 613b284, 4b0e473, 6b093e2
 - Brief: replaces markdown backlog with durable transactional store
 
-## X-mode Integration
+## Relay Integration
 
-**Capability:** Respond to X/Twitter mentions and dispatch work from mentions with durable public reply tracking.
+**Capability:** Respond to public mentions on X and Discord with dispatched work and durable public reply tracking.
 
 **Files:**
 - `.agents/skills/fmx-respond/SKILL.md` — mention classification, reply, and follow-up handling
-- `bin/fm-x-lib.sh` — X-mode mention parsing and reply context
-- `bin/fmx-respond` — X-mode mention handler (if present)
-- `docs/configuration.md` — X-mode activation and FMX_PAIRING_TOKEN
+- `bin/fm-x-lib.sh` — Relay mention parsing and reply context
+- `bin/fmx-respond` — Relay mention handler (if present)
+- `docs/configuration.md` — Relay activation and FMX_PAIRING_TOKEN
 
 **Observable behavior:**
-- X-mode can be activated with `FMX_PAIRING_TOKEN` in `.env`
-- Mentions wake the supervisor when X-mode is active
+- Relay can be activated with `FMX_PAIRING_TOKEN` in `.env`
+- Mentions wake the supervisor when Relay is active
 - Replies and follow-ups are durable and tracked in state/
 - Public commitment reconciliation before teardown
 
 **References:**
-- Various commits adding X-mode support
-- Brief: enables accepting work from X mentions with durable reply tracking
+- Various commits adding Relay support
+- Brief: enables accepting work from X and Discord mentions with durable reply tracking
 
 ## Herdr Backend Support
 
