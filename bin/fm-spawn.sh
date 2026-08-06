@@ -1397,7 +1397,7 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
 # Sets REMOTE_WORKTREE to the allocated path on the remote machine.
 allocate_remote_worktree() {
   local remote_host=$1 task_id=$2
-  local treehouse_path remote_worktree_dir ssh_rc
+  local treehouse_path ssh_rc
 
   # Try treehouse get --lease on the remote
   treehouse_path=$(ssh "$remote_host" treehouse get --lease 2>/dev/null)
@@ -1429,18 +1429,18 @@ allocate_remote_worktree() {
     return 1
   fi
 
-  proj_clone_dir="~/fm-worktrees/$task_id"
   # Get the current branch name from local project to check out on remote
   local current_branch
   current_branch=$(git -C "$PROJ_ABS" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
   # Clone the project on the remote and check out the current branch.
-  # The double quotes allow local variable expansion ($proj_url, $current_branch) before ssh.
-  # Single quotes in the git command protect those expansions from remote shell re-interpretation.
+  # The double quotes allow local variable expansion ($current_branch) before ssh.
+  # Use $(echo ~) on the remote to expand ~ to the actual home directory.
+  # Single quotes protect expansions from remote re-interpretation.
   # If the branch doesn't exist on remote, use the remote's default branch.
   # shellcheck disable=SC2029
-  if ssh "$remote_host" "git clone '$proj_url' '$proj_clone_dir' && cd '$proj_clone_dir' && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
-    REMOTE_WORKTREE="$proj_clone_dir"
+  if ssh "$remote_host" "git clone '$proj_url' \"\$(echo ~)/fm-worktrees/$task_id\" && cd \"\$(echo ~)/fm-worktrees/$task_id\" && git fetch origin && git checkout -q '$current_branch' 2>/dev/null || git checkout -q HEAD" 2>/dev/null; then
+    REMOTE_WORKTREE="\$(echo ~)/fm-worktrees/$task_id"
     return 0
   fi
 

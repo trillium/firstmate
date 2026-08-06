@@ -199,6 +199,8 @@ fm_backend_herdr_remote_cmd() {
   if [ -z "$remote_host" ]; then
     herdr "$@"
   else
+    # SC2029: $@ expands locally, which is intentional - we want arguments passed through SSH
+    # shellcheck disable=SC2029
     ssh "$remote_host" herdr "$@"
   fi
 }
