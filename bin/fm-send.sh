@@ -371,6 +371,13 @@ else
         echo "error: refusing to send the slash command '$SLASH_VERB' to secondmate ${TARGET_TASK_ID:-$T}: from-firstmate marked text carries '$FM_FROMFIRST_LABEL' at column 0, so the harness reads the whole line as prose and never runs the command. Recover with one of: bin/fm-teardown.sh to close that agent; an explicit backend target (its own endpoint, e.g. session:window), which is never marked, to drive its harness directly; or the same request as prose." >&2
         exit 1
         ;;
+      \$[a-z]*)
+        if [ "$TARGET_HARNESS" = codex ]; then
+          CODEX_VERB=${CARRIER_BODY%%[[:space:]]*}
+          echo "error: refusing to send the codex skill command '$CODEX_VERB' to secondmate ${TARGET_TASK_ID:-$T}: from-firstmate marked text carries '$FM_FROMFIRST_LABEL' at column 0, so codex reads the whole line as prose and never runs the '\$<skill>' command. Recover with one of: bin/fm-teardown.sh to close that agent; an explicit backend target (its own endpoint, e.g. session:window), which is never marked, to drive its harness directly; or the same request as prose." >&2
+          exit 1
+        fi
+        ;;
     esac
     # Reuse an existing correlation id for recovery resends; otherwise create a
     # durable parent expectation before delivery. Transport success never

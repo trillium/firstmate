@@ -147,7 +147,9 @@ first_settle 0.3 'codex plain text -> fast path' codex 'just a normal steer'
 
 # A kind=secondmate target prepends the from-firstmate carrier, so the composer
 # line starts with '[' and no popup can open no matter what the ARGUMENTS were.
-# The settle is therefore selected from the FINAL text: a `$<skill>` message to a
-# codex SECONDMATE takes the fast path, unlike the same message to a codex
-# crewmate above (robots-u7gu - the mismatch that exposed the carrier defect).
-first_settle 0.3 'codex secondmate $skill -> fast path (carrier at column 0)' codex '$no-mistakes' secondmate
+# The settle is therefore selected from the FINAL text: a `$`-prefixed price to a
+# codex SECONDMATE takes the fast path, even though the same `$5...` argument to a
+# codex crewmate above takes the long settle (robots-u7gu - the argument-vs-final
+# mismatch that exposed the carrier defect). A real `$<skill>` to a secondmate is
+# refused, not delivered, so it is exercised in fm-send-secondmate-marker.test.sh.
+first_settle 0.3 'codex secondmate $price -> fast path (carrier at column 0)' codex '$5/month is cheap' secondmate

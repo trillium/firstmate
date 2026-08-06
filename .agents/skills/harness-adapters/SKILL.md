@@ -165,7 +165,8 @@ Natural language is acceptable if uncertain.
 Across every verified harness, a command form is recognized only when its `/` or `$` is the FIRST character of the composer line.
 Any prefix demotes the whole line to prose that the agent merely reads, and the agent may then narrate compliance it never performed, so a prefixed command fails silently rather than erroring.
 Field evidence: `[fm-from-firstmate]<U+2063>corr=... /exit` reached a secondmate, which answered "Exiting secondmate session as requested" and stayed open (robots-u7gu).
-That is why `fm-send` refuses a slash command to a `kind=secondmate` target: its from-firstmate carrier owns column 0, so no command can be delivered on that path.
+That is why `fm-send` refuses a command to a `kind=secondmate` target: its from-firstmate carrier owns column 0, so no command can be delivered on that path.
+The refusal covers both command forms - a leading `/` for any harness, and a leading `$<skill>` when the target's recorded harness is codex (a leading `$` before a non-skill token like `$5` or `$HOME` stays deliverable prose).
 
 ## Submission acknowledgement hazards
 
