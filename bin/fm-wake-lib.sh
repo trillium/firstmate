@@ -9,10 +9,13 @@ STATE="${FM_STATE_OVERRIDE:-${STATE:-$FM_HOME/state}}"
 FM_WAKE_QUEUE="${FM_WAKE_QUEUE:-$STATE/.wake-queue}"
 FM_WAKE_QUEUE_LOCK="${FM_WAKE_QUEUE_LOCK:-$STATE/.wake-queue.lock}"
 FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
-# Resolved once at source time: fm_pid_identity and fm_path_mtime run inside 0.2s
-# confirm and 0.5s attach polls, and forking uname per call is a measurable cost on
-# the platform (Git Bash/MSYS) that already pays the highest fork price.
+# Resolved once at source time: fm_pid_identity runs inside 0.2s confirm and 0.5s
+# attach polls, and forking uname per call is a measurable cost on the platform
+# (Git Bash/MSYS) that already pays the highest fork price. Note this is a KERNEL
+# question only - fm_path_mtime deliberately does NOT use it, see below.
 _FM_UNAME=$(uname 2>/dev/null || echo unknown)
+# shellcheck source=bin/fm-stat-lib.sh
+. "$FM_WAKE_LIB_DIR/fm-stat-lib.sh"
 mkdir -p "$STATE"
 
 fm_current_pid() {
@@ -64,12 +67,12 @@ fm_pid_identity() {
   printf '%s\n' "$out" | sed 's/^[[:space:]]*//'
 }
 
+# Deliberately NOT keyed on $_FM_UNAME: a Darwin kernel routinely resolves `stat`
+# to GNU coreutils, so the kernel's name does not predict the binary's dialect.
+# bin/fm-stat-lib.sh feature-detects the binary once and caches the answer, so
+# this stays fork-free per call in the confirm/attach polls.
 fm_path_mtime() {
-  if [ "$_FM_UNAME" = Darwin ]; then
-    stat -f %m "$1" 2>/dev/null
-  else
-    stat -c %Y "$1" 2>/dev/null
-  fi
+  fm_stat_mtime "$1"
 }
 
 fm_path_age() {

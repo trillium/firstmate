@@ -18,6 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-stat-lib.sh
+. "$SCRIPT_DIR/fm-stat-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -75,13 +77,7 @@ snapshot_bounded_file() { # <file> <max-bytes> <destination> <size-file>
   )
 }
 
-directory_identity() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f '%d:%i' . 2>/dev/null
-  else
-    stat -c '%d:%i' . 2>/dev/null
-  fi
-}
+directory_identity() { fm_stat_identity .; }
 
 put_handoff_file() { # <home-real> <name> <max-bytes> <relative-path> <bytes> <sha256> <generation>
   local home_real=$1 name=$2 max=$3 rel=$4 expected_bytes=$5 expected_hash=$6 generation=$7

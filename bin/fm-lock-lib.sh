@@ -21,6 +21,10 @@
 # binary through the same function so one host can never answer "is lsof here?"
 # two different ways.
 
+_FM_LOCK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_LOCK_LIB_DIR="."
+# shellcheck source=bin/fm-stat-lib.sh
+. "$_FM_LOCK_LIB_DIR/fm-stat-lib.sh"
+
 fm_lock_log() {
   echo "${FM_LOCK_LOG_PREFIX:-fm-lock}: $*" >&2
 }
@@ -54,14 +58,14 @@ fm_lsof_bin() {
   return 1
 }
 
-# Portable mtime in epoch seconds. Kept self-contained so this leaf lib drags in
-# no wake-queue machinery when a caller only needs the staleness proof.
+# Portable mtime in epoch seconds. Still drags in no wake-queue machinery when a
+# caller only needs the staleness proof: fm-stat-lib.sh is a dependency-free leaf
+# whose only job is answering which dialect this host's `stat` speaks. Asking
+# `uname` instead is wrong - a Darwin kernel routinely resolves `stat` to GNU
+# coreutils - and a wrong answer here reads every lock as unreadable, which fails
+# safe but permanently refuses to reap an abandoned lock.
 fm_lock_path_mtime() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f %m "$1" 2>/dev/null
-  else
-    stat -c %Y "$1" 2>/dev/null
-  fi
+  fm_stat_mtime "$1"
 }
 
 # fm_lock_lsof_holder <target>: 0 a process holds it, 1 provably none, 2 lsof

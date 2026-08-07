@@ -38,6 +38,10 @@
 # an Aqua requirement. The launch-agent renderer and repair helpers here are
 # shared by the entrypoint and remote doctor so their ownership cannot drift.
 
+_FM_REMOTE_JOB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_REMOTE_JOB_LIB_DIR="."
+# shellcheck source=bin/fm-stat-lib.sh
+. "$_FM_REMOTE_JOB_LIB_DIR/fm-stat-lib.sh"
+
 FM_REMOTE_JOB_LABEL=dev.firstmate.remote-job
 FM_REMOTE_JOB_MAX_BYTES=${FM_REMOTE_JOB_MAX_BYTES:-1048576}
 FM_REMOTE_JOB_QUEUE_TIMEOUT=${FM_REMOTE_JOB_QUEUE_TIMEOUT:-360}
@@ -571,9 +575,11 @@ fm_remote_job_reap() { # <account-home> <id>; only removes an exact completed re
 }
 
 fm_remote_job_path_mtime() { # <path>
-  # The platform override controls worker shape in isolated tests, not the host
-  # kernel's stat syntax.
-  if [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then stat -f %m "$1" 2>/dev/null; else stat -c %Y "$1" 2>/dev/null; fi
+  # Neither the platform override nor the host kernel decides stat's syntax: the
+  # `stat` BINARY does, and a Darwin kernel routinely resolves it to GNU
+  # coreutils. Getting this wrong made the readiness probe fail permanently
+  # (robots-xw8p). bin/fm-stat-lib.sh feature-detects the binary instead.
+  fm_stat_mtime "$1"
 }
 
 fm_remote_job_reap_stale() { # <account-home>
