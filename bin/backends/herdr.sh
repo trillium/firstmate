@@ -86,6 +86,12 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # shellcheck source=bin/fm-transition-lib.sh
 . "$FM_BACKEND_HERDR_ROOT/bin/fm-transition-lib.sh"
 
+# The one owner of "which dialect does this host's `stat` speak?". The
+# presentation-lock namespace checks below are ownership/permission proofs, so
+# an unreadable answer disables the lock outright - see the note there.
+# shellcheck source=bin/fm-stat-lib.sh
+. "$FM_BACKEND_HERDR_ROOT/bin/fm-stat-lib.sh"
+
 FM_BACKEND_HERDR_MIN_PROTOCOL=14
 # events.subscribe (the native pane.agent_status_changed push stream) and its
 # subscription_event schema first shipped at protocol 16 (verified: herdr
@@ -680,20 +686,17 @@ fm_backend_herdr_presentation_lock_namespace() {
   printf '%s' '/tmp/firstmate-herdr-presentation'
 }
 
+# Mode and owner via bin/fm-stat-lib.sh rather than a `uname -s` branch: the
+# kernel's name does not predict the `stat` binary's dialect, and a Darwin host
+# with GNU coreutils on PATH answered both of these with an apfs dump. Both
+# feed fm_backend_herdr_presentation_lock_namespace_valid, so the wrong dialect
+# read every namespace as invalid and silently gave up the presentation lock.
 fm_backend_herdr_presentation_lock_namespace_mode() {
-  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
-    stat -f '%Lp' "$1" 2>/dev/null
-  else
-    stat -c '%a' "$1" 2>/dev/null
-  fi
+  fm_stat_mode "$1"
 }
 
 fm_backend_herdr_presentation_lock_namespace_uid() {
-  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
-    stat -f '%u' "$1" 2>/dev/null
-  else
-    stat -c '%u' "$1" 2>/dev/null
-  fi
+  fm_stat_uid "$1"
 }
 
 fm_backend_herdr_presentation_lock_namespace_valid() {

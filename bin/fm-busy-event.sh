@@ -47,6 +47,8 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-stat-lib.sh
+. "$SCRIPT_DIR/fm-stat-lib.sh"
 
 CMD=${1:-}
 case "$CMD" in
@@ -102,7 +104,17 @@ lock_acquire() {
     tries=$((tries + 1))
     if [ "$tries" -ge 40 ]; then
       now=$(date +%s)
-      mtime=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo "$now")
+      # NOT `stat -f ... || stat -c ...`. GNU's -f is --file-system and takes no
+      # argument, so GNU reads `%m` as a second FILE operand: it fails on that
+      # operand (so the `||` does fire) but it has ALREADY written a filesystem
+      # dump for $LOCK to stdout, which 2>/dev/null does not suppress. The
+      # substitution therefore captures the apfs/ext4 blob with the fallback's
+      # number glued on, and the arithmetic below gets that. Age never crosses
+      # the stale threshold and a dead holder's lock is never broken.
+      # fm_stat_mtime feature-detects the binary instead and yields a bare
+      # integer or nothing; $now still stands in when the lock is gone or
+      # unreadable, which reads as age 0 (not stale), as before.
+      mtime=$(fm_stat_mtime "$LOCK" 2>/dev/null) || mtime=$now
       age=$((now - mtime))
       if [ "$age" -ge "${FM_BUSY_LOCK_STALE_SECS:-5}" ]; then
         rmdir "$LOCK" 2>/dev/null || rm -rf "$LOCK" 2>/dev/null || true

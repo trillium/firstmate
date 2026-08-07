@@ -14,13 +14,16 @@
 # identity-matched watcher is still required. The status fields here retain the
 # beacon-age details used in their messages.
 
-# Portable mtime; Linux stat lacks -f, macOS stat lacks -c.
+_FM_SUPERVISION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_SUPERVISION_LIB_DIR="."
+# shellcheck source=bin/fm-stat-lib.sh
+. "$_FM_SUPERVISION_LIB_DIR/fm-stat-lib.sh"
+
+# Portable mtime, via the one owner of the dialect question. Not keyed on
+# `uname`: a Darwin kernel routinely resolves `stat` to GNU coreutils, and a
+# wrong answer here makes every beacon read as absent, so a healthy watcher is
+# reported unsupervised forever.
 fm_sup_stat_mtime() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f %m "$1" 2>/dev/null
-  else
-    stat -c %Y "$1" 2>/dev/null
-  fi
+  fm_stat_mtime "$1"
 }
 
 # fm_supervision_status <state-dir> [grace-seconds]

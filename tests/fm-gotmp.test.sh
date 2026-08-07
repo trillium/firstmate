@@ -80,6 +80,13 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-secondmate-parent-lib.sh" "$fake/bin/fm-secondmate-parent-lib.sh"
   # fm-wake-lib.sh: teardown sources it for serialized secondmate lifecycle locks.
   ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
+  # fm-stat-lib.sh: the leaf that owns the stat-dialect question. Nothing here
+  # names it directly - it is reached only through siblings already symlinked
+  # above (fm-lock-lib.sh, fm-pr-lib.sh, fm-x-lib.sh, fm-wake-lib.sh) and
+  # through the fm-busy-event.sh that teardown execs. Each of those resolves it
+  # from its OWN BASH_SOURCE, which is this fake bin/, so the real file has to
+  # be reachable here or teardown exits non-zero on a valid tasktmp.
+  ln -s "$ROOT/bin/fm-stat-lib.sh" "$fake/bin/fm-stat-lib.sh"
   # fm-guard.sh: stub (teardown calls it with `|| true`).
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -157,6 +164,9 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-secondmate-registry-lib.sh" "$fake/bin/fm-secondmate-registry-lib.sh"
   ln -s "$ROOT/bin/fm-secondmate-parent-lib.sh" "$fake/bin/fm-secondmate-parent-lib.sh"
   ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
+  # fm-stat-lib.sh: reached only via the siblings above and fm-busy-event.sh,
+  # each resolving it from its own BASH_SOURCE inside this fake bin/.
+  ln -s "$ROOT/bin/fm-stat-lib.sh" "$fake/bin/fm-stat-lib.sh"
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
