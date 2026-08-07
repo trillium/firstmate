@@ -161,11 +161,20 @@ status_is_paused_or_captain_held() {  # <status-line>
 #   resolved       [key=api-shape]: <how it was decided>
 # A line with no token uses the key "default", preserving the historical
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
-# The three parsers are pure reads of a single line; the verb parser strips any
-# key token before the colon so the leading word is recovered cleanly.
+#
+# "[key=<slug>]" is NOT the only bracketed token that appears there: a secondmate
+# answering a marked parent request writes the correlation token the same way
+# (bin/fm-secondmate-report.sh), so a real resolution line is often
+#   resolved [corr=<16 hex>] [key=<slug>]: <how it was decided>
+# The three parsers are pure reads of a single line; the verb parser therefore
+# strips EVERY bracketed token before the colon - not just "[key=...]" - so the
+# leading word is recovered cleanly whatever tokens a writer attached. Stripping
+# only the key token left the verb as "resolved [corr=...]", which matched no
+# verb case, so such a line neither opened nor closed its decision and every
+# other verb consumer (terminal/paused/captain-relevant) misread it too.
 status_line_verb() {  # <status-line> -> leading verb word
   local v=${1%%:*}
-  v=${v%%\[key=*}
+  v=${v%%\[*}
   v=${v#"${v%%[![:space:]]*}"}
   v=${v%"${v##*[![:space:]]}"}
   printf '%s' "$v"
