@@ -312,17 +312,18 @@ fail_unexplained_cycle() {
   return 1
 }
 
-# Close a cycle whose reason line this arm could not read against the bounded
-# terminal-delivery ledger the watcher publishes before releasing its lock.
+# Report the wake this arm's cycle durably delivered, read from the bounded
+# terminal-delivery ledger the watcher publishes before releasing its lock. A
+# hit prints the reason and returns 0. Anything else - no watcher-bound record,
+# or the delivery lock could not be taken - returns 1 WITHOUT printing, so the
+# caller falls through to classify the reasonless close by the pending queue and
+# the liveness beacon.
 close_unobserved_cycle() {
   local i reason clean_identity record_pid record_identity record_reason
   clean_identity=$(printf '%s' "$cycle_watcher_identity" | tr '\t\r\n' '   ')
   i=0
   while ! fm_lock_try_acquire "$WATCH_DELIVERY_LOCK"; do
-    [ "$i" -lt 20 ] || {
-      fail_unexplained_cycle
-      return 1
-    }
+    [ "$i" -lt 20 ] || return 1
     sleep 0.02
     i=$((i + 1))
   done
@@ -339,14 +340,16 @@ close_unobserved_cycle() {
     printf '%s\n' "$reason"
     return 0
   fi
-  fail_unexplained_cycle
   return 1
 }
 
 # Stay alive across identity-matched healthy holders. If one cycle ends, attach
-# to a verified successor. With no successor, let end_cycle_without_reason
-# classify by the beacon: a benign clean end (fresh beacon) exits zero, only a
-# stale/expired beacon fails loudly.
+# to a verified successor. With no successor, classify the closed cycle in order:
+# first report a wake this cycle durably delivered (the watcher-bound ledger, the
+# only evidence that survives an attached arm that never read the reason line);
+# then a wake still queued but delivered by no one is a real miss that fails
+# loudly; only a genuinely empty queue lets end_cycle_without_reason fall back to
+# the beacon, where a fresh beacon is a benign clean end and a stale one fails.
 attach_and_wait() {
   local attached_pid=$1
   while :; do
@@ -367,12 +370,19 @@ attach_and_wait() {
       report_attached
       continue
     fi
-    if end_cycle_without_reason; then
-      cycle_log_append unknown unknown attached-cycle-ended-benign none
-      return 0
-    fi
     if close_unobserved_cycle; then
       cycle_log_append unknown unknown attached-delivered-wake none
+      return 0
+    fi
+    if [ -s "$FM_WAKE_QUEUE" ]; then
+      # A wake is still queued but this cycle delivered none of it: a real miss,
+      # not a benign idle, however fresh the liveness beacon still looks.
+      fail_unexplained_cycle
+      cycle_log_append unknown unknown attached-cycle-ended none
+      return 1
+    fi
+    if end_cycle_without_reason; then
+      cycle_log_append unknown unknown attached-cycle-ended-benign none
       return 0
     fi
     cycle_log_append unknown unknown attached-cycle-ended none
