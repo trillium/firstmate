@@ -22,6 +22,12 @@
 # guard after any harness upgrade and before trusting refreshed evidence.
 set -u
 
+# fm-spawn.sh enrolls the spawned agent with the live parlay relay unless this
+# is set, and that listener outlives the test (robots-4nkn). Tests that source
+# tests/lib.sh inherit the guard; this file rolls its own boilerplate, so it
+# sets it directly.
+export FM_SPAWN_SKIP_PARLAY=1
+
 if [ "${FM_HARNESS_LIVENESS_DRIFT:-0}" != 1 ]; then
   echo "skip: set FM_HARNESS_LIVENESS_DRIFT=1 to run the installed-harness liveness drift guard"
   exit 0

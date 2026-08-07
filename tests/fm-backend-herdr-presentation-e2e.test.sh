@@ -6,6 +6,12 @@
 # and the guarded named-session lab helper.
 set -u
 
+# fm-spawn.sh enrolls the spawned agent with the live parlay relay unless this
+# is set, and that listener outlives the test (robots-4nkn). Tests that source
+# tests/lib.sh inherit the guard; this file rolls its own boilerplate, so it
+# sets it directly.
+export FM_SPAWN_SKIP_PARLAY=1
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HERDR_LAB_HELPER=${HERDR_LAB_HELPER:-$ROOT/bin/fm-herdr-lab.sh}
 

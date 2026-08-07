@@ -7,6 +7,12 @@
 # destructive-invariant coverage that an e2e run cannot deterministically reach.
 set -u
 
+# fm-spawn.sh enrolls the spawned agent with the live parlay relay unless this
+# is set, and that listener outlives the test (robots-4nkn). Tests that source
+# tests/lib.sh inherit the guard; this file rolls its own boilerplate, so it
+# sets it directly.
+export FM_SPAWN_SKIP_PARLAY=1
+
 # shellcheck source=tests/secondmate-helpers.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
 
