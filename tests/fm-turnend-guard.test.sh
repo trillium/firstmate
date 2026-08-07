@@ -119,6 +119,16 @@ test_predicate_source_needs_supervision() {
 # Each scenario gets its own directory carrying a copy of the two guard scripts
 # under bin/, so the hook (invoked by absolute path) resolves its own FM_ROOT to
 # that scenario dir regardless of the test's cwd.
+#
+# A bash symlink named "claude" stands in for the harness process, exactly as in
+# tests/fm-claude-stop-autoarm.test.sh: the guard's primary-SESSION gate walks
+# the process ancestry for a verified harness name and compares that pid with
+# the one recorded in state/.lock, so the fixture needs a real ancestor with a
+# real pid rather than an environment bypass.
+
+FAKE_HARNESS_BIN=$(fm_fakebin "$TMP_ROOT/harness")
+ln -s /bin/bash "$FAKE_HARNESS_BIN/claude"
+FAKE_HARNESS="$FAKE_HARNESS_BIN/claude"
 
 install_guard_scripts() {
   local dir=$1
@@ -129,6 +139,7 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-supervision-instructions.sh" "$dir/bin/fm-supervision-instructions.sh"
   cp "$ROOT/bin/fm-harness.sh" "$dir/bin/fm-harness.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
+  cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-watch-cycle-lib.sh" "$dir/bin/fm-watch-cycle-lib.sh"
@@ -205,10 +216,68 @@ make_secondmate_linked_home_dir() {
   printf '%s\n' "$dir"
 }
 
+# THE single definition of "run this command line underneath a live fake-harness
+# process". Every fixture that must reach the guard's identity comparison goes
+# through here, including the integrity probe below, so there is exactly one
+# wrapper whose breakage the probe can detect.
+#
+# The body ends with an explicit `exit "$rc"` rather than letting the command be
+# the last one: bash implicitly execs a final simple command, which would
+# REPLACE the fake harness process and erase the very ancestry these fixtures
+# exist to provide.
+#
+# The guard fires only inside the session that owns this home's session lock,
+# the same identity proof bin/fm-claude-stop-autoarm.sh requires. $1 is the
+# state dir to claim with the harness pid, or empty to run with no claim at all;
+# the rest is the command line to run underneath the fake harness.
+under_fake_harness() {
+  local owned_state=$1
+  shift
+  # shellcheck disable=SC2016 # expansion must happen in the child shell so the fake-harness ancestry survives
+  FM_TEST_OWNED_STATE="$owned_state" "$FAKE_HARNESS" -c '
+    if [ -n "${FM_TEST_OWNED_STATE:-}" ]; then
+      mkdir -p "$FM_TEST_OWNED_STATE" || exit 1
+      printf "%s\n" "$$" > "$FM_TEST_OWNED_STATE/.lock" || exit 1
+    fi
+    "$@"
+    rc=$?
+    exit "$rc"
+  ' _ "$@"
+}
+
+# A harness ancestry that DOES record its own pid as this home's session lock
+# owner: the shape of the captain's real primary session.
+run_owning_session() {
+  local owned_state=$1
+  shift
+  under_fake_harness "$owned_state" "$@"
+}
+
+# The same harness ancestry WITHOUT the session lock: the shape of a crewmate,
+# scout, or helper agent launched with its cwd set to the primary checkout.
+# $1 selects what the lock holds - "none" leaves it absent, otherwise $1 is
+# written verbatim as the recorded owner pid.
+# Any further arguments are passed to the guard itself (e.g. --claude).
+run_hook_unowned() {
+  local lock=$1 dir=$2 stop_active=$3 home
+  shift 3
+  home=$(cd "$dir" && pwd)
+  mkdir -p "$home/state"
+  if [ "$lock" = none ]; then
+    rm -f "$home/state/.lock"
+  else
+    printf '%s\n' "$lock" > "$home/state/.lock"
+  fi
+  printf '{"stop_hook_active":%s,"session_id":"sess-unowned"}' "$stop_active" \
+    | under_fake_harness '' env CLAUDECODE=1 FM_HOME="$home" \
+        bash "$dir/bin/fm-turnend-guard.sh" "$@" 2>&1
+}
+
 run_hook() {
   local dir=$1 stop_active=$2 home
   home=$(cd "$dir" && pwd)
-  printf '{"stop_hook_active":%s}' "$stop_active" | CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1
+  printf '{"stop_hook_active":%s}' "$stop_active" \
+    | run_owning_session "$home/state" env CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1
 }
 
 nonexistent_pid() {
@@ -379,13 +448,111 @@ test_hook_blocks_when_unhealthy_in_primary() {
   pass "fm-turnend-guard: blocks with the exact required reason in the primary when unhealthy"
 }
 
+# --- primary SESSION identity (robots-s91c) ----------------------------------
+#
+# Fixture integrity first: the shared wrapper every runner below goes through
+# must resolve a REAL harness ancestor. If it resolved none, the guard would
+# exit at its uncertainty branch and every silence assertion below would pass
+# without ever exercising the identity comparison they exist to prove. This
+# probe drives the very same under_fake_harness definition those runners use, so
+# collapsing that wrapper back to a single final simple command fails here.
+test_fixture_unowned_runner_resolves_its_fake_harness() {
+  local dir out ancestor parent
+  dir=$(make_primary_dir "$TMP_ROOT/hook-fixture-ancestry")
+  # shellcheck disable=SC2016 # expansion must happen in the child shell so the fake-harness ancestry survives
+  out=$(under_fake_harness '' \
+      bash -c '. "$0"; printf "%s %s\n" "$(fm_harness_ancestry_pid)" "$PPID"' \
+      "$dir/bin/fm-session-lock-lib.sh") || fail "ancestry probe failed to run"
+  ancestor=${out%% *}
+  parent=${out##* }
+  [ -n "$ancestor" ] || fail "fixture resolved no harness ancestor; identity assertions would be vacuous"
+  [ "$ancestor" = "$parent" ] || fail "fixture ancestry resolved $ancestor, expected the fake harness parent $parent"
+  pass "fm-turnend-guard fixtures: the non-owning runner resolves its fake harness ancestor"
+}
+
+#
+# Being IN the primary checkout is not BEING the primary session. A scout,
+# crewmate, or helper agent launched with its cwd set to the primary checkout
+# loads these same tracked hook files, and the repair banner tells its reader to
+# arm fleet supervision - a fleet mutation reserved for the lock-holding primary
+# (AGENTS.md sections 3 and 8). A compliant reader would arm a second watcher
+# and contend with the captain's real session; a non-compliant one just eats a
+# false alarm every turn. Each fixture below is identical to
+# test_hook_blocks_when_unhealthy_in_primary except for who owns state/.lock.
+
+test_hook_silent_for_non_owning_session_in_primary_checkout() {
+  local dir owner out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-nonowner-live")
+  : > "$dir/state/task1.meta"
+  "$FAKE_HARNESS" -c 'sleep 60; exit $?' &
+  owner=$!
+  out=$(run_hook_unowned "$owner" "$dir" false); status=$?
+  kill "$owner" 2>/dev/null || true
+  wait "$owner" 2>/dev/null || true
+  expect_code 0 "$status" "hook must stay silent when another live harness holds this home's session lock"
+  [ -z "$out" ] || fail "hook nagged a non-owning session inside the primary checkout: $out"
+  pass "fm-turnend-guard: silent for a crewmate/scout session in the primary checkout while the real primary owns the lock"
+}
+
+test_hook_silent_when_session_lock_absent() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-nonowner-nolock")
+  : > "$dir/state/task1.meta"
+  out=$(run_hook_unowned none "$dir" false); status=$?
+  expect_code 0 "$status" "hook must stay silent when no session has claimed this home"
+  [ -z "$out" ] || fail "hook demanded supervision repair with no session lock present: $out"
+  pass "fm-turnend-guard: silent when state/.lock is absent (no session has proven itself primary)"
+}
+
+test_hook_silent_when_session_lock_owner_dead() {
+  local dir dead out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-nonowner-deadlock")
+  dead=$(nonexistent_pid)
+  : > "$dir/state/task1.meta"
+  out=$(run_hook_unowned "$dead" "$dir" false); status=$?
+  expect_code 0 "$status" "hook must stay silent when the recorded session-lock owner is dead"
+  [ -z "$out" ] || fail "hook demanded supervision repair from a session that does not own the stale lock: $out"
+  pass "fm-turnend-guard: silent when the recorded session-lock owner is dead (session start reclaims it first)"
+}
+
+# A malformed lock is uncertainty, not proof of ownership: it must not fire, and
+# it must not be treatable as a match by a non-numeric spoof either.
+test_hook_silent_when_session_lock_malformed() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-nonowner-malformed")
+  : > "$dir/state/task1.meta"
+  out=$(run_hook_unowned 'not-a-pid' "$dir" false); status=$?
+  expect_code 0 "$status" "hook must stay silent on a malformed session lock"
+  [ -z "$out" ] || fail "hook acted on a malformed session lock: $out"
+  pass "fm-turnend-guard: silent on a malformed session lock"
+}
+
+# The reported repro was a Claude session, and --claude mode ignores
+# stop_hook_active - so the identity gate must hold on that path too, including
+# on the re-block turn where the loop guard offers no relief.
+test_hook_claude_mode_silent_for_non_owning_session() {
+  local dir owner out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-nonowner-claude")
+  : > "$dir/state/task1.meta"
+  "$FAKE_HARNESS" -c 'sleep 60; exit $?' &
+  owner=$!
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_unowned "$owner" "$dir" true --claude); status=$?
+  kill "$owner" 2>/dev/null || true
+  wait "$owner" 2>/dev/null || true
+  expect_code 0 "$status" "--claude mode must stay silent for a session that does not hold the session lock"
+  [ -z "$out" ] || fail "--claude mode nagged a non-owning session inside the primary checkout: $out"
+  [ ! -e "$dir/state/.turnend-claude-blocks" ] || fail "--claude mode spent block budget on a non-owning session"
+  pass "fm-turnend-guard --claude: silent for a crewmate/scout session in the primary checkout"
+}
+
 test_hook_blocks_from_fm_home_state() {
   local dir home out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-fm-home")
   home="$TMP_ROOT/hook-fm-home-op"
   mkdir -p "$home/state"
   : > "$home/state/task1.meta"
-  out=$(printf '{"stop_hook_active":false}' | CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
+  out=$(printf '{"stop_hook_active":false}' \
+    | run_owning_session "$home/state" env CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
   expect_code 2 "$status" "hook must inspect the active FM_HOME state dir"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: blocks from active FM_HOME state, not only repo-root state"
@@ -420,7 +587,8 @@ test_hook_ignores_repo_state_when_fm_home_set() {
   home="$TMP_ROOT/hook-fm-home-quiet"
   mkdir -p "$home/state"
   : > "$dir/state/task1.meta"
-  out=$(printf '{"stop_hook_active":false}' | FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
+  out=$(printf '{"stop_hook_active":false}' \
+    | run_owning_session "$home/state" env FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
   expect_code 0 "$status" "hook must ignore repo-root state when FM_HOME selects another state dir"
   [ -z "$out" ] || fail "hook produced output from stale repo-root state despite FM_HOME: $out"
   pass "fm-turnend-guard: ignores stale repo-root state when FM_HOME is set"
@@ -433,7 +601,8 @@ test_hook_uses_state_override() {
   state="$TMP_ROOT/hook-state-override-active"
   mkdir -p "$home/state" "$state"
   : > "$state/task1.meta"
-  out=$(printf '{"stop_hook_active":false}' | CLAUDECODE=1 FM_HOME="$home" FM_STATE_OVERRIDE="$state" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
+  out=$(printf '{"stop_hook_active":false}' \
+    | run_owning_session "$state" env CLAUDECODE=1 FM_HOME="$home" FM_STATE_OVERRIDE="$state" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
   expect_code 2 "$status" "hook must let FM_STATE_OVERRIDE win over FM_HOME/state"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: uses FM_STATE_OVERRIDE ahead of FM_HOME/state"
@@ -670,7 +839,7 @@ test_grok_adapter_forces_one_resume_when_unhealthy() {
 } >> "$log"
 EOF
   chmod +x "$fakebin/grok"
-  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | run_owning_session "$dir/state" env PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 0 "$status" "grok adapter must fail open after queuing a forced resume"
   [ -z "$out" ] || fail "grok adapter printed output: $out"
   assert_contains "$(cat "$log")" 'active=1' "grok adapter must mark its forced resume as loop-guarded"
@@ -693,7 +862,7 @@ test_grok_adapter_loop_guard_skips_resume() {
 printf 'called\n' >> "$log"
 EOF
   chmod +x "$fakebin/grok"
-  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" GROK_TURNEND_GUARD_ACTIVE=1 bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | run_owning_session "$dir/state" env PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" GROK_TURNEND_GUARD_ACTIVE=1 bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 0 "$status" "grok adapter must allow its own forced resume turn to end"
   [ -z "$out" ] || fail "grok adapter printed output while loop-guarded: $out"
   [ ! -e "$log" ] || fail "grok adapter spawned another resume while loop-guarded: $(cat "$log")"
@@ -708,7 +877,7 @@ test_grok_adapter_native_false_blocks_without_resume() {
   log="$TMP_ROOT/grok-native-false.log"
   printf '#!/usr/bin/env bash\nprintf called >> %q\n' "$log" > "$fakebin/grok"
   chmod +x "$fakebin/grok"
-  out=$(printf '%s' '{"sessionId":"native","stopHookActive":false}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '%s' '{"sessionId":"native","stopHookActive":false}' | run_owning_session "$dir/state" env PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 2 "$status" "native stopHookActive=false must return the shared blocking status"
   assert_contains "$out" 'TURN WOULD END BLIND' "native block must pass shared guard feedback to Grok"
   [ ! -e "$log" ] || fail "native path started grok --resume"
@@ -723,7 +892,7 @@ test_grok_adapter_native_true_allows_without_resume() {
   log="$TMP_ROOT/grok-native-true.log"
   printf '#!/usr/bin/env bash\nprintf called >> %q\n' "$log" > "$fakebin/grok"
   chmod +x "$fakebin/grok"
-  out=$(printf '%s' '{"sessionId":"native","stopHookActive":true}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '%s' '{"sessionId":"native","stopHookActive":true}' | run_owning_session "$dir/state" env PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 0 "$status" "native stopHookActive=true must allow the bounded continuation to stop"
   [ -z "$out" ] || fail "native true produced output: $out"
   [ ! -e "$log" ] || fail "native true started grok --resume"
@@ -734,12 +903,12 @@ test_grok_adapter_snake_case_native_and_camel_precedence() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/grok-native-spellings")
   : > "$dir/state/task1.meta"
-  out=$(printf '%s' '{"sessionId":"native","stop_hook_active":false}' | GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '%s' '{"sessionId":"native","stop_hook_active":false}' | run_owning_session "$dir/state" env GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 2 "$status" "typed snake_case false must select native blocking"
   assert_contains "$out" 'TURN WOULD END BLIND' "snake_case native block lost feedback"
-  out=$(printf '%s' '{"sessionId":"native","stopHookActive":true,"stop_hook_active":false}' | GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '%s' '{"sessionId":"native","stopHookActive":true,"stop_hook_active":false}' | run_owning_session "$dir/state" env GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 0 "$status" "camelCase true must win over snake_case false"
-  out=$(printf '%s' '{"sessionId":"native","stopHookActive":false,"stop_hook_active":true}' | GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '%s' '{"sessionId":"native","stopHookActive":false,"stop_hook_active":true}' | run_owning_session "$dir/state" env GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 2 "$status" "camelCase false must win over snake_case true"
   pass "fm-turnend-guard-grok: both spellings are typed and camelCase has deterministic precedence"
 }
@@ -763,12 +932,12 @@ test_grok_adapter_invalid_inputs_start_neither_path() {
     '{"sessionId":"x","stop_hook_active":false,"stop_hook_active":false}' \
     '{"sessionId":"x","sessionId":"y"}'
   do
-    out=$(printf '%s' "$payload" | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+    out=$(printf '%s' "$payload" | run_owning_session "$dir/state" env PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
     expect_code 0 "$status" "invalid Grok payload must conservatively allow without choosing a path"
     [ -z "$out" ] || fail "invalid Grok payload produced output: $out"
   done
   [ ! -e "$log" ] || fail "invalid Grok payload started a resume process"
-  out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$TMP_ROOT/missing-grok-root" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | run_owning_session "$dir/state" env PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$TMP_ROOT/missing-grok-root" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 0 "$status" "missing shared-guard prerequisite must conservatively allow"
   [ -z "$out" ] || fail "missing prerequisite produced output: $out"
   [ ! -e "$log" ] || fail "missing prerequisite started a resume process"
@@ -787,13 +956,13 @@ test_grok_adapter_missing_jq_and_no_supervision_allow() {
   done
   printf '#!/usr/bin/env bash\nprintf called >> %q\n' "$log" > "$fakebin/grok"
   chmod +x "$fakebin/grok"
-  out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | PATH="$fakebin" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | run_owning_session "$dir/state" env PATH="$fakebin" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 0 "$status" "missing jq must conservatively allow"
   [ -z "$out" ] || fail "missing jq produced output: $out"
   [ ! -e "$log" ] || fail "missing jq started a resume process"
 
   dir=$(make_primary_dir "$TMP_ROOT/grok-native-no-work")
-  out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
+  out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | run_owning_session "$dir/state" env GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
   expect_code 0 "$status" "healthy no-supervision-needed native stop must allow"
   [ -z "$out" ] || fail "no-supervision-needed native stop produced output: $out"
   pass "fm-turnend-guard-grok: missing jq and no-supervision-needed stops stay silent and bounded"
@@ -1062,7 +1231,8 @@ EOF
 run_hook_claude() {
   local dir=$1 stop_active=$2 home
   home=$(cd "$dir" && pwd)
-  printf '{"stop_hook_active":%s,"session_id":"sess-claude-mode"}' "$stop_active" | CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" --claude 2>&1
+  printf '{"stop_hook_active":%s,"session_id":"sess-claude-mode"}' "$stop_active" \
+    | run_owning_session "$home/state" env CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" --claude 2>&1
 }
 
 seed_claude_failure() {
@@ -1583,6 +1753,12 @@ test_hook_silent_with_live_lock_and_fresh_beacon
 test_hook_non_claude_health_ignores_claude_budget_contention
 test_hook_blocks_with_live_lock_and_stale_beacon
 test_hook_blocks_when_unhealthy_in_primary
+test_fixture_unowned_runner_resolves_its_fake_harness
+test_hook_silent_for_non_owning_session_in_primary_checkout
+test_hook_silent_when_session_lock_absent
+test_hook_silent_when_session_lock_owner_dead
+test_hook_silent_when_session_lock_malformed
+test_hook_claude_mode_silent_for_non_owning_session
 test_hook_blocks_from_fm_home_state
 test_hook_x_mode_reason_sources_cadence
 test_hook_x_mode_only_blocks_in_default_mode
