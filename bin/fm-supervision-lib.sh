@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # Shared "supervision missing" predicate.
 # Usage: . bin/fm-supervision-lib.sh
+# shellcheck source=bin/fm-stat-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fm-stat-lib.sh"
 #
 # Reports whether a firstmate home needs supervision because it has in-flight
 # work (a state/<id>.meta exists) or an X-mode relay poll
@@ -13,15 +15,6 @@
 # with no live watcher is healthy; under persistent-watcher harnesses a live
 # identity-matched watcher is still required. The status fields here retain the
 # beacon-age details used in their messages.
-
-# Portable mtime; Linux stat lacks -f, macOS stat lacks -c.
-fm_sup_stat_mtime() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f %m "$1" 2>/dev/null
-  else
-    stat -c %Y "$1" 2>/dev/null
-  fi
-}
 
 # fm_supervision_status <state-dir> [grace-seconds]
 # Populates, for the state dir at $1:
@@ -60,7 +53,7 @@ fm_supervision_status() {
 
   beat="$state/.last-watcher-beat"
   if [ -e "$beat" ]; then
-    m=$(fm_sup_stat_mtime "$beat")
+    m=$(fm_stat_mtime "$beat")
     if [ -n "$m" ]; then
       age=$(( $(date +%s) - m ))
       FM_SUP_BEACON_DESC="${age}s ago"
