@@ -50,6 +50,10 @@
 # bin/fm-remote-job-reap-orphans.sh uses it to reap workers that were already
 # orphaned that way.
 
+_FM_REMOTE_JOB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_REMOTE_JOB_LIB_DIR="."
+# shellcheck source=bin/fm-stat-lib.sh
+. "$_FM_REMOTE_JOB_LIB_DIR/fm-stat-lib.sh"
+
 FM_REMOTE_JOB_LABEL=dev.firstmate.remote-job
 FM_REMOTE_JOB_MAX_BYTES=${FM_REMOTE_JOB_MAX_BYTES:-1048576}
 FM_REMOTE_JOB_QUEUE_TIMEOUT=${FM_REMOTE_JOB_QUEUE_TIMEOUT:-360}
@@ -582,23 +586,12 @@ fm_remote_job_reap() { # <account-home> <id>; only removes an exact completed re
   rmdir "$job"
 }
 
-fm_remote_job_path_mtime() { # <path>; prints epoch seconds, or nothing and returns 1
-  # Do NOT infer stat's dialect from `uname`. On a nix-darwin or Homebrew-coreutils
-  # Mac, GNU coreutils can sit ahead of /usr/bin on the restricted child PATH, so
-  # `stat` is GNU even though the kernel is Darwin. GNU `stat -f` means *filesystem*
-  # status: it exits 0 while printing an apfs dump instead of an mtime, and every
-  # numeric check downstream then fails forever (the remote-job readiness probe can
-  # never go green on such a host).
-  #
-  # Probe the binary's own dialect instead, and order the probes GNU-first: BSD stat
-  # rejects `-c` with a usage error on stderr and writes nothing to stdout, so the
-  # fallback stays clean. The reverse order is the trap documented in fm-watch.sh -
-  # GNU `stat -f` would poison stdout before the fallback ever ran.
-  local mtime
-  mtime=$(stat -c %Y "$1" 2>/dev/null) || mtime=$(stat -f %m "$1" 2>/dev/null) || return 1
-  # Guard the contract even if some third stat dialect answers both probes.
-  case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
-  printf '%s\n' "$mtime"
+fm_remote_job_path_mtime() { # <path>
+  # Neither the platform override nor the host kernel decides stat's syntax: the
+  # `stat` BINARY does, and a Darwin kernel routinely resolves it to GNU
+  # coreutils. Getting this wrong made the readiness probe fail permanently
+  # (robots-xw8p). bin/fm-stat-lib.sh feature-detects the binary instead.
+  fm_stat_mtime "$1"
 }
 
 fm_remote_job_reap_stale() { # <account-home>
