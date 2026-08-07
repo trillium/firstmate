@@ -1871,7 +1871,7 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # non-zero exit - the get still runs and still speaks for itself.
   if [ "${FM_SPAWN_SKIP_POOL_RECLAIM:-}" != 1 ]; then
     fm_run_timed "${FM_SPAWN_POOL_RECLAIM_TIMEOUT:-30}" \
-      "$SCRIPT_DIR/fm-pool-reclaim.sh" --project "$PROJ" --yes --only-if-exhausted 2>&1 \
+      "$SCRIPT_DIR/fm-pool-reclaim.sh" --project "$PROJ_ABS" --yes --only-if-exhausted 2>&1 \
       | sed 's/^/spawn: /' >&2 || true
   fi
 
@@ -1924,11 +1924,11 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     # window looks fine), so print the pool itself - which slot is dirty, leased,
     # or in use is the actual diagnosis, and bin/fm-pool-reclaim.sh is the fix.
     if command -v treehouse >/dev/null 2>&1; then
-      if pool_status=$( (cd "$PROJ" && treehouse status) 2>/dev/null ) \
+      if pool_status=$( (cd "$PROJ_ABS" && treehouse status) 2>/dev/null ) \
          && [ -n "$pool_status" ]; then
-        echo "error: treehouse pool for $PROJ at the moment of failure:" >&2
+        echo "error: treehouse pool for $PROJ_ABS at the moment of failure:" >&2
         printf '%s\n' "$pool_status" >&2
-        echo "error: if no worktree is available, preview reclaimable slots with: $SCRIPT_DIR/fm-pool-reclaim.sh --project '$PROJ'" >&2
+        echo "error: if no worktree is available, preview reclaimable slots with: $SCRIPT_DIR/fm-pool-reclaim.sh --project '$PROJ_ABS'" >&2
         echo "error: that is a dry run; add --yes to actually return the abandoned slots" >&2
       fi
     fi
