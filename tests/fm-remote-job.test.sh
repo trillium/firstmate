@@ -106,6 +106,63 @@ export FM_REMOTE_JOB_TIMEOUT=5
 # shellcheck source=bin/fm-remote-job-lib.sh
 . "$ROOT/bin/fm-remote-job-lib.sh"
 
+# The mtime reader must detect stat's own dialect rather than infer it from the
+# kernel. A nix-darwin or Homebrew-coreutils Mac puts GNU coreutils ahead of
+# /usr/bin on the restricted child PATH, and GNU `stat -f` is *filesystem* status:
+# it exits 0 printing an apfs dump, which fails every numeric check downstream and
+# leaves the remote-job readiness probe permanently red on a fully healthy host.
+STAT_DIALECT_DIR="$TMP_ROOT/stat-dialect"
+mkdir -p "$STAT_DIALECT_DIR/gnu" "$STAT_DIALECT_DIR/bsd"
+: > "$STAT_DIALECT_DIR/probe"
+cat > "$STAT_DIALECT_DIR/gnu/stat" <<'SH'
+#!/bin/bash
+# GNU coreutils shape: -c is the format flag, -f dumps filesystem status.
+case "${1:-}" in
+  -c) [ -e "${3:-}" ] || { printf "stat: cannot stat '%s'\n" "${3:-}" >&2; exit 1; }
+      printf '1700000000\n' ;;
+  -f) [ -e "${3:-}" ] || { printf "stat: cannot stat '%s'\n" "${3:-}" >&2; exit 1; }
+      printf '  File: "%s"\n    ID: 0 Namelen: 255 Type: apfs\nBlock size: 4096\n' "$3" ;;
+  *)  printf 'stat: unsupported\n' >&2; exit 1 ;;
+esac
+SH
+cat > "$STAT_DIALECT_DIR/bsd/stat" <<'SH'
+#!/bin/bash
+# BSD shape: -f is the format flag and -c is rejected with nothing on stdout.
+case "${1:-}" in
+  -f) [ -e "${3:-}" ] || { printf 'stat: %s: No such file or directory\n' "${3:-}" >&2; exit 1; }
+      printf '1600000000\n' ;;
+  *)  printf 'stat: illegal option -- %s\n' "${1#-}" >&2
+      printf 'usage: stat [-FLnq] [-f format | -l | -r | -s | -x] [file ...]\n' >&2
+      exit 1 ;;
+esac
+SH
+chmod +x "$STAT_DIALECT_DIR/gnu/stat" "$STAT_DIALECT_DIR/bsd/stat"
+STAT_DIALECT_SAVED_PATH=$PATH
+# Each probe runs in a command-substitution subshell so the shimmed PATH - and the
+# command-hash reset it forces - cannot leak into the rest of the suite.
+STAT_DIALECT_GNU=$(
+  PATH="$STAT_DIALECT_DIR/gnu:$STAT_DIALECT_SAVED_PATH"; export PATH; hash -r 2>/dev/null || true
+  fm_remote_job_path_mtime "$STAT_DIALECT_DIR/probe"
+)
+[ "$STAT_DIALECT_GNU" = 1700000000 ] ||
+  fail "a GNU stat ahead of /usr/bin broke the remote-job mtime reader (got '$STAT_DIALECT_GNU')"
+STAT_DIALECT_BSD=$(
+  PATH="$STAT_DIALECT_DIR/bsd:$STAT_DIALECT_SAVED_PATH"; export PATH; hash -r 2>/dev/null || true
+  fm_remote_job_path_mtime "$STAT_DIALECT_DIR/probe"
+)
+[ "$STAT_DIALECT_BSD" = 1600000000 ] ||
+  fail "a BSD stat ahead of /usr/bin broke the remote-job mtime reader (got '$STAT_DIALECT_BSD')"
+if STAT_DIALECT_MISSING=$(fm_remote_job_path_mtime "$STAT_DIALECT_DIR/absent"); then
+  fail "the mtime reader reported success for a path that does not exist"
+fi
+[ -z "$STAT_DIALECT_MISSING" ] ||
+  fail "the mtime reader printed '$STAT_DIALECT_MISSING' for a path that does not exist"
+STAT_DIALECT_REAL=$(fm_remote_job_path_mtime "$STAT_DIALECT_DIR/probe")
+case "$STAT_DIALECT_REAL" in
+  ''|*[!0-9]*) fail "this host's own stat did not yield a numeric mtime (got '$STAT_DIALECT_REAL')" ;;
+esac
+pass "the mtime reader survives either stat dialect ahead of /usr/bin"
+
 LOCAL_BIN_PARENT="$ACCOUNT_HOME/.local"
 LOCAL_BIN_TARGET="$TMP_ROOT/local-bin-target"
 mkdir -p "$LOCAL_BIN_PARENT" "$LOCAL_BIN_TARGET"
