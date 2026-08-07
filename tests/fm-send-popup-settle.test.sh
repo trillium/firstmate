@@ -93,11 +93,19 @@ first_settle() {  # <expected> <label> <harness|--explicit> <message> [selector-
         target="fm-popupcase"
         meta_id=popupcase
         ;;
+      secondmate)
+        target="fm-popupcase"
+        meta_id=popupcase
+        ;;
       *)
         fail "$label: unknown selector form '$selector_form'"
         ;;
     esac
-    fm_write_meta "$home/state/$meta_id.meta" "window=sess:win" "harness=$harness"
+    if [ "$selector_form" = secondmate ]; then
+      fm_write_secondmate_meta "$home/state/$meta_id.meta" "$home" "sess:win" alpha "$harness"
+    else
+      fm_write_meta "$home/state/$meta_id.meta" "window=sess:win" "harness=$harness"
+    fi
   fi
   : > "$log"
   env FM_SEND_SETTLE=0 PATH="$fb:$PATH" \
@@ -136,3 +144,12 @@ first_settle 1.2 'codex /command -> long settle (slash unchanged)' codex '/help'
 
 # Plain text to codex takes the fast path - the codex scope is `$`-prefixed only.
 first_settle 0.3 'codex plain text -> fast path' codex 'just a normal steer'
+
+# A kind=secondmate target prepends the from-firstmate carrier, so the composer
+# line starts with '[' and no popup can open no matter what the ARGUMENTS were.
+# The settle is therefore selected from the FINAL text: a `$`-prefixed price to a
+# codex SECONDMATE takes the fast path, even though the same `$5...` argument to a
+# codex crewmate above takes the long settle (robots-u7gu - the argument-vs-final
+# mismatch that exposed the carrier defect). A real `$<skill>` to a secondmate is
+# refused, not delivered, so it is exercised in fm-send-secondmate-marker.test.sh.
+first_settle 0.3 'codex secondmate $price -> fast path (carrier at column 0)' codex '$5/month is cheap' secondmate
