@@ -48,6 +48,9 @@ set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 1
 
+# shellcheck source=bin/fm-stat-lib.sh
+. "$ROOT/bin/fm-stat-lib.sh"
+
 JOBS=4
 JSON_PATH=
 LIST_ONLY=0
@@ -203,13 +206,20 @@ fm-quota-array-dispatch-live-e2e.test.sh
 EOF
 }
 
+# This used to probe `stat -f %Lp` and take BSD on success. That is the wrong
+# direction to probe. GNU's -f is --file-system and takes no argument, so GNU
+# reads `%Lp` as a second FILE operand: it fails on that operand, but it still
+# writes a full filesystem dump for <dir> to STDOUT. The old `if` only inspected
+# the exit status, so it happened to fall through to the GNU branch - but the
+# very next line, had the status gone the other way, would have handed the
+# caller that dump. `stat -c` is the one direction that cannot be fooled: BSD
+# rejects it as an unknown option with nothing on stdout, so fm_stat_mode
+# (which probes -c FIRST) identifies the binary positively in both directions.
+# Prints nothing (exit 0) when the mode is unreadable, so the three callers'
+# `case` arms report it as an isolation failure with their own message rather
+# than `set -e` aborting the run at the assignment with no explanation.
 dir_mode() {
-  local path=$1
-  if stat -f %Lp "$path" >/dev/null 2>&1; then
-    stat -f %Lp "$path"
-  else
-    stat -c %a "$path"
-  fi
+  fm_stat_mode "$1" || true
 }
 
 global_git_snapshot() {

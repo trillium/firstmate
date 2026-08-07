@@ -8,6 +8,10 @@
 # parsing, default publication, and the portable prompt-memory estimate used by
 # bin/fm-startup-memory-budget.sh and the internal /stow skill.
 
+_FM_STARTUP_MEMORY_BUDGET_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_STARTUP_MEMORY_BUDGET_LIB_DIR="."
+# shellcheck source=bin/fm-stat-lib.sh
+. "$_FM_STARTUP_MEMORY_BUDGET_LIB_DIR/fm-stat-lib.sh"
+
 FM_STARTUP_MEMORY_BUDGET_FILE="startup-memory-budget"
 FM_STARTUP_MEMORY_BUDGET_DEFAULT="7500"
 FM_STARTUP_MEMORY_BUDGET_ERROR=""
@@ -21,12 +25,12 @@ fm_startup_memory_budget_fail() {
   return 1
 }
 
+# Link count via the one owner of the stat-dialect question. Not keyed on
+# `uname`: a Darwin kernel routinely resolves `stat` to GNU coreutils, and a
+# wrong answer here makes the hardlink-safety check unreadable, so a legitimate
+# config directory is rejected.
 fm_startup_memory_budget_link_count() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f %l "$1" 2>/dev/null
-  else
-    stat -c %h "$1" 2>/dev/null
-  fi
+  fm_stat_links "$1"
 }
 
 fm_startup_memory_budget_config_dir_safe() {
