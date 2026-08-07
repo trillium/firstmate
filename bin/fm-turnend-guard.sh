@@ -127,6 +127,8 @@ fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-watch-cycle-lib.sh
+. "$SCRIPT_DIR/fm-watch-cycle-lib.sh"
 
 BUDGET_FILE="$STATE/.turnend-claude-blocks"
 BUDGET_LOCK="$STATE/.turnend-claude-blocks.lock"
@@ -153,7 +155,7 @@ if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
 fi
 
 block_stop() {
-  local afk x_mode reason rule
+  local afk x_mode reason rule cycle_evidence
   afk=0
   [ -e "$STATE/.afk" ] && afk=1
   x_mode=0
@@ -171,6 +173,10 @@ block_stop() {
     else
       printf '●  X-mode relay polling needs supervision, but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_BEACON_DESC"
     fi
+    # A killed watcher leaves a beacon just as fresh as a healthy one, so name how
+    # the last cycle actually ended rather than leaving the model to guess.
+    cycle_evidence=$(fm_cycle_describe "$STATE" 2>/dev/null || true)
+    [ -n "$cycle_evidence" ] && printf '●  %s\n' "$cycle_evidence"
     if [ "$CLAUDE_MODE" -eq 1 ]; then
       printf '●  The Stop-owned auto-arm did not claim this home either, so recovery is NOT already under way.\n'
     fi

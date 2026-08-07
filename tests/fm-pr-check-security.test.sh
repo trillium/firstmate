@@ -66,6 +66,16 @@ SH
 printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case " $* " in
   *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
+  *" api "*)
+    # Emulates gh's own --jq engine already filtering the reviews response to
+    # Bot-authored ids: emit the configured ids verbatim, one per line.
+    case " $* " in
+      *reviews*)
+        [ "${FM_TEST_GH_REVIEWS_FAIL:-0}" = 0 ] || exit 1
+        printf '%s' "${FM_TEST_GH_BOT_REVIEW_IDS:-}"
+        ;;
+    esac
+    ;;
   *" state "*)
     [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
     [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
@@ -2700,6 +2710,7 @@ test_teardown_removes_poll_artifacts() {
   printf 'check\n' > "$dir/home/state/task-a.check.sh"
   printf 'data\n' > "$dir/home/state/task-a.pr-poll"
   printf 'registration\n' > "$dir/home/state/task-a.pr-poll-registration"
+  printf '205\n' > "$dir/home/state/task-a.pr-review-seen"
   printf 'trust\n' > "$dir/home/state/task-a.check-trust"
   mkdir -p "$dir/home/state/.pr-check-quarantine"
   chmod 0700 "$dir/home/state/.pr-check-quarantine"
@@ -2718,6 +2729,7 @@ SH
   [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "teardown left the runnable check"
   [ ! -e "$dir/home/state/task-a.pr-poll" ] || fail "teardown left the sidecar"
   [ ! -e "$dir/home/state/task-a.pr-poll-registration" ] || fail "teardown left the PR poll registration"
+  [ ! -e "$dir/home/state/task-a.pr-review-seen" ] || fail "teardown left the bot-review dedup sidecar"
   [ ! -e "$dir/home/state/task-a.check-trust" ] || fail "teardown left the custom check registration"
   ! find "$dir/home/state/.pr-check-quarantine" -name 'task-a.*' -print 2>/dev/null | grep . >/dev/null \
     || fail "teardown left task quarantine artifacts"
@@ -3409,8 +3421,73 @@ test_gitlab_merged_poll_retires() {
   pass "GitHub and GitLab exact merged results share one retirement path"
 }
 
+# A new automated-reviewer review must wake firstmate exactly once, stay clearly
+# distinct from the merge wake, dedupe through the private seen sidecar, and
+# never displace the terminal merged wake or leave the poll disarmed.
+test_bot_review_wake() {
+  local dir state out rc seen
+  dir=$(make_case bot-review-wake)
+  state="$dir/home/state"
+  make_poll_fixture "$dir"
+  seen="$state/task-a.pr-review-seen"
+
+  # No bot reviews -> silent, no seen sidecar.
+  out=$(FM_TEST_GH_STATE=OPEN run_poll "$dir")
+  [ -z "$out" ] || fail "static poll emitted with no bot reviews"
+  [ ! -e "$seen" ] || fail "static poll wrote a seen sidecar with no bot reviews"
+
+  # First bot review -> one bot-review line, seen recorded.
+  out=$(FM_TEST_GH_STATE=OPEN FM_TEST_GH_BOT_REVIEW_IDS=$'100' run_poll "$dir")
+  [ "$out" = bot-review ] || fail "static poll did not emit bot-review for a new bot review"
+  [ "$(cat "$seen")" = 100 ] || fail "static poll did not record the surfaced bot review id"
+  [ "$(file_mode "$seen")" = 600 ] || fail "seen sidecar was not written 0600"
+
+  # Same id again -> deduped to silence.
+  out=$(FM_TEST_GH_STATE=OPEN FM_TEST_GH_BOT_REVIEW_IDS=$'100' run_poll "$dir")
+  [ -z "$out" ] || fail "static poll re-woke for an already-surfaced bot review"
+  [ "$(cat "$seen")" = 100 ] || fail "dedup changed the recorded bot review id"
+
+  # A newer id (mixed with the old one) -> wake once, advance the seen id.
+  out=$(FM_TEST_GH_STATE=OPEN FM_TEST_GH_BOT_REVIEW_IDS=$'100\n205' run_poll "$dir")
+  [ "$out" = bot-review ] || fail "static poll did not emit for a newer bot review"
+  [ "$(cat "$seen")" = 205 ] || fail "static poll did not advance the seen id to the new maximum"
+
+  # A reviews-API failure is silent and leaves the seen id untouched.
+  out=$(FM_TEST_GH_STATE=OPEN FM_TEST_GH_REVIEWS_FAIL=1 FM_TEST_GH_BOT_REVIEW_IDS=$'999' run_poll "$dir")
+  [ -z "$out" ] || fail "static poll emitted after a reviews-API failure"
+  [ "$(cat "$seen")" = 205 ] || fail "reviews-API failure changed the seen id"
+
+  # merged wins even when a newer bot review exists, and never also emits bot-review.
+  out=$(FM_TEST_GH_STATE=MERGED FM_TEST_GH_BOT_REVIEW_IDS=$'900' run_poll "$dir")
+  [ "$out" = merged ] || fail "merged did not take priority over a pending bot review"
+  [ "$(cat "$seen")" = 205 ] || fail "merged path touched the bot-review seen id"
+
+  # End to end through the watcher: an OPEN PR with a new bot review surfaces one
+  # bot-review wake, records the seen id, and leaves the poll armed (not retired).
+  dir=$(make_case bot-review-watcher)
+  state="$dir/home/state"
+  seen="$state/task-a.pr-review-seen"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/1
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+  rm -f "$state/.last-check"
+  set +e
+  FM_TEST_GH_STATE=OPEN FM_TEST_GH_BOT_REVIEW_IDS=$'4242' \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "watcher did not surface a bot-review poll: $(cat "$dir/watch.err")"
+  [ "$(grep -c '^check: .*: bot-review$' "$dir/watch.out")" -eq 1 ] \
+    || fail "watcher did not convert bot-review output into exactly one wake"
+  ! grep -q ': merged$' "$dir/watch.out" || fail "bot-review poll emitted a spurious merged wake"
+  [ "$(cat "$seen")" = 4242 ] || fail "watcher poll did not record the surfaced bot review id"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "bot-review wake disarmed or corrupted the still-open poll"
+  pass "a new automated reviewer wakes once, dedupes, defers to merged, and stays armed"
+}
+
 test_parser_matrix
 test_gitlab_merge_watch
+test_bot_review_wake
 test_merged_poll_retires_once
 test_persistent_secondmate_retirement_is_poll_only
 test_retirement_crash_recovery

@@ -60,6 +60,23 @@ A `no-mistakes` or `no-mistakes-prod-only` project must have an `origin` remote 
 A `direct-PR` project needs an `origin` remote but skips no-mistakes initialization.
 A `local-only` project may have no remote and skips no-mistakes initialization.
 
+### Fork-contribution projects: origin must be the captain's fork
+
+A fork-contribution project is one where the captain works against a project the captain does not own upstream, and every PR must land in the captain's own `trillium/<repo>` fork, never the upstream project, until the captain explicitly says otherwise.
+Clone it so `origin` is the captain's `trillium/<repo>` fork and the original project is a separate `upstream` remote, never the reverse:
+
+```sh
+git clone git@github.com:trillium/<repo>.git projects/<repo>
+git -C projects/<repo> remote add upstream <original-project-url>
+```
+
+If the fork does not exist yet, create it with `gh-axi` before cloning.
+This origin/upstream shape is load-bearing, not cosmetic: `git push origin` and, for `no-mistakes` projects, no-mistakes's own PR-open step both act on whatever `origin` is configured to, so an `origin` that still points at the upstream project makes a `no-mistakes` PR land there automatically, with no worker-side override available.
+`bin/fm-brief.sh`'s header and `AGENTS.md` section 11 own the resulting brief-scaffold rule and its exact clone-shape detection; do not restate that mechanism here.
+Never initialize a fork-contribution project with `no-mistakes init --fork-url` - that flag implements the opposite workflow (push to a named fork, open the PR against `origin`/upstream), documented for external contributors to firstmate itself in `CONTRIBUTING.md`, and is exactly backwards for a fork-contribution project.
+A clone still carrying the legacy shape (`origin` = upstream, no `upstream` remote) needs this swap before its next `no-mistakes` run; treat discovering one as a project-management fix, not a task for the ship worker mid-brief to attempt.
+Run `bin/fm-fork-origin-check.sh` by hand to advisory-scan every registered clone for a legacy or partially swapped origin/upstream shape; it is read-only and never blocks a spawn or edits a remote.
+
 ## Create a project
 
 Creating a GitHub repository is outward-facing.

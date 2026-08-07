@@ -341,6 +341,27 @@ fm_backend_cmux_surface_id_for_workspace() {  # <workspace_id>
     | jq -r '.panes[0] // {} | .selected_surface_id // (.surface_ids[0] // empty)' 2>/dev/null
 }
 
+# fm_backend_cmux_workspace_matches_label: does <workspace_id> still carry the
+# workspace title firstmate expects for caller-facing task label <label>?
+# Looked up by exact id (never falls back to searching by label alone the
+# way fm_backend_cmux_target_ready does for its reconnect purpose), so a
+# workspace id that no longer resolves at all is a refusal, not a signal to
+# go find some other live workspace that happens to share the title.
+# Mirrors fm_backend_zellij_tab_matches_label's scoped/bare-with-ambiguity
+# rules: checks the home-scoped title first, then the legacy bare label, but
+# only when the bare title is not ambiguous across live workspaces.
+fm_backend_cmux_workspace_matches_label() {  # <workspace_id> <label>
+  local workspace_id=$1 label=$2 scoped workspaces count
+  scoped=$(fm_backend_cmux_scoped_title "$label")
+  workspaces=$(fm_backend_cmux_cli workspace list --json --id-format uuids 2>/dev/null)
+  printf '%s' "$workspaces" | jq -e --arg id "$workspace_id" --arg want "$scoped" \
+    '[.workspaces[]? | select(.id == $id and .title == $want)] | length > 0' >/dev/null 2>&1 && return 0
+  printf '%s' "$workspaces" | jq -e --arg id "$workspace_id" --arg want "$label" \
+    '[.workspaces[]? | select(.id == $id and .title == $want)] | length > 0' >/dev/null 2>&1 || return 1
+  count=$(printf '%s' "$workspaces" | jq -r --arg want "$label" '[.workspaces[]? | select(.title == $want)] | length' 2>/dev/null)
+  [ "$count" = "1" ]
+}
+
 # fm_backend_cmux_create_task: create the task's workspace (one surface),
 # refusing an existing live <label> (finding #6: cmux enforces no uniqueness
 # itself). Resolves the fresh workspace's default surface via one list-panes
@@ -401,6 +422,19 @@ fm_backend_cmux_surface_exists() {  # <workspace_id> <surface_id>
   local wsid=$1 sfid=$2
   fm_backend_cmux_cli list-panes --workspace "$wsid" --json --id-format uuids 2>/dev/null \
     | jq -e --arg s "$sfid" '[.panes[]? | select(.surface_ids // [] | index($s))] | length > 0' >/dev/null 2>&1
+}
+
+# fm_backend_cmux_surface_verifies_task: does <surface_id> still exist inside
+# <workspace_id>, and does that exact workspace still carry the task label
+# for <task_id>? Mirrors fm_backend_herdr_pane_verifies_task's identity-proof
+# role for legacy-metadata self-repair (bin/fm-backend.sh): both the surface
+# membership and the workspace's own title must independently hold, or this
+# refuses rather than guessing.
+fm_backend_cmux_surface_verifies_task() {  # <workspace_id> <surface_id> <task_id>
+  local workspace_id=$1 surface_id=$2 task_id=$3
+  [ -n "$workspace_id" ] && [ -n "$surface_id" ] && [ -n "$task_id" ] || return 1
+  fm_backend_cmux_surface_exists "$workspace_id" "$surface_id" || return 1
+  fm_backend_cmux_workspace_matches_label "$workspace_id" "fm-$task_id"
 }
 
 # fm_backend_cmux_target_ready: parse the target and verify it is live via

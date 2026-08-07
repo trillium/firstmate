@@ -307,6 +307,137 @@ ROWS
   pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
 }
 
+# beads-authority migration Stage 5 resilience layer (report.md section 5,
+# docs/configuration.md "Beads resilience layer"): a beads-store outage only
+# reaches MISSING: when no fresh local mirror covers it, and reports DEGRADED:
+# naming the mirror's timestamp when one does.
+write_beads_mirror_fixture() {
+  local home=$1 age_seconds=$2 written_at
+  mkdir -p "$home/state"
+  written_at=$(($(date +%s) - age_seconds))
+  jq -n --argjson written_at "$written_at" --arg output 'ready-task-1' \
+    '{written_at: $written_at, output: $output}' > "$home/state/.beads-mirror-ready.json"
+}
+
+test_beads_backend_missing_vs_degraded() {
+  local case_dir fakebin home out
+
+  # 1. task CLI missing, no mirror -> hard MISSING:
+  case_dir="$TMP_ROOT/beads-missing-no-mirror"
+  home="$case_dir/home"
+  mkdir -p "$home/config"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh")
+  printf '%s\n' "$out" | grep -Fq 'MISSING: task CLI (beads store; install:' \
+    || fail "missing task CLI with no mirror did not report MISSING: $out"
+
+  # 2. task CLI missing, fresh mirror -> DEGRADED:, never MISSING:
+  case_dir="$TMP_ROOT/beads-missing-fresh-mirror"
+  home="$case_dir/home"
+  mkdir -p "$home/config"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  write_beads_mirror_fixture "$home" 60
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh")
+  printf '%s\n' "$out" | grep -Fq 'DEGRADED: task CLI not found (beads store; install:' \
+    || fail "missing task CLI with a fresh mirror did not report DEGRADED: $out"
+  printf '%s\n' "$out" | grep -Fq 'MISSING: task CLI' \
+    && fail "missing task CLI with a fresh mirror still reported MISSING: $out"
+
+  # 3. task CLI present but store unreachable, no mirror -> hard MISSING:
+  case_dir="$TMP_ROOT/beads-unreachable-no-mirror"
+  home="$case_dir/home"
+  mkdir -p "$home/config"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+exit 7
+SH
+  chmod +x "$fakebin/task"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh")
+  printf '%s\n' "$out" | grep -Fq 'MISSING: task store is unreachable or broken (beads backend configured, cannot run '\''task list'\''), and no usable local mirror' \
+    || fail "unreachable store with no mirror did not report MISSING: $out"
+
+  # 4. task CLI present but store unreachable, fresh mirror -> DEGRADED:
+  case_dir="$TMP_ROOT/beads-unreachable-fresh-mirror"
+  home="$case_dir/home"
+  mkdir -p "$home/config"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  write_beads_mirror_fixture "$home" 60
+  fakebin=$(make_fake_toolchain "$case_dir")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+exit 7
+SH
+  chmod +x "$fakebin/task"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh")
+  printf '%s\n' "$out" | grep -Fq "DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from" \
+    || fail "unreachable store with a fresh mirror did not report DEGRADED: $out"
+  printf '%s\n' "$out" | grep -Fq 'MISSING: task store' \
+    && fail "unreachable store with a fresh mirror still reported MISSING: $out"
+
+  # 5. task CLI present but store unreachable, mirror older than the freshness
+  # threshold -> hard MISSING:, never a stale-mirror DEGRADED:
+  case_dir="$TMP_ROOT/beads-unreachable-stale-mirror"
+  home="$case_dir/home"
+  mkdir -p "$home/config"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  write_beads_mirror_fixture "$home" 100000
+  fakebin=$(make_fake_toolchain "$case_dir")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+exit 7
+SH
+  chmod +x "$fakebin/task"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh")
+  printf '%s\n' "$out" | grep -Fq 'MISSING: task store is unreachable or broken (beads backend configured, cannot run '\''task list'\''), and no usable local mirror' \
+    || fail "unreachable store with a stale mirror did not fall back to MISSING: $out"
+  printf '%s\n' "$out" | grep -Fq 'DEGRADED:' \
+    && fail "unreachable store with a stale mirror wrongly reported DEGRADED: $out"
+
+  pass "beads backend bootstrap escalates to MISSING: only when both the live store and every local mirror are unusable, else reports DEGRADED: with the mirror timestamp"
+}
+
+test_beads_write_queue_reconciled_on_bootstrap() {
+  local case_dir home fakebin queue out log
+  case_dir="$TMP_ROOT/beads-write-queue-reconcile"
+  home="$case_dir/home"
+  mkdir -p "$home/config" "$home/state"
+  printf '%s\n' beads > "$home/config/backlog-backend"
+  queue="$home/state/.beads-write-queue"
+  log="$home/task-close.log"
+  jq -nc --arg id bd-1 --arg desc 'close: task-1' --argjson epoch "$(date +%s)" \
+    '{queued_at: $epoch, task_id: $id, description: $desc, argv: ["close", $id, "--reason", "landed"]}' \
+    > "$queue"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  cat > "$fakebin/task" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$log"
+case "\$*" in
+  'list --limit 1') exit 0 ;;
+  'close bd-1 --reason landed') exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BEADS_WRITE_QUEUE: reconciled queued write for bd-1" \
+    "bootstrap did not replay the durable write queue once the store recovered"
+  [ -s "$queue" ] && fail "the write queue was not drained after a successful replay"
+  assert_grep "close bd-1 --reason landed" "$log" "the queued close was never replayed against the live store"
+
+  pass "bootstrap reconciles the durable beads write queue against a recovered store, with no separate polling loop"
+}
+
 test_no_mistakes_min_version() {
   local label version mode case_dir fakebin out missing n
   missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
@@ -952,6 +1083,8 @@ ROWS
 }
 
 test_bootstrap_reporting
+test_beads_backend_missing_vs_degraded
+test_beads_write_queue_reconciled_on_bootstrap
 test_no_mistakes_min_version
 test_gh_axi_min_version
 test_lavish_axi_min_version

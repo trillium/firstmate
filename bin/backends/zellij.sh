@@ -308,6 +308,24 @@ fm_backend_zellij_tab_matches_label() {  # <session> <tab_id> <label>
   [ "$count" = "1" ]
 }
 
+# fm_backend_zellij_pane_verifies_task: does <pane_id> in <session> still
+# belong to <tab_id>, and does that tab still carry the task label for
+# <task_id>? Mirrors fm_backend_herdr_pane_verifies_task's identity-proof
+# role for legacy-metadata self-repair (bin/fm-backend.sh): the pane's
+# CURRENT owning tab is looked up fresh (never trusts the recorded tab_id
+# alone, since a pane can move tabs), then that owning tab must equal the
+# recorded tab_id, then the tab's name must match via
+# fm_backend_zellij_tab_matches_label's scoped/bare-with-ambiguity-check
+# rules. Any mismatch, including a pane that moved tabs or a tab renamed to
+# a different task's label, refuses rather than guessing.
+fm_backend_zellij_pane_verifies_task() {  # <session> <tab_id> <pane_id> <task_id>
+  local session=$1 tab_id=$2 pane_id=$3 task_id=$4 owning_tab
+  [ -n "$session" ] && [ -n "$tab_id" ] && [ -n "$pane_id" ] && [ -n "$task_id" ] || return 1
+  owning_tab=$(fm_backend_zellij_tab_for_pane "$session" "$pane_id") || return 1
+  [ -n "$owning_tab" ] && [ "$owning_tab" = "$tab_id" ] || return 1
+  fm_backend_zellij_tab_matches_label "$session" "$tab_id" "fm-$task_id"
+}
+
 # fm_backend_zellij_create_task: create the task's tab (one terminal pane) in
 # <session>, refusing an existing <label>. Zellij does NOT enforce tab-name
 # uniqueness itself (verified: two tabs can share a name), so the duplicate

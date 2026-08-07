@@ -39,6 +39,15 @@
 # unusable), it falls back to a lightweight periodic `herdr agent list` poll.
 # Both paths share one normalize + edge-detect + enqueue core.
 #
+# OWNED-AGENT FILTER.
+# EXTERNAL is enforced, not assumed. `herdr agent list` reports every agent in
+# the session, including the panes firstmate itself spawned, so before enqueuing
+# a finish edge the bridge resolves the pane back to a firstmate task through
+# window_owner_task (bin/fm-classify-lib.sh) and drops the edge when one owns it.
+# Without that, every firstmate-owned agent wakes firstmate twice per turn-end -
+# once legitimately via its status append, once spuriously here - and the channel
+# stops meaning "an agent firstmate cannot otherwise see".
+#
 # DEBOUNCE.
 # Edges are computed against a remembered last-status per agent (in-memory for
 # the process). Only working->{idle,done} fires. A subsequent working edge
@@ -68,6 +77,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-transition-lib.sh
 . "$SCRIPT_DIR/fm-transition-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 
 FM_HERDR_SPUR_SESSION="${FM_HERDR_SPUR_SESSION:-default}"
 FM_HERDR_SPUR_POLL_INTERVAL="${FM_HERDR_SPUR_POLL_INTERVAL:-5}"   # seconds between poll passes (poll fallback)
@@ -195,6 +206,40 @@ fm_herdr_spur_edge_policy() {  # <from> <to>
   esac
 }
 
+# fm_herdr_spur_pane_owner: print the firstmate task id that owns <pane_id>, or
+# return 1 (printing nothing) when no task in this home does. Ownership decides
+# the bridge's whole scope: a firstmate-SPAWNED agent already reports completion
+# through its state/<id>.status append and turn-end hook, so spurring on its
+# idle/done edge would wake firstmate TWICE per turn-end and bury the genuinely
+# invisible external agents this channel exists to surface.
+#
+# The lookup is window_owner_task's strict state/*.meta scan
+# (bin/fm-classify-lib.sh) - strict because "nobody owns this pane" must be a
+# real answer, not window_to_task's always-something fallback. herdr records
+# window= as "<session>:<pane-id>" (bin/backends/herdr.sh's target shape) while
+# both `herdr agent list` and the event stream report the BARE pane id, so the
+# bare form alone never matches a herdr-backed task's meta; try both shapes.
+# Checked at each finish EDGE rather than once at subscribe time, so a task
+# spawned or torn down mid-stream is classified against current metadata.
+fm_herdr_spur_pane_owner() {  # <pane_id>
+  local pane=$1
+  [ -n "$pane" ] || return 1
+  window_owner_task "$pane" "$STATE" && return 0
+  window_owner_task "${FM_HERDR_SPUR_SESSION}:${pane}" "$STATE" && return 0
+  return 1
+}
+
+# Enqueue one spur wake for <agent> reaching <status>, unless the pane belongs to
+# a firstmate task (which reports its own completion; see fm_herdr_spur_pane_owner).
+fm_herdr_spur_spur_or_skip() {  # <agent> <status> <pane_id>
+  local agent=$1 status=$2 pane=$3 owner
+  if owner=$(fm_herdr_spur_pane_owner "$pane"); then
+    log "SKIP-OWNED agent=$agent status=$status pane=$pane task=$owner"
+    return 0
+  fi
+  fm_herdr_spur_enqueue "$agent" "$status" "$pane"
+}
+
 # Enqueue one spur wake for <agent> reaching <status>.
 fm_herdr_spur_enqueue() {  # <agent> <status> <pane_id>
   local agent=$1 status=$2 pane=$3 reason
@@ -213,15 +258,15 @@ fm_herdr_spur_enqueue() {  # <agent> <status> <pane_id>
 # a spur. Updates the in-memory last-status. This is the shared core used by
 # BOTH the poll fallback and the post-event level-reconcile.
 fm_herdr_spur_reconcile() {  # <watch-set>
-  local watch_set=$1 agent pane _ws status key prev prev_var
-  while IFS=$'\t' read -r agent pane _ws status; do
+  local watch_set=$1 line agent pane ws status key prev prev_var
+  while IFS=$'\t' read -r agent pane ws status; do
     [ -n "$agent" ] || continue
     fm_herdr_spur_in_watch_set "$agent" "$watch_set" || continue
     key=$(fm_herdr_spur_safekey "$agent")
     prev_var="LAST_STATUS_${key}"
     prev="${!prev_var:-}"
     if [ -n "$prev" ] && fm_herdr_spur_edge_policy "$prev" "$status"; then
-      fm_herdr_spur_enqueue "$agent" "$status" "$pane"
+      fm_herdr_spur_spur_or_skip "$agent" "$status" "$pane"
     fi
     printf -v "$prev_var" '%s' "$status"
   done < <(fm_herdr_spur_snapshot_any)
@@ -257,7 +302,7 @@ fm_herdr_spur_socket_path() {
 # rule in bin/backends/herdr.sh. pane->agent mapping is stored in per-pane
 # dynamic variables PANE_AGENT_<safekey(pane_id)>, read via indirection.
 fm_herdr_spur_event_block() {  # <watch-set>
-  local watch_set=$1 sock reader_py agent pane _ws status key
+  local watch_set=$1 sock reader_py agent pane ws status key
   local pane_ids=""
   sock=$(fm_herdr_spur_socket_path)
   [ -n "$sock" ] || return 2
@@ -266,7 +311,7 @@ fm_herdr_spur_event_block() {  # <watch-set>
 
   # Build pane list for watched agents, seed last-status so the first streamed
   # edge has a `from`, and record each pane's agent name for the reverse lookup.
-  while IFS=$'\t' read -r agent pane _ws status; do
+  while IFS=$'\t' read -r agent pane ws status; do
     [ -n "$agent" ] || continue
     fm_herdr_spur_in_watch_set "$agent" "$watch_set" || continue
     pane_ids="$pane_ids $pane"
@@ -280,9 +325,15 @@ fm_herdr_spur_event_block() {  # <watch-set>
 
   # Stream. herdr-eventwait.py prints "@subscribed" then TAB lines:
   #   <pane_id>\t<workspace_id>\t<agent_status>\t<agent>
-  local pane_id _ev_ws ev_status ev_agent name prev prev_var pa_var
-  while IFS=$'\t' read -r pane_id _ev_ws ev_status ev_agent; do
-    [ "$pane_id" = "@subscribed" ] && { log "subscribed panes=$#"; continue; }
+  local pane_id ev_ws ev_status ev_agent name prev prev_var pa_var
+  local saw_subscribed=false
+  # shellcheck disable=SC2034 # ev_ws is a positional field in the stream, deliberately unused here.
+  while IFS=$'\t' read -r pane_id ev_ws ev_status ev_agent; do
+    if [ "$pane_id" = "@subscribed" ]; then
+      saw_subscribed=true
+      log "subscribed panes=$#"
+      continue
+    fi
     [ -n "$pane_id" ] || continue
     pa_var="PANE_AGENT_$(fm_herdr_spur_safekey "$pane_id")"
     name="${!pa_var:-$ev_agent}"
@@ -292,11 +343,15 @@ fm_herdr_spur_event_block() {  # <watch-set>
     prev_var="LAST_STATUS_${key}"
     prev="${!prev_var:-}"
     if [ -n "$prev" ] && fm_herdr_spur_edge_policy "$prev" "$ev_status"; then
-      fm_herdr_spur_enqueue "$name" "$ev_status" "$pane_id"
+      fm_herdr_spur_spur_or_skip "$name" "$ev_status" "$pane_id"
     fi
     printf -v "$prev_var" '%s' "$ev_status"
   done < <(python3 "$reader_py" "$sock" "$FM_HERDR_SPUR_EVENT_BUDGET" "$@" 2>/dev/null)
-  return 0
+  if [ "$saw_subscribed" = true ]; then
+    return 0
+  fi
+  log "event stream never subscribed; treating as reader failure"
+  return 2
 }
 
 # --- main --------------------------------------------------------------------

@@ -341,7 +341,7 @@ grok loads PROJECT hooks (`<worktree>/.grok/hooks/`, `<worktree>/.claude/setting
 GLOBAL hooks in `~/.grok/hooks/` are always trusted and load on first launch.
 So `fm-spawn` installs ONE firstmate-owned global hook, `~/.grok/hooks/fm-turn-end.json`, plus the companion `~/.grok/hooks/fm-turn-end.sh`, guarded as a no-op for every non-firstmate grok session.
 Its `Stop` command fires only when the current workspace holds a `.fm-grok-turnend` token pointer that matches the firstmate-owned hook registry under `~/.grok/hooks/fm-turn-end.d/`.
-`fm-spawn` writes that per-task pointer (`<worktree>/.fm-grok-turnend`, gitignored via git info/exclude like the other harnesses' worktree hook files) and a matching registry entry naming this task's `state/<id>.turn-ended`.
+`fm-spawn` writes that per-task pointer (`<worktree>/.fm-grok-turnend`, gitignored by the tracked root `.gitignore` like the other harnesses' worktree hook files, with `fm-spawn`'s own per-worktree `git info/exclude` call as a local backstop) and a matching registry entry naming this task's `state/<id>.turn-ended`.
 The hook reads `$GROK_WORKSPACE_ROOT`, which is always set for hooks and equals the worktree.
 This keeps the hook outside the worktree, needs no trust grant, and writes only firstmate-owned files.
 `fm-teardown` removes the worktree pointer before returning a pooled worktree.

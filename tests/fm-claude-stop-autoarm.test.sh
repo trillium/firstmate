@@ -30,6 +30,7 @@ install_autoarm_scripts() {
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
+  cp "$ROOT/bin/fm-watch-cycle-lib.sh" "$dir/bin/fm-watch-cycle-lib.sh"
   cp "$ROOT/bin/fm-session-lock-lib.sh" "$dir/bin/fm-session-lock-lib.sh"
   cp "$ROOT/bin/fm-lock.sh" "$dir/bin/fm-lock.sh"
   chmod +x "$dir/bin/fm-claude-stop-autoarm.sh" "$dir/bin/fm-lock.sh"
@@ -144,12 +145,65 @@ printf 'stale: fixture-win actionable\n'
 exit 0
 SH
       ;;
+    quiet-then-healthy)
+      # First close is quiet with no successor (supervision ended). The re-arm
+      # then establishes a genuinely healthy watcher, which must end the loop
+      # silently: continuity was restored without waking the model.
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+echo "$$" >> "$FM_HOME/state/arm-ran"
+runs=$(wc -l < "$FM_HOME/state/arm-ran" | tr -d ' ')
+[ "$runs" -ge 2 ] && "$FM_HOME/bin/mk-healthy-watcher.sh"
+printf 'watcher: idle - cycle ended cleanly with a fresh beacon (2s); adapter re-arm owns continuity\n'
+exit 0
+SH
+      ;;
     *)
       echo "unknown arm fixture: $kind" >&2
       return 2
       ;;
   esac
   chmod +x "$dir/bin/fm-watch-arm.sh"
+}
+
+# Publish a watcher singleton that passes the real fm_watcher_healthy gate: a
+# live process recorded in state/.watch.lock with this home's identity fields and
+# a fresh liveness beacon. Used to represent "some other arm's watcher genuinely
+# survived this close", the only state that may exit 0 quietly.
+install_healthy_watcher_helper() {
+  local dir=$1
+  cat > "$dir/bin/mk-healthy-watcher.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_HOME="${FM_HOME:?}"
+STATE="$FM_HOME/state"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+sleep 300 &
+wpid=$!
+echo "$wpid" > "$STATE/fake-watcher-pid"
+lock="$STATE/.watch.lock"
+rm -rf "$lock" 2>/dev/null || true
+mkdir -p "$lock"
+printf '%s\n' "$wpid" > "$lock/pid"
+printf '%s\n' "$FM_HOME" > "$lock/fm-home"
+printf '%s\n' "$SCRIPT_DIR/fm-watch.sh" > "$lock/watcher-path"
+fm_pid_identity "$wpid" > "$lock/pid-identity"
+: > "$STATE/.last-watcher-beat"
+SH
+  chmod +x "$dir/bin/mk-healthy-watcher.sh"
+}
+
+kill_fake_watcher() {
+  local dir=$1 pid
+  pid=$(cat "$dir/state/fake-watcher-pid" 2>/dev/null || true)
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null
+  return 0
+}
+
+arm_run_count() {
+  wc -l < "$1/state/arm-ran" 2>/dev/null | tr -d ' '
 }
 
 epoch_outcome() {
@@ -390,112 +444,80 @@ test_failed_close_rewakes_with_failure_banner() {
   pass "auto-arm: bounded failure verification emits one automatic-mechanism alarm"
 }
 
-test_failed_cycles_notify_once_and_keep_retrying() {
-  local dir out1 out2 status1 status2
-  dir=$(make_primary_dir "$TMP_ROOT/failed-dedup")
-  : > "$dir/state/task.meta"
-  write_arm_fixture "$dir" failed
-  out1=$(run_autoarm "$dir" 2>/dev/null); status1=$?
-  out2=$(run_autoarm "$dir" 2>/dev/null); status2=$?
-  expect_code 2 "$status1" "the first exhausted failure must notify"
-  expect_code 2 "$status2" "a consecutive exhausted failure must force another Stop-owned retry"
-  [ -n "$out1" ] || fail "the first exhausted failure did not notify"
-  [ -z "$out2" ] || fail "consecutive exhausted failure repeated an operator notice: $out2"
-  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 4 ] || fail "each cycle must retain bounded automatic retries"
-  assert_present "$dir/state/.claude-autoarm-failure-notified" "failure episode marker was not recorded"
-  [ "$(epoch_outcome "$dir")" = failed-suppressed ] || fail "second failure must record failed-suppressed"
-  pass "auto-arm: consecutive failures keep Stop-owned retry without repeating notice"
-}
-
-test_unverified_clean_close_exhausts_retries() {
+# A quiet close is only benign when a live watcher genuinely survived it. The arm
+# asserts "adapter re-arm owns continuity" on that close, and for a Claude primary
+# this hook IS that adapter - so it must confirm the claim, not assume it.
+test_quiet_close_with_live_watcher_exits_silently() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/clean")
+  install_healthy_watcher_helper "$dir"
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" clean
+  FM_HOME="$dir" "$dir/bin/mk-healthy-watcher.sh"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a non-actionable close without a healthy watcher must fail closed"
-  assert_contains "$out" "automatic supervision mechanism is broken" "unverified close must report automatic failure"
-  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "unverified close must exhaust exactly two bounded attempts"
-  [ "$(epoch_outcome "$dir")" = failed ] || fail "epoch must record outcome=failed, got: $(epoch_outcome "$dir")"
-  pass "auto-arm: unverified clean close exhausts retries and fails closed"
+  kill_fake_watcher "$dir"
+  expect_code 0 "$status" "a quiet arm close behind a live healthy watcher must not rewake"
+  [ -z "$out" ] || fail "quiet close behind a live watcher produced output: $out"
+  [ "$(epoch_outcome "$dir")" = clean ] || fail "epoch must record outcome=clean, got: $(epoch_outcome "$dir")"
+  [ "$(arm_run_count "$dir")" = 1 ] || fail "verified continuity must not re-arm, saw $(arm_run_count "$dir") arms"
+  pass "auto-arm: quiet close with a verified live watcher exits silently with a clean epoch"
 }
 
-test_post_alarm_actionable_close_is_suppressed() {
+# The reported defect: a harness stop kills the arm and its watcher, the arm
+# records reason=arm-interrupted, and the hook used to exit 0 on that quiet close
+# - handing continuity to itself and then quitting, so supervision died silently.
+test_quiet_close_without_successor_rearms_then_alarms() {
+  local dir out status runs
+  dir=$(make_primary_dir "$TMP_ROOT/no-successor")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" clean
+  printf 'arm_pid=4242\twatcher_pid=4243\torigin=started\tstarted_at=1\tended_at=2\texit_code=143\tsignal=TERM\treason=arm-interrupted\tbeacon_age=3\tlock_before=pid:none|identity:none\tlock_after=pid:none|identity:none\tsuccessor=none\n' \
+    > "$dir/state/.watch-cycle-exits.log"
+  export FM_AUTOARM_MAX_REARMS=2
+  out=$(run_autoarm "$dir" 2>&1); status=$?
+  unset FM_AUTOARM_MAX_REARMS
+  expect_code 2 "$status" "a quiet close that left no live watcher must never exit 0 silently"
+  runs=$(arm_run_count "$dir")
+  [ "$runs" -gt 1 ] || fail "hook must re-arm behind a quiet close with no successor, armed only $runs time(s)"
+  assert_contains "$out" "continuity LOST" "an exhausted re-arm budget must name lost continuity"
+  assert_contains "$out" "TERMINATED" "the banner must relay the ledger's arm-interrupted classification"
+  [ "$(epoch_outcome "$dir")" = rewake ] || fail "epoch must record outcome=rewake, got: $(epoch_outcome "$dir")"
+  pass "auto-arm: a quiet close with no live successor re-arms, then alarms instead of dying silently"
+}
+
+# The self-healing case: the re-arm succeeds, so supervision is restored with no
+# model turn consumed at all.
+test_rearm_restores_continuity_without_rewake() {
+  local dir out status runs
+  dir=$(make_primary_dir "$TMP_ROOT/rearm-heals")
+  install_healthy_watcher_helper "$dir"
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" quiet-then-healthy
+  export FM_AUTOARM_MAX_REARMS=4
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  unset FM_AUTOARM_MAX_REARMS
+  kill_fake_watcher "$dir"
+  expect_code 0 "$status" "a successful re-arm must restore supervision without waking the model"
+  [ -z "$out" ] || fail "self-healed re-arm produced output: $out"
+  runs=$(arm_run_count "$dir")
+  [ "$runs" = 2 ] || fail "hook must stop re-arming once a healthy watcher is confirmed, armed $runs time(s)"
+  [ "$(epoch_outcome "$dir")" = clean ] || fail "epoch must record outcome=clean, got: $(epoch_outcome "$dir")"
+  pass "auto-arm: a re-arm that re-establishes a healthy watcher closes silently"
+}
+
+# A wake already queued needs a handling turn, not another silent cycle stacked
+# behind it.
+test_pending_wake_after_quiet_close_rewakes_immediately() {
   local dir out status
-  dir=$(make_primary_dir "$TMP_ROOT/post-alarm-actionable")
+  dir=$(make_primary_dir "$TMP_ROOT/queued")
   : > "$dir/state/task.meta"
-  : > "$dir/state/.claude-autoarm-failure-notified"
-  : > "$dir/state/.claude-autoarm-failure-alarmed"
-  write_arm_fixture "$dir" actionable
-  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "an actionable result after attended fail-open must not continue"
-  [ -z "$out" ] || fail "post-alarm actionable result produced continuation output: $out"
-  assert_present "$dir/state/.claude-autoarm-failure-notified" "post-alarm actionable result cleared the failure notice"
-  assert_present "$dir/state/.claude-autoarm-failure-alarmed" "post-alarm actionable result cleared the attended alarm"
-  [ "$(epoch_outcome "$dir")" = failed-suppressed ] || fail "post-alarm actionable result must record failed-suppressed"
-  pass "auto-arm: post-alarm actionable outcomes cannot continue or reset failure state"
-}
-
-test_benign_cycle_end_with_live_watcher_is_silent() {
-  local dir out out2 status status2 pid identity
-  dir=$(make_primary_dir "$TMP_ROOT/benign-live")
-  : > "$dir/state/task.meta"
-  write_arm_fixture "$dir" benign-live
-  sleep 60 &
-  pid=$!
-  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live watcher holder for benign close"
-  record_watcher_lock "$dir" "$pid" "$identity"
-  touch "$dir/state/.last-watcher-beat"
-  printf 'session=sess-autoarm\ncount=3\nepoch=9\n' > "$dir/state/.turnend-claude-blocks"
-  : > "$dir/state/.claude-autoarm-failure-notified"
-  : > "$dir/state/.claude-autoarm-failure-alarmed"
-  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  out2=$(run_autoarm "$dir" 2>/dev/null); status2=$?
-  kill "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a failed-looking cycle with a live fresh watcher must be benign"
-  expect_code 0 "$status2" "the next Stop-owned cycle must remain benign with the live watcher"
-  [ -z "$out" ] || fail "benign live cycle produced an operator notice: $out"
-  [ -z "$out2" ] || fail "next benign live cycle produced an operator notice: $out2"
-  [ "$(epoch_outcome "$dir")" = clean ] || fail "benign live cycle must record outcome=clean, got: $(epoch_outcome "$dir")"
-  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "the next Stop-owned cycle must run its own bounded arm"
-  [ ! -e "$dir/state/.turnend-claude-blocks" ] || fail "benign live cycle must clear the prior block budget"
-  [ ! -e "$dir/state/.claude-autoarm-failure-notified" ] || fail "benign live cycle must not leave a failure-notice marker"
-  [ ! -e "$dir/state/.claude-autoarm-failure-alarmed" ] || fail "benign live cycle must not leave an attended-alarm marker"
-  pass "auto-arm: benign cycle end with a live watcher and fresh beacon stays silent across the next cycle"
-}
-
-test_positive_recovery_budget_contention_preserves_episode() {
-  local dir out status pid identity holder
-  dir=$(make_primary_dir "$TMP_ROOT/recovery-budget-contention")
-  : > "$dir/state/task.meta"
-  write_arm_fixture "$dir" benign-live
-  sleep 60 &
-  pid=$!
-  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live watcher holder for recovery contention"
-  record_watcher_lock "$dir" "$pid" "$identity"
-  touch "$dir/state/.last-watcher-beat"
-  printf 'session=sess-autoarm\ncount=3\nepoch=9\n' > "$dir/state/.turnend-claude-blocks"
-  : > "$dir/state/.claude-autoarm-failure-notified"
-  sleep 60 &
-  holder=$!
-  mkdir -p "$dir/state/.turnend-claude-blocks.lock"
-  printf '%s\n' "$holder" > "$dir/state/.turnend-claude-blocks.lock/pid"
-  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a healthy auto-arm must continue when the episode reset lock is busy"
-  [ -z "$out" ] || fail "recovery contention produced an operator notice: $out"
-  [ "$(epoch_outcome "$dir")" = failed-suppressed ] || fail "recovery contention must not record ordinary clean recovery"
-  assert_present "$dir/state/.turnend-claude-blocks" "recovery contention partially cleared the block budget"
-  assert_present "$dir/state/.claude-autoarm-failure-notified" "recovery contention partially cleared the failure notice"
-  kill "$holder" 2>/dev/null || true
-  wait "$holder" 2>/dev/null || true
-  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  kill "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a later healthy auto-arm must complete the episode reset"
-  assert_absent "$dir/state/.turnend-claude-blocks" "successful retry left the block budget"
-  assert_absent "$dir/state/.claude-autoarm-failure-notified" "successful retry left the failure notice"
-  pass "auto-arm: budget contention preserves the episode and forces a reset retry"
+  write_arm_fixture "$dir" clean
+  printf '1\t1\tsignal\ttask\tqueued fixture wake\n' > "$dir/state/.wake-queue"
+  out=$(run_autoarm "$dir" 2>&1); status=$?
+  expect_code 2 "$status" "a durable queued wake must reach a handling turn, not be re-armed past"
+  [ "$(arm_run_count "$dir")" = 1 ] || fail "a pending queued wake must not be re-armed behind, saw $(arm_run_count "$dir") arms"
+  assert_contains "$out" "continuity LOST" "the queued-wake close must still report lost continuity"
+  pass "auto-arm: a queued wake after a quiet close rewakes instead of re-arming"
 }
 
 test_arms_for_x_mode_poll_need_without_inflight() {
@@ -586,11 +608,10 @@ test_inert_when_fleet_idle
 test_actionable_close_rewakes_with_reason
 test_actionable_close_with_live_successor_rewakes_once
 test_failed_close_rewakes_with_failure_banner
-test_failed_cycles_notify_once_and_keep_retrying
-test_unverified_clean_close_exhausts_retries
-test_post_alarm_actionable_close_is_suppressed
-test_benign_cycle_end_with_live_watcher_is_silent
-test_positive_recovery_budget_contention_preserves_episode
+test_quiet_close_with_live_watcher_exits_silently
+test_quiet_close_without_successor_rearms_then_alarms
+test_rearm_restores_continuity_without_rewake
+test_pending_wake_after_quiet_close_rewakes_immediately
 test_arms_for_x_mode_poll_need_without_inflight
 test_single_flight_admits_exactly_one_owner
 test_need_vanished_mid_cycle_closes_quietly

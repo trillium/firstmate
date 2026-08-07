@@ -138,8 +138,9 @@ To run firstmate with none of your global harness config (no global CLAUDE.md, h
 bin/fm-isolated-launch.sh
 ```
 
-This repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load normally.
-First run under a fresh isolated home requires logging in again - no auth carries over from the real `~/.claude.json`.
+This repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load normally, and the isolated session runs with the same bypass-permissions autonomy as an ordinary crewmate.
+On macOS it reuses your existing login by copying the OAuth token read-only out of your Keychain, so no re-login is needed; it only falls back to a login prompt when that isn't possible (non-macOS, or no stored credential).
+See [docs/configuration.md](docs/configuration.md#isolated-launch-binfm-isolated-launchsh) for the full mechanics and the `FM_ISOLATED_HOME`, `FM_ISOLATED_CWD`, and `FM_ROOT_OVERRIDE` overrides.
 
 ## How It Works
 
@@ -219,6 +220,7 @@ Firstmate's skills live in two separate places with different audiences:
 - [docs/cmux-backend.md](docs/cmux-backend.md) - current setup, socket security, and limits for the experimental cmux backend.
 - [docs/codex-app-backend.md](docs/codex-app-backend.md) - the current blocked Codex App backend boundary and rollout contract.
 - [docs/verification/runtime-backends.md](docs/verification/runtime-backends.md) - active maintainer verification for runtime backend guarantees.
+- [docs/verification/dispatch-auth.md](docs/verification/dispatch-auth.md) - active maintainer verification for quota-aware dispatch's quota, runway, and credential judgment.
 - [docs/gitlab-merge-watch.md](docs/gitlab-merge-watch.md) - maintainer verification for GitLab merge watching on arbitrary instances.
 - [docs/turnend-guard.md](docs/turnend-guard.md) - the primary session's current "no turn ends blind" backstop, scope, loop safety, and compatibility limits.
 - [docs/verification/supervision.md](docs/verification/supervision.md) - active maintainer verification for session-start, guard, continuity, and wedge integrations.

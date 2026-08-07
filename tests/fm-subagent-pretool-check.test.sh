@@ -41,6 +41,25 @@ PLAN_ONLY_TOOLS='TaskCreate TaskUpdate'
 # assumed.
 PLAN_ONLY_NEAR_MISSES='TaskCreateAgent TaskCreateWorktree TaskUpdateAgent RemoteTaskCreate Task TaskCreator'
 
+# Durable schedule management (robots-sy7m option A). A cron ROUTINE is durable,
+# persistent, and inspectable via CronList, so creating or deleting one is not
+# the ephemeral, fleet-invisible delegation the guard targets. The guard's
+# schedule-management exemption must allow exactly these two, alongside the
+# already-exempt observe-only CronList.
+SCHEDULE_MGMT_TOOLS='CronCreate CronDelete'
+
+# Names the schedule-management exemption must NOT release. Each matches the
+# 'cron' or 'schedul' stem and still creates or manages an ephemeral off-fleet
+# schedule or agent, so each must STAY denied. "ScheduleCreate" is the explicit
+# proof (robots-sy7m) that exempting cron create/delete did not leak into a
+# blanket schedul* allow; the rest lock the exemption at exactly two names.
+SCHEDULE_MGMT_NEAR_MISSES='ScheduleCreate ScheduleDelete ScheduleWakeup CronSchedule CronJob ScheduleAgent CronCreateAgent'
+
+# The core off-fleet delegation hazards this guard exists to block. Adding the
+# cron exemption must never silently widen into disabling the guard, so every
+# one of these must stay denied after the exemption lands.
+DELEGATION_HAZARD_TOOLS='Task Agent Workflow spawn dispatch subagent Worktree SendMessage Handoff Remote'
+
 run_tool() {
   local tool=$1 rc=0
   shift
@@ -81,6 +100,9 @@ test_guard_denies_every_currently_known_delegation_tool() {
     case "$tool" in
       TaskOutput|TaskStop|TaskGet|TaskList|CronList) continue ;;
       TaskCreate|TaskUpdate) continue ;;
+      # Durable schedule management, exempt under robots-sy7m option A and
+      # covered by its own dedicated allow test below.
+      CronCreate|CronDelete) continue ;;
     esac
     expect_deny "known delegation tool" "$tool"
   done
@@ -132,6 +154,40 @@ test_plan_only_exclusion_is_exact_name() {
     expect_deny "plan-only near miss" "$tool"
   done
   pass "the plan-only exclusion releases exactly two names and nothing that merely contains them"
+}
+
+test_schedule_mgmt_exemption_allows_cron_create_delete() {
+  # robots-sy7m option A: a cron ROUTINE is durable, persistent, and inspectable
+  # through CronList, so creating or deleting one is not the ephemeral,
+  # fleet-invisible delegation the guard targets. CronList stays exempt too.
+  local tool
+  for tool in $SCHEDULE_MGMT_TOOLS CronList; do
+    expect_allow "schedule-management tool" "$tool"
+  done
+  pass "the guard allows durable schedule management: CronCreate, CronDelete, and CronList"
+}
+
+test_schedule_mgmt_exemption_is_exactly_two_names() {
+  # The exemption must release ONLY CronCreate/CronDelete, never the wider
+  # 'cron'/'schedul' stems. Every near miss still creates or manages an
+  # ephemeral off-fleet schedule or agent and must stay denied; ScheduleCreate
+  # is the explicit proof the cron exemption did not leak to the schedul stem.
+  local tool
+  for tool in $SCHEDULE_MGMT_NEAR_MISSES; do
+    expect_deny "schedule-management near miss" "$tool"
+  done
+  pass "the schedule-management exemption releases exactly CronCreate/CronDelete and nothing else on the cron or schedul stems"
+}
+
+test_cron_exemption_does_not_disable_delegation_guard() {
+  # Hard requirement (robots-sy7m): adding the cron exemption must never
+  # silently widen into disabling the guard. Every core off-fleet delegation
+  # hazard must stay blocked exactly as before.
+  local tool
+  for tool in $DELEGATION_HAZARD_TOOLS; do
+    expect_deny "delegation hazard after cron exemption" "$tool"
+  done
+  pass "the cron exemption leaves every core delegation hazard blocked: Task, Agent, Workflow, spawn, dispatch, subagent, Worktree, SendMessage, Handoff, Remote"
 }
 
 test_guard_never_classifies_mcp_tools() {
@@ -281,6 +337,9 @@ test_guard_denies_hypothetical_future_tools
 test_guard_allows_ordinary_and_observe_only_tools
 test_guard_allows_session_local_todo_tools
 test_plan_only_exclusion_is_exact_name
+test_schedule_mgmt_exemption_allows_cron_create_delete
+test_schedule_mgmt_exemption_is_exactly_two_names
+test_cron_exemption_does_not_disable_delegation_guard
 test_guard_never_classifies_mcp_tools
 test_deny_message_defers_to_intake_classification
 test_escape_hatch_allows_deliberate_use

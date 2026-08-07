@@ -14,6 +14,23 @@ command -v herdr >/dev/null 2>&1 || { echo 'skip: herdr not found'; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo 'skip: jq not found'; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo 'skip: python3 not found'; exit 0; }
 [ -x "$HERDR_LAB_HELPER" ] || { echo "skip: Herdr lab helper not executable at $HERDR_LAB_HELPER"; exit 0; }
+[ -x /bin/bash ] || { echo 'skip: /bin/bash not found (needed for a deterministic lab login shell)'; exit 0; }
+
+# Pin the login shell this lab's RESTORED panes come back as, before the lab
+# server is started, because that server hands its own SHELL down to every
+# pane it restores. The subject here is the childless bare idle-shell proof in
+# fm_backend_herdr_pane_idle_shell_pid, which refuses a shell that owns ANY
+# child process, and a per-create `--env SHELL=...` does not survive the
+# stop/restore cycle this case exercises (verified on the real 0.8.0 lab: the
+# restored pane comes back as the SERVER's login shell, not the creating
+# call's). Without this pin the fixture inherits whatever interactive shell the
+# box's operator uses, so on a captain box whose zsh startup forks a persistent
+# helper the restored pane is never childless and the proof can never converge
+# - a permanent local red that CI, where the login shell is a bare bash, never
+# sees. /bin/bash keeps `name` and argv0 the same recognized shell, which the
+# proof also requires (macOS /bin/sh reports name=bash with argv0=sh).
+SHELL=/bin/bash
+export SHELL
 
 REAL_HERDR=$(command -v herdr)
 HERDR_ORIGINAL_PATH=$PATH
@@ -116,8 +133,8 @@ while [ "$attempt" -lt 50 ]; do
   sleep 0.1
   attempt=$((attempt + 1))
 done
-[ "$attempt" -lt 50 ] || fail 'restored child did not converge to the exact childless idle-shell process-group shape'
-pass 'real named lab reproduced the exact restored one-tab one-pane childless no-agent shell shape'
+[ "$attempt" -lt 50 ] || fail 'restored child did not converge to the exact unoccupied idle-shell process-group shape'
+pass 'real named lab reproduced the exact restored one-tab one-pane no-agent idle-shell shape'
 
 FM_HOME="$HOME_DIR" FM_BACKEND=herdr HERDR_SESSION="$HERDR_LAB_SESSION" \
   PATH="$FAKEBIN:$HERDR_ORIGINAL_PATH" "$ROOT/bin/fm-herdr-session-cleanup.sh" \

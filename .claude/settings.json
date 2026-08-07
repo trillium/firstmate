@@ -18,6 +18,15 @@
             "command": "bd prime --hook-json"
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bd prime --hook-json"
+          }
+        ]
       }
     ],
     "PreToolUse": [

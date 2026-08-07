@@ -10,6 +10,22 @@ set -u
 # which the no-mistakes gate runs from a gate worktree, must be exempt).
 export FM_GATE_REFUSE_BYPASS=1
 
+# Drop an inherited FM_HOME for the same reason tests/lib.sh does, which these
+# suites cannot get from there because they never source it. Every bin/ script
+# resolves "${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}", so an ambient FM_HOME
+# silently outranks the home a case means to exercise. For the Herdr backend
+# that is not a config-path detail but a workspace-IDENTITY one:
+# fm_backend_herdr_workspace_label reads "$FM_HOME/.fm-secondmate-home" and
+# returns 2M-<scope> when it exists, so a captain box whose exported FM_HOME
+# happens to be a SECONDMATE home labels this suite's primary workspace
+# 2M-<that scope> instead of 1M-FIRSTMATE. Every assertion that pins the
+# primary label, or that expects container_ensure to adopt a workspace a case
+# pre-created as 1M-FIRSTMATE, then fails permanently on that box while CI -
+# where FM_HOME is unset - stays green. Unsetting here makes the local
+# environment match CI. Cases that genuinely need an FM_HOME set it per
+# invocation (FM_HOME=... fm_backend_herdr_...), which this cannot affect.
+unset FM_HOME
+
 HERDR_TEST_SAFETY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 . "$HERDR_TEST_SAFETY_DIR/bin/fm-herdr-lab.sh"
