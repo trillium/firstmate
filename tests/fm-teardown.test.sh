@@ -1998,7 +1998,10 @@ SH
   pid=$!
   printf '%s\n' "$pid" > "$case_dir/state/task-x1.parlay-listen-pid"
 
-  run_teardown "$case_dir" >/dev/null 2>&1 \
+  # Unset FM_SPAWN_SKIP_PARLAY (lib.sh exports it globally to protect all other
+  # tests from the live relay) so this case exercises the real deregistration
+  # path: a genuine spawn that enrolled must be deregistered on teardown.
+  FM_SPAWN_SKIP_PARLAY='' run_teardown "$case_dir" >/dev/null 2>&1 \
     || fail "parlay-present: teardown should succeed"
 
   ! kill -0 "$pid" 2>/dev/null \
@@ -2040,6 +2043,53 @@ test_teardown_kills_pid_even_when_parlay_absent() {
   assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
     "parlay-absent: teardown did not remove the parlay-listen-pid file"
   pass "a clean teardown still kills the recorded parlay-listen pid even when parlay is absent from PATH"
+}
+
+# The leak (robots-8ce5): a test-suite spawn sets FM_SPAWN_SKIP_PARLAY=1 (via
+# tests/lib.sh) and therefore never enrolls with the live relay. If teardown
+# still called `parlay agent-down <id>` whenever a real parlay is on the host's
+# PATH, every test that drove fm-teardown.sh would contact the live Parlay relay
+# with a fixture id and leak test state into real Parlay. This case reproduces
+# that surface with a logging fake parlay first on PATH and asserts the flag
+# suppresses the relay call while local pid cleanup still runs.
+test_teardown_skips_parlay_agent_down_in_test_mode() {
+  local case_dir calls_log pid
+  case_dir=$(make_case parlay-skip)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" "fix the thing"
+  add_fork_with_pushed_branch "$case_dir"
+
+  # A fake parlay that logs any call. If teardown honors the skip flag, this log
+  # stays empty; if it leaks, it records the fixture-id agent-down call.
+  calls_log="$case_dir/parlay-calls.log"
+  cat > "$case_dir/fakebin/parlay" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$calls_log"
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/parlay"
+
+  sleep 6600 &
+  pid=$!
+  printf '%s\n' "$pid" > "$case_dir/state/task-x1.parlay-listen-pid"
+
+  # FM_SPAWN_SKIP_PARLAY=1 is exported by lib.sh for all test-suite spawns.
+  # run_teardown inherits it, so this is the exact test-mode condition.
+  run_teardown "$case_dir" >/dev/null 2>&1 \
+    || fail "parlay-skip: teardown should succeed"
+
+  # Local pid cleanup is unconditional: the recorded listener is still killed and
+  # its pid file removed even when the relay call is skipped.
+  ! kill -0 "$pid" 2>/dev/null \
+    || { kill "$pid" 2>/dev/null || true; fail "parlay-skip: recorded parlay-listen pid was not killed"; }
+  assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
+    "parlay-skip: teardown did not remove the parlay-listen-pid file"
+
+  # The relay was never contacted: no parlay call of any kind was made.
+  if [ -s "$calls_log" ]; then
+    fail "parlay-skip: parlay was invoked despite FM_SPAWN_SKIP_PARLAY=1; calls: $(cat "$calls_log")"
+  fi
+  pass "FM_SPAWN_SKIP_PARLAY=1 suppresses 'parlay agent-down' while local pid cleanup still runs"
 }
 
 # --- staleness auto-close (bin/fm-watch.sh idle>2h backstop) ---------------
@@ -3140,6 +3190,7 @@ test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
 test_teardown_deregisters_parlay_when_present
 test_teardown_kills_pid_even_when_parlay_absent
+test_teardown_skips_parlay_agent_down_in_test_mode
 test_beads_linked_task_closes_bead_on_landed_teardown
 test_beads_linked_task_does_not_close_bead_on_force_teardown
 test_beads_linked_task_does_not_close_bead_on_refused_teardown
