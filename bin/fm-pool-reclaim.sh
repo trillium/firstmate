@@ -116,7 +116,14 @@ if [ ! -d "$PROJECT" ]; then
   exit 0
 fi
 
-STATUS_JSON=$( (cd "$PROJECT" && treehouse status --json) 2>/dev/null ) || {
+# </dev/null on every treehouse call: the sweep below drives its main loop from a
+# heredoc on stdin, so a child that read stdin would eat the records still queued
+# behind it and the sweep would stop after the first one.
+read_status() {
+  (cd "$PROJECT" && treehouse status --json) </dev/null 2>/dev/null
+}
+
+STATUS_JSON=$(read_status) || {
   warn "treehouse status failed for $PROJECT, nothing to reclaim"
   exit 0
 }
@@ -132,10 +139,10 @@ STATUS_JSON=$( (cd "$PROJECT" && treehouse status --json) 2>/dev/null ) || {
 # shift every later field left. US is not IFS whitespace, so empty fields hold
 # their place. lease_age_secs is -1 when no lease timestamp parsed, which makes
 # the age check below decline rather than guess.
-flatten() {
+flatten() {  # <status json>
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$STATUS_JSON" <<'PY'
-import json, sys, datetime
+    python3 - "$1" <<'PY'
+import json, re, sys, datetime
 
 try:
     pool = json.loads(sys.argv[1])
@@ -144,6 +151,30 @@ except Exception:
 if not isinstance(pool, list):
     sys.exit(3)
 
+# treehouse is Go, so its timestamps come out of RFC3339Nano with however many
+# fractional digits the clock produced - up to nine, and trailing zeros trimmed.
+# Before Python 3.11, fromisoformat accepts a fraction of exactly three or six
+# digits and raises ValueError on every other width. Left alone that turns an
+# ordinary nanosecond stamp into "no usable timestamp", and the lease it belongs
+# to is skipped forever rather than reclaimed. Pad or truncate the fraction to
+# microseconds first; sub-microsecond precision cannot matter to an age measured
+# against a threshold of hours.
+FRACTION = re.compile(r'^(.*\d{2}:\d{2}:\d{2})\.(\d+)(.*)$')
+
+
+def parse_stamp(text):
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    match = FRACTION.match(text)
+    if match:
+        head, fraction, tail = match.groups()
+        text = head + "." + (fraction + "000000")[:6] + tail
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 now = datetime.datetime.now(datetime.timezone.utc)
 for wt in pool:
     if not isinstance(wt, dict):
@@ -151,11 +182,7 @@ for wt in pool:
     leased_at = wt.get("leased_at") or ""
     age = -1
     if leased_at:
-        text = leased_at.replace("Z", "+00:00")
-        try:
-            stamp = datetime.datetime.fromisoformat(text)
-        except ValueError:
-            stamp = None
+        stamp = parse_stamp(leased_at)
         if stamp is not None:
             if stamp.tzinfo is None:
                 stamp = stamp.replace(tzinfo=datetime.timezone.utc)
@@ -178,13 +205,13 @@ PY
   # Without python3 there is no portable RFC3339 parse, so report every lease as
   # age -1: dirty-slot reclaim still works, stale-lease reclaim declines.
   command -v jq >/dev/null 2>&1 || return 3
-  printf '%s' "$STATUS_JSON" | jq -r '
+  printf '%s' "$1" | jq -r '
     .[] | [ (.status // ""), (.path // ""), (.lease_id // ""),
             (.lease_holder // ""), ((.processes // []) | length | tostring),
             "-1" ] | join("\u001f")'
 }
 
-RECORDS=$(flatten) || {
+RECORDS=$(flatten "$STATUS_JSON") || {
   warn 'could not parse treehouse status (needs python3, or jq as a fallback)'
   exit 0
 }
@@ -235,13 +262,37 @@ EOF
   return 0
 }
 
+# A dirty unleased slot has no lease id, so the `--if-lease-id` guard the stale
+# lease path uses has nothing to match on. This is the nearest equivalent: re-read
+# the pool immediately before the return and confirm the slot still looks exactly
+# as it did when we decided - dirty, unleased, no processes. It cannot close the
+# window entirely (nothing available in treehouse can), but it shrinks the race
+# from the whole length of the sweep, which walks every worktree and shells out to
+# git for each one, down to the gap between two adjacent commands. Fails closed:
+# a status that will not re-read or re-parse answers "do not reclaim".
+still_unclaimed_dirty() {  # <worktree>
+  local wt=$1 fresh records status path lease procs
+  fresh=$(read_status) || return 1
+  [ -n "$fresh" ] || return 1
+  records=$(flatten "$fresh") || return 1
+  while IFS=$'\x1f' read -r status path lease _holder procs _age; do
+    [ "$path" = "$wt" ] || continue
+    [ "$status" = dirty ] && [ -z "$lease" ] && [ "${procs:-0}" = 0 ]
+    return $?
+  done <<EOF
+$records
+EOF
+  # The worktree left the pool between the two reads; someone else owns it now.
+  return 1
+}
+
 do_return() {  # <path> [extra treehouse args...]
   local wt=$1 out
   shift
   if [ "$APPLY" -ne 1 ]; then
     return 0
   fi
-  if out=$( (cd "$PROJECT" && treehouse return --force "$@" "$wt") 2>&1 ); then
+  if out=$( (cd "$PROJECT" && treehouse return --force "$@" "$wt") </dev/null 2>&1 ); then
     [ -n "$out" ] && printf '%s\n' "$out"
     return 0
   fi
@@ -304,6 +355,13 @@ while IFS=$'\x1f' read -r status path lease_id holder procs age; do
         continue
       fi
       if only_firstmate_droppings "$path"; then
+        # Only when actually returning: a dry run changes nothing, so it has no
+        # race to guard and should not pay a second `treehouse status` per slot.
+        if [ "$APPLY" -eq 1 ] && ! still_unclaimed_dirty "$path"; then
+          say "skipped $path (it stopped being an unclaimed dirty slot while the sweep ran)"
+          skipped=$((skipped + 1))
+          continue
+        fi
         if do_return "$path"; then
           say "$VERB $path (spent slot: only firstmate hook droppings were dirty)"
           reclaimed=$((reclaimed + 1))

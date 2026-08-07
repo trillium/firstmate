@@ -28,6 +28,10 @@
 #   (k) empty-field alignment: an unleased dirty worktree's two empty lease
 #       fields must not shift the process count or age left (the tab-vs-US
 #       separator regression - tab is IFS whitespace and collapses runs)
+#   (l) every RFC3339Nano fraction width Go emits ages correctly, including the
+#       widths fromisoformat rejects outright before Python 3.11
+#   (m) a dirty slot claimed by someone else mid-sweep is re-verified and left
+#       alone, since an unleased slot has no lease id to guard the return with
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -41,6 +45,9 @@ fm_git_identity fmtest fmtest@example.invalid
 # rendering for bare `status`, and appending its full argv to $TH_RETURN_LOG for
 # `return`. Returns succeed unless FM_FAKE_TH_RETURN_FAIL is set, which lets a
 # case drive the refused-return path (a lease re-acquired mid-sweep).
+# FM_FAKE_TH_POOL_AFTER names a second pool file served from the SECOND
+# `status --json` onward, which is how a case simulates the pool changing under
+# the sweep between its decision read and its pre-return re-read.
 make_fake_treehouse() {  # <fakebin>
   local fakebin=$1
   cat > "$fakebin/treehouse" <<'SH'
@@ -48,7 +55,12 @@ make_fake_treehouse() {  # <fakebin>
 case "${1:-}" in
   status)
     if [ "${2:-}" = --json ]; then
-      cat "$TH_POOL_JSON"
+      if [ -n "${FM_FAKE_TH_POOL_AFTER:-}" ] && [ -e "$TH_POOL_JSON.served" ]; then
+        cat "$FM_FAKE_TH_POOL_AFTER"
+      else
+        : > "$TH_POOL_JSON.served"
+        cat "$TH_POOL_JSON"
+      fi
     else
       # Bare `status` only needs the status word per line for the
       # available-slot scan in older callers; keep it obviously distinct.
@@ -121,14 +133,24 @@ PY
 
 # An RFC3339 stamp <n> seconds in the past, in the same shape treehouse emits
 # (fractional seconds plus a numeric UTC offset), so the parser is exercised on
-# the real format rather than a simplified one.
-stamp_ago() {  # <seconds>
+# the real format rather than a simplified one. The optional second argument sets
+# how many fractional digits to emit: Go's RFC3339Nano trims trailing zeros, so
+# any width from 0 to 9 reaches the parser in practice, and only 3 and 6 are
+# accepted by fromisoformat before Python 3.11.
+stamp_ago() {  # <seconds> [fraction digits]
   python3 -c '
 import sys, datetime
 ago = int(sys.argv[1])
+digits = int(sys.argv[2]) if len(sys.argv) > 2 else 6
 now = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=ago)
-print(now.isoformat(timespec="microseconds"))
-' "$1"
+text = now.isoformat(timespec="seconds")
+# isoformat puts the offset last, so split it back off to insert the fraction.
+base, offset = text[:-6], text[-6:]
+# microsecond is six digits; the fixed "789" tail extends it to the nine Go can
+# emit, so widths past six carry real digits rather than padding zeros.
+fraction = (("%06d" % now.microsecond) + "789")[:digits] if digits else ""
+print(base + (("." + fraction) if fraction else "") + offset)
+' "$1" "${2:-6}"
 }
 
 command -v python3 >/dev/null 2>&1 || { echo "skip: python3 not found"; exit 0; }
@@ -144,7 +166,9 @@ new_case() {  # -> exports FAKEBIN TH_POOL_JSON TH_RETURN_LOG CASE_DIR
   export TH_POOL_JSON="$CASE_DIR/pool.json"
   export TH_RETURN_LOG="$CASE_DIR/returns.log"
   : > "$TH_RETURN_LOG"
+  rm -f "$TH_POOL_JSON.served"
   unset FM_FAKE_TH_RETURN_FAIL
+  unset FM_FAKE_TH_POOL_AFTER
   # The project directory only has to exist; the fake resolves no pool from it.
   mkdir -p "$CASE_DIR/project"
 }
@@ -363,5 +387,67 @@ run_reclaim --yes; out=$OUT
 assert_not_contains "$out" "still leased" "(k) an unleased dirty slot is not read as leased"
 assert_contains "$out" "reclaimed $WT" "(k) empty lease fields keep their place"
 pass "(k) empty lease fields do not shift the process count or age"
+
+# --- (l) fractional-second widths treehouse can actually emit ---------------
+#
+# treehouse is Go, so leased_at arrives as RFC3339Nano: up to nine fractional
+# digits, trailing zeros trimmed, which yields every width from none to nine.
+# Before Python 3.11 fromisoformat accepts exactly three or six and raises on the
+# rest, so an unnormalized parse turns an ordinary nanosecond stamp into "no
+# usable timestamp" and that lease is skipped for as long as it exists - the leak
+# this whole script was written to stop, reintroduced through the parser.
+#
+# Be honest about what this case can prove: Python 3.11 widened fromisoformat to
+# accept any fraction width, so on a 3.11+ host these assertions hold whether or
+# not the normalization is there. It bites only where the bug bites - a 3.9 or
+# 3.10 interpreter - which is exactly where a regression would otherwise land
+# silently, since the reclaimer fails closed and simply stops reclaiming leases.
+
+for width in 0 1 3 6 7 9; do
+  new_case
+  WT=$(make_worktree "$CASE_DIR/wt")
+  write_pool "$TH_POOL_JSON" "leased|$WT|abc123|beadme|0|$(stamp_ago 90000 "$width")"
+  run_reclaim --yes; out=$OUT
+  assert_not_contains "$out" "no usable timestamp" \
+    "(l) a ${width}-digit fraction parses"
+  assert_contains "$out" "reclaimed $WT" \
+    "(l) a stale lease stamped with a ${width}-digit fraction is reclaimed"
+done
+pass "(l) every RFC3339Nano fraction width treehouse emits is aged, not declined"
+
+# --- (m) the dirty slot is re-verified immediately before the return --------
+#
+# A dirty unleased slot carries no lease id, so `--if-lease-id` has nothing to
+# match and the reclaim would otherwise trust a pool reading taken before the
+# sweep walked every worktree and shelled out to git for each. Re-reading right
+# before the return shrinks that window to the gap between two commands. Drive it
+# by rewriting the pool file between the two reads, which is exactly what a
+# concurrent `treehouse get` would look like from here.
+
+new_case
+WT=$(make_worktree "$CASE_DIR/wt")
+commit_then_delete_dropping "$WT" .claude/settings.local.json
+write_pool "$TH_POOL_JSON" "dirty|$WT|||0|"
+# The slot is leased to someone else by the time the sweep re-reads the pool.
+export FM_FAKE_TH_POOL_AFTER="$CASE_DIR/pool-after.json"
+write_pool "$FM_FAKE_TH_POOL_AFTER" "leased|$WT|zzz999|latecomer|1|$(stamp_ago 5)"
+run_reclaim --yes; out=$OUT
+unset FM_FAKE_TH_POOL_AFTER
+expect_code 0 "$RC" "(m) exits 0"
+assert_contains "$out" "stopped being an unclaimed dirty slot" \
+  "(m) the slot taken mid-sweep is reported, not reclaimed"
+assert_not_contains "$(cat "$TH_RETURN_LOG")" "$WT" \
+  "(m) no --force return was issued against the newly claimed slot"
+pass "(m) a dirty slot claimed mid-sweep is re-verified and left alone"
+
+# The guard must not cost anything when nothing changed: the same slot with a
+# stable pool still reclaims, or the re-read would have broken every reclaim.
+new_case
+WT=$(make_worktree "$CASE_DIR/wt")
+commit_then_delete_dropping "$WT" .claude/settings.local.json
+write_pool "$TH_POOL_JSON" "dirty|$WT|||0|"
+run_reclaim --yes; out=$OUT
+assert_contains "$out" "reclaimed $WT" "(m) an unchanged pool still reclaims after the re-read"
+pass "(m) the re-verify passes through when the slot is unchanged"
 
 echo "all fm-pool-reclaim tests passed"

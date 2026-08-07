@@ -573,6 +573,7 @@ FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=1 # seconds fm-teardown.sh waits before
 FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=   # legacy alias for FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS when the new variable is unset
 FM_POOL_STALE_LEASE_SECS=7200             # age past which a process-free treehouse pool lease counts as abandoned and bin/fm-pool-reclaim.sh may return it; invalid values use 7200
 FM_SPAWN_SKIP_POOL_RECLAIM=               # set to 1 to skip fm-spawn.sh's best-effort bin/fm-pool-reclaim.sh pre-flight before `treehouse get`
+FM_SPAWN_POOL_RECLAIM_TIMEOUT=30          # seconds fm-spawn.sh allows that pre-flight sweep before abandoning it; a timeout is fail-open like every other reclaim failure
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=3        # fetch retries after fm-fleet-sync.sh hits the orphaned .git/packed-refs.lock signature
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds fm-fleet-sync.sh waits before each of those retries
 FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet-sync.sh treats a leftover packed-refs.lock as provably stale

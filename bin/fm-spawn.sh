@@ -217,6 +217,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1860,8 +1862,16 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Best-effort throughout: fm-pool-reclaim.sh exits 0 on every failure, and a
   # sweep that reclaims nothing still lets the get below run and report for
   # itself, so a reclaim problem can never be why a spawn fails.
+  #
+  # Hard-bounded even so. The sweep shells out to `treehouse` once per pool read
+  # and once per reclaim, and none of those calls carry a deadline of their own;
+  # a single hung treehouse would otherwise stall here indefinitely and burn the
+  # 60s allocation budget the wait loop below is counting on. fm_run_timed caps
+  # the whole sweep, and 124 (timed out) is swallowed exactly like any other
+  # non-zero exit - the get still runs and still speaks for itself.
   if [ "${FM_SPAWN_SKIP_POOL_RECLAIM:-}" != 1 ]; then
-    "$SCRIPT_DIR/fm-pool-reclaim.sh" --project "$PROJ" --yes --only-if-exhausted 2>&1 \
+    fm_run_timed "${FM_SPAWN_POOL_RECLAIM_TIMEOUT:-30}" \
+      "$SCRIPT_DIR/fm-pool-reclaim.sh" --project "$PROJ" --yes --only-if-exhausted 2>&1 \
       | sed 's/^/spawn: /' >&2 || true
   fi
 
@@ -1918,7 +1928,8 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
          && [ -n "$pool_status" ]; then
         echo "error: treehouse pool for $PROJ at the moment of failure:" >&2
         printf '%s\n' "$pool_status" >&2
-        echo "error: if no worktree is available, reclaim abandoned slots with: $SCRIPT_DIR/fm-pool-reclaim.sh --project $PROJ" >&2
+        echo "error: if no worktree is available, preview reclaimable slots with: $SCRIPT_DIR/fm-pool-reclaim.sh --project '$PROJ'" >&2
+        echo "error: that is a dry run; add --yes to actually return the abandoned slots" >&2
       fi
     fi
     exit 1
