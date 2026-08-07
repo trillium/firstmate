@@ -690,8 +690,12 @@ command_resolve() {
   for dep in $routed; do
     show=$(task_show "$dep") || fail "routed task $dep does not exist in the active home"
     state=$(show_field "$show" state)
-    [ "$state" != "done" ] || [ "$resolution_recorded" = 1 ] \
-      || fail "routed task $dep is already done"
+    if [ "$state" = "done" ]; then
+      [ "$resolution_recorded" = 1 ] || case "$hold_body" in
+        *"- $dep"*) : ;;
+        *) fail "routed task $dep is already done" ;;
+      esac
+    fi
     # tasks-axi quotes multi-entry blocked_by as "a,b,c"; strip so edge ids match.
     blocked=$(show_field "$show" blocked_by | tr -d '[:space:]' | sed 's/^"//;s/"$//')
     case ",$blocked," in

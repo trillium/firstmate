@@ -93,6 +93,7 @@ state/               volatile runtime signals; gitignored
   <id>.turn-ended    touched by turn-end hooks
   <id>.grok-turnend-token   firstmate-owned grok hook registry token for the task; removed by teardown
   <id>.staleness-unfiled   written by fm-teardown.sh's --staleness-autoclose reclaim only when filing the triage bead failed, before <id>.meta is removed; records the preserved worktree, branch, and project so the location is never lost
+  <id>.teardown-blocked-surfaced   written by the watcher's teardown-blocked sweep, holding the blocking text already surfaced for a finished task whose teardown refuses, so the same blockage wakes once and a changed one wakes again; removed by teardown
   <id>.kimi-turnend-token   firstmate-owned Kimi hook registry token for the task; removed by teardown
   <id>.parlay-listen-pid    background `parlay listen` pid from a best-effort Parlay chat-panel enrollment at spawn (bin/fm-spawn.sh header); absent for test-mode spawns (`FM_SPAWN_SKIP_PARLAY=1`); killed and removed by teardown
   <id>.muse-session  muse busy-source binding (sessions root plus task worktree) written by fm-spawn; removed by teardown
@@ -375,6 +376,9 @@ After successful teardown, record completion, retain only the configured recent 
 The watcher also reclaims a ship task's live process on its own once its window has sat idle past the configured staleness threshold (default two hours) and the crew is not provably working or parked at a captain-relevant gate.
 Landed work gets the ordinary full teardown above; unlanded work only has its runtime endpoint reclaimed and a triage record filed, leaving the worktree, branch, and every uncommitted change untouched for later deliberate triage.
 Treat a task whose endpoint has gone quiet with no captain-facing wake as a possible automatic reclaim rather than a crash; the filed staleness bead (or, if filing failed, `state/<id>.staleness-unfiled`), the preserved worktree and branch, and `state/.staleness-autoclose.log` still hold the evidence.
+A finished task whose teardown still refuses is surfaced by its own `check: teardown blocked for finished task <id>` wake carrying teardown's refusal, which names the blocking work; the common case is landed work behind a scrap of uncommitted dirt, but the same wake reports unpushed or unlanded commits.
+Resolve the named work rather than leaving the worktree leased: commit uncommitted changes, and push or land unlanded commits.
+Discarding either still requires explicit captain authority, so never answer such a wake with `--force`.
 
 A secondmate is persistent and an empty queue is healthy.
 Retire one only on an explicit captain or main-firstmate decision, after loading `secondmate-provisioning`; its home must contain no work under way, and forced discard still requires explicit captain authority.
