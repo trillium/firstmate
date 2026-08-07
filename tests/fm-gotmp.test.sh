@@ -68,6 +68,10 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
+  # fm-stat-lib.sh: fm-pr-lib.sh and fm-lock-lib.sh both source it (stat-dialect
+  # owner), resolving the sibling from their own unresolved BASH_SOURCE dir, so it
+  # must exist next to them in the fake bin or the nested source fails under set -e.
+  ln -s "$ROOT/bin/fm-stat-lib.sh" "$fake/bin/fm-stat-lib.sh"
   # fm-public-followup-lib.sh (and the fm-x-lib.sh it sources): teardown sources
   # it for the relay-activation gate on the promised-public-reply check. Neither
   # does anything in this fixture, which has no .env, but both are real siblings
@@ -152,6 +156,10 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
+  # fm-stat-lib.sh: fm-pr-lib.sh and fm-lock-lib.sh both source it (stat-dialect
+  # owner), resolving the sibling from their own unresolved BASH_SOURCE dir, so it
+  # must exist next to them in the fake bin or the nested source fails under set -e.
+  ln -s "$ROOT/bin/fm-stat-lib.sh" "$fake/bin/fm-stat-lib.sh"
   # fm-public-followup-lib.sh (and the fm-x-lib.sh it sources): teardown sources
   # it for the relay-activation gate on the promised-public-reply check. Neither
   # does anything in this fixture, which has no .env, but both are real siblings
