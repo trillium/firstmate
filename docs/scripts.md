@@ -122,6 +122,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-pr-check.sh`         | Record validated `pr=` and `pr_head=` values; arm a static merge poll unless migration is blocked (status 3) |
 | `fm-pr-merge.sh`         | Record PR metadata prerequisite, then merge a task's PR; reports arming failure separately when status 3 |
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode |
+| `fm-agent-axi.sh`        | Read-only triage of live agent sessions to classify which are safe to reap by checking liveness, work-state, and pipeline gates |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
 | `fm-staleness-file.sh`   | File a triage bead into the `staleness` federated store for a ship task reclaimed unlanded by staleness auto-close |
 | `fm-harness.sh`          | Detect the running harness and resolve crew or secondmate harness, model, and effort |
