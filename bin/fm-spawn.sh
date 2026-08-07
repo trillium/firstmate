@@ -1869,6 +1869,17 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # 60s allocation budget the wait loop below is counting on. fm_run_timed caps
   # the whole sweep, and 124 (timed out) is swallowed exactly like any other
   # non-zero exit - the get still runs and still speaks for itself.
+  #
+  # On locking, since this is the one mutating step in the spawn path: this
+  # invocation's task-id-scoped lock is already held (acquired at the
+  # fm_lock_try_acquire "$SPAWN_TASK_LOCK" above), so no second spawn of THIS
+  # task can reach here concurrently. That lock is keyed by task id, though, not
+  # by pool - two spawns of different tasks sharing one treehouse pool can and do
+  # sweep at the same time, and no lock in firstmate serializes them. That is why
+  # the safety lives in the sweep itself rather than here: every stale-lease
+  # return is guarded by --if-lease-id, and every dirty-slot return re-reads the
+  # pool immediately beforehand. Do not weaken either guard on the assumption
+  # that this call site is serialized, because it is not.
   if [ "${FM_SPAWN_SKIP_POOL_RECLAIM:-}" != 1 ]; then
     fm_run_timed "${FM_SPAWN_POOL_RECLAIM_TIMEOUT:-30}" \
       "$SCRIPT_DIR/fm-pool-reclaim.sh" --project "$PROJ_ABS" --yes --only-if-exhausted 2>&1 \

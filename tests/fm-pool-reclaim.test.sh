@@ -403,7 +403,7 @@ pass "(k) empty lease fields do not shift the process count or age"
 # 3.10 interpreter - which is exactly where a regression would otherwise land
 # silently, since the reclaimer fails closed and simply stops reclaiming leases.
 
-for width in 0 1 3 6 7 9; do
+for width in 0 1 2 3 4 5 6 7 8 9; do
   new_case
   WT=$(make_worktree "$CASE_DIR/wt")
   write_pool "$TH_POOL_JSON" "leased|$WT|abc123|beadme|0|$(stamp_ago 90000 "$width")"
