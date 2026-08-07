@@ -102,6 +102,7 @@ fm_stat_mode()   { _fm_stat_uint %a  %Lp "$1"; }  # permission bits, octal
 fm_stat_device() { _fm_stat_uint %d  %d  "$1"; }  # device number
 fm_stat_inode()  { _fm_stat_uint %i  %i  "$1"; }  # inode number
 fm_stat_links()  { _fm_stat_uint %h  %l  "$1"; }  # hard link count
+fm_stat_uid()    { _fm_stat_uint %u  %u  "$1"; }  # owning user id
 
 # fm_stat_identity <path>: "device:inode" - the rotation/recreation check.
 fm_stat_identity() { fm_stat_fmt '%d:%i' '%d:%i' "$1"; }

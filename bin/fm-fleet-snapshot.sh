@@ -165,6 +165,9 @@ validate_positive_bound FM_SNAPSHOT_BEADS_TIMEOUT "$FM_SNAPSHOT_BEADS_TIMEOUT"
 # shellcheck source=bin/fm-timeout-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
+# shellcheck source=bin/fm-stat-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-stat-lib.sh"  # fm_stat_*: the one owner of the stat-dialect question
 
 usage() {
   cat <<'EOF'
@@ -952,16 +955,19 @@ FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME=${FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME:
 case "$FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME" in ''|*[!0-9]*) FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME=10 ;; esac
 
 # GNU stat treats -f as a filesystem-report command, so a BSD-first fallback can
-# pollute arithmetic input before failing. Select the platform syntax once.
-if [ "$(uname 2>/dev/null || true)" = Darwin ]; then
-  SNAPSHOT_STAT_STYLE=bsd
-  file_mtime_epoch() { stat -f '%m' "$1" 2>/dev/null || true; }
-  file_mode_octal() { stat -f '%Lp' "$1" 2>/dev/null || true; }
-else
-  SNAPSHOT_STAT_STYLE=gnu
-  file_mtime_epoch() { stat -c '%Y' "$1" 2>/dev/null || true; }
-  file_mode_octal() { stat -c '%a' "$1" 2>/dev/null || true; }
-fi
+# pollute arithmetic input before failing. The dialect is therefore selected
+# once - but by FEATURE-DETECTING the `stat` binary (bin/fm-stat-lib.sh), not by
+# asking `uname` about the kernel. A Darwin kernel routinely resolves `stat` to
+# GNU coreutils (nix-darwin, or Homebrew coreutils ahead of /usr/bin on PATH),
+# and the old `uname` branch then picked BSD `-f` on a GNU binary - which is the
+# very filesystem-report pollution this block set out to avoid.
+#
+# SNAPSHOT_STAT_STYLE is still resolved here so the bounded parent-activity
+# subprocess below inherits one already-probed answer instead of re-probing.
+# Empty when neither dialect answers; the subprocess treats that as unreadable.
+SNAPSHOT_STAT_STYLE=$(fm_stat_dialect 2>/dev/null || true)
+file_mtime_epoch() { fm_stat_mtime "$1" 2>/dev/null || true; }
+file_mode_octal() { fm_stat_mode "$1" 2>/dev/null || true; }
 
 registry_secondmates_json() {
   local reg="$DATA/secondmates.md" out rc reason mode script parse_filter output_filter
@@ -1086,12 +1092,15 @@ bounded_parent_activities_json() {  # <status-file>
     max_bytes=$4
     max_records=$5
     stat_style=$6
+    stat_lib=$7
     . "$classify"
-    if [ "$stat_style" = bsd ]; then
-      size=$(stat -f "%z" "$f" 2>/dev/null) || exit 3
-    else
-      size=$(stat -c "%s" "$f" 2>/dev/null) || exit 3
-    fi
+    # The parent already feature-detected the dialect; hand it straight to
+    # fm-stat-lib.sh via its documented override so this subprocess neither
+    # re-probes nor re-derives the answer from $stat_style itself.
+    FM_STAT_DIALECT_OVERRIDE=$stat_style
+    export FM_STAT_DIALECT_OVERRIDE
+    . "$stat_lib"
+    size=$(fm_stat_size "$f") || exit 3
     content=$(LC_ALL=C tail -c "$max_bytes" "$f") || exit 3
     byte_truncated=false
     if [ "$size" -gt "$max_bytes" ]; then
@@ -1146,7 +1155,8 @@ BASH
   out=$(fm_run_timed "$FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT" bash -c "$script" \
     fm-parent-activities "$SCRIPT_DIR/fm-classify-lib.sh" "$f" \
     "$FM_SNAPSHOT_PARENT_ACTIVITY_LINES" "$FM_SNAPSHOT_PARENT_ACTIVITY_BYTES" \
-    "$FM_SNAPSHOT_PARENT_ACTIVITIES" "$SNAPSHOT_STAT_STYLE" 2>/dev/null)
+    "$FM_SNAPSHOT_PARENT_ACTIVITIES" "$SNAPSHOT_STAT_STYLE" \
+    "$SCRIPT_DIR/fm-stat-lib.sh" 2>/dev/null)
   rc=$?
   if [ "$rc" -eq 0 ] && printf '%s' "$out" | jq -e '
     (.records | type) == "array" and (.available | type) == "boolean"

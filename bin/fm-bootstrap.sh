@@ -111,6 +111,8 @@ PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+# shellcheck source=bin/fm-stat-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-stat-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-beads-resilience-lib.sh disable=SC1091
@@ -742,18 +744,15 @@ x_mode_write_if_changed() {
   parent=${dest%/*}
   [ "$parent" != "$dest" ] || return 1
   [ -d "$parent" ] && [ ! -L "$parent" ] || return 1
-  if [ "$(uname)" = Darwin ]; then
-    parent_device=$(stat -f %d "$parent" 2>/dev/null) || return 1
-  else
-    parent_device=$(stat -c %d "$parent" 2>/dev/null) || return 1
-  fi
+  # Device and mode via bin/fm-stat-lib.sh, which feature-detects the `stat`
+  # binary instead of asking `uname` about the kernel. On a Darwin host whose
+  # PATH resolves `stat` to GNU coreutils the old branch ran BSD `-f`, GNU read
+  # that as --file-system and answered with a filesystem dump, so every X-mode
+  # file write below failed its single-link precondition forever.
+  parent_device=$(fm_stat_device "$parent") || return 1
   if [ -e "$dest" ] || [ -L "$dest" ]; then
     fmx_single_link_file_valid "$dest" "$parent_device" || return 1
-    if [ "$(uname)" = Darwin ]; then
-      current_mode=$(stat -f %Lp "$dest" 2>/dev/null) || return 1
-    else
-      current_mode=$(stat -c %a "$dest" 2>/dev/null) || return 1
-    fi
+    current_mode=$(fm_stat_mode "$dest") || return 1
     if [ "$current_mode" = "$mode" ] && cmp -s "$dest" <(printf '%s\n' "$content"); then
       return 0
     fi
