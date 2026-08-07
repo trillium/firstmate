@@ -417,6 +417,7 @@ A secondmate's idle endpoint is healthy, and parent supervision relies on its ro
 Waiting on a healthy supervision cycle is silent; empty polls, elapsed time, and no-change updates are not captain-facing progress.
 Never broadly kill watchers, especially never `pkill -f bin/fm-watch.sh`, because that can kill sibling firstmate homes.
 A forced repair must use the home-scoped owner path emitted by supervision instructions.
+The same hazard applies to the behavior-test runner, which concurrent agents invoke with near-identical command lines: stop a suite with `bin/fm-test-run.sh --stop [<run-id>]`, never `pkill -f fm-test-run.sh`, and treat a run log carrying neither `FM_TEST_SUMMARY` nor `FM_TEST_ABORTED` as lost output rather than a pass.
 
 Guard warnings do not replace the contract.
 Queued wakes must be drained before other action, stale liveness must be repaired through the emitted protocol, and the worktree-tangle warning must be resolved without touching unlanded work.

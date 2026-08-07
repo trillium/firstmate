@@ -758,6 +758,164 @@ assert len(doc["scripts"])==3
   pass "aggregate-json merges lane timing artifacts"
 }
 
+# --- scoped stop ------------------------------------------------------------
+#
+# The runner used to offer no way to stop one run, so agents reached for
+# `pkill -f "fm-test-run.sh --changed"` and killed a concurrent agent's suite:
+# every run's command line is near-identical, so no pattern can tell them
+# apart. These tests pin the replacement - identity-scoped stop plus a loud
+# terminator - because both properties fail silently when they regress.
+
+# Wait up to <seconds> for <predicate command> to succeed.
+fm_await() {
+  local seconds=$1; shift
+  local waited=0
+  while [ "$waited" -lt "$((seconds * 10))" ]; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+fm_stop_fixture() {
+  local dir=$1
+  cat >"$dir/slow.test.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+echo "fixture running"
+sleep 120
+FIXTURE
+  chmod +x "$dir/slow.test.sh"
+}
+
+fm_registered_run_count() {
+  local reg=$1 n
+  n=$(find "$reg" -name '*.run' 2>/dev/null | wc -l | tr -d ' ')
+  [ "$n" = "$2" ]
+}
+
+test_stop_targets_one_run_and_marks_the_log_aborted() {
+  local tmp reg run_id out rc
+  tmp=$(fm_test_tmproot fm-test-run-stop) || fail "could not create tmp root"
+  reg="$tmp/registry"
+  fm_stop_fixture "$tmp"
+
+  FM_TEST_RUN_REGISTRY="$reg" "$RUNNER" "$tmp/slow.test.sh" >"$tmp/run.log" 2>&1 &
+  local runpid=$!
+  fm_await 30 fm_registered_run_count "$reg" 1 \
+    || { kill -KILL "$runpid" 2>/dev/null; fail "run did not register itself"; }
+
+  out=$(FM_TEST_RUN_REGISTRY="$reg" "$RUNNER" --list-runs)
+  assert_contains "$out" "FM_TEST_RUN run_id=" "--list-runs must report the live run"
+  run_id=$(printf '%s\n' "$out" | sed -n 's/.*run_id=\([^ ]*\).*/\1/p')
+  [ -n "$run_id" ] || { kill -KILL "$runpid" 2>/dev/null; fail "--list-runs printed no run id"; }
+
+  out=$(FM_TEST_RUN_REGISTRY="$reg" "$RUNNER" --stop "$run_id" 2>&1) \
+    || { kill -KILL "$runpid" 2>/dev/null; fail "--stop <run-id> failed: $out"; }
+  assert_contains "$out" "FM_TEST_STOPPED run_id=$run_id" "--stop must confirm the run it stopped"
+
+  rc=0
+  wait "$runpid" || rc=$?
+  [ "$rc" = 143 ] || fail "a TERMed run must exit 143, got $rc"
+
+  # The whole point of the terminator: a truncated log says so, instead of
+  # looking like a short clean run to anyone counting failures off it.
+  assert_grep "FM_TEST_ABORTED " "$tmp/run.log" \
+    "aborted run must print the FM_TEST_ABORTED terminator"
+  assert_grep "run_id=$run_id signal=TERM" "$tmp/run.log" \
+    "terminator must name the stopped run and the signal"
+  assert_no_grep "FM_TEST_SUMMARY " "$tmp/run.log" \
+    "an aborted run must not print a summary that reads as a completed suite"
+
+  # A finished run leaves no record for a later stop to act on.
+  fm_registered_run_count "$reg" 0 || fail "stopped run left a stale registry record"
+  out=$(FM_TEST_RUN_REGISTRY="$reg" "$RUNNER" --stop "$run_id" 2>&1) && \
+    fail "--stop must refuse an unknown run id"
+  assert_contains "$out" "no live run registered with id" "refusal must name the missing run"
+
+  pass "--stop <run-id> stops exactly that run and its log identifies itself as aborted"
+}
+
+test_stop_without_id_never_reaches_another_roots_run() {
+  local tmp reg sibling out rc
+  tmp=$(fm_test_tmproot fm-test-run-stop-scope) || fail "could not create tmp root"
+  reg="$tmp/registry"
+  fm_stop_fixture "$tmp"
+
+  # A second checkout of the runner: same command line, different root. This is
+  # the concurrent-agent shape that broad pkill cannot distinguish.
+  sibling="$tmp/sibling"
+  mkdir -p "$sibling/bin"
+  cp "$RUNNER" "$sibling/bin/fm-test-run.sh"
+
+  FM_TEST_RUN_REGISTRY="$reg" "$sibling/bin/fm-test-run.sh" "$tmp/slow.test.sh" \
+    >"$tmp/sibling.log" 2>&1 &
+  local sibpid=$!
+  FM_TEST_RUN_REGISTRY="$reg" "$RUNNER" "$tmp/slow.test.sh" >"$tmp/mine.log" 2>&1 &
+  local mypid=$!
+  fm_await 30 fm_registered_run_count "$reg" 2 || {
+    kill -KILL "$sibpid" "$mypid" 2>/dev/null
+    fail "both concurrent runs did not register"
+  }
+
+  out=$(FM_TEST_RUN_REGISTRY="$reg" "$RUNNER" --stop 2>&1) || {
+    kill -KILL "$sibpid" "$mypid" 2>/dev/null
+    fail "bare --stop failed: $out"
+  }
+
+  rc=0
+  wait "$mypid" || rc=$?
+  [ "$rc" = 143 ] || { kill -KILL "$sibpid" 2>/dev/null; fail "own run should have stopped, got $rc"; }
+
+  kill -0 "$sibpid" 2>/dev/null || fail "bare --stop killed another root's run"
+  assert_no_grep "FM_TEST_ABORTED" "$tmp/sibling.log" "sibling run must be untouched"
+
+  # And the sibling is still individually stoppable by identity.
+  out=$(FM_TEST_RUN_REGISTRY="$reg" "$RUNNER" --list-runs)
+  local sib_id
+  sib_id=$(printf '%s\n' "$out" | sed -n 's/.*run_id=\([^ ]*\).*/\1/p')
+  FM_TEST_RUN_REGISTRY="$reg" "$RUNNER" --stop "$sib_id" >/dev/null 2>&1 \
+    || { kill -KILL "$sibpid" 2>/dev/null; fail "could not stop the sibling by id"; }
+  rc=0
+  wait "$sibpid" || rc=$?
+  [ "$rc" = 143 ] || fail "sibling stop by id should exit 143, got $rc"
+
+  pass "bare --stop is scoped to this root and never reaches a concurrent run"
+}
+
+test_stop_refuses_when_nothing_is_registered() {
+  local tmp out
+  tmp=$(fm_test_tmproot fm-test-run-stop-empty) || fail "could not create tmp root"
+
+  out=$(FM_TEST_RUN_REGISTRY="$tmp/registry" "$RUNNER" --stop 2>&1) \
+    && fail "--stop must refuse when this root has no live run"
+  assert_contains "$out" "no live run registered from this root" \
+    "refusal must name the root it searched"
+
+  # The id builds a path this verb removes, so its shape is checked first.
+  out=$(FM_TEST_RUN_REGISTRY="$tmp/registry" "$RUNNER" --stop '../escape' 2>&1) \
+    && fail "--stop must refuse a run id that is not the minted shape"
+  assert_contains "$out" "not a run id" "refusal must name the expected run-id shape"
+
+  # A record whose process is gone is pruned, never signalled: a recycled pid
+  # must not inherit a dead run's identity.
+  mkdir -p "$tmp/registry"
+  {
+    printf 'run_id=fm-test-run-stale\n'
+    printf 'pid=999999\n'
+    printf 'root=%s\n' "$ROOT"
+    printf 'selection=scripts\n'
+    printf 'started=1970-01-01T00:00:00Z\n'
+  } >"$tmp/registry/fm-test-run-stale.run"
+  out=$(FM_TEST_RUN_REGISTRY="$tmp/registry" "$RUNNER" --list-runs 2>&1)
+  assert_not_contains "$out" "fm-test-run-stale" "--list-runs must prune a dead run's record"
+  [ -f "$tmp/registry/fm-test-run-stale.run" ] && fail "dead run record was not removed"
+
+  pass "--stop refuses with no live run and dead records are pruned"
+}
+
 test_list_all_exact_suite_coverage
 test_family_selection
 test_single_script_selection
@@ -776,3 +934,6 @@ test_portable_serial_shard_lane_refusals
 test_jobs_requires_proven_isolated
 test_jobs_parallel_scheduler_and_failure_propagation
 test_aggregate_json
+test_stop_targets_one_run_and_marks_the_log_aborted
+test_stop_without_id_never_reaches_another_roots_run
+test_stop_refuses_when_nothing_is_registered
