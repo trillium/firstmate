@@ -56,3 +56,99 @@ test  = "bin/claude-account.sh not-an-index"
 [[feature.anchor]]
 path   = "bin/claude-account.sh"
 sig    = "cf3c9bbe5cdc7735"
+
+[[feature]]
+id    = "remote-ssh-transport"
+story = "Given a reachable remote mini host, when the captain dispatches a crewmate to it, then firstmate allocates the remote worktree and drives launch, reclaim, reconcile, and status over the SSH bridge rather than running the work locally."
+test  = "bin/fm-remote-launch.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-remote-launch.sh"
+symbol = "usage"
+sig    = "76e7531d766651dd"
+[[feature.anchor]]
+path   = "bin/fm-remote-launch.sh"
+symbol = "fm_remote_bridge_command"
+sig    = "1da6e1926171af7c"
+[[feature.anchor]]
+path   = "docs/remote-secondmates.md"
+sig    = "7294f8f66a9329db"
+
+[[feature]]
+id    = "tasks-toml-beads-backend"
+story = "Given a firstmate home with a .tasks.toml backlog config, when firstmate resolves which task-store backend to use, then it reads the configured value (markdown, tasks-axi, or the beads federated store) instead of assuming one, so the backlog can move to beads without touching code."
+test  = "source bin/fm-tasks-axi-lib.sh && fm_backlog_backend_value"
+[[feature.anchor]]
+path   = ".tasks.toml"
+sig    = "31c645e8fdeca7b7"
+[[feature.anchor]]
+path   = "bin/fm-tasks-axi-lib.sh"
+symbol = "fm_backlog_backend_value"
+sig    = "1ac247af6004aa26"
+[[feature.anchor]]
+path   = "bin/fm-tasks-axi-lib.sh"
+symbol = "fm_beads_backend_available"
+sig    = "22eb5049eab2e22b"
+
+[[feature]]
+id    = "fork-local-skills"
+story = "Given fork-local skills under .agents/skills, when a Claude or IDE harness looks for skills at .claude/skills, then the symlink resolves to .agents/skills and fork-only skills such as firstmate-orca are discoverable without colliding with upstream."
+test  = "readlink .claude/skills && test -f .agents/skills/firstmate-orca/SKILL.md && echo firstmate-orca:present"
+[[feature.anchor]]
+path   = ".agents/skills/firstmate-orca/SKILL.md"
+sig    = "c51ad0ccb1848c2a"
+
+[[feature]]
+id    = "decision-hold-lifecycle-skill"
+story = "Given the decision-hold-lifecycle skill and firstmate's OPEN DECISIONS startup display, when a status line records a keyed captain decision, then fm-classify-lib folds it by its stable decision key so the same unresolved decision is surfaced durably on every startup instead of being lost."
+test  = "source bin/fm-classify-lib.sh && _fm_decision_key 'blocked[key=deploy-region]: pick'"
+[[feature.anchor]]
+path   = ".agents/skills/decision-hold-lifecycle/SKILL.md"
+sig    = "4f0e7a02d350391b"
+[[feature.anchor]]
+path   = "bin/fm-classify-lib.sh"
+symbol = "_fm_decision_key"
+sig    = "09e6b7d5fb8f74ff"
+[[feature.anchor]]
+path   = "bin/fm-session-start.sh"
+sig    = "a558b89650493d91"
+
+[[feature]]
+id    = "backlog-handoff"
+story = "Given work queued in one firstmate home, when the captain hands a backlog item to a secondmate home, then fm-backlog-handoff delivers it and fm-backlog-receive integrates only dependency-closed, non-duplicate items into the receiving home's backlog, so cross-home transfer stays safe."
+test  = "bin/fm-backlog-handoff.sh --help; bin/fm-backlog-receive.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-backlog-handoff.sh"
+symbol = "remote_deliver_outbox"
+sig    = "794a7f1d6129454f"
+[[feature.anchor]]
+path   = "bin/fm-backlog-receive.sh"
+symbol = "run_move"
+sig    = "a15c922bed43cb85"
+
+[[feature]]
+id    = "x-mode-relay"
+story = "Given a Relay-paired firstmate home, when a public mention needs an answer, then fm-x-lib resolves the pairing config and reply context and fm-x-reply posts a public-safe reply or completion follow-up, all gated behind the opt-in FMX_PAIRING_TOKEN."
+test  = "bin/fm-x-reply.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-x-lib.sh"
+symbol = "fmx_load_config"
+sig    = "0997b4359feb1c10"
+[[feature.anchor]]
+path   = "bin/fm-x-reply.sh"
+symbol = "usage"
+sig    = "ef50b5917c5bd992"
+[[feature.anchor]]
+path   = ".agents/skills/fmx-respond/SKILL.md"
+sig    = "31883529a8761949"
+
+[[feature]]
+id    = "herdr-backend"
+story = "Given the experimental Herdr session-provider backend, when firstmate decides whether Herdr's presentation projection is available, then bin/backends/herdr.sh gates it behind a Herdr release floor via a deterministic version comparison, so an older Herdr never triggers the projection path."
+test  = "source bin/backends/herdr.sh && fm_backend_herdr_version_at_least 0.8.1 0.8.0 && echo YES; fm_backend_herdr_version_at_least 0.7.1 0.8.0 || echo NO"
+[[feature.anchor]]
+path   = "bin/backends/herdr.sh"
+symbol = "fm_backend_herdr_version_at_least"
+sig    = "c180cac689124d60"
+[[feature.anchor]]
+path   = "docs/herdr-backend.md"
+sig    = "5255ffada60177eb"

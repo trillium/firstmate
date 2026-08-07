@@ -1,0 +1,17 @@
+usage: fm-x-reply.sh <request_id> [--followup] [--image <path>] [--receipt-file <path>] <text>
+       fm-x-reply.sh <request_id> [--followup] [--image <path>] [--receipt-file <path>] --text-file <path>
+       fm-x-reply.sh <request_id> [--followup] [--image <path>] [--receipt-file <path>] -
+
+Post a public-safe X-mode answer to the relay, or a completion follow-up with --followup.
+
+Options:
+  --followup       POST to /connector/followup instead of /connector/answer.
+  --image <path>   Attach one local image file; threaded replies attach it to the opener tweet or message.
+  --receipt-file <path>
+                   After a successful reply, write {request_id, endpoint, chunks, dry_run} to <path>.
+  --text-file <path>
+                   Read reply text from a file instead of the command line.
+  -                Read reply text from stdin.
+  --help           Show this help.
+---exit---
+0

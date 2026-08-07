@@ -1,0 +1,7 @@
+usage:
+  fm-remote-launch.sh <mini> <project> <task-id> <prompt...>
+  fm-remote-launch.sh reclaim <task-id> [--force]
+  fm-remote-launch.sh reconcile
+  fm-remote-launch.sh status <task-id>
+---exit---
+0
