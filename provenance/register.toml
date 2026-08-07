@@ -56,6 +56,16 @@ test  = "bin/claude-account.sh not-an-index"
 [[feature.anchor]]
 path   = "bin/claude-account.sh"
 sig    = "cf3c9bbe5cdc7735"
+[[feature.anchor]]
+path   = "bin/fm-spawn.sh"
+symbol = "usage"
+sig    = "70eb6ba9abdc98a9"
+[[feature.anchor]]
+path   = "bin/claude-1.sh"
+sig    = "9755f4e71d750ba0"
+[[feature.anchor]]
+path   = "bin/claude-2.sh"
+sig    = "9ead7f3ba380c4e9"
 
 [[feature]]
 id    = "remote-ssh-transport"
@@ -72,6 +82,10 @@ sig    = "1da6e1926171af7c"
 [[feature.anchor]]
 path   = "docs/remote-secondmates.md"
 sig    = "7294f8f66a9329db"
+[[feature.anchor]]
+path   = "bin/fm-spawn.sh"
+symbol = "spawn_remote_secondmate"
+sig    = "ee5885ae9ddb7d8c"
 
 [[feature]]
 id    = "tasks-toml-beads-backend"
@@ -152,3 +166,72 @@ sig    = "c180cac689124d60"
 [[feature.anchor]]
 path   = "docs/herdr-backend.md"
 sig    = "5255ffada60177eb"
+
+[[feature]]
+id    = "staleness-autoclose-reap"
+story = "As the captain, I want the watcher to notice when a live crew process (including a herdr agent firstmate did not spawn) has sat idle past the staleness window and reclaim only its runtime endpoint, filing a triage bead so its unlanded work is never lost."
+test  = "source bin/fm-watch.sh && hash_pane <<<'x'; bin/fm-herdr-spur.sh --help; bin/fm-staleness-file.sh"
+[[feature.anchor]]
+path   = "bin/fm-staleness-file.sh"
+sig    = "3e04928e8c5dd2f9"
+[[feature.anchor]]
+path   = "bin/fm-herdr-spur.sh"
+sig    = "f479f43cd86822cc"
+[[feature.anchor]]
+path   = "bin/fm-watch.sh"
+symbol = "hash_pane"
+sig    = "e8c29c1410091d6c"
+[[feature.anchor]]
+path   = "bin/fm-watch.sh"
+symbol = "staleness_autoclose_reclaim"
+sig    = "486e071a1e907c45"
+[[feature.anchor]]
+path   = "bin/fm-teardown.sh"
+symbol = "staleness_chat_only_teardown"
+sig    = "5dc6d96f53c82cdb"
+
+[[feature]]
+id    = "send-raw-and-verify-transition"
+story = "As the captain, I want fm-send to gain a --raw best-effort path for driving an unmanaged pane it cannot verify, and an opt-in FM_SEND_VERIFY_TRANSITION that confirms a normal send actually drove a turn (idle->working) rather than only clearing the composer."
+test  = "mkdir -p "$FM_HOME/state" "$FM_HOME/fakebin" && printf '#!/usr/bin/env bash\nexit 0\n' > "$FM_HOME/fakebin/tmux" && chmod +x "$FM_HOME/fakebin/tmux" && PATH="$FM_HOME/fakebin:$PATH" FM_ROOT_OVERRIDE="$FM_HOME" FM_SEND_SETTLE=0 bin/fm-send.sh sess:win --raw --key Enter"
+[[feature.anchor]]
+path   = "bin/fm-send.sh"
+symbol = "fm_send_resolve_target"
+sig    = "beedda6d13f41e4f"
+
+[[feature]]
+id    = "fork-origin-check"
+story = "As the captain, I want an advisory read-only scan that flags registered project clones whose origin/upstream remotes look like a botched fork-contribution swap, so a clone that would push to the wrong repo is caught before dispatch, never blocking a spawn."
+test  = "bin/fm-fork-origin-check.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-fork-origin-check.sh"
+sig    = "3862c92eab7a17f3"
+
+[[feature]]
+id    = "review-decision-pages"
+story = "As the captain, I want each open item in the review store to get a phone-readable Pulse page with Approve/Decline/Comment controls wired to POST /api/review/decision, so I can clear the requires-human-eyes queue from my phone and the decision flows back into the wake queue."
+test  = "bin/fm-review-page.ts --help; bin/fm-review-decision.sh"
+[[feature.anchor]]
+path   = "bin/fm-review-decision.sh"
+sig    = "7da8813e8bc48877"
+[[feature.anchor]]
+path   = "bin/fm-review-page.ts"
+sig    = "9fd3f104f929c61a"
+
+[[feature]]
+id    = "project-dir-resolution"
+story = "As the captain, I want one shared definition mapping a project argument to its clone directory, used by both fm-brief and fm-spawn, so the two halves of a dispatch can never disagree about what a project string names."
+test  = "source bin/fm-project-dir-lib.sh && fm_project_dir_candidate projects/foo /PROJ"
+[[feature.anchor]]
+path   = "bin/fm-project-dir-lib.sh"
+symbol = "fm_project_dir_candidate"
+sig    = "b309b19750afdf09"
+
+[[feature]]
+id    = "watch-cycle-diagnostics"
+story = "As the captain, I want firstmate to read the watcher lifecycle ledger so a supervision arm the harness killed can be told apart from a clean handoff, keeping a supervision-down banner honest about why the last cycle ended."
+test  = "source bin/fm-watch-cycle-lib.sh && mkdir -p "$FM_HOME/state" && printf 'arm_pid=111\twatcher_pid=222\torigin=stop-hook\tended_at=1700000000\texit_code=143\tsignal=15\treason=arm-interrupted\tbeacon_age=7\tsuccessor=none\n' > "$FM_HOME/state/.watch-cycle-exits.log" && fm_cycle_last_row "$FM_HOME/state" && printf 'origin=%s exit=%s signal=%s reason=%s successor=%s\n' $FM_CYCLE_ORIGIN $FM_CYCLE_EXIT_CODE $FM_CYCLE_SIGNAL $FM_CYCLE_REASON $FM_CYCLE_SUCCESSOR"
+[[feature.anchor]]
+path   = "bin/fm-watch-cycle-lib.sh"
+symbol = "fm_cycle_last_row"
+sig    = "0f259f30a722cf44"

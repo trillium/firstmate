@@ -1,0 +1,32 @@
+Advisory scan for registered project clones whose remotes look like an
+unswapped or partially swapped fork-contribution setup: `origin` still
+points at the upstream repo the captain does not own, rather than the
+captain's own trillium/<repo> fork. See the project-management skill's
+"Fork-contribution projects" section for the required origin/upstream
+convention, and bin/fm-brief.sh for how a generated brief reacts to each
+clone shape at dispatch time.
+
+This is a read-only report, never a gate: it never blocks a spawn, edits a
+remote, or fails the build. Run it by hand when triaging suspected
+misconfigured clones (e.g. after an incident like the rango PR opened
+against upstream instead of the captain's fork).
+
+For each project in data/projects.md with a local clone under projects/:
+  - origin owned by trillium, no upstream remote  -> ordinary project, silent.
+  - origin owned by trillium, upstream remote set  -> correctly swapped
+    fork-contribution clone, silent (this is the target state).
+  - origin NOT owned by trillium, upstream remote set -> MISCONFIGURED:
+    the swap was started (upstream added) but never finished (origin still
+    points upstream). Always reported; no network call needed.
+  - origin NOT owned by trillium, no upstream remote -> possibly an
+    unswapped fork-contribution clone, or a genuinely non-Trillium project
+    with no fork relationship at all. Best-effort: report it only when
+    `trillium/<repo>` exists on GitHub and is itself a fork (via `gh`), so
+    an ordinary non-Trillium project with no fork counterpart stays silent.
+    A missing `gh` or a failed lookup is not an error - that project is
+    skipped rather than misreported.
+
+Usage: fm-fork-origin-check.sh
+Exit status is always 0; findings go to stdout, one per line.
+---exit---
+0
