@@ -21,14 +21,14 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 # shellcheck source=bin/fm-config-inherit-lib.sh
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
+# shellcheck source=bin/fm-stat-lib.sh
+. "$SCRIPT_DIR/fm-stat-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; else sha256sum "$1" | awk '{print $1}'; fi
 }
-file_link_count() {
-  if [ "$(uname)" = Darwin ]; then stat -f %l "$1" 2>/dev/null; else stat -c %h "$1" 2>/dev/null; fi
-}
+file_link_count() { fm_stat_links "$1"; }
 shared_captain_header_valid() {
   local head
   head=$(sed -n '1,12p' "$1" 2>/dev/null) || return 1
