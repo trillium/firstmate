@@ -19,6 +19,11 @@ set -u
 
 LINT="$ROOT/bin/fm-lint.sh"
 INSTALLER="$ROOT/bin/fm-install-shellcheck.sh"
+# Every lint below runs against throwaway machine-wide state. Without this the
+# fixtures would seed the developer's own slots and result cache, and a later
+# real lint could be served a verdict produced by a fake ShellCheck.
+FM_LINT_STATE_DIR=$(fm_test_tmproot fm-lint-state) || exit 1
+export FM_LINT_STATE_DIR
 # The pinned version, read from the single source (the one owner itself).
 REQUIRED=$("$LINT" --required-version)
 
@@ -314,7 +319,9 @@ SH
       if [ "$telemetry" = on ]; then
         telemetry_file="$tmp/telemetry-$jobs.tsv"
       fi
-      PATH="$fakebin:$PATH" TMPDIR="$lint_tmp" FM_LINT_JOBS="$jobs" \
+      # Caching off: this test needs a ShellCheck process to signal, and a
+      # cached root is one no process is ever started for.
+      PATH="$fakebin:$PATH" TMPDIR="$lint_tmp" FM_LINT_JOBS="$jobs" FM_LINT_CACHE=0 \
         FM_LINT_TELEMETRY="$telemetry_file" FM_TEST_SHELLCHECK_PID="$pid_file" \
         "$LINT" "$fixture" > "$out_file" 2>&1 &
       parent_pid=$!
@@ -426,6 +433,191 @@ SH
   pass "seeded dispatcher, adapter, production-owner, and test-local diagnostics preserve parity"
 }
 
+# A ShellCheck process's peak resident set is set by the heaviest single root's
+# source closure, so concurrent lint runs - several no-mistakes worktrees of one
+# repo - multiply memory no matter how each run shards its own work. The
+# machine-wide slot limit is the only thing that bounds that, so it has to be
+# proven to actually serialize rather than merely be configured.
+fm_lint_concurrency_fakebin() {  # <fakebin> <hold-seconds>
+  local fakebin=$1 hold=$2
+  cat > "$fakebin/shellcheck" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
+  exit 0
+fi
+mkdir -p "\$FM_TEST_CONCURRENCY_DIR"
+: > "\$FM_TEST_CONCURRENCY_DIR/live.\$\$"
+find "\$FM_TEST_CONCURRENCY_DIR" -maxdepth 1 -name 'live.*' | wc -l \\
+  >> "\$FM_TEST_CONCURRENCY_DIR/observed"
+sleep $hold
+rm -f "\$FM_TEST_CONCURRENCY_DIR/live.\$\$"
+exit 0
+SH
+  chmod +x "$fakebin/shellcheck"
+}
+
+test_global_slot_limit_serializes_shellcheck() {
+  local tmp fakebin state concurrency a b peak admitted rc
+  tmp=$(fm_test_tmproot fm-lint-slots)
+  fakebin=$(fm_fakebin "$tmp")
+  state="$tmp/state"
+  concurrency="$tmp/concurrency"
+  a="$tmp/a.sh"
+  b="$tmp/b.sh"
+  printf '#!/usr/bin/env bash\nprintf a\n' > "$a"
+  printf '#!/usr/bin/env bash\nprintf b\n' > "$b"
+  fm_lint_concurrency_fakebin "$fakebin" 1
+
+  # Caching is off throughout this test and the next: both count ShellCheck
+  # processes, and a cached root is one this run never has to start.
+  rc=0
+  PATH="$fakebin:$PATH" FM_TEST_CONCURRENCY_DIR="$concurrency" FM_LINT_CACHE=0 \
+    FM_LINT_STATE_DIR="$state" FM_LINT_GLOBAL_LIMIT=1 FM_LINT_JOBS=2 \
+    "$LINT" "$a" "$b" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || fail "capped lint failed (exit $rc)"
+
+  # Both assertions are needed and neither is implied by the other: the count
+  # proves the limit did not simply drop a shard's work, and the peak proves the
+  # two admitted processes never held resident sets at the same time. The same
+  # fixture run with FM_LINT_GLOBAL_LIMIT=0 observes a peak of 2.
+  admitted=$(wc -l < "$concurrency/observed" | tr -d '[:space:]')
+  [ "$admitted" = "2" ] || fail "capped lint ran $admitted ShellCheck processes, expected both shards"
+  peak=$(LC_ALL=C sort -nr "$concurrency/observed" | head -1 | tr -d '[:space:]')
+  [ "$peak" = "1" ] || fail "the machine-wide limit admitted $peak concurrent ShellCheck processes, expected 1"
+  assert_absent "$state/slots/slot.0" "a completed run left its machine-wide slot claimed"
+  pass "the machine-wide ShellCheck limit serializes concurrent workers and releases its slots"
+}
+
+test_disabled_and_stale_global_slots_never_block() {
+  local tmp fakebin state concurrency fixture dead out rc
+  tmp=$(fm_test_tmproot fm-lint-slots-edge)
+  fakebin=$(fm_fakebin "$tmp")
+  state="$tmp/state"
+  concurrency="$tmp/concurrency"
+  fixture="$tmp/fixture.sh"
+  printf '#!/usr/bin/env bash\nprintf ok\n' > "$fixture"
+  fm_lint_concurrency_fakebin "$fakebin" 0
+
+  rc=0
+  PATH="$fakebin:$PATH" FM_TEST_CONCURRENCY_DIR="$concurrency" FM_LINT_CACHE=0 \
+    FM_LINT_STATE_DIR="$state" FM_LINT_GLOBAL_LIMIT=0 FM_LINT_JOBS=2 \
+    "$LINT" "$fixture" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || fail "limit=0 did not disable machine-wide admission (exit $rc)"
+  assert_absent "$state/slots" "limit=0 still created machine-wide slot state"
+
+  # A slot whose holder was killed must be reclaimed on sight, not waited out:
+  # otherwise one hard kill would throttle every later run on the machine.
+  ( : ) &
+  dead=$!
+  wait "$dead" 2>/dev/null || true
+  mkdir -p "$state/slots"
+  printf '%s\n' "$dead" > "$state/slots/slot.0"
+  rc=0
+  out=$(PATH="$fakebin:$PATH" FM_TEST_CONCURRENCY_DIR="$concurrency" FM_LINT_CACHE=0 \
+    FM_LINT_STATE_DIR="$state" FM_LINT_GLOBAL_LIMIT=1 FM_LINT_GLOBAL_WAIT=30 FM_LINT_JOBS=1 \
+    "$LINT" "$fixture" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "a stale slot blocked a later lint run (exit $rc)"
+  assert_not_contains "$out" "no ShellCheck slot after" \
+    "the run waited out its budget instead of reclaiming a dead holder's slot"
+  pass "machine-wide admission can be disabled and reclaims slots from dead holders"
+}
+
+# A cached verdict is only sound if it is indistinguishable from an uncached
+# one, so the parity assertions are the contract here and the hit counts only
+# evidence that the parity was not bought by quietly never caching. The library
+# edit is the case a per-file key gets wrong on its own: not one byte of the
+# consumer changes, yet its diagnostics do, so reusing them would report a
+# defect that no longer exists.
+test_content_cache_reuses_only_unchanged_roots() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): content cache reuse check"
+    return
+  fi
+  local tmp state lib consumer leaf before after
+  local cold warm uncached edited relit rc_cold rc_warm rc_uncached rc_relit
+  tmp=$(fm_test_tmproot fm-lint-cache)
+  state="$tmp/state"
+  lib="$tmp/lib.sh"
+  consumer="$tmp/consumer.sh"
+  leaf="$tmp/leaf.sh"
+  cat > "$lib" <<'SH'
+#!/usr/bin/env bash
+lib_helper() {
+  printf '%s\n' "${1:-}"
+}
+SH
+  cat > "$consumer" <<SH
+#!/usr/bin/env bash
+# shellcheck source=$lib
+. "\$LIB"
+printf '%s\n' "\$lib_setting"
+lib_helper "\$@"
+SH
+  cat > "$leaf" <<'SH'
+#!/usr/bin/env bash
+leaf() {
+  printf '%s\n' $1
+}
+SH
+
+  before=$(cksum "$lib" "$consumer" "$leaf")
+  rc_cold=0
+  cold=$(FM_LINT_STATE_DIR="$state" FM_LINT_TELEMETRY="$tmp/cold.tsv" \
+    "$LINT" "$lib" "$consumer" "$leaf" 2>&1) || rc_cold=$?
+  after=$(cksum "$lib" "$consumer" "$leaf")
+  # A cache write resolving to a linted file would destroy the corpus it was
+  # asked to check, so the run is pinned as read-only over its own roots.
+  [ "$before" = "$after" ] || fail "a lint run rewrote a file it was asked to lint"
+  assert_contains "$cold" "SC2154" "the fixture stopped exercising a cross-file diagnostic"
+  assert_contains "$cold" "SC2086" "the fixture stopped exercising a leaf diagnostic"
+  assert_grep $'cache_state\tactive' "$tmp/cold.tsv" "the cache disabled itself on a resolvable corpus"
+  assert_grep $'cache_misses\t3' "$tmp/cold.tsv" "a cold run reported reusable roots"
+  # The closing block is rebuilt from every root's diagnostics rather than
+  # inherited from one invocation, so it carries both codes at full length
+  # where ShellCheck's own block truncates each message.
+  assert_contains "$cold" \
+    "https://www.shellcheck.net/wiki/SC2154 -- lib_setting is referenced but not assigned." \
+    "the closing block lost a code raised by one of the roots"
+  assert_contains "$cold" \
+    "https://www.shellcheck.net/wiki/SC2086 -- Double quote to prevent globbing and word splitting." \
+    "the closing block truncated a message it no longer has to truncate"
+
+  rc_warm=0
+  warm=$(FM_LINT_STATE_DIR="$state" FM_LINT_TELEMETRY="$tmp/warm.tsv" \
+    "$LINT" "$lib" "$consumer" "$leaf" 2>&1) || rc_warm=$?
+  rc_uncached=0
+  uncached=$(FM_LINT_STATE_DIR="$state" FM_LINT_CACHE=0 \
+    "$LINT" "$lib" "$consumer" "$leaf" 2>&1) || rc_uncached=$?
+  assert_grep $'cache_hits\t3' "$tmp/warm.tsv" "an unchanged corpus was analysed again"
+  [ "$cold" = "$warm" ] || fail "a cached run and the cold run that filled it differ"
+  [ "$cold" = "$uncached" ] || fail "a cached run and an uncached run of one corpus differ"
+  [ "$rc_cold" -eq "$rc_warm" ] && [ "$rc_warm" -eq "$rc_uncached" ] \
+    || fail "cached and uncached exit results differ: $rc_cold/$rc_warm/$rc_uncached"
+
+  cat >> "$leaf" <<'SH'
+leaf_two() {
+  printf '%s\n' $2
+}
+SH
+  edited=$(FM_LINT_STATE_DIR="$state" FM_LINT_TELEMETRY="$tmp/edited.tsv" \
+    "$LINT" "$lib" "$consumer" "$leaf" 2>&1) || true
+  assert_grep $'cache_misses\t1' "$tmp/edited.tsv" "editing one root re-analysed more than that root"
+  assert_grep $'cache_hits\t2' "$tmp/edited.tsv" "editing one root expired roots it does not reach"
+  assert_contains "$edited" "line 6" "the edited root's new diagnostic was not reported"
+
+  # The consumer is untouched here; only the library it sources changes.
+  printf 'lib_setting=on\n' >> "$lib"
+  rc_relit=0
+  relit=$(FM_LINT_STATE_DIR="$state" FM_LINT_TELEMETRY="$tmp/relit.tsv" \
+    "$LINT" "$lib" "$consumer" "$leaf" 2>&1) || rc_relit=$?
+  assert_grep $'cache_hits\t0' "$tmp/relit.tsv" "a change to a sourced library did not expire its readers"
+  assert_not_contains "$relit" "SC2154" \
+    "an unchanged consumer replayed a diagnostic its library had already resolved"
+  [ "$rc_relit" -ne 0 ] || fail "the leaf defect vanished with the library edit"
+  pass "cached roots replay byte-identically and expire on their own and their libraries' content"
+}
+
 test_list_files_reports_the_shell_inventory
 test_pins_an_explicit_version
 test_installer_retries_transient_download_failure
@@ -435,4 +627,7 @@ test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
 test_worker_trees_stop_on_signal
+test_global_slot_limit_serializes_shellcheck
+test_disabled_and_stale_global_slots_never_block
+test_content_cache_reuses_only_unchanged_roots
 test_seeded_module_boundary_parity
