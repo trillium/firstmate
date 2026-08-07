@@ -68,7 +68,7 @@ run_case_spawn() {
     TMUX="fake,1,0" \
     FM_FAKE_PANE_PATH="$WT_DIR" \
     PATH="$FAKEBIN_DIR:$PATH" \
-    "$SPAWN" "$id" "$PROJ_DIR" "$@" 2>&1
+    "$SPAWN" --mode no-mistakes --yolo off "$id" "$PROJ_DIR" "$@" 2>&1
 }
 
 test_parlay_listen_enrolled_when_present() {
@@ -126,7 +126,7 @@ test_spawn_succeeds_when_parlay_absent() {
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     TMUX="fake,1,0" \
     FM_FAKE_PANE_PATH="$WT_DIR" \
-    "$SPAWN" "$id" "$PROJ_DIR" 2>&1)
+    "$SPAWN" --mode no-mistakes --yolo off "$id" "$PROJ_DIR" 2>&1)
   expect_code 0 "$?" "spawn should succeed even when parlay is not on PATH"
   assert_contains "$out" "spawned $id" "spawn did not report success without parlay"
   [ -e "$HOME_DIR/state/$id.parlay-listen-pid" ] \

@@ -76,7 +76,7 @@ run_spawn() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+    "$SPAWN" --mode no-mistakes --yolo off "$@" 2>&1
 }
 
 read_case_record() {

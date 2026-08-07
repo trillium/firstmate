@@ -94,7 +94,7 @@ test_spawn_accepts_a_bare_project_name() {
   # resolving the project, so reaching the brief error proves the bare name
   # resolved - without launching anything.
   out=$(FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" \
-    "$ROOT/bin/fm-spawn.sh" bare-name-task herdr-web "sh -c true" --backend tmux 2>&1); rc=$?
+    "$ROOT/bin/fm-spawn.sh" bare-name-task herdr-web "sh -c true" --mode no-mistakes --yolo off --backend tmux 2>&1); rc=$?
   expect_code 1 "$rc" "fm-spawn.sh did not stop at the missing brief"
   assert_contains "$out" "no brief at" \
     "fm-spawn.sh did not get past project resolution for a bare project name"
@@ -106,7 +106,7 @@ test_spawn_accepts_a_bare_project_name() {
 test_spawn_names_an_unresolvable_project() {
   local out rc
   out=$(FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" \
-    "$ROOT/bin/fm-spawn.sh" missing-proj-task herdrweb "sh -c true" --backend tmux 2>&1); rc=$?
+    "$ROOT/bin/fm-spawn.sh" missing-proj-task herdrweb "sh -c true" --mode no-mistakes --yolo off --backend tmux 2>&1); rc=$?
   [ "$rc" -ne 0 ] || fail "fm-spawn.sh accepted a project that resolves nowhere"
   assert_contains "$out" "project not found: herdrweb" \
     "fm-spawn.sh did not report an unresolvable project by name"

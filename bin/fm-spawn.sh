@@ -2563,8 +2563,8 @@ fi
 # blocks forever on a `code --wait`-style editor: silent, indistinguishable from
 # a thinking pane, made worse by the agent's retry (robots-1xw8). `true` exits 0
 # without touching the file, so git proceeds with the message or todo as written.
-spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 spawn_send_text_line "$T" "export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true"
+spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 # Send through the exact channel that already ships GOTMPDIR, so every backend
 # and harness - ship, scout, and secondmate - gets it before launch. Skipped
 # entirely when trace context is off.
