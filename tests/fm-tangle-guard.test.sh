@@ -2,14 +2,16 @@
 # Behavior tests for the worktree-tangle guards.
 #
 # Firstmate is a treehouse-pooled git repo of itself: linked worktrees and
-# secondmate homes all sit at a detached HEAD on the default branch, while the
-# PRIMARY checkout (FM_ROOT) is a normal checkout on a real branch. The "tangle"
+# secondmate homes are disposable checkouts - detached, or on their own feature
+# branch when created with `git worktree add -b` - while the PRIMARY checkout
+# (FM_ROOT) is a normal checkout that belongs on the default branch. The "tangle"
 # is a crewmate branching/committing in the primary instead of its own worktree,
 # stranding the primary on a feature branch. Two guards cover it:
 #   GUARD 1 (prevention) - the brief asserts isolation before its branch step, and
 #            fm-spawn refuses to launch unless the resolved worktree is isolated.
-#   GUARD 2 (detection)  - fm-guard and fm-bootstrap alarm when the primary is on
-#            a feature branch, and stay silent on the default branch or detached.
+#   GUARD 2 (detection)  - fm-guard and fm-bootstrap alarm when the PRIMARY is on
+#            a feature branch, and stay silent on the default branch, on a
+#            detached HEAD, and in any linked worktree whatever its branch.
 # These cases pin: the shared lib's branch classification, the fm-guard banner,
 # the fm-bootstrap problem line, the brief assertion ordering, and the fm-spawn
 # abort - all hermetic over temp git repos and fakebins.
@@ -34,8 +36,9 @@ make_repo() {
 
 # --- shared lib: branch classification --------------------------------------
 
-# fm_primary_tangle_branch is the whole scoping decision: a NAMED non-default
-# branch is the tangle; the default branch and detached HEAD are healthy.
+# fm_primary_tangle_branch is the whole scoping decision: in the PRIMARY checkout
+# a NAMED non-default branch is the tangle; the default branch and detached HEAD
+# are healthy.
 test_lib_classification() {
   local repo n=0 label state branch expect out
   repo=$(make_repo "$TMP_ROOT/lib-repo")
@@ -60,6 +63,42 @@ ROWS
   pass "fm_primary_tangle_branch: feature branch alarms; default/detached/non-git stay silent"
 }
 
+# A LINKED worktree is never the tangle, whatever branch it is on. The sanctioned
+# crew flow is `git worktree add <dir> -b <branch>`, which leaves the worktree on
+# a named non-default branch - exactly the shape a branch-only check misreads as a
+# stranded primary. The scoping fact is the git dir: a linked worktree has its own
+# (<common>/worktrees/<name>), the primary's IS the common dir.
+test_lib_linked_worktree_is_never_tangled() {
+  local repo out
+  repo=$(make_repo "$TMP_ROOT/wt-repo")
+  git -C "$repo" checkout -q main
+
+  fm_is_primary_checkout "$repo" || fail "primary checkout was not recognized as primary"
+
+  # `git worktree add -b` - a named feature branch in a linked worktree.
+  git -C "$repo" worktree add -q "$TMP_ROOT/wt-feature" -b fm/worktree-branch-hh8 >/dev/null 2>&1
+  ! fm_is_primary_checkout "$TMP_ROOT/wt-feature" || fail "linked worktree was misreported as the primary checkout"
+  out=$(fm_primary_tangle_branch "$TMP_ROOT/wt-feature" || true)
+  [ -z "$out" ] || fail "linked worktree on a feature branch wrongly reported a tangle: '$out'"
+
+  # A subdirectory inside that worktree resolves the same way.
+  mkdir -p "$TMP_ROOT/wt-feature/sub"
+  out=$(fm_primary_tangle_branch "$TMP_ROOT/wt-feature/sub" || true)
+  [ -z "$out" ] || fail "subdir of a linked worktree wrongly reported a tangle: '$out'"
+
+  # `git worktree add --detach` - the older assumed shape, still silent.
+  git -C "$repo" worktree add -q --detach "$TMP_ROOT/wt-detached" >/dev/null 2>&1
+  out=$(fm_primary_tangle_branch "$TMP_ROOT/wt-detached" || true)
+  [ -z "$out" ] || fail "detached linked worktree wrongly reported a tangle: '$out'"
+
+  # The primary still alarms while those worktrees exist - the fix narrows the
+  # scope, it does not disarm the guard.
+  git -C "$repo" checkout -q -B fm/tangle-hh9
+  out=$(fm_primary_tangle_branch "$repo" || true)
+  [ "$out" = fm/tangle-hh9 ] || fail "primary tangle no longer detected once worktrees exist: got '$out'"
+  pass "fm_primary_tangle_branch: linked worktrees stay silent on any branch; the primary still alarms"
+}
+
 # --- GUARD 2a: fm-guard banner ----------------------------------------------
 
 run_guard() {
@@ -77,6 +116,14 @@ test_guard_banner() {
   git -C "$repo" checkout -q --detach
   out=$(run_guard "$repo")
   assert_not_contains "$out" "WORKTREE TANGLE" "guard alarmed on a detached HEAD (legitimate worktree state)"
+
+  # The reported false positive: a fleet action running inside a linked worktree
+  # that `git worktree add -b` left on a named branch. The banner's remedy would
+  # abandon that checkout, and it lands in captured stderr during test runs.
+  git -C "$repo" checkout -q main
+  git -C "$repo" worktree add -q "$TMP_ROOT/guard-wt" -b fm/guard-wt-aa0 >/dev/null 2>&1
+  out=$(run_guard "$TMP_ROOT/guard-wt")
+  assert_not_contains "$out" "WORKTREE TANGLE" "guard alarmed inside a linked worktree on its own feature branch"
 
   git -C "$repo" checkout -q -B fm/tangle-aa1
   out=$(run_guard "$repo")
@@ -108,6 +155,11 @@ test_bootstrap_line() {
   out=$(run_bootstrap "$repo" | grep '^TANGLE:' || true)
   [ -z "$out" ] || fail "bootstrap emitted a TANGLE line on a detached HEAD: $out"
 
+  git -C "$repo" checkout -q main
+  git -C "$repo" worktree add -q "$TMP_ROOT/bootstrap-wt" -b fm/bootstrap-wt-bb1 >/dev/null 2>&1
+  out=$(run_bootstrap "$TMP_ROOT/bootstrap-wt" | grep '^TANGLE:' || true)
+  [ -z "$out" ] || fail "bootstrap emitted a TANGLE line inside a linked worktree on its own branch: $out"
+
   git -C "$repo" checkout -q -B fm/tangle-bb2
   out=$(run_bootstrap "$repo" | grep '^TANGLE:' || true)
   assert_contains "$out" "fm/tangle-bb2" "bootstrap did not report the tangled branch"
@@ -127,7 +179,7 @@ test_brief_assertion_precedes_branch() {
   local home brief iso br
   home="$TMP_ROOT/brief-home"
   mkdir -p "$home/data"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" tangle-brief-cc3 alpha >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" tangle-brief-cc3 alpha --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/tangle-brief-cc3/brief.md"
   assert_present "$brief" "brief was not scaffolded"
   assert_grep "blocked: launched in primary checkout, not an isolated worktree" "$brief" \
@@ -182,7 +234,7 @@ run_spawn() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX="fake,1,0" \
     PATH="$fakebin:$PATH" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex 2>&1
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex --mode no-mistakes --yolo off 2>&1
 }
 
 test_spawn_isolation_abort() {
@@ -262,7 +314,7 @@ run_spawn_record() {
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX="fake,1,0" \
     FM_TMUX_REC="$rec" \
     PATH="$fakebin:$PATH" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex 2>&1
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" codex --mode no-mistakes --yolo off 2>&1
 }
 
 test_spawn_tmux_window_construction() {
@@ -302,6 +354,7 @@ test_spawn_tmux_window_construction() {
 }
 
 test_lib_classification
+test_lib_linked_worktree_is_never_tangled
 test_guard_banner
 test_bootstrap_line
 test_brief_assertion_precedes_branch

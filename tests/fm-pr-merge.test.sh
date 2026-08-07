@@ -14,6 +14,8 @@
 #   (f) malformed PR URL fails fast without calling gh-axi
 #   (g) explicit merge method is not overridden by the default --squash
 #   (h) repo override args fail fast because the repo comes from the URL
+#   (i) a merge poll that cannot be armed still merges and reports separately
+#   (j) a check that fails before recording pr= refuses and says no merge ran
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -301,6 +303,71 @@ test_parses_pr_url_for_gh_axi() {
   pass "fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments"
 }
 
+# Arming the watcher's merge poll is supervision convenience; the merge is the
+# operation. bin/fm-pr-check.sh reports status 3 when it recorded pr= but could
+# not arm the poll, and that must never cancel the merge silently.
+test_unarmable_poll_still_merges_and_reports() {
+  local case_dir rc warnings
+  case_dir=$(make_case arming-blocked)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  : > "$case_dir/gh-axi.log"
+  # A private quarantine that is not a directory blocks the non-executing PR
+  # check migration even in the --checks-safe mode fm-pr-check.sh uses, so the
+  # poll cannot be armed while recording stays possible.
+  printf 'not a quarantine directory\n' > "$case_dir/state/.pr-check-quarantine"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/31 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "arming-blocked: fm-pr-merge should merge when only arming failed"
+  grep -qxF 'pr merge 31 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+    || fail "arming-blocked: gh-axi pr merge was not invoked"
+  assert_grep 'pr=https://github.com/example/repo/pull/31' "$case_dir/state/task-x1.meta" \
+    "arming-blocked: pr= was not recorded before the merge"
+  assert_absent "$case_dir/state/task-x1.check.sh" \
+    "arming-blocked: a merge poll was armed despite the blocked migration"
+  assert_grep 'merge poll NOT armed for task-x1' "$case_dir/stderr" \
+    "arming-blocked: the arming failure was not reported"
+  assert_grep 'bin/fm-watch-arm.sh' "$case_dir/stderr" \
+    "arming-blocked: the arming failure did not name the re-arm path"
+  warnings=$(grep -c 'merging anyway' "$case_dir/stderr" || true)
+  [ "$warnings" -eq 2 ] \
+    || fail "arming-blocked: arming failure should be reported before and after the merge, saw $warnings"
+  pass "fm-pr-merge merges and reports separately when the merge poll cannot be armed"
+}
+
+test_check_failure_before_recording_refuses_merge() {
+  local case_dir rc
+  case_dir=$(make_case check-fails)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  : > "$case_dir/gh-axi.log"
+  # A pending retirement receipt that cannot be validated or discarded fails
+  # fm-pr-check.sh before it records pr=, the hard merge prerequisite.
+  mkdir "$case_dir/state/task-x1.pr-poll-retirement"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/33 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "check-fails: fm-pr-merge should refuse when recording failed"
+  assert_grep 'no merge was performed' "$case_dir/stderr" \
+    "check-fails: refusal did not say that no merge was performed"
+  assert_no_grep 'pr=https://github.com/example/repo/pull/33' "$case_dir/state/task-x1.meta" \
+    "check-fails: pr= was recorded by a failed check"
+  assert_no_grep 'pr merge' "$case_dir/gh-axi.log" \
+    "check-fails: gh-axi pr merge was invoked without a recorded pr="
+  assert_absent "$case_dir/state/task-x1.check.sh" \
+    "check-fails: a merge poll was armed by a failed check"
+  pass "fm-pr-merge refuses and reports that no merge was performed when recording fails"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -311,3 +378,5 @@ test_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
+test_unarmable_poll_still_merges_and_reports
+test_check_failure_before_recording_refuses_merge

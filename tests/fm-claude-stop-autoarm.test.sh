@@ -107,6 +107,14 @@ printf 'watcher: attached pid=%s (beacon 2s)\n' "$$"
 exit 0
 SH
       ;;
+    benign-live)
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+echo "$$" >> "$FM_HOME/state/arm-ran"
+printf 'watcher: FAILED - cycle ended without an actionable reason\n'
+exit 1
+SH
+      ;;
     slow-actionable)
       cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
@@ -199,7 +207,23 @@ arm_run_count() {
 }
 
 epoch_outcome() {
-  sed -n 's/^.*outcome=\([a-z][a-z]*\) .*$/\1/p' "$1/state/.claude-autoarm-epoch" 2>/dev/null || true
+  sed -n 's/^.*outcome=\([a-z][a-z-]*\) .*$/\1/p' "$1/state/.claude-autoarm-epoch" 2>/dev/null || true
+}
+
+watcher_identity() {
+  local dir=$1 pid=$2
+  FM_STATE_OVERRIDE="$dir/state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$dir/bin/fm-wake-lib.sh" "$pid"
+}
+
+record_watcher_lock() {
+  local dir=$1 pid=$2 identity=$3 root bin_dir
+  root=$dir
+  bin_dir=$(cd "$dir/bin" && pwd)
+  mkdir -p "$dir/state/.watch.lock"
+  printf '%s\n' "$pid" > "$dir/state/.watch.lock/pid"
+  printf '%s\n' "$root" > "$dir/state/.watch.lock/fm-home"
+  printf '%s\n' "$bin_dir/fm-watch.sh" > "$dir/state/.watch.lock/watcher-path"
+  printf '%s\n' "$identity" > "$dir/state/.watch.lock/pid-identity"
 }
 
 # --- registration contract ----------------------------------------------------
@@ -278,10 +302,14 @@ test_inert_when_afk() {
   dir=$(make_primary_dir "$TMP_ROOT/afk")
   : > "$dir/state/task.meta"
   : > "$dir/state/.afk"
+  : > "$dir/state/.claude-autoarm-failure-notified"
+  : > "$dir/state/.claude-autoarm-failure-alarmed"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   expect_code 0 "$status" "hook must never arm or rewake while away mode owns triage"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed while state/.afk existed"
+  assert_present "$dir/state/.claude-autoarm-failure-notified" "AFK without positive recovery reset the failure notice"
+  assert_present "$dir/state/.claude-autoarm-failure-alarmed" "AFK without positive recovery reset the attended alarm"
   pass "auto-arm: inert while AFK owns supervision"
 }
 
@@ -341,10 +369,14 @@ test_resolves_outermost_claude_pid_in_nested_bgspare_chain() {
 test_inert_when_fleet_idle() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/idle")
+  : > "$dir/state/.claude-autoarm-failure-notified"
+  : > "$dir/state/.claude-autoarm-failure-alarmed"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   expect_code 0 "$status" "hook must exit 0 in an idle home with no X-mode poll"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed an idle home"
+  assert_present "$dir/state/.claude-autoarm-failure-notified" "idle state without positive recovery reset the failure notice"
+  assert_present "$dir/state/.claude-autoarm-failure-alarmed" "idle state without positive recovery reset the attended alarm"
   pass "auto-arm: inert with nothing in flight and no X-mode need"
 }
 
@@ -367,6 +399,36 @@ test_actionable_close_rewakes_with_reason() {
   pass "auto-arm: actionable close translates to exactly one exit-2 rewake with reason"
 }
 
+test_actionable_close_with_live_successor_rewakes_once() {
+  local dir out out2 status status2 pid identity
+  dir=$(make_primary_dir "$TMP_ROOT/actionable-live-successor")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" actionable
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live successor for actionable close"
+  record_watcher_lock "$dir" "$pid" "$identity"
+  touch "$dir/state/.last-watcher-beat"
+
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  write_arm_fixture "$dir" benign-live
+  out2=$(run_autoarm "$dir" 2>/dev/null); status2=$?
+
+  expect_code 2 "$status" "an actionable close must rewake when a live successor already exists"
+  expect_code 0 "$status2" "a repeated non-actionable close with the live successor must stay quiet"
+  [ "$(printf '%s\n' "$out" | grep -c '^firstmate watcher wake')" -eq 1 ] \
+    || fail "actionable close with a live successor did not emit exactly one wake banner: $out"
+  [ "$(printf '%s\n' "$out" | grep -c '^stale: fixture-win actionable')" -eq 1 ] \
+    || fail "actionable close with a live successor did not surface its reason exactly once: $out"
+  [ -z "$out2" ] || fail "repeated hook duplicated the delivered actionable result: $out2"
+  kill -0 "$pid" 2>/dev/null || fail "actionable delivery stopped or replaced the live successor"
+  [ "$(epoch_outcome "$dir")" = clean ] || fail "the later benign close must record outcome=clean"
+
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  pass "auto-arm: actionable close survives a healthy successor without duplicate delivery"
+}
+
 test_failed_close_rewakes_with_failure_banner() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/failed")
@@ -374,11 +436,12 @@ test_failed_close_rewakes_with_failure_banner() {
   write_arm_fixture "$dir" failed
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   expect_code 2 "$status" "a typed watcher failure must rewake as an alarm"
-  assert_contains "$out" "watcher cycle FAILED" "failure rewake must carry the failure banner"
+  assert_contains "$out" "automatic supervision mechanism is broken" "failure rewake must describe the automatic mechanism failure"
   assert_contains "$out" "watcher: FAILED" "failure rewake must carry the arm's typed failure"
-  assert_contains "$out" "repair supervision" "failure rewake must direct the manual repair"
-  [ "$(epoch_outcome "$dir")" = rewake ] || fail "epoch must record outcome=rewake, got: $(epoch_outcome "$dir")"
-  pass "auto-arm: watcher: FAILED translates to an exit-2 alarm rewake"
+  assert_not_contains "$out" "bin/fm-watch-arm.sh" "failure rewake must not create a manual arm loop"
+  [ "$(epoch_outcome "$dir")" = failed ] || fail "epoch must record outcome=failed, got: $(epoch_outcome "$dir")"
+  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "failure must exhaust exactly two bounded arm attempts"
+  pass "auto-arm: bounded failure verification emits one automatic-mechanism alarm"
 }
 
 # A quiet close is only benign when a live watcher genuinely survived it. The arm
@@ -543,6 +606,7 @@ test_stale_lock_recovery_preserves_afk_and_need_gates
 test_resolves_outermost_claude_pid_in_nested_bgspare_chain
 test_inert_when_fleet_idle
 test_actionable_close_rewakes_with_reason
+test_actionable_close_with_live_successor_rewakes_once
 test_failed_close_rewakes_with_failure_banner
 test_quiet_close_with_live_watcher_exits_silently
 test_quiet_close_without_successor_rearms_then_alarms
