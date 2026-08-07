@@ -13,6 +13,9 @@
 #   fm-remote-secondmate-control.sh update <id>
 #   fm-remote-secondmate-control.sh retire <id> [--force]
 #
+# FM_HOME must name the remote secondmate home this command acts on; fm-on.sh sets
+# it for every routed call, so set it explicitly when running this command by hand.
+#
 # Remote placement ends here, but the second-mate agent always runs on the
 # Herdr backend in the dedicated fm-remote session, so launch refuses any other
 # selection rather than reading this home's config/backend. The interactive
@@ -37,9 +40,10 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-TARGET_HOME=${FM_HOME:?FM_HOME is required}
-CONTROL_STATE="$TARGET_HOME/state/parent-route"
-CONTROL_DATA="$TARGET_HOME/data/.parent-route"
+# Capture the caller-selected home before sourcing bin/fm-backend.sh, which
+# defaults FM_HOME to this code root. An unset selection must stay distinguishable
+# here so it is reported as no secondmate rather than acting on the code root.
+SELECTED_HOME=${FM_HOME:-}
 REMOTE_HERDR_SESSION=fm-remote
 
 # shellcheck source=bin/fm-backend.sh
@@ -48,8 +52,19 @@ REMOTE_HERDR_SESSION=fm-remote
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 validate_id() { case "$1" in ''|*[!A-Za-z0-9._-]*) die "invalid secondmate id: $1" ;; esac; }
+
+# Resolve the selected secondmate home. An unset FM_HOME selects no secondmate at
+# all, so report that rather than letting a bare parameter expansion abort with a
+# shell-internal diagnostic before help or command dispatch can run.
+resolve_target_home() {
+  [ -n "$SELECTED_HOME" ] \
+    || die "no secondmate selected: set FM_HOME to the remote secondmate home this command acts on"
+  TARGET_HOME=$SELECTED_HOME
+  CONTROL_STATE="$TARGET_HOME/state/parent-route"
+  CONTROL_DATA="$TARGET_HOME/data/.parent-route"
+}
 
 validate_home() { # <id> [allow-absent]
   local id=$1 allow_absent=${2:-no} marker
@@ -286,6 +301,9 @@ cmd_retire() {
   fi
 }
 
+case "${1:-}" in ''|-h|--help|help) usage ;; esac
+resolve_target_home
+
 case "${1:-}" in
   launch) shift; [ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage; cmd_launch "$@" ;;
   state) shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"; state_value "$1" ;;
@@ -297,6 +315,5 @@ case "${1:-}" in
   sync) shift; [ "$#" -eq 1 ] || usage; cmd_sync "$@" ;;
   update) shift; [ "$#" -eq 1 ] || usage; cmd_update "$@" ;;
   retire) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_retire "$@" ;;
-  ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;
 esac
