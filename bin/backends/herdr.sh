@@ -3058,18 +3058,33 @@ fm_backend_herdr_kill_serialized() {  # <session> <pane>
 fm_backend_herdr_kill() {  # <target>
   fm_backend_herdr_target_ready "$1" || return 0
   local session=$FM_BACKEND_HERDR_SESSION pane=$FM_BACKEND_HERDR_PANE
-  local lock_path attempt=0 lock_held=0
+  local lock_path verified_lock_path attempt=0 lock_held=0 lock_max lock_interval
   if ! declare -F fm_lock_try_acquire >/dev/null 2>&1; then
     # shellcheck source=bin/fm-wake-lib.sh
     . "$FM_BACKEND_HERDR_ROOT/bin/fm-wake-lib.sh"
   fi
+  # Same bounded wait as fm-spawn.sh's projection lock; see docs/configuration.md
+  # for FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS / _INTERVAL (default 50 x 0.1 = 5s).
+  fm_backend_herdr_presentation_lock_budget
+  lock_max=$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS
+  lock_interval=$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL
   if lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session"); then
-    while [ "$attempt" -lt 50 ]; do
+    while [ "$attempt" -lt "$lock_max" ]; do
       if fm_lock_try_acquire "$lock_path"; then
-        lock_held=1
+        # Acquiring proves only that this exact directory was taken. The wait is
+        # bounded but not instant, so re-resolve the session's lock path and
+        # refuse when it moved: closing a pane under a stale path would mutate
+        # while another holder owns the live one. Mirrors the same re-check in
+        # fm-teardown.sh's teardown_herdr_preflight_target.
+        if verified_lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") \
+          && [ "$verified_lock_path" = "$lock_path" ]; then
+          lock_held=1
+        else
+          fm_lock_release "$lock_path" || true
+        fi
         break
       fi
-      sleep 0.1
+      sleep "$lock_interval"
       attempt=$((attempt + 1))
     done
   fi
@@ -3187,6 +3202,26 @@ fm_backend_herdr_busy_state() {  # <target>
 # call-count assertions).
 FM_BACKEND_HERDR_SUBMIT_POLLS=${FM_BACKEND_HERDR_SUBMIT_POLLS:-6}
 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=${FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP:-0.6}
+
+# Resolve the bounded wait every session presentation lock acquire site shares
+# (fm-spawn.sh's projection, fm-teardown.sh's preflight, and the task kill
+# below) into FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS and
+# _BUDGET_INTERVAL. A knob that is absent or malformed falls back to the shipped
+# 50 x 0.1 = 5s rather than reaching the loop: a non-numeric poll count would
+# fail the integer comparison and degrade immediately, and a non-numeric
+# interval would make sleep fail every iteration and spin the wait with no delay
+# at all. See docs/configuration.md for both knobs.
+fm_backend_herdr_presentation_lock_budget() {
+  FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS=${FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS:-50}
+  FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL=${FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL:-0.1}
+  case $FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS in
+    '' | *[!0-9]*) FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS=50 ;;
+  esac
+  case $FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL in
+    '' | *[!0-9.]* | *.*.* | .) FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL=0.1 ;;
+    *.) FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL=0.1 ;;
+  esac
+}
 
 fm_backend_herdr_submit_confirm_budget() {  # <caller-budget-seconds>
   awk -v b="${1:-0}" -v m="$FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP" 'BEGIN {
