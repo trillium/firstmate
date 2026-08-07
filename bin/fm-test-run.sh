@@ -140,6 +140,7 @@ family_for_basename() {
     fm-documentation-audiences.test.sh|fm-ensure-agents-md.test.sh|fm-grok-harness.test.sh|\
     fm-kimi-harness.test.sh|fm-muse-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|\
     fm-operational-input.test.sh|fm-pi-primary-types.test.sh|\
+    fm-pool-reclaim.test.sh|\
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
@@ -930,6 +931,14 @@ families_for_changed_path() {
     bin/fm-peek.sh|bin/fm-composer*)
       printf '%s\n' backend-dispatch
       printf '%s\n' pure-contract-unit
+      ;;
+    bin/fm-pool-reclaim.sh)
+      # The worktree-pool reclaimer: its own contract unit tests, plus the
+      # spawn families, because bin/fm-spawn.sh pre-flights it before
+      # `treehouse get` and bin/fm-teardown.sh owns the dropping set it keys on.
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' backend-dispatch
+      printf '%s\n' pr-forge
       ;;
     bin/fm-bearings-snapshot.sh|bin/fm-fleet-snapshot.sh|bin/fm-fleet-view.sh)
       printf '%s\n' snapshot-bearings

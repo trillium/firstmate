@@ -217,6 +217,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1851,6 +1853,39 @@ kimi_spawn_fail() {  # <detail>
 }
 
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  # Pre-flight the pool only when it has nothing left to hand out. A treehouse
+  # pool only shrinks - an endpoint that dies without reaching fm-teardown.sh
+  # leaks its slot, and neither `treehouse prune` nor a later `get` ever takes
+  # one back - so without this sweep the pool eventually empties and every
+  # spawn stalls in the wait loop below until its 60s deadline. Skipping the
+  # sweep while a slot is free keeps the common spawn free of the extra work.
+  # Best-effort throughout: fm-pool-reclaim.sh exits 0 on every failure, and a
+  # sweep that reclaims nothing still lets the get below run and report for
+  # itself, so a reclaim problem can never be why a spawn fails.
+  #
+  # Hard-bounded even so. The sweep shells out to `treehouse` once per pool read
+  # and once per reclaim, and none of those calls carry a deadline of their own;
+  # a single hung treehouse would otherwise stall here indefinitely and burn the
+  # 60s allocation budget the wait loop below is counting on. fm_run_timed caps
+  # the whole sweep, and 124 (timed out) is swallowed exactly like any other
+  # non-zero exit - the get still runs and still speaks for itself.
+  #
+  # On locking, since this is the one mutating step in the spawn path: this
+  # invocation's task-id-scoped lock is already held (acquired at the
+  # fm_lock_try_acquire "$SPAWN_TASK_LOCK" above), so no second spawn of THIS
+  # task can reach here concurrently. That lock is keyed by task id, though, not
+  # by pool - two spawns of different tasks sharing one treehouse pool can and do
+  # sweep at the same time, and no lock in firstmate serializes them. That is why
+  # the safety lives in the sweep itself rather than here: every stale-lease
+  # return is guarded by --if-lease-id, and every dirty-slot return re-reads the
+  # pool immediately beforehand. Do not weaken either guard on the assumption
+  # that this call site is serialized, because it is not.
+  if [ "${FM_SPAWN_SKIP_POOL_RECLAIM:-}" != 1 ]; then
+    fm_run_timed "${FM_SPAWN_POOL_RECLAIM_TIMEOUT:-30}" \
+      "$SCRIPT_DIR/fm-pool-reclaim.sh" --project "$PROJ_ABS" --yes --only-if-exhausted 2>&1 \
+      | sed 's/^/spawn: /' >&2 || true
+  fi
+
   spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
@@ -1894,6 +1929,20 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   done
   if [ -z "$WT" ]; then
     echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
+    # By far the most common cause is an exhausted pool: `treehouse get` has no
+    # worktree to hand out, so the pane never moves and this deadline is the
+    # only symptom. The message alone sends the reader to the wrong place (the
+    # window looks fine), so print the pool itself - which slot is dirty, leased,
+    # or in use is the actual diagnosis, and bin/fm-pool-reclaim.sh is the fix.
+    if command -v treehouse >/dev/null 2>&1; then
+      if pool_status=$( (cd "$PROJ_ABS" && treehouse status) 2>/dev/null ) \
+         && [ -n "$pool_status" ]; then
+        echo "error: treehouse pool for $PROJ_ABS at the moment of failure:" >&2
+        printf '%s\n' "$pool_status" >&2
+        echo "error: if no worktree is available, preview reclaimable slots with: $SCRIPT_DIR/fm-pool-reclaim.sh --project '$PROJ_ABS'" >&2
+        echo "error: that is a dry run; add --yes to actually return the abandoned slots" >&2
+      fi
+    fi
     exit 1
   fi
 
