@@ -294,6 +294,27 @@ fm_write_secondmate_meta() {
     "projects=$projects"
 }
 
+# fm_register_secondmate <registry-file> <id> <home> [scope] [projects]
+# Bind <id> to <home> in a data/secondmates.md registry, replacing any prior line
+# for that id. A --secondmate spawn refuses unless the spawning home's own
+# registry carries this binding, so any fixture that spawns one needs it, exactly
+# as bin/fm-home-seed.sh writes it before the first launch. The home is recorded
+# physically resolved because fm-spawn compares it against the resolved path.
+fm_register_secondmate() {
+  local reg=$1 id=$2 home=$3 scope=${4:-test scope} projects=${5:-} home_abs tmp
+  home_abs=$(cd "$home" 2>/dev/null && pwd -P) || home_abs=$home
+  mkdir -p "$(dirname "$reg")"
+  tmp="$reg.tmp.$$"
+  if [ -f "$reg" ]; then
+    grep -v "^- $id " "$reg" > "$tmp" 2>/dev/null || :
+  else
+    : > "$tmp"
+  fi
+  printf -- '- %s - %s (home: %s; scope: %s; projects: %s; added 2026-08-05)\n' \
+    "$id" "$scope" "$home_abs" "$scope" "$projects" >> "$tmp"
+  mv "$tmp" "$reg"
+}
+
 # --- common assertions ------------------------------------------------------
 
 # assert_contains <haystack> <needle> <msg>

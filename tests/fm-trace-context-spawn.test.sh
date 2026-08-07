@@ -192,6 +192,9 @@ run_two_level() {
   sm_id="sm-$name"
   mkdir -p "$prim/data/$sm_id"
   printf 'charter brief\n' > "$prim/data/$sm_id/brief.md"
+  # A --secondmate spawn refuses unless the launching home's own registry binds
+  # the id to this home, exactly as fm-home-seed.sh writes it before a real launch.
+  fm_register_secondmate "$prim/data/secondmates.md" "$sm_id" "$sm"
   smlog="$base/sm-launch.log"
   smfake=$(make_spawn_fakebin "$base/sm-fake")
   : > "$smlog"
@@ -359,6 +362,7 @@ test_duplicate_secondmate_spawn_does_not_converge_trace_context() {
   printf '# Firstmate\n' > "$sm/AGENTS.md"
   printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
   printf 'charter\n' > "$sm/data/charter.md"
+  fm_register_secondmate "$prim/data/secondmates.md" "$id" "$sm"
   fake=$(make_spawn_fakebin "$base/fake")
 
   out=$(env -u FM_TRACE_CONTEXT \
