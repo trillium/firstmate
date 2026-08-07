@@ -32,6 +32,8 @@ The behavioral proof is the load-bearing guarantee that a feature still works as
 
 Adding a feature is one `[[feature]]` block plus one snapshot.
 The snapshot and signatures are generated, never hand-written.
+Write a new anchor with just its `path` and `symbol` and leave `sig` out; `check.sh` reports it as `anchor unblessed` until you run `--regen`, which writes the `sig` line for you.
+An anchor that is missing its `sig` is never silently downgraded to a whole-file anchor, so its deletion tripwire is armed from the moment you write it.
 
 ## Usage
 
@@ -69,7 +71,7 @@ The following are out of scope for this proof of concept and are described here 
 
 ## Tests
 
-`tests/provenance-check.test.sh` drives `check.sh` through its CLI against an isolated fixture tree, asserting green on an intact tree, red on a deleted anchor, red on a behavior change, and WARN-not-FAIL on signature drift.
+`tests/provenance-check.test.sh` drives `check.sh` through its CLI against an isolated fixture tree, asserting green on an intact tree, red on a deleted anchor, red on a behavior change, WARN-not-FAIL on signature drift, and that an anchor authored without a `sig` line keeps its symbol and gains a generated `sig`.
 It touches no real `bin/` script and no real snapshot, using the `FM_PROV_ROOT`, `FM_PROV_REGISTER`, and `FM_PROV_SNAP_DIR` overrides.
 
 ## Maintaining this file

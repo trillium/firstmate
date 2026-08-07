@@ -9,7 +9,9 @@
 #   - green (exit 0) on an intact tree,
 #   - red (exit 1) when an anchored symbol is deleted (deletion tripwire),
 #   - red (exit 1) when a feature's behavior changes vs its approved snapshot,
-#   - and that a mere signature drift is a WARN, not a FAIL.
+#   - that a mere signature drift is a WARN, not a FAIL,
+#   - and that an anchor authored WITHOUT a sig line keeps its symbol (so the
+#     deletion tripwire stays armed) and gets a sig line written by --regen.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -49,6 +51,16 @@ path   = "bin/feat.sh"
 symbol = "greet"
 sig    = "PENDING"
 EOF
+  printf '%s\n' "$fx"
+}
+
+# make_fixture_nosig: the same fixture with the anchor's `sig` line removed - the
+# natural first draft of a new anchor, authored before the first --regen. Echoes
+# the fixture root.
+make_fixture_nosig() {
+  local fx; fx=$(make_fixture)
+  grep -v '^sig ' "$fx/provenance/register.toml" > "$fx/provenance/register.toml.new"
+  mv "$fx/provenance/register.toml.new" "$fx/provenance/register.toml"
   printf '%s\n' "$fx"
 }
 
@@ -141,9 +153,47 @@ EOF
   pass "signature drift is a WARN (exit 0), not a FAIL"
 }
 
+test_anchor_without_sig_keeps_its_symbol() {
+  local fx; fx=$(make_fixture_nosig)
+  # Before any --regen, the anchor is unblessed and must SAY so rather than pass
+  # quietly. A missing sig must never be read as "no symbol either".
+  local out ec
+  out=$(run_check "$fx" 2>&1); ec=$?
+  assert_contains "$out" "anchor unblessed" "a sig-less anchor should report itself unblessed"
+  assert_contains "$out" "bin/feat.sh#greet" "a sig-less anchor must keep its symbol, not fall back to the whole file"
+  run_check "$fx" --regen >/dev/null 2>&1 || fail "regen should succeed on a sig-less anchor"
+  # The tripwire is the point: delete greet() while leaving --help identical, so
+  # only the anchor can catch it. A whole-file anchor would merely WARN on drift.
+  cat > "$fx/bin/feat.sh" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+case "${1:-}" in
+  --help) echo "feat.sh - a fixture feature"; exit 0 ;;
+  *) echo "hello from feat" ;;
+esac
+EOF
+  out=$(run_check "$fx" 2>&1); ec=$?
+  expect_code 1 "$ec" "a sig-less anchor's deletion tripwire must still fire"
+  assert_contains "$out" "anchor symbol vanished" "deleting the symbol should be reported, not downgraded to drift"
+  pass "an anchor authored without a sig line keeps its symbol and its deletion tripwire"
+}
+
+test_regen_writes_a_missing_sig_line() {
+  local fx; fx=$(make_fixture_nosig)
+  run_check "$fx" --regen >/dev/null 2>&1 || fail "regen should succeed on a sig-less anchor"
+  assert_grep 'sig    = "' "$fx/provenance/register.toml" "regen should write a sig line the author never typed"
+  local out ec
+  out=$(run_check "$fx" 2>&1); ec=$?
+  expect_code 0 "$ec" "a regenerated sig-less anchor should pass"
+  assert_contains "$out" "PASS  fixture-feat" "regen should leave no lingering unblessed warning"
+  pass "--regen supplies a sig line for an anchor that was authored without one"
+}
+
 test_regen_then_green_on_intact
 test_deletion_tripwire
 test_behavior_clobber
 test_drift_is_warn_not_fail
+test_anchor_without_sig_keeps_its_symbol
+test_regen_writes_a_missing_sig_line
 
 echo "# all provenance-check tests passed"

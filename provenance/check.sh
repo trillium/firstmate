@@ -85,7 +85,10 @@ anchor_signature() {
 feat_ids=(); feat_stories=(); feat_tests=()
 anc_fidx=(); anc_path=(); anc_symbol=(); anc_sig=()
 cur=-1
-while IFS=$'\t' read -r kind a b c d; do
+# US (U+001F), not tab: tab is IFS-whitespace and `read` collapses runs of it, so
+# an empty field would swallow the one after it. provenance_parse_register's
+# header owns the record format.
+while IFS=$'\x1f' read -r kind a b c d; do
   case "$kind" in
     FEATURE) cur=$((cur + 1)); feat_ids[cur]="$a"; feat_stories[cur]=""; feat_tests[cur]="" ;;
     STORY)   feat_stories[cur]="$a" ;;
@@ -116,12 +119,23 @@ if [ "$MODE" = regen ]; then
       aidx=$((aidx + 1))
     done
   done
-  # Rewrite each anchor's sig line in the register from the freshly computed map.
+  # Rewrite each anchor's sig line in the register from the freshly computed map,
+  # and INSERT one for an anchor authored without a `sig` line at all - otherwise
+  # a first-draft anchor would warn "unblessed" forever, since --regen would have
+  # nothing to replace.
   tmpreg=$(mktemp)
   awk '
+    # Called when an anchor block ends: supply its sig line if it had none, then
+    # release any blank lines parked while we waited to see one.
+    function close_anchor() {
+      if (in_anchor && !sig_seen && (curid SUBSEP aidx) in sig) {
+        printf "sig    = \"%s\"\n", sig[curid SUBSEP aidx]
+      }
+      printf "%s", hold; hold = ""
+    }
     FNR == NR { sig[$1 SUBSEP $2] = $3; next }
-    /^[ \t]*\[\[feature\]\]/        { in_anchor = 0; aidx = -1; print; next }
-    /^[ \t]*\[\[feature\.anchor\]\]/ { in_anchor = 1; aidx++; print; next }
+    /^[ \t]*\[\[feature\]\]/        { close_anchor(); in_anchor = 0; aidx = -1; print; next }
+    /^[ \t]*\[\[feature\.anchor\]\]/ { close_anchor(); in_anchor = 1; sig_seen = 0; aidx++; print; next }
     {
       if (!in_anchor) {
         eq = index($0, "=")
@@ -131,13 +145,18 @@ if [ "$MODE" = regen ]; then
         }
         print; next
       }
+      # Park blank lines so a synthesized sig line lands with the anchor keys
+      # rather than after the gap that separates feature blocks.
+      if ($0 ~ /^[ \t]*$/) { hold = hold $0 "\n"; next }
+      printf "%s", hold; hold = ""
       t = $0; gsub(/[ \t]/, "", t)
-      if (t ~ /^sig=/ && (curid SUBSEP aidx) in sig) {
-        printf "sig    = \"%s\"\n", sig[curid SUBSEP aidx]
-      } else {
-        print
+      if (t ~ /^sig=/) {
+        sig_seen = 1
+        if ((curid SUBSEP aidx) in sig) { printf "sig    = \"%s\"\n", sig[curid SUBSEP aidx]; next }
       }
+      print
     }
+    END { close_anchor() }
   ' "$sigmap" "$REGISTER" > "$tmpreg"
   mv "$tmpreg" "$REGISTER"
   rm -f "$sigmap"

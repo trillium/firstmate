@@ -15,9 +15,13 @@
 #             path   - file the feature lives in. A vanished path is a FAIL.
 #             symbol - optional bash function name; a vanished symbol is a FAIL.
 #                      Omit to anchor the whole file (existence tripwire only).
-#             sig    - normalized fingerprint of the anchored region. A drift is a
-#                      WARN, not a FAIL: upstream edits legitimately shift code
-#                      without deleting the feature. Re-bless with `check.sh --regen`.
+#             sig    - normalized fingerprint of the anchored region. Generated,
+#                      never hand-written: leave it out on a new anchor and
+#                      `check.sh --regen` writes it. Until then the anchor reads
+#                      as unblessed (a WARN) while its path/symbol tripwires stay
+#                      fully armed. A drift is a WARN, not a FAIL: upstream edits
+#                      legitimately shift code without deleting the feature.
+#                      Re-bless with `check.sh --regen`.
 #
 # Adding a feature = one [[feature]] block here + one snapshot (via --regen).
 

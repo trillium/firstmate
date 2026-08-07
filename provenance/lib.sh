@@ -93,27 +93,40 @@ provenance_locate_symbol() {
 }
 
 # ---------------------------------------------------------------------------
-# provenance_parse_register <register.toml>: emit a flat TSV stream the shell can
-# consume without a TOML library. This reader understands only the controlled
-# subset this POC's register uses: `[[feature]]` tables, `[[feature.anchor]]`
-# subtables, and `key = "value"` string pairs. It is deliberately small; a real
-# scale-up would use a proper TOML parser (see README "Deferred").
+# provenance_parse_register <register.toml>: emit a flat delimited stream the
+# shell can consume without a TOML library. This reader understands only the
+# controlled subset this POC's register uses: `[[feature]]` tables,
+# `[[feature.anchor]]` subtables, and `key = "value"` string pairs. It is
+# deliberately small; a real scale-up would use a proper TOML parser (see README
+# "Deferred").
 #
-# Output records (tab-separated):
+# Output records, one per line, fields separated by US (U+001F, "unit
+# separator"):
 #   FEATURE <id>
 #   STORY   <story>
 #   TEST    <command>
 #   ANCHOR  <index> <path> <sig> <symbol>
-# Anchors are indexed per-feature starting at 0. The optional <symbol> is emitted
-# LAST because it may be empty: with tab as an IFS-whitespace delimiter, `read`
-# collapses adjacent tabs, so an empty field is only safe as the trailing one.
+#
+# The separator is US rather than tab ON PURPOSE. Tab is IFS-WHITESPACE to bash,
+# so `IFS=$'\t' read -r a b c d` COLLAPSES a run of tabs: an empty field in the
+# middle of a record silently disappears and every field after it shifts left.
+# That is exactly how an anchor authored without a `sig` line used to be read as
+# a whole-file anchor with a garbage sig - a real defect (robots-ovt6). US is not
+# IFS-whitespace, so `IFS=$'\x1f' read` preserves empty fields positionally and
+# no field ordering is load-bearing. Read this stream with `IFS=$'\x1f'`.
+#
+# Anchors are indexed per-feature starting at 0. `symbol` is genuinely optional
+# (omit it to anchor a whole file). A missing or empty `sig` is emitted as the
+# PENDING sentinel, which check.sh already reports as "anchor unblessed (run
+# --regen)" - a loud WARN, never a silent downgrade.
 provenance_parse_register() {
   awk '
+    BEGIN { US = sprintf("%c", 31) }
     function trim(s)  { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
     function unq(s)   { s = trim(s); sub(/^"/, "", s); sub(/"$/, "", s); return s }
     function flush() {
       if (in_anchor) {
-        print "ANCHOR\t" anchor_no "\t" a_path "\t" a_sig "\t" a_symbol
+        print "ANCHOR" US anchor_no US a_path US (a_sig == "" ? "PENDING" : a_sig) US a_symbol
         in_anchor = 0
       }
     }
@@ -133,9 +146,9 @@ provenance_parse_register() {
         else if (key == "symbol") a_symbol = val
         else if (key == "sig")    a_sig = val
       } else {
-        if (key == "id")        print "FEATURE\t" val
-        else if (key == "story") print "STORY\t" val
-        else if (key == "test")  print "TEST\t" val
+        if (key == "id")        print "FEATURE" US val
+        else if (key == "story") print "STORY" US val
+        else if (key == "test")  print "TEST" US val
       }
     }
     END { flush() }
