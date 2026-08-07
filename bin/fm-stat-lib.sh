@@ -15,19 +15,21 @@
 #      speak. That is robots-xw8p (remote-job readiness probe) and robots-e8x5
 #      (thirteen more call sites).
 #
-#   2. `stat -f <fmt> ... || stat -c <fmt> ...` is worse, because GNU's `-f` is
-#      not "format" - it is --file-system. GNU `stat -f %m <path>` treats %m as an
-#      extra operand, stats the FILESYSTEM of <path>, EXITS 0, and prints a
-#      multi-line filesystem dump. The `||` never fires, so the correct call never
-#      runs and the caller gets an apfs/ext4 dump where it expected an integer.
-#      Under `set -u` arithmetic on that garbage can kill a loop mid-cycle
-#      (see the comment this replaces in fm-watch.sh).
+#   2. `stat -f <fmt> ... || stat -c <fmt> ...` is worse, and subtly: GNU's `-f`
+#      is --file-system, not --format. When `stat -f %m <path>` runs under GNU,
+#      `%m` becomes a second file operand; GNU stats the FILESYSTEM of <path>,
+#      writes a multi-line apfs/ext4 dump to STDOUT, and then EXITS 1. The `||`
+#      DOES fire, and `2>/dev/null` only silences stderr - so the fallback's
+#      correct integer is APPENDED to the dump already in the pipe. The caller
+#      receives a non-integer multi-line value at overall rc=0: invisible to
+#      error-handling, fatal to any arithmetic that follows.
 #
-# So: FEATURE-DETECT the binary, once per process, and dispatch. The probe is
-# ordering-safe in the one direction that matters - `stat -c` on BSD is an
-# unknown option (usage error on stderr, nothing on stdout, non-zero), while
-# `stat -f` on GNU succeeds with junk. Probing `-c` FIRST therefore cannot be
-# fooled by either flavor.
+# So: FEATURE-DETECT the binary, once per process, and dispatch. The probe must
+# try `-c` first: BSD stat rejects `-c` with a non-zero exit and NOTHING on
+# stdout, so the clean failure falls through to the `-f` probe; GNU stat rejects
+# `-f` only AFTER polluting stdout, so probing `-f` first would contribute junk
+# output even when it fails. Probing `-c` first guarantees the discarded probe
+# cannot contribute output under either flavor.
 #
 # The dialect is cached in _FM_STAT_DIALECT after the first probe, because
 # callers like fm_path_mtime run inside 0.2s confirm and 0.5s attach polls where
@@ -51,10 +53,10 @@ fm_stat_dialect() {
     # `/` is guaranteed to exist and to have an integer size under both flavors,
     # so a bare-integer result is a positive identification of the dialect and
     # anything else (empty, usage text, a filesystem dump) is a rejection.
-    probe=$(stat -c %s / 2>/dev/null)
+    probe=$(stat -c %s / 2>/dev/null) || probe=''
     case "$probe" in
       ''|*[!0-9]*)
-        probe=$(stat -f %z / 2>/dev/null)
+        probe=$(stat -f %z / 2>/dev/null) || probe=''
         case "$probe" in
           ''|*[!0-9]*) _FM_STAT_DIALECT=unknown ;;
           *) _FM_STAT_DIALECT=bsd ;;
