@@ -329,6 +329,7 @@ stop_runs() {
     # the shape keeps a caller-supplied id from resolving to a path outside the
     # registry, since the id is used to build a file this function rm -f's.
     case "$want" in
+      */*) die "not a run id: $want (expected fm-test-run-<ms>-<pid>; see --list-runs)" ;;
       fm-test-run-[0-9]*-[0-9]*) ;;
       *) die "not a run id: $want (expected fm-test-run-<ms>-<pid>; see --list-runs)" ;;
     esac
