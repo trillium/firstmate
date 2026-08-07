@@ -724,7 +724,7 @@ EOF
 
   # no-mistakes on a legacy (non-Trillium, unswapped) origin: the worker must
   # stop rather than let no-mistakes default the PR to upstream.
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm upstream-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm upstream-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/fork-nm/brief.md"
   assert_grep "# Fork-based project: origin is not yet the fork - STOP before running no-mistakes" "$brief" \
     "no-mistakes brief on a legacy upstream origin lost the stop-before-running rule"
@@ -745,7 +745,7 @@ EOF
   cat >> "$home/data/projects.md" <<'EOF'
 - swapped-proj [no-mistakes] - correctly swapped fork-contribution project (added 2026-08-01)
 EOF
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm-swapped swapped-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-nm-swapped swapped-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/fork-nm-swapped/brief.md"
   assert_grep "# Fork-based project: PRs stay in the fork, never upstream" "$brief" \
     "swapped no-mistakes brief lost the fork-target rule"
@@ -761,7 +761,7 @@ EOF
   cat >> "$home/data/projects.md" <<'EOF'
 - upstream-ssh [direct-PR] - upstream fork reached over SSH (added 2026-07-01)
 EOF
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-dp upstream-ssh >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-dp upstream-ssh --mode direct-PR >/dev/null 2>&1
   brief="$home/data/fork-dp/brief.md"
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
   assert_grep 'own `trillium/rango` fork, NEVER upstream' "$brief" \
@@ -774,13 +774,13 @@ EOF
 
   # Trillium-owned origin with no upstream remote: an ordinary captain-owned
   # project, no fork-contribution rule at all.
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-tr trillium-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-tr trillium-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/fork-tr/brief.md"
   assert_no_grep "# Fork-based project" "$brief" \
     "Trillium-origin brief wrongly carried a fork-contribution rule"
 
   # local-only never pushes: exempt even though the origin is upstream.
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-lo upstream-local >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" fork-lo upstream-local --mode local-only >/dev/null 2>&1
   brief="$home/data/fork-lo/brief.md"
   assert_no_grep "# Fork-based project" "$brief" \
     "local-only brief wrongly carried a fork-contribution rule"
@@ -822,7 +822,7 @@ test_crewmate_briefs_enroll_in_parlay_first() {
     if [ "$kind" = scout ]; then
       FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "enroll-$kind" someproj --scout >/dev/null 2>&1
     else
-      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "enroll-$kind" someproj >/dev/null 2>&1
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "enroll-$kind" someproj --mode no-mistakes >/dev/null 2>&1
     fi
     brief="$home/data/enroll-$kind/brief.md"
     assert_present "$brief" "$kind: brief was not scaffolded"
@@ -893,7 +893,7 @@ test_beads_backend_does_not_mint_at_brief_time() {
   calls_log="$TMP_ROOT/beads-backend-fake-calls.log"
   add_beads_task_mock_resolve "$fakebin" bead-auto-brief-1 "$calls_log"
 
-  PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-ship no-registry-proj >/dev/null 2>&1
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/beads-auto-ship/brief.md"
   assert_present "$brief" "ship brief was not scaffolded under the beads backend"
   assert_no_grep "# Bead Receipt" "$brief" \
@@ -920,7 +920,7 @@ test_beads_backend_does_not_mint_at_brief_time() {
   # auto-minting); it must not trigger any task CLI lookup/mint either.
   FM_HOOK_BEADS_ID=bead-explicit-under-beads-backend \
     PATH="$fakebin:$PATH" FM_HOME="$home" \
-    "$ROOT/bin/fm-brief.sh" beads-explicit-ship no-registry-proj >/dev/null 2>&1
+    "$ROOT/bin/fm-brief.sh" beads-explicit-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/beads-explicit-ship/brief.md"
   assert_grep "task set-state bead-explicit-under-beads-backend dispatch=claimed" "$brief" \
     "an explicit FM_HOOK_BEADS_ID did not render the Bead Receipt section under the beads backend"
@@ -938,7 +938,7 @@ test_default_backend_omits_hook_sections() {
   home="$TMP_ROOT/default-backend-home"
   write_registry "$home"
 
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" no-beads-ship no-registry-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" no-beads-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/no-beads-ship/brief.md"
   assert_present "$brief" "ship brief was not scaffolded under the default backend"
   assert_no_grep "# Bead Receipt" "$brief" \
@@ -949,7 +949,7 @@ test_default_backend_omits_hook_sections() {
   # An explicit FM_HOOK_BEADS_ID still works under the default backend (the
   # pre-existing --beads opt-in path, now that the hook loop is actually wired).
   FM_HOOK_BEADS_ID=bead-explicit-99 FM_HOME="$home" \
-    "$ROOT/bin/fm-brief.sh" explicit-beads-ship no-registry-proj >/dev/null 2>&1
+    "$ROOT/bin/fm-brief.sh" explicit-beads-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/explicit-beads-ship/brief.md"
   assert_grep "task set-state bead-explicit-99 dispatch=claimed" "$brief" \
     "an explicit FM_HOOK_BEADS_ID did not render the Bead Receipt section under the default backend"

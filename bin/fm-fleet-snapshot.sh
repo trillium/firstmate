@@ -468,7 +468,7 @@ backlog_json_beads() {  # [<backlog-path>] - defaults to this home's $BACKLOG
   stale=false
   stale_since_json=null
 
-  if out=$(run_timed "$FM_SNAPSHOT_BEADS_TIMEOUT" task list --label "$label" \
+  if out=$(fm_run_timed "$FM_SNAPSHOT_BEADS_TIMEOUT" task list --label "$label" \
       --status open,in_progress,blocked --limit "$FM_SNAPSHOT_BEADS_LIMIT" \
       --json 2>/dev/null) \
       && printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1; then

@@ -86,7 +86,7 @@ test_brief_beads_renders_receipt_and_closure_once() {
   home="$TMP_ROOT/brief-home"
   mkdir -p "$home/data"
   id="brief-beads-a1"
-  FM_HOME="$home" "$BRIEF" "$id" some-proj --beads task-hzqq >/dev/null 2>&1 \
+  FM_HOME="$home" "$BRIEF" "$id" some-proj --mode no-mistakes --beads task-hzqq >/dev/null 2>&1 \
     || fail "fm-brief.sh --beads should exit 0"
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
@@ -107,7 +107,7 @@ test_brief_without_beads_has_no_bead_content() {
   home="$TMP_ROOT/brief-nobeads-home"
   mkdir -p "$home/data"
   id="brief-nobeads-a2"
-  FM_HOME="$home" "$BRIEF" "$id" some-proj >/dev/null 2>&1 || fail "fm-brief.sh should exit 0"
+  FM_HOME="$home" "$BRIEF" "$id" some-proj --mode no-mistakes >/dev/null 2>&1 || fail "fm-brief.sh should exit 0"
   brief="$home/data/$id/brief.md"
   assert_no_grep "Bead" "$brief" "brief without --beads must carry no bead content"
   pass "fm-brief.sh: omitting --beads leaves no bead content behind"
@@ -127,7 +127,7 @@ test_brief_beads_rejects_invalid_id() {
   local home out status
   home="$TMP_ROOT/brief-invalid-home"
   mkdir -p "$home/data"
-  out=$(FM_HOME="$home" "$BRIEF" brief-beads-bad-a4 some-proj --beads 'bad id!' 2>&1); status=$?
+  out=$(FM_HOME="$home" "$BRIEF" brief-beads-bad-a4 some-proj --mode no-mistakes --beads 'bad id!' 2>&1); status=$?
   expect_code 1 "$status" "an invalid --beads id should be refused"
   assert_contains "$out" "invalid --beads id" "invalid-id refusal message missing"
   pass "fm-brief.sh: --beads rejects an id with disallowed characters"
@@ -179,7 +179,7 @@ test_spawn_records_beads_id_in_meta_and_runs_hook() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
     PATH="$task_fakebin:$fakebin:$PATH" \
-    "$SPAWN" "$id" "$proj" --beads task-open 2>&1); status=$?
+    "$SPAWN" "$id" "$proj" --mode no-mistakes --yolo off --beads task-open 2>&1); status=$?
 
   expect_code 0 "$status" "ship spawn with --beads should exit 0 (got: $out)"
   assert_grep "beads_id=task-open" "$home/state/$id.meta" "meta missing beads_id="

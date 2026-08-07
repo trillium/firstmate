@@ -167,7 +167,6 @@ MODE_SET=0
 POS=()
 want_value=
 end_of_flags=0
-want_value=
 for a in "$@"; do
   if [ "$end_of_flags" -eq 1 ]; then
     POS+=("$a")
@@ -222,7 +221,6 @@ done
   echo "usage: fm-brief.sh <task-id> <repo-name> [flags]   (--help for the full contract)" >&2
   exit 2
 }
-[ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 
 # Ship delivery mode is an explicit per-task decision (AGENTS.md section 7). A
 # missing or invalid value stops the scaffold rather than silently defaulting.

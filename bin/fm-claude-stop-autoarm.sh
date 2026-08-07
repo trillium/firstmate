@@ -166,16 +166,25 @@ write_epoch arming
 # shellcheck source=/dev/null
 [ -f "$CONFIG/x-mode.env" ] && . "$CONFIG/x-mode.env"
 
-# --- foreground the real arm wrapper, re-arming behind a quiet close ----------
+# --- foreground the arm wrapper, reconciling every close ----------------------
 # NO shell &: this hook process tree is the harness-owned lifecycle. The arm
 # forks the watcher as its own tracked child exactly as it does for the
 # model-driven background-task path, and propagates the wake reason on close.
 #
-# The loop is the continuity fix. A quiet close (rc 0, no actionable reason) is
-# how the arm reports "this cycle ended and some adapter re-arms behind me" - and
-# on a Claude primary that adapter is this hook. Exiting 0 there ended
-# supervision with nothing scheduled to restart it, so instead: verify whether a
-# live watcher actually survived, and re-arm here when none did.
+# Every non-actionable close is first checked against the same identity-matched
+# live-watcher-plus-fresh-beacon predicate the turn-end guard uses: a live
+# successor makes the close benign no matter its exit code. Only when no live
+# watcher survived does the close translate into recovery, and two kinds are
+# distinguished:
+#   - A typed failure (nonzero rc or a "watcher: FAILED" line) is the automatic
+#     mechanism itself failing. It is verified a bounded number of attempts
+#     (FM_CLAUDE_AUTOARM_ATTEMPTS) and then raises the once-only mechanism alarm.
+#   - A quiet close (rc 0, no actionable reason, no typed failure) means the arm
+#     handed continuity to "some adapter" that, on a Claude primary, is this
+#     hook. Exiting 0 there would end supervision with nothing scheduled to
+#     restart it, so it re-arms in this same foreground tree (bounded by
+#     FM_AUTOARM_MAX_REARMS) and, if that cannot re-establish a live watcher or a
+#     durable wake is already queued, reports lost continuity.
 OUT=
 drop_output() {
   [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
@@ -183,11 +192,13 @@ drop_output() {
 }
 
 ACTIONABLE=0
-FAILED=0
 CONTINUITY_LOST=0
+HEALTHY=0
 REARMS=0
+attempt=0
 
 while :; do
+  attempt=$((attempt + 1))
   OUT=$(mktemp "$STATE/.claude-autoarm-output.XXXXXX") || OUT=
   if [ -n "$OUT" ]; then
     "$SCRIPT_DIR/fm-watch-arm.sh" >"$OUT" 2>&1
@@ -206,39 +217,47 @@ while :; do
   fi
 
   ACTIONABLE=0
-  FAILED=0
+  FAILEDLINE=0
   if [ -n "$OUT" ]; then
     grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" 2>/dev/null && ACTIONABLE=1
-    grep -q '^watcher: FAILED' "$OUT" 2>/dev/null && FAILED=1
+    grep -q '^watcher: FAILED' "$OUT" 2>/dev/null && FAILEDLINE=1
   fi
-  [ "$RC" -ne 0 ] && FAILED=1
-  { [ "$ACTIONABLE" -eq 1 ] || [ "$FAILED" -eq 1 ]; } && break
+  [ "$ACTIONABLE" -eq 1 ] && break
 
-  # Quiet close. The need may have vanished mid-cycle (fleet torn down, X opted
-  # out): nothing left to supervise, so close quietly. This also populates
-  # FM_SUP_QUEUE_PENDING for the durable-wake check below.
+  # The need may have vanished mid-cycle (fleet torn down, X opted out): nothing
+  # left to supervise, so close quietly. This also populates FM_SUP_QUEUE_PENDING
+  # for the durable-wake check below.
   if ! need_supervision; then
     write_epoch clean
     drop_output
     exit 0
   fi
 
-  # Continuity genuinely held: some other arm's watcher owns the singleton, is
-  # alive, matches this home's identity, and is beating. Only this proves the
-  # arm's "adapter re-arm owns continuity" claim, so only this may exit 0.
+  # A non-actionable close is benign - whatever its exit code or typed failure
+  # line - when another verified watcher already owns this home, matches its
+  # identity, and is still beating. Only this proves the arm's "adapter re-arm
+  # owns continuity" claim, so check it before any recovery.
   if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
-    write_epoch clean
-    drop_output
-    exit 0
+    HEALTHY=1
+    break
   fi
 
-  # Supervision ended with no live successor. A wake already sitting in the
-  # durable queue needs a handling turn, not another silent cycle behind it.
+  # No live successor. A typed failure is the mechanism itself failing: verify it
+  # up to the bounded attempt budget, then translate it into the once-only alarm.
+  if [ "$RC" -ne 0 ] || [ "$FAILEDLINE" -eq 1 ]; then
+    [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ] || break
+    drop_output
+    continue
+  fi
+
+  # A quiet close (rc 0, no actionable reason, no typed failure) that left no live
+  # watcher ended supervision with nothing scheduled to restart it. A wake already
+  # sitting in the durable queue needs a handling turn now, not another silent
+  # cycle stacked behind it.
   if [ "$FM_SUP_QUEUE_PENDING" = true ]; then
     CONTINUITY_LOST=1
     break
   fi
-
   REARMS=$((REARMS + 1))
   if [ "$REARMS" -gt "$MAX_REARMS" ]; then
     CONTINUITY_LOST=1
@@ -260,34 +279,58 @@ if ! need_supervision; then
   exit 0
 fi
 
-write_epoch rewake
+# A live successor genuinely survived the close: benign. Reset the failure
+# episode so a later genuine failure starts a fresh bounded progression.
+if [ "$HEALTHY" -eq 1 ]; then
+  if fm_failure_episode_reset "$STATE"; then
+    write_epoch clean
+    drop_output
+    exit 0
+  fi
+  write_epoch failed-suppressed
+  drop_output
+  [ -e "$FAILURE_ALARM" ] && exit 0
+  exit 2
+fi
+
+# After the synchronous guard has consumed the episode's attended fail-open, do
+# not create another exit-2 continuation that could defeat it.
+if [ -e "$FAILURE_ALARM" ]; then
+  write_epoch failed-suppressed
+  drop_output
+  exit 0
+fi
+
+# An actionable close: one supervision event needs a handling turn now.
+if [ "$ACTIONABLE" -eq 1 ]; then
+  write_epoch rewake
+  {
+    printf 'firstmate watcher wake - one supervision event needs a handling turn now.\n'
+    [ -n "$OUT" ] && grep -E '^(signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
+    printf 'Run bin/fm-wake-drain.sh first and handle the wake. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.\n'
+  } >&2
+  drop_output
+  exit 2
+fi
+
+# A quiet close left supervision down with no live successor: re-arming could not
+# re-establish it, or a durable wake is already queued. Report lost continuity.
 if [ "$CONTINUITY_LOST" -eq 1 ]; then
+  write_epoch rewake
   {
     printf 'firstmate watcher continuity LOST - supervision ended and could not be re-established while this home still needs it.\n'
     fm_cycle_describe "$STATE" 2>/dev/null || true
     [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
     printf 'Run bin/fm-wake-drain.sh first. Then repair supervision with bin/fm-watch-arm.sh as its own Claude Code background task (never shell &). If it will not stay up, treat it as a blocker and report it instead of ending blind.\n'
   } >&2
-elif [ "$FAILED" -eq 1 ]; then
-  {
-    printf 'firstmate watcher cycle FAILED - supervision is down while this home still needs it.\n'
-    fm_cycle_describe "$STATE" 2>/dev/null || true
-    [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
-    printf 'Run bin/fm-wake-drain.sh first. Then repair supervision with bin/fm-watch-arm.sh as its own Claude Code background task (never shell &). If the failure repeats, treat it as a blocker and report it instead of ending blind.\n'
-  } >&2
-else
-  {
-    printf 'firstmate watcher wake - one supervision event needs a handling turn now.\n'
-    [ -n "$OUT" ] && grep -E '^(signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
-    printf 'Run bin/fm-wake-drain.sh first and handle the wake. This Stop hook owns watcher continuity: when the handling turn ends, the next needed cycle arms automatically - do NOT run bin/fm-watch-arm.sh after an ordinary wake.\n'
-  } >&2
-  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  drop_output
   exit 2
 fi
 
-# Notify only once for this continuous failure episode; every later invocation
-# still exits 2 so Claude must continue into another Stop-owned retry without
-# creating a repeated operator notice or manual-arm loop.
+# A typed failure exhausted its bounded attempts: the automatic mechanism itself
+# is broken. Notify only once for this continuous failure episode; every later
+# invocation still exits 2 so Claude continues into another Stop-owned retry
+# without creating a repeated operator notice or manual-arm loop.
 if [ ! -e "$FAILURE_NOTICE" ]; then
   write_epoch failed
   {
@@ -296,8 +339,9 @@ if [ ! -e "$FAILURE_NOTICE" ]; then
     printf 'Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.\n'
   } >&2
   : > "$FAILURE_NOTICE" 2>/dev/null || true
-  [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
+  drop_output
   exit 2
 fi
+write_epoch failed-suppressed
 drop_output
 exit 2

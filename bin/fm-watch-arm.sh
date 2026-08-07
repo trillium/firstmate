@@ -307,6 +307,11 @@ end_cycle_without_reason() {
   return 1
 }
 
+fail_unexplained_cycle() {
+  echo "watcher: FAILED - cycle ended without an actionable reason"
+  return 1
+}
+
 # Close a cycle whose reason line this arm could not read against the bounded
 # terminal-delivery ledger the watcher publishes before releasing its lock.
 close_unobserved_cycle() {
