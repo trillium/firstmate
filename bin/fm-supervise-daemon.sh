@@ -228,12 +228,15 @@ AFK_FLAG_NAME=".afk"
 # classifiers can take an explicit state arg without depending on globals.
 _state_root() { printf '%s' "${FM_STATE_OVERRIDE:-$FM_HOME/state}"; }
 
-# --- portable stat (same trap as fm-watch.sh: no `stat -f || stat -c`) -------
-if [ "$(uname)" = Darwin ]; then
-  _stat_file_mtime() { stat -f %m "$1" 2>/dev/null; }
-else
-  _stat_file_mtime() { stat -c %Y "$1" 2>/dev/null; }
-fi
+# --- portable stat: one owner, bin/fm-stat-lib.sh ---------------------------
+# It closes both traps at once - never `stat -f || stat -c` (GNU's -f is
+# --file-system: it writes a filesystem dump to STDOUT and only THEN exits 1, so
+# the fallback DOES run and appends its correct integer to that dump, handing the
+# caller a multi-line non-integer at overall rc=0), and never keyed on `uname`
+# (a Darwin kernel routinely resolves `stat` to GNU coreutils).
+# shellcheck source=bin/fm-stat-lib.sh
+. "$FM_DAEMON_DIR/fm-stat-lib.sh"
+_stat_file_mtime() { fm_stat_mtime "$1"; }
 _now() { date +%s; }
 _file_age() {  # seconds since mtime; very large if missing
   local f=$1 m

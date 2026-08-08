@@ -100,6 +100,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-timeout-lib.sh`      | Single owner of hard-bounded command execution and its fallback watchdog |
 | `fm-supervision-lib.sh`  | Shared in-flight-work-without-fresh-watcher-beacon predicate                         |
 | `fm-ff-lib.sh`           | Shared guarded fast-forward helper for origin pulls and local secondmate syncs       |
+| `fm-stat-lib.sh`         | Feature-detect the `stat` binary's dialect (BSD vs GNU) once per process and dispatch accordingly; the single owner of portable `stat` calls across the fleet |
 | `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
 | `fm-config-inherit-lib.sh` | Shared primary-to-secondmate inherited local-material propagation and config-reread delivery |
 | `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector (tasks-axi/beads/manual), `tasks-axi` compatibility probe, and beads resolve-or-create for auto-linking |
