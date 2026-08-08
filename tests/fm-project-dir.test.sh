@@ -158,86 +158,109 @@ test_brief_still_scaffolds_with_known_flags() {
   pass "fm-brief.sh: documented flags still parse after unknown-flag rejection"
 }
 
-# Structural guard for the recurring take-both merge corruption that has now hit
-# these parsers four times (fm-spawn.sh, then fm-brief.sh at c1154f5c, then BOTH
+# Guard for the recurring take-both conflict resolution that has now hit these
+# parsers four times (fm-spawn.sh, then fm-brief.sh at c1154f5c, then BOTH
 # again at d8313f1e / robots-l0ev / robots-sg76). Resolving a merge conflict in
-# the flag `case` by keeping both sides reorders the arms and lifts the `--*)`
-# unknown-option catch-all above the named ones. bash matches case arms
-# top-down, so every named flag below the catch-all silently becomes unreachable
-# and dies as "unknown option: --mode" at dispatch time.
+# the flag case by keeping both sides reorders the arms and lifts the --*)
+# unknown-option catch-all above the named ones. bash matches case arms top-down,
+# so every named flag below the catch-all silently becomes unreachable and dies as
+# "unknown option: --flag" at dispatch time. No .gitattributes file exists in any
+# ref of this repo and no merge.* driver is configured, so CI is the whole defense
+# against this shape of conflict resolution.
 #
-# The behavior tests below only cover the flags they happen to name, so this
-# asserts the invariant itself: the catch-all must be the LAST `--`-matching arm
-# in each parser. That catches the next reorder whichever flag it buries.
-CATCH_ALL_ARM_RE='^[[:space:]]*--\*)[[:space:]]*echo "error: unknown option'
+# The tests below exercise each script's flag contract directly against its
+# executable interface, deriving the expected flag set from --help output (never
+# from source text). A behavioral invocation fails the moment the script emits
+# "unknown option: --flag" for a flag its --help documents; a source-text grep
+# cannot fail against dead or commented-out code.
 
-# The parsers carrying that catch-all, discovered rather than hardcoded, so a
-# script that adopts the pattern later is guarded the day it does.
-CATCH_ALL_PARSERS=()
-for _parser in "$ROOT"/bin/*.sh; do
-  if grep -q "$CATCH_ALL_ARM_RE" "$_parser"; then
-    CATCH_ALL_PARSERS+=("${_parser##*/}")
-  fi
-done
-unset _parser
-
-# Discovery must never silently degrade to guarding nothing: if the catch-all
-# spelling drifts, the guards below would pass over an empty set and report ok.
-# The two parsers every recurrence has hit are the floor.
-test_the_arm_order_guards_cover_the_parsers_that_keep_breaking() {
-  local required found script
-  for required in fm-brief.sh fm-spawn.sh; do
-    found=0
-    for script in ${CATCH_ALL_PARSERS[@]+"${CATCH_ALL_PARSERS[@]}"}; do
-      [ "$script" = "$required" ] && found=1
-    done
-    [ "$found" -eq 1 ] \
-      || fail "$required has no unknown-option catch-all the structural guards can find; they would pass vacuously"
-  done
-  pass "arm-order guards cover ${#CATCH_ALL_PARSERS[@]} parser(s), including fm-brief.sh and fm-spawn.sh"
+# flag_list_from_help <script-path>: emit one flag name per line extracted from
+# the script's --help output. Reads Usage synopsis lines (Usage: and 7-space
+# continuation) plus 2-space-indented option description lines; never reads
+# source code.
+flag_list_from_help() {
+  "$1" --help 2>&1 \
+    | grep -E '^(Usage:|       |  --[a-zA-Z])' \
+    | grep -oE '\-\-[a-zA-Z][a-zA-Z0-9-]+' \
+    | sort -u
 }
 
-test_unknown_flag_catch_all_is_the_last_arm() {
-  local script path catch_line later
-  for script in ${CATCH_ALL_PARSERS[@]+"${CATCH_ALL_PARSERS[@]}"}; do
-    path="$ROOT/bin/$script"
-    catch_line=$(grep -n "$CATCH_ALL_ARM_RE" "$path" | cut -d: -f1)
-    [ "$(printf '%s\n' "$catch_line" | wc -l)" -eq 1 ] \
-      || fail "$script has more than one unknown-option catch-all arm"
-    # Any named `--flag)` / `--flag=*)` / `--a|--b)` arm below the catch-all is
-    # dead code by construction.
-    later=$(tail -n "+$((catch_line + 1))" "$path" \
-      | grep -n '^[[:space:]]*--[a-zA-Z][a-zA-Z0-9-]*[)=|]' | head -1)
-    [ -z "$later" ] \
-      || fail "$script: a named flag arm sits below the --*) catch-all and is unreachable ($later)"
-  done
-  pass "${CATCH_ALL_PARSERS[*]}: the --*) catch-all is the last flag arm, so no named flag is unreachable"
+test_flag_reachability_sweep_brief() {
+  local flags flag flag_name out
+  flags=$(FM_HOME="$HOME_DIR" flag_list_from_help "$ROOT/bin/fm-brief.sh")
+  [ -n "$flags" ] \
+    || fail "fm-brief.sh --help produced no flags in its synopsis; the sweep would pass vacuously"
+  case "$flags" in *"--mode"*) ;; *)
+    fail "fm-brief.sh --help synopsis does not contain --mode; reachability of the most-often-buried flag cannot be confirmed" ;;
+  esac
+  # For each documented flag, invoke the script with that flag and verify the arm
+  # is reachable. Any outcome is acceptable — a usage error, a missing-value error,
+  # exit 2 — except "unknown option: --<flag>", which proves the arm sat below the
+  # --*) catch-all. One positional (task-id) gets the script past the task-id check;
+  # the script then fails at the next validation before any brief is scaffolded.
+  while IFS= read -r flag; do
+    [ -n "$flag" ] || continue
+    flag_name=${flag#--}
+    out=$(FM_HOME="$HOME_DIR" "$ROOT/bin/fm-brief.sh" "sweep-$flag_name" "$flag" 2>&1) || true
+    case "$out" in
+      *"unknown option: $flag"*)
+        fail "fm-brief.sh: $flag arm is unreachable; the --*) catch-all sits above it (dispatch produced: $out)" ;;
+    esac
+  done <<EOF
+$flags
+EOF
+  pass "fm-brief.sh: every flag in the --help synopsis is reachable — catch-all is not above any named arm"
 }
 
-# The other half of the same corruption: the take-both resolution has also
-# DUPLICATED the `if [ -n "$want_value" ]` value-dispatch block and split its
-# arms across the clones. The first clone's `continue` means the second is dead,
-# so whichever flag landed there loses its value handler even when its arm is
-# reachable.
-test_value_dispatch_block_is_not_duplicated() {
-  local script path count wants
-  for script in ${CATCH_ALL_PARSERS[@]+"${CATCH_ALL_PARSERS[@]}"}; do
-    path="$ROOT/bin/$script"
-    # shellcheck disable=SC2016 # The literal source text "$want_value" is the pattern.
-    count=$(grep -c '^[[:space:]]*if \[ -n "\$want_value" \]; then' "$path")
-    # shellcheck disable=SC2016 # Ditto: matching the source text, not expanding it.
-    wants=$(grep -c 'want_value=[a-z]' "$path")
-    # A parser with no valued flags legitimately has no dispatch block; one that
-    # arms want_value must have exactly one, and never two.
-    if [ "$wants" -gt 0 ]; then
-      [ "$count" -eq 1 ] \
-        || fail "$script arms want_value but has $count dispatch blocks; anything past the first is dead code"
-    else
-      [ "$count" -le 1 ] \
-        || fail "$script has $count want_value dispatch blocks; all but the first are dead code"
-    fi
-  done
-  pass "${CATCH_ALL_PARSERS[*]}: exactly one want_value dispatch block, so no value handler is stranded"
+test_flag_reachability_sweep_spawn() {
+  local flags flag flag_name out
+  flags=$(FM_HOME="$HOME_DIR" flag_list_from_help "$ROOT/bin/fm-spawn.sh")
+  [ -n "$flags" ] \
+    || fail "fm-spawn.sh --help produced no flags in its synopsis; the sweep would pass vacuously"
+  case "$flags" in *"--mode"*) ;; *)
+    fail "fm-spawn.sh --help synopsis does not contain --mode; reachability of the most-often-buried flag cannot be confirmed" ;;
+  esac
+  # FM_SPAWN_NO_GUARD=1 bypasses only the watcher guard, not spawning itself.
+  # Without required positionals or --mode/--yolo, the script exits before any
+  # spawn endpoint is created:
+  #   valued flags:    "requires a value" at end-of-args check
+  #   --scout:         "missing <project-dir>"
+  #   --secondmate:    "no firstmate home registered" from registry lookup
+  while IFS= read -r flag; do
+    [ -n "$flag" ] || continue
+    flag_name=${flag#--}
+    out=$(FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" \
+      "$ROOT/bin/fm-spawn.sh" "sweep-$flag_name" "$flag" 2>&1) || true
+    case "$out" in
+      *"unknown option: $flag"*)
+        fail "fm-spawn.sh: $flag arm is unreachable; the --*) catch-all sits above it (dispatch produced: $out)" ;;
+    esac
+  done <<EOF
+$flags
+EOF
+  pass "fm-spawn.sh: every flag in the --help synopsis is reachable — catch-all is not above any named arm"
+}
+
+# Behavioral coverage for the want_value dispatch block: the take-both conflict
+# resolution has also duplicated that block, stranding one flag's value handler
+# in a dead copy (the first block's continue always skips it). A duplicated block
+# causes the trapped flag's space-separated value to be silently dropped or to
+# trigger an "internal parser state" error. Test both '--flag value' and
+# '--flag=value' forms for every valued flag in fm-brief.sh and confirm each
+# scaffolds a brief successfully. --mode is covered by test_brief_mode_flag_is_reachable.
+test_beads_flag_value_dispatch_brief() {
+  local out rc
+  out=$(FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-brief.sh" beads-val-b1 herdr-web --beads test-bead-b1 --mode direct-PR 2>&1); rc=$?
+  expect_code 0 "$rc" "fm-brief.sh rejected --beads with a space-separated value (got: $out)"
+  assert_present "$HOME_DIR/data/beads-val-b1/brief.md" \
+    "fm-brief.sh --beads value did not scaffold a brief"
+  out=$(FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-brief.sh" beads-val-b2 herdr-web --beads=test-bead-b2 --mode direct-PR 2>&1); rc=$?
+  expect_code 0 "$rc" "fm-brief.sh rejected --beads=<value> (got: $out)"
+  assert_present "$HOME_DIR/data/beads-val-b2/brief.md" \
+    "fm-brief.sh --beads=<value> did not scaffold a brief"
+  pass "fm-brief.sh: --beads and --beads=<value> both dispatch the value without silent drop"
 }
 
 # Behavioral companion to the structural guards: --mode is the flag the reorder
@@ -288,9 +311,9 @@ test_spawn_rejects_an_unknown_flag
 test_brief_rejects_an_unknown_flag
 test_brief_names_a_missing_repo_argument
 test_brief_still_scaffolds_with_known_flags
-test_the_arm_order_guards_cover_the_parsers_that_keep_breaking
-test_unknown_flag_catch_all_is_the_last_arm
-test_value_dispatch_block_is_not_duplicated
+test_flag_reachability_sweep_brief
+test_flag_reachability_sweep_spawn
+test_beads_flag_value_dispatch_brief
 test_brief_mode_flag_is_reachable
 test_end_of_flags_separator
 test_help_is_accepted_after_a_positional
