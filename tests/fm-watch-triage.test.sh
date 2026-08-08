@@ -68,10 +68,22 @@ wait_numeric_file() {
   return 1
 }
 
-# Portable mtime in epoch seconds. Platform-detected, never the `stat -f || stat -c`
-# fallback (which writes a partial filesystem dump on Linux; see fm-watch.sh).
+# Portable mtime in epoch seconds. This file is a standalone test, so it does not
+# source bin/fm-stat-lib.sh (the shared dialect owner); the ordering below is
+# load-bearing instead and must stay GNU-FIRST for the two reasons that lib
+# exists to document:
+#   - `uname` is the wrong discriminator: a Darwin kernel routinely resolves
+#     `stat` to GNU coreutils (nix-darwin, or Homebrew coreutils ahead of
+#     /usr/bin on PATH), so the kernel's name does not predict the binary's
+#     dialect.
+#   - BSD-first is worse, not safer: GNU's `-f` is --file-system, so `stat -f %m`
+#     writes a filesystem dump to stdout and only THEN exits 1. The `||` does
+#     fire, but its correct integer is appended to the dump already in the pipe,
+#     handing the caller a multi-line non-integer at overall rc=0.
+# GNU-first is clean because BSD stat rejects `-c` with a usage error on stderr
+# and writes NOTHING to stdout, so the fallback fires with an empty pipe.
 file_mtime() {
-  if [ "$(uname)" = Darwin ]; then stat -f %m "$1" 2>/dev/null; else stat -c %Y "$1" 2>/dev/null; fi
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
 # Set <file>'s mtime to exactly <epoch> seconds, for aging a busy-turn marker by
