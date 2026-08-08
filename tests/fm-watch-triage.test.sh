@@ -149,7 +149,7 @@ wait_cycle() {  # <state> <pid> [cycles] [limit-ticks]
     if [ -n "$now" ] && [ "$now" != "$prev" ]; then
       prev=$now
       beats=$((beats + 1))
-      if [ "$beats" -ge "$want" ]; then return 0; fi
+      if [ "$beats" -ge "$want" ]; then kill -0 "$pid" 2>/dev/null || return 1; return 0; fi
     fi
     kill -0 "$pid" 2>/dev/null || return 1
     sleep 0.1
@@ -2067,8 +2067,15 @@ test_heartbeat_no_change_absorbed() {
   # The heartbeat is on its OWN cadence (.last-heartbeat age >= FM_HEARTBEAT),
   # not one per supervision cycle, so wait for the streak it writes rather than
   # for a number of cycles that happens to span it.
-  wait_numeric_file "$state/.heartbeat-streak" 300 \
-    || { reap "$pid"; fail "heartbeat backoff streak did not advance while absorbing"; }
+  local hb_i=0 hb_val
+  while [ "$hb_i" -lt 300 ]; do
+    hb_val=$(cat "$state/.heartbeat-streak" 2>/dev/null || true)
+    case "$hb_val" in ''|*[!0-9]*) ;; *) break ;; esac
+    kill -0 "$pid" 2>/dev/null || { reap "$pid"; fail "watcher exited while waiting for the heartbeat backoff streak"; }
+    sleep 0.1
+    hb_i=$((hb_i + 1))
+  done
+  [ "$hb_i" -lt 300 ] || { reap "$pid"; fail "heartbeat backoff streak did not advance while absorbing"; }
   [ ! -s "$out" ] || fail "no-change heartbeat printed a wake reason: $(cat "$out")"
   [ ! -s "$state/.wake-queue" ] || fail "no-change heartbeat enqueued a durable wake record"
   [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] || fail "heartbeat backoff streak did not advance while absorbing"
