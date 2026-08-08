@@ -158,23 +158,50 @@ test_brief_still_scaffolds_with_known_flags() {
   pass "fm-brief.sh: documented flags still parse after unknown-flag rejection"
 }
 
-# Structural guard for the recurring union-merge corruption that has now hit
-# this parser three times (fm-spawn.sh, then fm-brief.sh twice: c1154f5c and
-# robots-l0ev). git-town's union merge reorders the flag `case` arms and lifts
-# the `--*)` unknown-option catch-all above the named ones. bash matches case
-# arms top-down, so every named flag below the catch-all silently becomes
-# unreachable and dies as "unknown option: --mode" at dispatch time.
+# Structural guard for the recurring take-both merge corruption that has now hit
+# these parsers four times (fm-spawn.sh, then fm-brief.sh at c1154f5c, then BOTH
+# again at d8313f1e / robots-l0ev / robots-sg76). Resolving a merge conflict in
+# the flag `case` by keeping both sides reorders the arms and lifts the `--*)`
+# unknown-option catch-all above the named ones. bash matches case arms
+# top-down, so every named flag below the catch-all silently becomes unreachable
+# and dies as "unknown option: --mode" at dispatch time.
 #
 # The behavior tests below only cover the flags they happen to name, so this
 # asserts the invariant itself: the catch-all must be the LAST `--`-matching arm
 # in each parser. That catches the next reorder whichever flag it buries.
+CATCH_ALL_ARM_RE='^[[:space:]]*--\*)[[:space:]]*echo "error: unknown option'
+
+# The parsers carrying that catch-all, discovered rather than hardcoded, so a
+# script that adopts the pattern later is guarded the day it does.
+CATCH_ALL_PARSERS=()
+for _parser in "$ROOT"/bin/*.sh; do
+  if grep -q "$CATCH_ALL_ARM_RE" "$_parser"; then
+    CATCH_ALL_PARSERS+=("${_parser##*/}")
+  fi
+done
+unset _parser
+
+# Discovery must never silently degrade to guarding nothing: if the catch-all
+# spelling drifts, the guards below would pass over an empty set and report ok.
+# The two parsers every recurrence has hit are the floor.
+test_the_arm_order_guards_cover_the_parsers_that_keep_breaking() {
+  local required found script
+  for required in fm-brief.sh fm-spawn.sh; do
+    found=0
+    for script in ${CATCH_ALL_PARSERS[@]+"${CATCH_ALL_PARSERS[@]}"}; do
+      [ "$script" = "$required" ] && found=1
+    done
+    [ "$found" -eq 1 ] \
+      || fail "$required has no unknown-option catch-all the structural guards can find; they would pass vacuously"
+  done
+  pass "arm-order guards cover ${#CATCH_ALL_PARSERS[@]} parser(s), including fm-brief.sh and fm-spawn.sh"
+}
+
 test_unknown_flag_catch_all_is_the_last_arm() {
   local script path catch_line later
-  for script in fm-brief.sh fm-spawn.sh; do
+  for script in ${CATCH_ALL_PARSERS[@]+"${CATCH_ALL_PARSERS[@]}"}; do
     path="$ROOT/bin/$script"
-    catch_line=$(grep -n '^[[:space:]]*--\*)[[:space:]]*echo "error: unknown option' "$path" | cut -d: -f1)
-    [ -n "$catch_line" ] \
-      || fail "$script has no unknown-option catch-all arm at all"
+    catch_line=$(grep -n "$CATCH_ALL_ARM_RE" "$path" | cut -d: -f1)
     [ "$(printf '%s\n' "$catch_line" | wc -l)" -eq 1 ] \
       || fail "$script has more than one unknown-option catch-all arm"
     # Any named `--flag)` / `--flag=*)` / `--a|--b)` arm below the catch-all is
@@ -184,23 +211,33 @@ test_unknown_flag_catch_all_is_the_last_arm() {
     [ -z "$later" ] \
       || fail "$script: a named flag arm sits below the --*) catch-all and is unreachable ($later)"
   done
-  pass "fm-brief.sh/fm-spawn.sh: the --*) catch-all is the last flag arm, so no named flag is unreachable"
+  pass "${CATCH_ALL_PARSERS[*]}: the --*) catch-all is the last flag arm, so no named flag is unreachable"
 }
 
-# The other half of the same corruption: the union merge has also DUPLICATED the
-# `if [ -n "$want_value" ]` value-dispatch block and split its arms across the
-# clones. The first clone's `continue` means the second is dead, so whichever
-# flag landed there loses its value handler even when its arm is reachable.
+# The other half of the same corruption: the take-both resolution has also
+# DUPLICATED the `if [ -n "$want_value" ]` value-dispatch block and split its
+# arms across the clones. The first clone's `continue` means the second is dead,
+# so whichever flag landed there loses its value handler even when its arm is
+# reachable.
 test_value_dispatch_block_is_not_duplicated() {
-  local script path count
-  for script in fm-brief.sh fm-spawn.sh; do
+  local script path count wants
+  for script in ${CATCH_ALL_PARSERS[@]+"${CATCH_ALL_PARSERS[@]}"}; do
     path="$ROOT/bin/$script"
     # shellcheck disable=SC2016 # The literal source text "$want_value" is the pattern.
     count=$(grep -c '^[[:space:]]*if \[ -n "\$want_value" \]; then' "$path")
-    [ "$count" -eq 1 ] \
-      || fail "$script has $count want_value dispatch blocks; all but the first are dead code"
+    # shellcheck disable=SC2016 # Ditto: matching the source text, not expanding it.
+    wants=$(grep -c 'want_value=[a-z]' "$path")
+    # A parser with no valued flags legitimately has no dispatch block; one that
+    # arms want_value must have exactly one, and never two.
+    if [ "$wants" -gt 0 ]; then
+      [ "$count" -eq 1 ] \
+        || fail "$script arms want_value but has $count dispatch blocks; anything past the first is dead code"
+    else
+      [ "$count" -le 1 ] \
+        || fail "$script has $count want_value dispatch blocks; all but the first are dead code"
+    fi
   done
-  pass "fm-brief.sh/fm-spawn.sh: exactly one want_value dispatch block, so no value handler is stranded"
+  pass "${CATCH_ALL_PARSERS[*]}: exactly one want_value dispatch block, so no value handler is stranded"
 }
 
 # Behavioral companion to the structural guards: --mode is the flag the reorder
@@ -251,6 +288,7 @@ test_spawn_rejects_an_unknown_flag
 test_brief_rejects_an_unknown_flag
 test_brief_names_a_missing_repo_argument
 test_brief_still_scaffolds_with_known_flags
+test_the_arm_order_guards_cover_the_parsers_that_keep_breaking
 test_unknown_flag_catch_all_is_the_last_arm
 test_value_dispatch_block_is_not_duplicated
 test_brief_mode_flag_is_reachable
