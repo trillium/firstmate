@@ -757,6 +757,9 @@ EOF
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
   assert_grep 'Never run `no-mistakes init --fork-url`' "$brief" \
     "swapped no-mistakes rule dropped the --fork-url warning"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'verify `git remote get-url origin` returns the `trillium/rango` fork URL' "$brief" \
+    "swapped no-mistakes rule dropped the pre-invocation origin verification"
 
   # direct-PR pushes too; SSH origin still resolves the fork name, with an
   # explicit --repo override so gh cannot default the PR base to upstream.
@@ -771,6 +774,9 @@ EOF
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
   assert_grep 'gh pr create --repo trillium/rango --base' "$brief" \
     "direct-PR fork rule dropped the explicit --repo override in the gh pr create form"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'gh-axi pr create --repo trillium/rango' "$brief" \
+    "direct-PR fork rule dropped the gh-axi alternative for --repo override"
   assert_grep "never stop to ask fork-vs-local" "$brief" \
     "fork rule dropped the never-ask-fork-vs-local instruction"
 

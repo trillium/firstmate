@@ -639,7 +639,7 @@ $FORK_HEADLINE
 $FORK_TARGET_RULE
 If the fork does not exist yet, create it with \`gh-axi\` before pushing.
 Push your branch to the fork - \`git push git@github.com:trillium/$FORK_REPO.git fm/$ID:fm/$ID\` if \`origin\` here is still upstream, or plain \`git push origin fm/$ID\` once \`origin\` is the fork.
-Open the PR with an explicit repo override so it can never default to upstream: \`gh pr create --repo trillium/$FORK_REPO --base <fork-default-branch> --head fm/$ID\`.
+Open the PR with an explicit repo override so it can never default to upstream: \`gh pr create --repo trillium/$FORK_REPO --base <fork-default-branch> --head fm/$ID\` (or \`gh-axi pr create --repo trillium/$FORK_REPO\`).
 Never omit that \`--repo trillium/$FORK_REPO\` override, and never stop to ask fork-vs-local: always target the fork.
 **CRITICAL:** a PR opened against the upstream repo must NEVER happen automatically. If targeting the fork is not possible, stop and get direct captain confirmation before any upstream PR attempt.
 EOF
@@ -651,6 +651,7 @@ $FORK_TARGET_RULE
 \`origin\` here is already the \`trillium/$FORK_REPO\` fork, with \`upstream\` as a separate remote, so no-mistakes's normal PR-open behavior already targets the fork - do not change that.
 Never run \`no-mistakes init --fork-url\` or any similar remote reconfiguration on this project: that flag pushes to the named fork while still opening the PR against \`origin\`, which is the exact wrong direction here.
 Never stop to ask fork-vs-local: always target the fork.
+Before invoking no-mistakes, verify \`git remote get-url origin\` returns the \`trillium/$FORK_REPO\` fork URL; if it shows upstream instead, stop and escalate.
 **CRITICAL:** if no-mistakes ever proposes or opens a PR against anything other than \`trillium/$FORK_REPO\`, stop and escalate immediately rather than letting it proceed.
 EOF
     else

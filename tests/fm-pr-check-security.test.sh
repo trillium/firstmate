@@ -3485,6 +3485,42 @@ test_bot_review_wake() {
   pass "a new automated reviewer wakes once, dedupes, defers to merged, and stays armed"
 }
 
+test_fork_namespace_warning() {
+  local dir rc
+
+  # Non-fork URL: advisory warning appears on stderr, poll still armed (exit 0).
+  dir=$(make_case fork-ns-upstream)
+  write_task_meta "$dir"
+  set +e
+  run_check_entry "$dir" task-a https://github.com/upstream-org/repo/pull/1 \
+    > "$dir/check.out" 2> "$dir/check.err"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "fork-namespace warning must not block poll arming (exit $rc)"
+  assert_contains "$(cat "$dir/check.err")" \
+    "WARNING: PR URL does not appear to be in the captain's fork (trillium/); escalate before merging" \
+    "non-fork PR URL did not trigger the fork-namespace warning"
+  grep -qxF "armed: state/task-a.check.sh" "$dir/check.out" \
+    || fail "poll was not armed after fork-namespace warning (stdout: $(cat "$dir/check.out"))"
+
+  # Fork URL: no warning on stderr, poll still armed (exit 0).
+  dir=$(make_case fork-ns-ok)
+  write_task_meta "$dir"
+  set +e
+  run_check_entry "$dir" task-a https://github.com/trillium/repo/pull/1 \
+    > "$dir/check.out" 2> "$dir/check.err"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "fork URL check should arm without error (exit $rc)"
+  assert_not_contains "$(cat "$dir/check.err")" \
+    "WARNING: PR URL does not appear to be in the captain's fork" \
+    "a URL in the trillium/ namespace must not trigger a fork-namespace warning"
+  grep -qxF "armed: state/task-a.check.sh" "$dir/check.out" \
+    || fail "poll was not armed for a fork URL (stdout: $(cat "$dir/check.out"))"
+
+  pass "fm-pr-check.sh: fork-namespace warning fires for non-trillium URLs, silent for trillium/ URLs, poll always armed"
+}
+
 test_parser_matrix
 test_gitlab_merge_watch
 test_bot_review_wake
@@ -3524,3 +3560,4 @@ test_bootstrap_isolates_incomplete_poll_migration
 test_custom_snapshot_cleanup_on_signal
 test_returned_custom_check_descendants_are_drained
 test_teardown_removes_poll_artifacts
+test_fork_namespace_warning

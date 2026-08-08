@@ -45,6 +45,12 @@ HOST=$FM_PR_HOST
 PROJECT_PATH=$FM_PR_PATH
 NUMBER=$FM_PR_NUMBER
 
+# Advisory: warn when the PR is not in the captain's fork namespace.
+case "$PROJECT_PATH" in
+  trillium/*) ;;
+  *) echo "WARNING: PR URL does not appear to be in the captain's fork (trillium/); escalate before merging" >&2 ;;
+esac
+
 # Task-derived paths are constructed only after the canonical ID validation.
 META="$STATE/$ID.meta"
 if [ ! -f "$META" ] || [ -L "$META" ] || [ "$(fm_pr_file_link_count "$META")" != 1 ]; then
