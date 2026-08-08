@@ -177,14 +177,27 @@ test_unknown_flag_catch_all_is_the_last_arm() {
       || fail "$script has no unknown-option catch-all arm at all"
     [ "$(printf '%s\n' "$catch_line" | wc -l)" -eq 1 ] \
       || fail "$script has more than one unknown-option catch-all arm"
-    # Any named `--flag)` / `--flag=*)` / `--a|--b)` arm below the catch-all is
-    # dead code by construction.
-    later=$(tail -n "+$((catch_line + 1))" "$path" \
-      | grep -n '^[[:space:]]*--[a-zA-Z][a-zA-Z0-9-]*[)=|]' | head -1)
+    # Any arm below the catch-all whose PATTERN LIST mentions `--` is dead code
+    # by construction. Inspect the pattern (the text before the arm's first
+    # `)`), not the arm's body, so this also catches the forms a name-anchored
+    # match would miss: `-h|--help)`, where the `--` alternative is not first,
+    # and the bare `--)` end-of-flags arm, which `--*` would otherwise swallow.
+    later=$(awk -v start="$catch_line" '
+      NR <= start { next }
+      /^[[:space:]]*esac/ { exit }
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        if (line ~ /^#/) next
+        close_paren = index(line, ")")
+        if (close_paren == 0) next
+        if (substr(line, 1, close_paren - 1) ~ /--/) { print NR ": " $0; exit }
+      }
+    ' "$path")
     [ -z "$later" ] \
-      || fail "$script: a named flag arm sits below the --*) catch-all and is unreachable ($later)"
+      || fail "$script: a flag arm sits below the --*) catch-all and is unreachable ($later)"
   done
-  pass "fm-brief.sh/fm-spawn.sh: the --*) catch-all is the last flag arm, so no named flag is unreachable"
+  pass "fm-brief.sh/fm-spawn.sh: the --*) catch-all is the last flag arm, so no flag arm is unreachable"
 }
 
 # The other half of the same corruption: the union merge has also DUPLICATED the
