@@ -745,6 +745,35 @@ heartbeat_scan_finds_actionable() {
   return 1
 }
 
+# parlay_heartbeat_payload: build the heartbeat wake-queue payload including a
+# compact parlay sweep summary. When parlay is absent, returns plain "heartbeat".
+# Surfaces only needs-decision, blocked, and failed HOLD lines; truncates each
+# to 80 chars. Read-only and safe to call at any time.
+parlay_heartbeat_payload() {
+  local sweep held count line summary
+  command -v parlay >/dev/null 2>&1 || { printf 'heartbeat'; return 0; }
+  sweep=$(parlay sweep 2>/dev/null) || sweep=
+  held=$(printf '%s\n' "$sweep" | grep -E '^HOLD[[:space:]].*state=(needs-decision|blocked|failed)' || true)
+  count=0
+  [ -n "$held" ] && count=$(printf '%s\n' "$held" | grep -c .)
+  if [ "$count" -eq 0 ]; then
+    printf 'heartbeat | parlay: none held'
+    return
+  fi
+  summary="heartbeat | parlay: ${count} agent(s) held"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if [ "${#line}" -gt 80 ]; then
+      summary="${summary} | ${line:0:80}"
+    else
+      summary="${summary} | ${line}"
+    fi
+  done <<EOF
+$held
+EOF
+  printf '%s' "$summary"
+}
+
 # event_wait_or_sleep: the terminal wait of each supervision cycle. For a home
 # with push-capable windows (herdr), it replaces the blind `sleep POLL` with a
 # bounded wait on the backend's native transition stream, so a crew going
@@ -1383,14 +1412,14 @@ EOF
     # without exiting); the away-mode daemon, when present, owns triage and wants
     # every heartbeat.
     if afk_present; then
-      fm_wake_append heartbeat heartbeat heartbeat || exit 1
+      fm_wake_append heartbeat heartbeat "$(parlay_heartbeat_payload)" || exit 1
       touch "$STATE/.last-heartbeat"
       wake "heartbeat"
     elif heartbeat_scan_finds_actionable; then
       # Backstop: a captain-relevant status the per-wake path absorbed by mistake.
       # Enqueue first, then mark every captain-relevant status surfaced so the next
       # heartbeat does not re-fire them (enqueue-before-suppress preserved).
-      fm_wake_append heartbeat heartbeat heartbeat || exit 1
+      fm_wake_append heartbeat heartbeat "$(parlay_heartbeat_payload)" || exit 1
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced
       wake "heartbeat"

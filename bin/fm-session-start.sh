@@ -167,7 +167,7 @@ done
 # The ordered stage list is the contract behind the truncation banner: the child
 # names the stage it is entering, and the parent reports every stage at or after
 # that one as never emitted. Keep it in the exact order the digest prints.
-SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions persona context fleet-state next-step'
+SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions persona context fleet-state parlay next-step'
 
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${FM_SESSION_START_STAGE_FILE:-}" ] || return 0
@@ -461,6 +461,35 @@ print_status_tail() {
   tail -n "$STATUS_TAIL" "$status"
 }
 
+# print_parlay_section: surface parlay agents held for captain action.
+# Skips silently when the parlay binary is absent.
+# Surfaces only HOLD lines with state=needs-decision, blocked, or failed;
+# ignores done, unknown, no-launch-spec, and would-close lines.
+print_parlay_section() {
+  local sweep held count line
+  command -v parlay >/dev/null 2>&1 || return 0
+  section "PARLAY"
+  sweep=$(parlay sweep 2>/dev/null) || sweep=
+  held=$(printf '%s\n' "$sweep" | grep -E '^HOLD[[:space:]].*state=(needs-decision|blocked|failed)' || true)
+  count=0
+  [ -n "$held" ] && count=$(printf '%s\n' "$held" | grep -c .)
+  if [ "$count" -eq 0 ]; then
+    printf 'parlay: none held for captain action\n'
+    return
+  fi
+  printf 'parlay: %s agent(s) held for captain action\n' "$count"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if [ "${#line}" -gt 80 ]; then
+      printf '%s\n' "${line:0:80}"
+    else
+      printf '%s\n' "$line"
+    fi
+  done <<EOF
+$held
+EOF
+}
+
 hash_file() {
   local file=$1
   [ -f "$file" ] || return 1
@@ -687,6 +716,12 @@ if fm_pf_relay_active "$FM_HOME" \
     printf '%s/bin/fm-public-followup.sh deliver <id>. Load fmx-respond for the procedure.\n' "$FM_ROOT"
   fi
 fi
+
+# --- 7a. parlay sweep --------------------------------------------------
+# Read-only parlay sweep surfacing captain-parked agents. Skips silently
+# when the parlay binary is absent.
+stage parlay
+print_parlay_section
 
 # --- 8. closing reminder -----------------------------------------------
 stage next-step
