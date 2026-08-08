@@ -170,6 +170,10 @@ A lock-refused session must not spawn, steer, merge, drain the wake queue, repai
    A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use the firstmate repo's built-in defaults, `projects.md` absent means rebuild it from the clones under `projects/`, etc.).
 7. **Fleet-state digest** - the compact backlog listing owned by `bin/fm-session-start.sh`; every `state/<id>.meta`; a bounded tail of each task's `state/<id>.status` (labeled as wake-EVENT history, not current state, with the full log path printed for a deeper read); the `state/.afk` flag; and one cheap alive/dead read of each task's recorded backend endpoint.
    That liveness line is a fast presence check only, not a full state read - when you need a crew's actual current state (a run-step, not just "is the pane there"), read it with `bin/fm-crew-state.sh <id>` as before; the digest deliberately skips that deeper, slower read for every task so it stays fast and bounded.
+8. **Parlay** - a read-only `parlay sweep` that surfaces captain-parked agents held for captain action.
+   A one-line count summary (`parlay: N agent(s) held for captain action` or `parlay: none held for captain action`) is always printed when the `parlay` binary is on PATH.
+   When N > 0, the HOLD lines with `state=needs-decision`, `state=blocked`, or `state=failed` follow, each truncated to 80 chars; `done`, `unknown`, `no-launch-spec`, and `would-close` lines are suppressed.
+   The section is absent entirely when the `parlay` binary is not installed; no action is required in that case.
 
 Bootstrap detects first, asks for consent, and installs only after the captain approves in the current session.
 Do not dispatch until the required tools are present and GitHub authentication is good.
