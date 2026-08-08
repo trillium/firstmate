@@ -408,7 +408,9 @@ fmx_request_relay_context() {
 
 fmx_context_registry_mtime() {
   # NOT `stat -f ... || stat -c ...`: on GNU coreutils `-f` is --file-system, so
-  # the first call exits 0 with a filesystem dump and the fallback never runs.
+  # the first call writes a filesystem dump to STDOUT and only THEN exits 1. The
+  # fallback DOES run and appends its correct integer to that dump, so the caller
+  # gets a multi-line non-integer at overall rc=0 - invisible to error handling.
   # fm-stat-lib.sh detects the binary's dialect instead. See bin/fm-stat-lib.sh.
   fm_stat_mtime "$1"
 }
