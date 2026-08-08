@@ -12,6 +12,10 @@
 # Also covers the second half of the same defect: an unknown --flag was consumed
 # as a positional, so `fm-brief.sh <id> --project herdr-web --mode direct-PR`
 # scaffolded a brief for a project literally named "--project".
+#
+# Also covers flag-arm reachability: a union-merge that keeps both sides of a
+# case statement reorders arms and lifts the --*) catch-all above named ones,
+# silently turning every named flag into "unknown option: --flag" at dispatch.
 set -u
 
 # shellcheck source=tests/lib.sh
