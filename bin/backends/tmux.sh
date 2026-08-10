@@ -56,6 +56,76 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
   fm_tmux_submit_core "$@"
 }
 
+# _fm_tmux_now_ns: current time in nanoseconds. GNU date supports +%s%N; stock
+# BSD date does not fail on %N, it emits "<seconds>N" (literal N), so detect a
+# non-digit result and fall back to seconds*1e9 to keep the same unit scale.
+_fm_tmux_now_ns() {
+  local t s
+  t=$(date +%s%N 2>/dev/null)
+  case "$t" in
+    ''|*[!0-9]*)
+      s=$(date +%s 2>/dev/null)
+      case "$s" in
+        ''|*[!0-9]*) return 1 ;;
+      esac
+      printf '%s000000000' "$s"
+      return 0
+      ;;
+    *) printf '%s' "$t"; return 0 ;;
+  esac
+}
+
+# fm_backend_tmux_wait_for_working_submit: optional post-submit transition
+# confirmation. Polls <target>'s busy state (via pane output scan) for up to
+# <budget_secs> to confirm the message drove a turn. Returns 0 and echoes
+# "working" if the pane shows busy output; returns 0 and echoes "idle" if the
+# pane remains quiet; returns 0 and echoes "unknown" on read failures.
+# Errors return 0 and echo "error". An optional <harness> selects the
+# harness-specific busy signature so per-harness spinners (e.g. kimi's
+# moon-phase) match instead of only the generic busy regex.
+fm_backend_tmux_wait_for_working_submit() {  # <target> <budget_secs> [harness]
+  local target=$1 budget=${2:-0.6} harness=${3:-} start_time current_time elapsed
+  local budget_ns max_polls polls=0
+  if ! start_time=$(_fm_tmux_now_ns); then
+    printf 'error'
+    return 0
+  fi
+  budget_ns=$(awk -v b="$budget" 'BEGIN { printf "%.0f", b * 1000000000 }' 2>/dev/null)
+  case "$budget_ns" in
+    ''|*[!0-9]*) printf 'error'; return 0 ;;
+  esac
+  max_polls=$(awk -v b="$budget" 'BEGIN { printf "%.0f", (b / 0.2) + 5 }' 2>/dev/null)
+  case "$max_polls" in
+    ''|*[!0-9]*|0) printf 'error'; return 0 ;;
+  esac
+  while :; do
+    if ! tmux capture-pane -p -t "$target" -S -1 >/dev/null 2>&1; then
+      printf 'error'
+      return 0
+    fi
+    if fm_pane_is_busy "$target" "$harness" 2>/dev/null; then
+      printf 'working'
+      return 0
+    fi
+    current_time=$(_fm_tmux_now_ns)
+    if [ -z "$current_time" ]; then
+      printf 'error'
+      return 0
+    fi
+    elapsed=$((current_time - start_time))
+    if [ "$elapsed" -ge "$budget_ns" ] 2>/dev/null; then
+      printf 'idle'
+      return 0
+    fi
+    polls=$((polls + 1))
+    if [ "$polls" -ge "$max_polls" ]; then
+      printf 'error'
+      return 0
+    fi
+    sleep 0.2
+  done
+}
+
 # fm_backend_tmux_container_ensure: reuse the current tmux session when
 # firstmate itself runs inside tmux, else ensure a dedicated detached
 # "firstmate" session exists. Mirrors fm-spawn.sh's container-ensure block;

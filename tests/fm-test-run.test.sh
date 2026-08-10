@@ -204,6 +204,95 @@ assert doc["families"] == []
   pass "empty changed selection emits deterministic text and JSON summaries"
 }
 
+# A suite launched from inside a live Firstmate session inherits that session's
+# exported FM_HOME and FM_*_OVERRIDE. Scripts that resolve real paths from them
+# then answer from the captain's own state instead of their fixtures - and an
+# allow-path fm-teardown.sh rewrites the real secondmate registry it found that
+# way. The parallel lane has always scrubbed the ambient values; the serial lane
+# once did not, so the default `bin/fm-test-run.sh <script>` invocation leaked.
+# Both lanes are asserted here so neither can regress alone.
+ambient_probe_fixture() {  # <evidence-path>
+  cat <<SH
+#!/usr/bin/env bash
+{
+  printf 'FM_HOME=[%s]\n' "\${FM_HOME:-}"
+  printf 'FM_STATE_OVERRIDE=[%s]\n' "\${FM_STATE_OVERRIDE:-}"
+  printf 'FM_DATA_OVERRIDE=[%s]\n' "\${FM_DATA_OVERRIDE:-}"
+  printf 'FM_ROOT_OVERRIDE=[%s]\n' "\${FM_ROOT_OVERRIDE:-}"
+  printf 'FM_PROJECTS_OVERRIDE=[%s]\n' "\${FM_PROJECTS_OVERRIDE:-}"
+  printf 'FM_CONFIG_OVERRIDE=[%s]\n' "\${FM_CONFIG_OVERRIDE:-}"
+  printf 'FM_BACKEND=[%s]\n' "\${FM_BACKEND:-}"
+} >> "$1"
+echo "ok - ambient probe"
+SH
+}
+
+test_ambient_firstmate_env_is_scrubbed_in_both_lanes() {
+  local tmp repo runner evidence fake_bin fixture a b leaked
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-ambient.XXXXXX")
+  evidence="$tmp/evidence.txt"
+  fixture="$tmp/ambient.test.sh"
+  : >"$evidence"
+  ambient_probe_fixture "$evidence" >"$fixture"
+  chmod +x "$fixture"
+
+  # Serial lane: the default, and the one the reported leak came through.
+  FM_HOME=/leaked/home \
+  FM_STATE_OVERRIDE=/leaked/state \
+  FM_DATA_OVERRIDE=/leaked/data \
+  FM_ROOT_OVERRIDE=/leaked/root \
+  FM_PROJECTS_OVERRIDE=/leaked/projects \
+  FM_CONFIG_OVERRIDE=/leaked/config \
+  FM_BACKEND=leakedbackend \
+    "$RUNNER" "$fixture" >"$tmp/out" 2>"$tmp/err" \
+    || { cat "$tmp/out" "$tmp/err"; rm -rf "$tmp"; fail "runner should pass on the ambient probe fixture"; }
+  leaked=$(grep -n 'leaked' "$evidence" || true)
+  [ -z "$leaked" ] \
+    || { rm -rf "$tmp"; fail "serial lane leaked ambient firstmate env into the test script: $leaked"; }
+
+  # Parallel lane, from a private runner copy so --jobs can use proven-isolated
+  # names without running the real suites.
+  repo="$tmp/repo"
+  runner="$repo/bin/fm-test-run.sh"
+  fake_bin="$tmp/fake-bin"
+  a=tests/fm-brief.test.sh
+  b=tests/fm-composer-lib.test.sh
+  mkdir -p "$repo/bin" "$repo/tests" "$fake_bin"
+  cp "$RUNNER" "$runner"
+  cat >"$fake_bin/stat" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = "-c" ] && [ "$2" = "%a" ]; then
+  printf '700\n'
+  exit 0
+fi
+if [ "$1" = "-f" ] && [ "$2" = "%Lp" ]; then
+  printf '  File: "%s"\n    ID: fake Namelen: 255 Type: ext2/ext3\n700\n' "$3"
+  exit 0
+fi
+exit 1
+SH
+  ambient_probe_fixture "$evidence" >"$repo/$a"
+  ambient_probe_fixture "$evidence" >"$repo/$b"
+  chmod +x "$runner" "$repo/$a" "$repo/$b" "$fake_bin/stat"
+  : >"$evidence"
+  PATH="$fake_bin:$PATH" \
+  FM_HOME=/leaked/home \
+  FM_STATE_OVERRIDE=/leaked/state \
+  FM_DATA_OVERRIDE=/leaked/data \
+  FM_ROOT_OVERRIDE=/leaked/root \
+  FM_PROJECTS_OVERRIDE=/leaked/projects \
+  FM_CONFIG_OVERRIDE=/leaked/config \
+  FM_BACKEND=leakedbackend \
+    "$runner" --jobs 2 "$a" "$b" >"$tmp/out2" 2>"$tmp/err2" \
+    || { cat "$tmp/out2" "$tmp/err2"; rm -rf "$tmp"; fail "jobs=2 should pass on the ambient probe fixtures"; }
+  leaked=$(grep -n 'leaked' "$evidence" || true)
+  [ -z "$leaked" ] \
+    || { rm -rf "$tmp"; fail "parallel lane leaked ambient firstmate env into the test script: $leaked"; }
+
+  rm -rf "$tmp"
+  pass "both lanes scrub the ambient firstmate environment before running a test script"
+}
+
 test_timing_markers_and_json() {
   local tmp fixture out json begin_n end_n summary
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-timing.XXXXXX")
@@ -675,6 +764,7 @@ test_single_script_selection
 test_changed_file_selection_is_conservative
 test_changed_dependency_selection_and_unmapped_failure
 test_empty_selection_emits_summary
+test_ambient_firstmate_env_is_scrubbed_in_both_lanes
 test_timing_markers_and_json
 test_aggregate_exit_behavior
 test_gate_skip_accounting

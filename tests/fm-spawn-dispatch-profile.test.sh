@@ -78,6 +78,10 @@ make_seeded_secondmate_home() {
   printf '# Firstmate\n' > "$home/AGENTS.md"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
   printf 'charter for %s\n' "$id" > "$home/data/charter.md"
+  # A --secondmate spawn refuses unless the launching home's own registry binds
+  # the id to this home, exactly as fm-home-seed.sh writes it before a real
+  # launch; the current case's home is HOME_DIR from read_case_record.
+  fm_register_secondmate "$HOME_DIR/data/secondmates.md" "$id" "$home"
 }
 
 run_spawn() {
@@ -362,8 +366,13 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   assert_contains "$out" "spawned $id harness=custom-agent" "spawn did not report raw command harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
   launch=$(cat "$LAUNCH_LOG")
-  [ "$launch" = "custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
-  pass "active crew-dispatch profile allows the raw launch-command escape hatch"
+  # robots-v0sh: a raw launch command must still receive the launch-brief
+  # positional arg, appended after the caller's own argv untouched, exactly
+  # like a named adapter template - otherwise the agent starts at an empty
+  # prompt with no instructions.
+  expected="custom-agent --flag \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "raw launch command did not get the launch-brief arg appended"$'\n'"expected: $expected"$'\n'"actual: $launch"
+  pass "active crew-dispatch profile allows the raw launch-command escape hatch and still appends the launch brief"
 }
 
 test_claude_threads_model_and_effort() {

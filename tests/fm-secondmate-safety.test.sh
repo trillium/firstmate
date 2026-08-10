@@ -7,6 +7,12 @@
 # destructive-invariant coverage that an e2e run cannot deterministically reach.
 set -u
 
+# fm-spawn.sh enrolls the spawned agent with the live parlay relay unless this
+# is set, and that listener outlives the test (robots-4nkn). Tests that source
+# tests/lib.sh inherit the guard; this file rolls its own boilerplate, so it
+# sets it directly.
+export FM_SPAWN_SKIP_PARLAY=1
+
 # shellcheck source=tests/secondmate-helpers.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
 
@@ -1461,6 +1467,67 @@ SH
   grep -F 'secondmate home cannot be an ancestor of the firstmate repo' "$err" >/dev/null || fail "spawn did not reject repo ancestor"
 
   pass "secondmate spawn validates homes before launch"
+}
+
+# state/<id>.meta and data/secondmates.md both hang off the spawning process's
+# FM_HOME, so a spawn invoked with a stale or inherited FM_HOME (an ancestor home,
+# or any home that never registered this secondmate) used to publish the meta into
+# that wrong home while the registering home kept the registry entry and lost the
+# ability to supervise its own secondmate. The registry binding is now a
+# precondition, so the meta can only ever land in the home that registers the id.
+# The positive control - a registered binding still spawns and writes the meta -
+# is fm-secondmate-harness.test.sh's B2-B5 spawn cases.
+test_secondmate_spawn_requires_registering_home() {
+  local home subhome subhome_abs elsewhere fakebin log err
+  home="$TMP_ROOT/spawn-registry-home"
+  subhome="$TMP_ROOT/spawn-registry-subhome"
+  elsewhere="$TMP_ROOT/spawn-registry-elsewhere"
+  mkdir -p "$home/data" "$home/state" "$subhome/bin" "$subhome/data" "$elsewhere"
+  printf '# Firstmate\n' > "$subhome/AGENTS.md"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'charter\n' > "$subhome/data/charter.md"
+  subhome_abs=$(cd "$subhome" && pwd -P)
+  fakebin=$(make_fake_tmux "$TMP_ROOT/spawn-registry-fake")
+  log="$TMP_ROOT/spawn-registry-fake/tmux.log"
+  err="$TMP_ROOT/spawn-registry.err"
+
+  # 1. no registry at all in the spawning home: refuse rather than skip the check.
+  if PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/spawn-registry-fake/pane.txt" \
+    "$ROOT/bin/fm-spawn.sh" domain "$subhome" codex --secondmate >/dev/null 2>"$err"; then
+    fail "secondmate spawn accepted a home with no secondmate registry"
+  fi
+  grep -F 'secondmate registry is unavailable or unsafe' "$err" >/dev/null \
+    || fail "spawn did not explain the absent registry"
+  grep -F "does not register secondmate domain" "$err" >/dev/null \
+    || fail "spawn did not name the home it refused to write the meta into"
+  assert_absent "$home/state/domain.meta" "spawn wrote a meta into a home that does not register the secondmate"
+  grep -F 'new-window' "$log" >/dev/null && fail "spawn created a window before the registry check"
+
+  # 2. a registry that binds other ids but not this one: same refusal.
+  printf -- '- other - other domain (home: %s; scope: other work; projects: ; added 2026-08-05)\n' "$elsewhere" \
+    > "$home/data/secondmates.md"
+  if PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/spawn-registry-fake/pane.txt" \
+    "$ROOT/bin/fm-spawn.sh" domain "$subhome" codex --secondmate >/dev/null 2>"$err"; then
+    fail "secondmate spawn accepted a registry with no binding for this secondmate"
+  fi
+  grep -F 'no registry binding for secondmate domain' "$err" >/dev/null \
+    || fail "spawn did not explain the missing registry binding"
+  assert_absent "$home/state/domain.meta" "spawn wrote a meta for an unregistered secondmate"
+  grep -F 'new-window' "$log" >/dev/null \
+    && fail "spawn created a window before refusing an unregistered secondmate"
+
+  # 3. a binding for this id pointing at a different home: refuse the route swap.
+  printf -- '- domain - domain (home: %s; scope: domain work; projects: ; added 2026-08-05)\n' "$elsewhere" \
+    > "$home/data/secondmates.md"
+  if PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/spawn-registry-fake/pane.txt" \
+    "$ROOT/bin/fm-spawn.sh" domain "$subhome_abs" codex --secondmate >/dev/null 2>"$err"; then
+    fail "secondmate spawn accepted a home that disagrees with its registry binding"
+  fi
+  assert_absent "$home/state/domain.meta" "spawn wrote a meta for a home its registry does not bind"
+  grep -F 'new-window' "$log" >/dev/null \
+    && fail "spawn created a window before refusing a mismatched registry binding"
+
+  pass "secondmate spawn refuses to write its meta into a home that does not register the secondmate"
 }
 
 test_secondmate_spawn_refuses_operational_dirs_outside_subhome() {
@@ -2997,6 +3064,7 @@ test_home_seed_refuses_operational_dirs_outside_subhome
 test_home_seed_refuses_unsafe_leaf_files
 test_home_seed_preserves_existing_parent_binding
 test_secondmate_spawn_requires_seeded_matching_home
+test_secondmate_spawn_requires_registering_home
 test_secondmate_spawn_refuses_operational_dirs_outside_subhome
 test_fm_send_refuses_bare_window_without_home_meta
 test_secondmate_teardown_retires_empty_home

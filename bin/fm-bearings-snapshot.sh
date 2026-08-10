@@ -23,6 +23,13 @@
 # backlog roles, unresolved blockers, and captain actionability. It never infers
 # decisions from report or visual-review prose or reimplements snapshot semantics.
 #
+# Because this wrapper only ever reads the canonical snapshot's .backlog.records[]
+# and never re-parses data/backlog.md itself, it inherits beads-backend awareness
+# for free the moment fm-fleet-snapshot.sh's backlog_json gains a beads branch
+# (beads-authority migration Stage 1): no code change is needed here to surface
+# beads-sourced in-flight/queued records. See fm-fleet-snapshot.sh's backlog_json
+# and backlog_json_beads, and docs/configuration.md "Backlog backend".
+#
 # Main-home inventory validity comes from the canonical snapshot's main_inventory
 # object (orphan structured in-flight without meta, unstructured current rows).
 # Bearings never invents Underway rows from backlog-only ids; it discloses those

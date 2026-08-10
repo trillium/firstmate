@@ -19,7 +19,7 @@
 #
 # Covers, at minimum (per the task brief):
 #   - a primary-shaped home (no .fm-secondmate-home marker) spawning a
-#     crewmate into the "firstmate" workspace
+#     crewmate into the "1M-FIRSTMATE" workspace
 #   - a secondmate-shaped home (with .fm-secondmate-home) getting its own
 #     labeled workspace when the PRIMARY spawns it (fm-spawn.sh's FM_HOME
 #     shadow for --secondmate)
@@ -29,6 +29,12 @@
 #   - teardown closing the right tab (and no other)
 #   - list-live recovery seeing only its own home's tabs, for both homes
 set -u
+
+# fm-spawn.sh enrolls the spawned agent with the live parlay relay unless this
+# is set, and that listener outlives the test (robots-4nkn). Tests that source
+# tests/lib.sh inherit the guard; this file rolls its own boilerplate, so it
+# sets it directly.
+export FM_SPAWN_SKIP_PARLAY=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -111,7 +117,7 @@ make_scratch_project() {  # <dir>
 PROJ1="$TMP_ROOT/scratch-project-1"; make_scratch_project "$PROJ1"
 PROJ2="$TMP_ROOT/scratch-project-2"; make_scratch_project "$PROJ2"
 
-# --- 1. primary-shaped home: a crewmate spawns into the "firstmate" space ---
+# --- 1. primary-shaped home: a crewmate spawns into the "1M-FIRSTMATE" space ---
 
 CM1_OUT="$TMP_ROOT/cm1.out"; CM1_ERR="$TMP_ROOT/cm1.err"
 FM_SPAWN_NO_GUARD=1 FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" \
@@ -135,14 +141,21 @@ assert_contains_local "$CM1_CAPTURE" "primary-crew-ok" "cm1's raw launch command
 CM1_WSID=$(herdr pane get "$CM1_PANE" --session "$SESSION" 2>/dev/null | jq -r '.result.pane.workspace_id // empty')
 [ -n "$CM1_WSID" ] || fail "could not read cm1's pane workspace_id"
 CM1_WS_LABEL=$(herdr workspace list --session "$SESSION" 2>&1 | jq -r --arg id "$CM1_WSID" '.result.workspaces[]? | select(.workspace_id == $id) | .label')
-[ "$CM1_WS_LABEL" = "firstmate" ] || fail "a primary-shaped home's crewmate should land in the 'firstmate' workspace, got '$CM1_WS_LABEL'"
-pass "real herdr E2E: the primary-shaped home's crewmate landed in the 'firstmate' workspace"
+[ "$CM1_WS_LABEL" = "1M-FIRSTMATE" ] || fail "a primary-shaped home's crewmate should land in the '1M-FIRSTMATE' workspace, got '$CM1_WS_LABEL'"
+pass "real herdr E2E: the primary-shaped home's crewmate landed in the '1M-FIRSTMATE' workspace"
 
 # --- 2. the PRIMARY spawns a secondmate: its tab lands in the SECONDMATE's own space ---
 # (fm-spawn.sh's herdr case arm shadows FM_HOME to the secondmate's home for
 # exactly this call - AGENTS.md task herdr-sm-spaces-k4, requirement 3.)
 
 SM_OUT="$TMP_ROOT/sm.out"; SM_ERR="$TMP_ROOT/sm.err"
+# A --secondmate spawn refuses unless the launching home's own registry binds the
+# id to that home, exactly as bin/fm-home-seed.sh writes it before a real launch.
+# The home is recorded physically resolved because fm-spawn compares it against
+# the resolved path.
+mkdir -p "$PRIMARY_HOME/data"
+printf -- '- e2esm1 - workspace fixture (home: %s; scope: workspace fixture; projects: ; added 2026-08-05)\n' \
+  "$(cd "$SM_HOME" && pwd -P)" >> "$PRIMARY_HOME/data/secondmates.md"
 FM_SPAWN_NO_GUARD=1 FM_HOME="$PRIMARY_HOME" FM_ROOT_OVERRIDE="$ROOT" \
   "$ROOT/bin/fm-spawn.sh" e2esm1 "$SM_HOME" "sh -c 'echo secondmate-launch-ok'" --secondmate --backend herdr \
   >"$SM_OUT" 2>"$SM_ERR"
@@ -162,7 +175,7 @@ SM_WSID=$(herdr pane get "$SM_PANE" --session "$SESSION" 2>/dev/null | jq -r '.r
 [ -n "$SM_WSID" ] || fail "could not read e2esm1's pane workspace_id"
 [ "$SM_WSID" != "$CM1_WSID" ] || fail "the secondmate's tab must NOT land in the primary's workspace, but it shares $CM1_WSID"
 SM_WS_LABEL=$(herdr workspace list --session "$SESSION" 2>&1 | jq -r --arg id "$SM_WSID" '.result.workspaces[]? | select(.workspace_id == $id) | .label')
-[ "$SM_WS_LABEL" = "2ndmate-e2esm1" ] || fail "a --secondmate spawn should land in '2ndmate-<id>', got '$SM_WS_LABEL'"
+[ "$SM_WS_LABEL" = "2M-E2ESM1" ] || fail "a --secondmate spawn should land in '2M-<SCOPE>', got '$SM_WS_LABEL'"
 pass "real herdr E2E: a --secondmate spawn by the PRIMARY lands in the SECONDMATE's own labeled workspace, distinct from the primary's"
 
 # --- 3. a crewmate spawned FROM the secondmate-shaped home lands in the SAME
@@ -201,10 +214,16 @@ assert_not_contains_local "$PRIMARY_LIVE" "fm-cm2" "the primary home's list_live
 pass "real herdr E2E: list_live from the primary's own context sees only the primary's own task"
 
 SM_LIVE=$(FM_HOME="$SM_HOME" fm_backend_herdr_list_live "$SESSION")
-assert_contains_local "$SM_LIVE" "fm-e2esm1" "the secondmate home's list_live did not see its own task"
+# e2esm1's own tab carries the mate naming convention's uppercase
+# "<materank>-<scope>" label (2M-E2ESM1), not fm-e2esm1 - fm-spawn.sh labels a
+# --secondmate spawn's own live-agent tab with its mate label instead of the
+# ordinary fm-<id> task label (docs/herdr-backend.md "Mate naming
+# convention"), so list_live's fm-<id> task filter deliberately does not
+# surface it here.
+assert_not_contains_local "$SM_LIVE" "fm-e2esm1" "the secondmate home's list_live must not see a fm-<id>-labeled tab for its own mate identity, which is labeled 2M-E2ESM1 instead"
 assert_contains_local "$SM_LIVE" "fm-cm2" "the secondmate home's list_live did not see the crewmate spawned from it"
 assert_not_contains_local "$SM_LIVE" "fm-cm1" "the secondmate home's list_live must not see the primary's task"
-pass "real herdr E2E: list_live from the secondmate's own context sees only tasks in the secondmate's own workspace (both its own tab and its crewmate's)"
+pass "real herdr E2E: list_live from the secondmate's own context sees only the fm-<id> task tabs in its own workspace (its crewmate's, not its own mate tab)"
 
 # --- 5. teardown closes the RIGHT tab, and no other ------------------------
 

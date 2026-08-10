@@ -85,7 +85,11 @@ Release happens only on explicit retirement or seed rollback, never on routine r
 
 `bin/fm-home-seed.sh` copies the charter into the secondmate home as `data/charter.md`.
 It also writes the gitignored `.fm-secondmate-parent` durable binding before the required `.fm-secondmate-home` identity marker; the parser header in [`bin/fm-secondmate-parent-lib.sh`](../../../bin/fm-secondmate-parent-lib.sh) owns the record contract, and both files must remain in place.
-`bin/fm-spawn.sh --secondmate` launches it through the secondmate harness path, resolving `config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness unless an explicit per-spawn harness override is passed.
+Critically, `bin/fm-home-seed.sh` also registers the secondmate in the primary home's `data/secondmates.md` registry, binding the secondmate ID to its home.
+`bin/fm-spawn.sh --secondmate` refuses to launch unless the primary home's registry carries this binding — the spawning home must be the home that registers the secondmate, not an ancestor or any other unrelated home.
+This binding is the sole authorization for a spawn to publish `state/<id>.meta` into that home's state directory, preventing a spawn invoked with an inherited or stale `FM_HOME` from silently publishing metadata into the wrong home.
+The one structural exception is a delegated remote launch, where the registering home is the parent on another machine and cannot be consulted from the target host: `bin/fm-remote-secondmate-control.sh` points the host-local spawn at the secondmate's own private `data/.parent-route` control directory, which the parent already validated before delegating and which belongs to exactly one secondmate by construction ([`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md)).
+Launch proceeds through the secondmate harness path, resolving `config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness unless an explicit per-spawn harness override is passed.
 
 `config/secondmate-harness` may also pin a concrete model and effort for the secondmate agent, in the SAME file rather than a new one: the format is a single whitespace-separated line `<harness> [<model>] [<effort>]`, with only the first non-empty, non-comment line parsed.
 A bare `<harness>` (today's format, e.g. `claude`) behaves exactly as before - harness only, no model/effort flag - so this is fully backward-compatible.
@@ -186,13 +190,13 @@ bin/fm-backlog-handoff.sh <secondmate-id> <item-key>...
 ```
 
 After seeding, run this handoff for the new secondmate's in-scope queued items.
-For an existing or inherited domain, complete record intake first so no already-shipped plan row is handed off as open work.
-For a local route, the helper resolves and validates the secondmate home from `data/secondmates.md`, then delegates the item move to `tasks-axi mv` (the single owner of the backlog format), which moves each named item - and a whole connected set, blocker plus dependents, atomically - from the main `data/backlog.md` into the secondmate home's `data/backlog.md`.
+For a local route, the helper resolves and validates the secondmate home from `data/secondmates.md`, then delegates the item move to `tasks-axi mv` (the single owner of the backlog format for the tasks-axi backend), which moves each named item - and a whole connected set, blocker plus dependents, atomically - from the main `data/backlog.md` into the secondmate home's `data/backlog.md`.
 For a remote route, the same helper first moves the dependency-closed set atomically from the main backlog into `data/handoff/<id>.outbox.md`, then transfers that backlog-format outbox through `fm-on.sh` and lets the remote home's `fm-backlog-receive.sh` move every not-already-present key under the destination lock.
 The outbox is the whole recovery record: its presence means delivery is unfinished, `--resume-pending` safely re-delivers it, and confirmed receipt removes it.
 There is no two-phase handoff journal and no tasks-axi release beyond the already-required atomic `mv` capability.
 Bootstrap retries pending outboxes when mutation is authorized and emits `SECONDMATE_HANDOFF:` for any that remain.
 This delegated route remains required when `config/backlog-backend=manual`, which controls only routine firstmate backlog edits.
+Handoff with the beads backend is not yet supported and requires a different mechanism; secondmates using the beads backend remain without handoff support until that mechanism is implemented.
 It moves each queued item's whole block - the `- [ ] <id> ...` header plus every following two-or-more-space-indented body line and blank separator, up to the next item or column-0 section heading - byte-exact under the same section, treating an indented `## ...` line as body rather than a section boundary, so neither the header nor its body is duplicated or orphaned.
 It refuses a selected item with a single-space or tab-indented continuation rather than risk leaving content orphaned in the main backlog.
 It accepts in-scope `## Queued` entries only and refuses `## In flight` and historical `## Done` entries.

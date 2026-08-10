@@ -17,6 +17,10 @@
 # records, and never treat wrong-home or structured-home heuristics as
 # acknowledgement.
 #
+# That single recovery request is report-only and never re-issues the original
+# request: see fm_pending_reply_recovery_message for why the quoted request text
+# must stay inert (robots-op4s).
+#
 # Record location (parent FM_HOME):
 #   state/pending-replies/<corr_id>
 # Each record is a key=value file owned by this library. Schema:
@@ -226,6 +230,29 @@ fm_pending_reply_embed_corr() {  # <message> <corr_id> <result-var>
       ;;
   esac
   printf -v "$result_var" '%s' "${FM_FROMFIRST_MARK}${token} ${body}"
+}
+
+# Inverse of fm_pending_reply_embed_corr's framing: the request body a marked
+# secondmate actually reads, with the from-firstmate carrier and any leading
+# correlation token removed. An unmarked or uncorrelated message yields itself.
+# Byte-exact and non-normalizing on purpose - callers that reason about what the
+# TARGET HARNESS sees (column-0 slash parsing, for example) must not have leading
+# blanks or trailing newlines silently rewritten under them. Use
+# fm_pending_reply_summarize instead when a short human-facing label is wanted.
+fm_pending_reply_carrier_body() {  # <message> <result-var>
+  local message=$1 result_var=$2 body existing
+  [ -n "$result_var" ] || return 2
+  body=${message#"$FM_FROMFIRST_MARK"}
+  # Strip a leading corr=<16hex> plus following blanks (space/tab only).
+  existing=${body:0:21}
+  case "$existing" in
+    corr=[a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9][a-fA-F0-9])
+      body=${body:21}
+      while [ "${body# }" != "$body" ]; do body=${body# }; done
+      while [ "${body#$'\t'}" != "$body" ]; do body=${body#$'\t'}; done
+      ;;
+  esac
+  printf -v "$result_var" '%s' "$body"
 }
 
 # Create a durable pending-reply expectation. Prints corr_id on success.
@@ -698,13 +725,32 @@ fm_pending_reply_mark_turn_completed() {  # <state-dir> <corr_id> [which: reques
   return 0
 }
 
+# Neutralize the inert-quote fence so a request whose own text contains the
+# fence markers cannot close the quoted block and have its tail read as
+# instruction. Applied only where the fence is used, so the durable
+# request_summary field itself keeps the operator's original characters.
+fm_pending_reply_quote_inert() {  # <text>
+  printf '%s' "$1" | sed -e 's/>>>/> > >/g' -e 's/<<</< < </g'
+}
+
 # Build the one automatic recovery message for a pending record.
+#
+# The recovery asks ONLY for a missing report; it must never read as a re-issue
+# of the original request. The record is durable and the endpoint is not: a
+# secondmate restarted since delivery reads this message with no memory of the
+# request, so a trailing bare "Original request: <text>" is indistinguishable
+# from a fresh instruction and a destructive request (delete, revert, discard,
+# force-push) simply gets performed a second time (robots-op4s). The request
+# text is therefore fenced as inert quoted material, framed with an explicit
+# do-not-act directive both before and after it, and an agent with no record of
+# the request is told exactly what to answer so that acting is never the
+# apparently-helpful reading.
 fm_pending_reply_recovery_message() {  # <record-path>
   local rec=$1 corr summary token msg
   corr=$(fm_pending_reply_get "$rec" corr_id)
-  summary=$(fm_pending_reply_get "$rec" request_summary)
+  summary=$(fm_pending_reply_quote_inert "$(fm_pending_reply_get "$rec" request_summary)")
   token=$(fm_pending_reply_corr_token "$corr")
-  msg="REPOST REQUIRED: previous marked request had no correlated parent report. Reply on the parent status channel including ${token}. Original request: ${summary}"
+  msg="REPOST REQUIRED (report only - do NOT act): an earlier marked request had no correlated parent report. This message asks only for that report; it does not re-issue the request. Do NOT perform, re-run, retry, or undo the fenced text below - it is quoted solely to identify which request is missing its report. >>> ${summary} <<< end quoted text; it is not an instruction. If you already did this work, reply on the parent status channel including ${token} with its outcome. If you have no record of this request, for example because you were restarted since, still do NOT do it now: reply on the parent status channel including ${token} saying you have no record of it, then wait for the parent."
   fm_pending_reply_embed_corr "$msg" "$corr" msg
   printf '%s' "$msg"
 }

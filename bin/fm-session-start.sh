@@ -30,8 +30,9 @@
 #                       mutating step runs.
 #   2. bootstrap      - home-local stale Herdr projection cleanup runs only
 #                       when this session actually holds the lock. Detect-only
-#                       diagnostics always run. Bootstrap's six MUTATING sweeps
-#                       (legacy PR-check migration, secondmate convergence,
+#                       diagnostics always run. Bootstrap's seven MUTATING sweeps
+#                       (legacy PR-check migration, the beads write-queue
+#                       reconcile [beads backend only], secondmate convergence,
 #                       secondmate liveness, pending remote handoff retry,
 #                       X-mode artifact writes, fleet sync) also run only when
 #                       locked; the four network sweeps run in the deferred
@@ -39,23 +40,27 @@
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
 #   4. supervision-instructions - the one emitted operating block for the
-#                       detected primary harness.
-#   5. read-once contract - the do-not-re-read contract covering every source
-#                       represented by the two digests below.
-#   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
+#                       detected primary harness, after the wake queue and
+#                       before persona and context.
+#   5. persona        - the active persona file (config/persona.md local
+#                       override, else tracked persona.md): read-only, always
+#                       safe, always runs (including on lock refusal), and
+#                       prints early - before the context and fleet-state
+#                       digests - so the captain-facing voice is reliably
+#                       in force.
+#   6. context digest - data/projects.md, data/secondmates.md, data/captain.md,
+#                       data/captain-shared.md, data/learnings.md: read-only,
+#                       always safe, always runs.
+#   7. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs.
-#   7. network checks - the result of the deferred network stage started back at
-#                       step 1, harvested WITHOUT waiting for it.
-#   8. context digest - data/projects.md, data/secondmates.md, data/captain.md,
-#                       data/captain-shared.md, data/learnings.md: read-only,
-#                       always safe, always runs.
-#   9. closing reminder - prints the context-specific watcher next step; this
+#   8. closing reminder - prints the context-specific watcher next step; this
 #                       script points back to the emitted harness supervision
-#                       block and deliberately never arms the watcher itself.
+#                       block (step 4) and deliberately never arms the watcher
+#                       itself.
 #
-# Those nine names are also the runtime-bound stage list below, so a truncated
+# Those eight names are also the runtime-bound stage list below, so a truncated
 # startup can name exactly which of them never ran.
 #
 # NO NETWORK ON THE BLOCKING PATH. This digest runs on a session-open hook that
@@ -227,7 +232,7 @@ done
 # The ordered stage list is the contract behind the truncation banner: the child
 # names the stage it is entering, and the parent reports every stage at or after
 # that one as never emitted. Keep it in the exact order the digest prints.
-SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions read-once fleet-state network-checks context next-step'
+SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions persona context fleet-state next-step'
 
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${FM_SESSION_START_STAGE_FILE:-}" ] || return 0
@@ -285,6 +290,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-public-followup-lib.sh
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
@@ -331,8 +338,61 @@ print_file_or_absent() {
   fi
 }
 
+# resolve_persona_path: prints the active persona file's path, or nothing if
+# neither exists. config/persona.md (local, gitignored, home-specific) fully
+# overrides the tracked FM_ROOT/persona.md default when present - mirrors
+# config/crew-harness's override pattern (AGENTS.md section 2).
+resolve_persona_path() {
+  if [ -f "$CONFIG/persona.md" ]; then
+    printf '%s\n' "$CONFIG/persona.md"
+  elif [ -f "$FM_ROOT/persona.md" ]; then
+    printf '%s\n' "$FM_ROOT/persona.md"
+  fi
+}
+
+# print_persona: the active persona's full contents, labeled by source
+# (local override vs tracked default). Unlike the other context-digest files,
+# an ABSENT persona is not a normal state - the tracked default should always
+# exist - so it is called out as needing repair rather than treated as a
+# quiet fallback-to-defaults signal.
+print_persona() {
+  local path
+  path=$(resolve_persona_path)
+  if [ -z "$path" ]; then
+    subsection "persona.md"
+    printf 'ABSENT (tracked persona.md and config/persona.md both missing - captain-facing address/voice is undefined; this should not happen, restore persona.md)\n'
+    return
+  fi
+  if [ "$path" = "$CONFIG/persona.md" ]; then
+    subsection "persona.md (local override: config/persona.md)"
+  else
+    subsection "persona.md (tracked default)"
+  fi
+  if [ ! -r "$path" ]; then
+    printf 'UNREADABLE (%s exists but could not be read - captain-facing address/voice is undefined; this needs repair, fix its permissions or restore it)\n' "$path"
+    return
+  fi
+  if [ -s "$path" ]; then
+    cat "$path"
+  else
+    printf '(present, empty)\n'
+  fi
+}
+
 print_backlog_pointer() {
-  printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
+  local backend
+  backend=$(fm_backlog_backend_value "$CONFIG")
+  case "$backend" in
+    beads)
+      printf 'Full task bodies remain available on demand: task show <id> (beads task store), or data/backlog.md.\n'
+      ;;
+    manual)
+      printf 'Full task bodies remain available on demand: inspect data/backlog.md directly, or data/backlog.md via tasks-axi when available.\n'
+      ;;
+    *)
+      printf 'Full task bodies remain available on demand: tasks-axi show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
+      ;;
+  esac
 }
 
 # A queued title line whose own text already marks it held or blocked. The
@@ -448,10 +508,73 @@ print_backlog_tasks_axi_compact() {
   print_backlog_manual_compact "$path" "fallback"
 }
 
+# print_backlog_beads_compact - beads-authority migration Stage 2 (see
+# data/beads-authority-migration-scout/report.md section 4). Mirrors
+# data/backlog.md's `## In flight`/`## Queued` structure instead of listing
+# only bd's native --ready set, which silently drops in_progress/blocked
+# work from the digest. Both sections are scoped by fm_beads_fleet_label so
+# this stays firstmate's fleet view, not the shared federated store's full
+# cross-project set (same label fm-fleet-snapshot.sh's Stage 1 beads read
+# uses). Any read failure falls back to the whole title-line rendering, same
+# as before Stage 2.
+print_backlog_beads_compact() {
+  local path=$1 label out_inflight rc_inflight out_queued rc_queued
+  local inflight_ok=0 queued_ok=0 inflight_stale_since='' queued_stale_since=''
+  label=$(fm_beads_fleet_label)
+  printf 'compact backlog listing (beads task store; label %s; max %s item(s) per section)\n' "$label" "$BACKLOG_LIMIT"
+
+  out_inflight=$(task list --label "$label" --status in_progress,blocked --limit "$BACKLOG_LIMIT" 2>&1)
+  rc_inflight=$?
+  if [ "$rc_inflight" -eq 0 ]; then
+    fm_beads_mirror_write inflight "$out_inflight" 2>/dev/null || true
+    inflight_ok=1
+  elif fm_beads_mirror_fresh inflight; then
+    out_inflight=$(fm_beads_mirror_read inflight)
+    inflight_stale_since=$(fm_beads_mirror_timestamp_iso inflight)
+    inflight_ok=1
+  fi
+
+  out_queued=$(task list --label "$label" --ready --limit "$BACKLOG_LIMIT" 2>&1)
+  rc_queued=$?
+  if [ "$rc_queued" -eq 0 ]; then
+    fm_beads_mirror_write ready "$out_queued" 2>/dev/null || true
+    queued_ok=1
+  elif fm_beads_mirror_fresh ready; then
+    out_queued=$(fm_beads_mirror_read ready)
+    queued_stale_since=$(fm_beads_mirror_timestamp_iso ready)
+    queued_ok=1
+  fi
+
+  if [ "$inflight_ok" -eq 1 ] && [ "$queued_ok" -eq 1 ]; then
+    if [ -n "$inflight_stale_since" ]; then
+      printf '(stale mirror, beads store unreachable since %s) In flight, as of last successful read:\n' "$inflight_stale_since"
+    else
+      printf '## In flight\n'
+    fi
+    printf '%s\n' "$out_inflight"
+    if [ -n "$queued_stale_since" ]; then
+      printf '(stale mirror, beads store unreachable since %s) Queued, as of last successful read:\n' "$queued_stale_since"
+    else
+      printf '## Queued\n'
+    fi
+    printf '%s\n' "$out_queued"
+  else
+    printf 'beads task listing failed; falling back to title-line rendering.\n'
+    printf '%s\n' "$out_inflight"
+    printf '%s\n' "$out_queued"
+    if [ -f "$path" ]; then
+      print_backlog_manual_compact "$path" "fallback"
+    fi
+  fi
+}
+
 print_backlog_compact() {
   local path=$1 label=$2
   subsection "$label"
-  if [ -f "$path" ]; then
+  if [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+    print_backlog_beads_compact "$path"
+    print_backlog_pointer
+  elif [ -f "$path" ]; then
     if [ -s "$path" ]; then
       if fm_tasks_axi_backend_available "$CONFIG"; then
         print_backlog_tasks_axi_compact "$path"
@@ -637,40 +760,25 @@ fi
   --afk "$AFK_PRESENT" \
   --x-mode "$X_MODE_PRESENT"
 
-# --- 5. read-once contract -------------------------------------------------
-# Ahead of the two digests it governs, not after them: a truncated tail is
-# exactly what drops a closing reminder, and this contract is what stops the
-# next turn from re-reading everything the digest just printed. Because it now
-# arrives BEFORE its subject, it also names the one condition that voids it -
-# a stage that never ran, which the truncation banner names by stage.
-stage read-once
-section "READ-ONCE CONTRACT"
-cat <<'EOF'
-Everything below is printed in full for this session start: every state/*.meta,
-a compact data/backlog.md listing, a bounded tail of every state/*.status,
-data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
-and data/learnings.md.
-Do NOT re-read any of them after reading this digest, and do NOT bulk-read
-data/backlog.md or state/*.status: re-reading everything defeats the entire
-point of this command.
+# --- 5. persona ----------------------------------------------------------
+# Always-in-force captain-facing voice (AGENTS.md persona pointer): printed
+# every session, unconditionally, so it never depends on a per-reply trigger.
+# config/persona.md (local, gitignored) overrides the tracked persona.md
+# default in full.
+stage persona
+section "PERSONA"
+print_persona
 
-Go to a source directly only when:
-  - this digest flagged it ABSENT (then rebuild or create it per AGENTS.md),
-  - its contents looked unparseable or corrupt,
-  - an individual full status log is needed for older wake-event history, or a
-    status line was capped and its tail matters (each task's full log path is
-    printed with its tail),
-  - a full task body is needed (tasks-axi show <id> --full, or data/backlog.md),
-  - the backlog listing disclosed omitted queued items and this turn needs them,
-  - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
-    turn needs their verdict (bin/fm-startup-network.sh report),
-  - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
-    which case that stage's sources were never emitted and must be reconciled.
-EOF
+# --- 6. context digest -----------------------------------------------------
+stage context
+section "CONTEXT"
+print_file_or_absent "$DATA/projects.md" "data/projects.md"
+print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
+print_file_or_absent "$DATA/captain.md" "data/captain.md"
+print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
+print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
 
-# --- 6. fleet-state digest ---------------------------------------------
-# Before CONTEXT: see this file's ORDERING note. Live fleet identity is what a
-# truncated tail must never take.
+# --- 7. fleet-state digest ---------------------------------------------
 stage fleet-state
 section "FLEET STATE"
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
@@ -742,39 +850,7 @@ if fm_pf_relay_active "$FM_HOME" \
   fi
 fi
 
-# --- 7. network checks ------------------------------------------------------
-# Deliberately here and not later: these lines are actionable (a stuck clone, a
-# secondmate that could not be relaunched, broken GitHub auth), and the section
-# after this one is the curated memory a truncated tail is meant to take first.
-# Deliberately here and not earlier: this is the last point in the digest, so the
-# worker started at step 1 has had the whole composition above to finish in. It
-# is a NON-BLOCKING read either way - whatever the worker has published by now is
-# printed, and whatever it has not is named as not yet confirmed.
-stage network-checks
-section "NETWORK CHECKS"
-if [ "$READ_ONLY" -eq 1 ]; then
-  printf 'skipped (read-only session) - GitHub authentication, project clone refresh,\n'
-  printf 'secondmate liveness and convergence, and pending handoff delivery were not run.\n'
-  printf 'They need the fleet lock, and this session must not spawn, steer, or merge, so it\n'
-  printf 'has no action they would gate. The session holding the lock runs them.\n'
-else
-  "$SCRIPT_DIR/fm-startup-network.sh" harvest --pid $$ 2>&1 || true
-fi
-
-# --- 8. context digest -----------------------------------------------------
-# Last of the bulk sections deliberately: curated memory is stable session to
-# session, already governed by config/startup-memory-budget, and recoverable
-# with one targeted read, so it is the cheapest thing for a truncated tail to
-# take (see this file's ORDERING note).
-stage context
-section "CONTEXT"
-print_file_or_absent "$DATA/projects.md" "data/projects.md"
-print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
-print_file_or_absent "$DATA/captain.md" "data/captain.md"
-print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
-print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
-
-# --- 9. closing reminder -----------------------------------------------
+# --- 8. closing reminder -----------------------------------------------
 stage next-step
 section "NEXT STEP"
 if [ "$READ_ONLY" -eq 1 ]; then
@@ -806,8 +882,18 @@ This script never starts supervision itself.
 EOF
 fi
 cat <<'EOF'
-The digest above is complete for this session start. The READ-ONCE CONTRACT
-section near the top of it governs what may still be read from disk.
+The digest above is complete for this session start. Do NOT re-read
+persona.md, config/persona.md, data/projects.md, data/secondmates.md,
+data/captain.md, data/captain-shared.md, data/learnings.md,
+or state/*.meta now - they were just printed in full.
+Do NOT bulk-read data/backlog.md now either: the compact identity/metadata
+listing was just printed with a pointer for targeted full-body follow-up.
+Do NOT bulk-read state/*.status now either: their bounded tails were just
+printed with full log paths for targeted follow-up when older wake-event
+history is actually needed. Re-reading everything defeats the entire point
+of this command. Re-read a file only if this digest flagged it ABSENT (then
+rebuild or create it per AGENTS.md), its contents looked unparseable/corrupt,
+or an individual full status log is needed for older wake-event history.
 EOF
 
 if [ "$READ_ONLY" -eq 0 ] && [ "$REEMIT" -eq 0 ]; then

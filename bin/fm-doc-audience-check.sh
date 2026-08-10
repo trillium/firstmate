@@ -50,6 +50,35 @@ def git_tracked(root: Path, patterns: list[str]) -> list[str]:
     return sorted(p for p in proc.stdout.decode("utf-8").split("\0") if p)
 
 
+def rename_key(path: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", Path(path).name.lower())
+
+
+def split_renames(
+    missing: list[str], extra: list[str]
+) -> tuple[list[tuple[str, str]], list[str], list[str]]:
+    """Pair a stale inventory path with the moved file it names, so one rename reads as one event."""
+    missing_by_key = Counter(rename_key(path) for path in missing)
+    extra_by_key = Counter(rename_key(path) for path in extra)
+    moved_keys = {
+        key
+        for key, count in extra_by_key.items()
+        if count == 1 and missing_by_key.get(key) == 1
+    }
+    moved = sorted(
+        (stale, actual)
+        for stale in extra
+        if rename_key(stale) in moved_keys
+        for actual in missing
+        if rename_key(actual) == rename_key(stale)
+    )
+    return (
+        moved,
+        [path for path in missing if rename_key(path) not in moved_keys],
+        [path for path in extra if rename_key(path) not in moved_keys],
+    )
+
+
 def load_inventory(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -176,7 +205,11 @@ def validate(root: Path, inventory_path: Path) -> tuple[int, int]:
     missing = sorted(tracked - classified)
     extra = sorted(classified - tracked)
     if missing or extra:
-        details = []
+        moved, missing, extra = split_renames(missing, extra)
+        details = [
+            f"inventory path no longer exists: {stale}; did it move to {actual}?"
+            for stale, actual in moved
+        ]
         if missing:
             details.append("unclassified: " + ", ".join(missing))
         if extra:

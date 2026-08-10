@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, or FMX - or when a standalone bin/fm-bootstrap.sh or bin/fm-startup-network.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, DEGRADED, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, BEADS_WRITE_QUEUE, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
   A silent bootstrap section, or a BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -20,8 +20,14 @@ When any diagnostic needs captain attention, report the plain consequence and re
   For `treehouse`, this also covers an installed version whose `treehouse get` lacks `--lease`; treat it as an upgrade request.
   For `no-mistakes`, this also covers an installed version older than 1.31.2, because crewmate validation briefs delegate gate mechanics to no-mistakes' version-matched guidance.
   For any axi-family tool - `gh-axi`, `lavish-axi`, `tasks-axi`, `quota-axi` - an installed version below its floor is a plain upgrade request; [`bin/fm-bootstrap.sh`](../../../bin/fm-bootstrap.sh) owns the floor policy, and never argue the floor down to whatever the home happens to have installed.
-  For `tasks-axi`, this additionally covers an installed build that fails the separate feature probe (`bin/fm-tasks-axi-lib.sh` owns the definition); `config/backlog-backend=manual` only suppresses the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not this missing-tool report.
+  For `tasks-axi`, this additionally covers an installed build that fails the separate feature probe (`bin/fm-tasks-axi-lib.sh` owns the definition); `config/backlog-backend=manual` or `config/backlog-backend=beads` only suppresses the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not this missing-tool report.
+  For `task` (the beads CLI), this reports the missing tool only when `config/backlog-backend=beads` is set.
   For `quota-axi`, bootstrap requires it because firstmate reads its current output directly before resolving every crew-dispatch profile array; without it, report the missing requirement and do not choose around an unexamined candidate.
+  For the beads task store (`config/backlog-backend=beads`), a missing `task` CLI or an unreachable/broken store only reaches `MISSING:` when no fresh local mirror exists (see `DEGRADED:` below); do not offer the install command as the only option without checking whether the mirror already covers it.
+- `DEGRADED: task CLI not found (beads store; install: <command>); using local mirror from <ts> until it is` / `DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from <ts> until it is` - the beads task store (`config/backlog-backend=beads`) is down, but a local mirror fresh enough to use exists (`docs/configuration.md` owns the mirror age threshold and files).
+  Do not block dispatch on this alone: relay it as a plain-English notice that fleet status is running on a recent cached snapshot rather than live data, and any beads write attempted meanwhile is queued for automatic replay once the store recovers, not lost.
+  Investigate the underlying store outage if it persists across multiple bootstraps rather than treating a one-off as actionable.
+  This escalates to `MISSING:` only once the mirror itself goes stale (or never existed), at which point handle it exactly like an ordinary `MISSING:` install/instructions gap.
 - `MISSING_MANUAL: <tool> (instructions: <url>)` - tell the captain why the tool is required and give them the printed instructions URL, but do not pass the tool to `bin/fm-bootstrap.sh install`; wait for the captain to complete the manual installation, then rerun session start to confirm the dependency is present.
 - `BACKEND_INVALID: <name> (known: <names>)` - the resolved runtime backend has no verified dependency or lifecycle contract, so do not dispatch work until the invalid `FM_BACKEND` or `config/backend` value is corrected to one of the listed backends.
 - `NEEDS_GH_AUTH` - ask the captain to run `! gh auth login` (interactive; you cannot run it for them).
@@ -60,3 +66,8 @@ When any diagnostic needs captain attention, report the plain consequence and re
   Inspect the reason, keep the pending marker under `state/.secondmate-nudge-pending/` intact, and rerun session start after the endpoint or metadata issue is fixed so bootstrap can retry the exact same marked send on the same local or remote route.
 - `FMX: X mode on ...` / `FMX: X mode off ...` - bootstrap confirmed or removed the local Relay poll artifacts (`docs/configuration.md` "Relay (.env)"); the emitted line still carries Relay's former `X mode` wording.
   Only when a running watcher needs the cadence transition applied immediately, restart the home-scoped watcher through the emitted harness supervision protocol; bootstrap deliberately never restarts the watcher itself.
+- `BEADS_WRITE_QUEUE: reconciled queued write for <id> (<description>)` - a beads write that failed during an earlier outage (dispatch stamp, assignment, or a task-close) replayed cleanly against the recovered store on this bootstrap's mutating sweep; no action needed, it is reported only so the recovery is visible.
+  `(bead already closed)` on a queued close means the bead was already closed - by the outage's original close attempt landing after all, or by someone else - and firstmate reconciled instead of retrying it forever.
+- `BEADS_WRITE_QUEUE: task CLI not found, N write(s) remain queued` / `BEADS_WRITE_QUEUE: store still unreachable, N write(s) remain queued` - the beads store outage is still ongoing; treat the same as an unresolved `DEGRADED:`/`MISSING:` beads line above rather than a new problem, and expect the queue to keep draining on later bootstraps once the store recovers.
+- `BEADS_WRITE_QUEUE: replay failed for <id> (<description>); re-queued` - a queued write hit a genuine replay failure (not just an unreachable store) and was left queued for the next attempt.
+  Investigate if the same id keeps failing to replay across multiple bootstraps rather than treating a one-off as actionable.

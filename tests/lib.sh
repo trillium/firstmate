@@ -34,6 +34,26 @@ FM_TEST_LIB_SOURCED=1
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
+# Skip Parlay enrollment in all test-suite spawns. The live Parlay relay is not
+# a test fixture; without this guard every test spawn that reaches the enrollment
+# block would permanently register a fake agent ID and leave a listener process
+# running (robots-8ce5). FM_SPAWN_SKIP_PARLAY is distinct from FM_SPAWN_NO_GUARD
+# (watcher-guard bypass) so batch-dispatch production spawns, which also set
+# FM_SPAWN_NO_GUARD, are unaffected.
+export FM_SPAWN_SKIP_PARLAY=1
+
+# Drop an inherited FM_HOME so no test can read the developer's real firstmate
+# home. Every bin/ script resolves "${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}",
+# so an ambient FM_HOME silently outranks the per-call FM_ROOT_OVERRIDE a case
+# sets, and FM_HOME-derived paths (notably CONFIG) then point at the captain's
+# live home instead of the fixture. That is invisible on CI, where FM_HOME is
+# unset, and only bites a box that exports it - the shape of the guard-xmode
+# case in tests/fm-watcher-lock.test.sh, which writes config/x-mode.env under
+# its FM_ROOT_OVERRIDE and asserts the guard's repair line sources it.
+# Unsetting here makes the local environment match CI. Cases that genuinely
+# need an FM_HOME set it per invocation, which this cannot affect.
+unset FM_HOME
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
@@ -158,6 +178,21 @@ fm_fakebin() {
   printf '%s\n' "$fakebin"
 }
 
+# fm_path_without <cmd>: echo $PATH with every directory containing an
+# executable named <cmd> removed. Lets a test simulate <cmd> being genuinely
+# absent from PATH even when the host machine has it installed (e.g. parlay).
+fm_path_without() {
+  local cmd=$1 dir
+  local -a kept_dirs=()
+  local IFS=:
+  # shellcheck disable=SC2086
+  for dir in $PATH; do
+    [ -x "$dir/$cmd" ] && continue
+    kept_dirs+=("$dir")
+  done
+  printf '%s\n' "${kept_dirs[*]}"
+}
+
 fm_fake_exit0() {
   local fakebin=$1 tool
   shift
@@ -257,6 +292,27 @@ fm_write_secondmate_meta() {
     "yolo=off" \
     "home=$home" \
     "projects=$projects"
+}
+
+# fm_register_secondmate <registry-file> <id> <home> [scope] [projects]
+# Bind <id> to <home> in a data/secondmates.md registry, replacing any prior line
+# for that id. A --secondmate spawn refuses unless the spawning home's own
+# registry carries this binding, so any fixture that spawns one needs it, exactly
+# as bin/fm-home-seed.sh writes it before the first launch. The home is recorded
+# physically resolved because fm-spawn compares it against the resolved path.
+fm_register_secondmate() {
+  local reg=$1 id=$2 home=$3 scope=${4:-test scope} projects=${5:-} home_abs tmp
+  home_abs=$(cd "$home" 2>/dev/null && pwd -P) || home_abs=$home
+  mkdir -p "$(dirname "$reg")"
+  tmp="$reg.tmp.$$"
+  if [ -f "$reg" ]; then
+    grep -v "^- $id " "$reg" > "$tmp" 2>/dev/null || :
+  else
+    : > "$tmp"
+  fi
+  printf -- '- %s - %s (home: %s; scope: %s; projects: %s; added 2026-08-05)\n' \
+    "$id" "$scope" "$home_abs" "$scope" "$projects" >> "$tmp"
+  mv "$tmp" "$reg"
 }
 
 # --- common assertions ------------------------------------------------------

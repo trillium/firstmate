@@ -48,6 +48,8 @@ STALE_BANNER_MARKER="$STATE/.guard-watcher-stale-banner"
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
 # shellcheck source=bin/fm-supervision-lib.sh
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
+# shellcheck source=bin/fm-watch-cycle-lib.sh
+. "$SCRIPT_DIR/fm-watch-cycle-lib.sh"
 
 # Deterministic episode key from the qualitative down-state (the failing
 # condition), NOT the beacon mtime: under the auto-arm model a healthy
@@ -122,7 +124,9 @@ fm_guard_clear_stale_banner() {
 # crewmate's branch/commits landed here instead of in its own isolated worktree,
 # the primary is stranded on a feature branch - surface it loudly on the very next
 # fleet action, the same way the watcher-down banner does. Scoped to the primary
-# only: detached HEAD (linked worktrees, secondmate homes) never trips this.
+# only: fm_primary_tangle_branch checks that FM_ROOT's git dir IS its common dir,
+# so linked worktrees and secondmate homes never trip this - including the ones
+# `git worktree add -b` leaves on a named branch, which is where branches belong.
 tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" || true)
 if [ -n "$tangle_branch" ]; then
   tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
@@ -206,6 +210,11 @@ if [ "$watcher_healthy" = false ]; then
       else
         printf '●  X-mode relay polling needs supervision, but %s.\n' "$watcher_cause"
       fi
+      # Name HOW the last cycle ended. A harness-killed arm and a crashed watcher
+      # look identical from the beacon alone, and only the lifecycle ledger
+      # distinguishes them, so print its classification as evidence.
+      cycle_evidence=$(fm_cycle_describe "$STATE" 2>/dev/null || true)
+      [ -n "$cycle_evidence" ] && printf '●  %s\n' "$cycle_evidence"
       if [ "$READ_ONLY" -eq 1 ]; then
         printf '●  This read-only session should report the lapse, not repair it.\n'
       else

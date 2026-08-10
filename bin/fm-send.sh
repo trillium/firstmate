@@ -10,6 +10,20 @@
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca currently supports Enter and C-c only, and rejects Escape.
 #
+# Raw/unmanaged pane escape hatch: fm-send.sh <target> --raw <text...>
+#   sends TEXT then Enter best-effort with NO delivery verification and NO
+#   from-firstmate marking. It exists because the default text path verifies
+#   submission by reading the target's agent composer/busy-state, and a raw
+#   shell pane (an explicit backend target with no state/<id>.meta and no agent
+#   composer) has nothing to verify against, so the verified path fails closed.
+#   --raw dispatches the backend's atomic type-then-Enter primitive
+#   (fm_backend_send_text_line) instead. Best-effort means exactly that: a zero
+#   exit proves the send command was issued, never that the pane accepted or
+#   submitted it. Use fm-<id> for any recorded task/lane so delivery IS verified;
+#   reach for --raw only to drive an ad-hoc pane the captain points at. --raw
+#   applies to the text path only and cannot be combined with --key (a raw key
+#   send already works: --key never verifies a composer).
+#
 # Text submission is verified: the line is typed ONCE, then Enter is sent and
 # retried (Enter only, never retyped) until the target backend confirms a
 # submit or reports an inconclusive send. If a swallowed Enter is positively
@@ -28,6 +42,13 @@
 # stranding it in chat the main firstmate never reads. A crewmate/scout target,
 # an explicit backend-target escape-hatch target, and the --key path are never
 # marked - their behavior is unchanged.
+#
+# Because that carrier sits at column 0, a marked line can never be a slash
+# command: the harness only parses one when the slash is the first character, so
+# a marked "/..." would arrive as prose and silently not run. fm-send refuses a
+# marked slash command rather than reporting a verified submit for it; use
+# fm-teardown to close a secondmate, or an explicit (never-marked) backend target
+# to drive its harness directly.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # also receives a privacy-safe correlation id and a durable parent record under
@@ -65,6 +86,15 @@
 # footer appears, so an immediate peek would otherwise see the stale idle pane.
 # The pause is fm-send-only; the shared submit core (used by the away-mode daemon,
 # which only needs "submitted") does not pay it, and the --key path is unaffected.
+#
+# Optional post-submit transition verification: set FM_SEND_VERIFY_TRANSITION to a
+# non-zero value to have fm-send confirm the submitted text actually drove a turn
+# (target transitioned idle->working) rather than only clearing the composer. It
+# polls the target's agent state for up to FM_SEND_VERIFY_TIMEOUT seconds (default
+# 0.6) via the backend's wait-for-working primitive. A confirmed still-idle target,
+# or a backend error during verification, exits NON-ZERO because the message did not
+# execute; an unverifiable ("unknown") read proceeds and, when FM_SEND_VERBOSE is
+# non-zero, prints a warning. Off by default and independent of FM_SEND_SETTLE.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -288,40 +318,18 @@ fm_send_resolve_target "$RAW_TARGET" || exit 1
 T=$RESOLVED_TARGET
 shift
 
-# Collect --resolve-key flags (answerer-closes; see the header contract). They
-# must precede --key or the message text; everything after the last flag is the
-# message exactly as before, so ordinary sends are byte-identical.
-RESOLVE_KEYS=
-fm_send_add_resolve_key() {  # <key>
-  local k=$1
-  case "$k" in
-    ''|*[!A-Za-z0-9._-]*)
-      echo "error: --resolve-key '$k' is not a valid decision key (allowed: A-Z a-z 0-9 . _ -)" >&2
-      return 1
-      ;;
-  esac
-  case " $RESOLVE_KEYS " in
-    *" $k "*)
-      echo "error: duplicate --resolve-key '$k'" >&2
-      return 1
-      ;;
-  esac
-  RESOLVE_KEYS="${RESOLVE_KEYS}${RESOLVE_KEYS:+ }$k"
-}
-while :; do
-  case "${1:-}" in
-    --resolve-key)
-      [ $# -ge 2 ] || { echo "error: --resolve-key requires a key" >&2; exit 1; }
-      fm_send_add_resolve_key "$2" || exit 1
-      shift 2
-      ;;
-    --resolve-key=*)
-      fm_send_add_resolve_key "${1#--resolve-key=}" || exit 1
-      shift
-      ;;
-    *) break ;;
-  esac
-done
+# Raw/unmanaged pane escape hatch: best-effort literal send + Enter with no
+# submit verification and no from-firstmate marking (see header). Parsed here so
+# it precedes both the --key branch and the verified text path.
+RAW_MODE=0
+if [ "${1:-}" = "--raw" ]; then
+  RAW_MODE=1
+  shift
+  if [ "${1:-}" = "--key" ]; then
+    echo "error: --raw cannot be combined with --key; a raw key send already works via '--key' alone (it never verifies a composer)" >&2
+    exit 1
+  fi
+fi
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
@@ -336,7 +344,7 @@ MARK_FROM_FIRSTMATE=0
 PENDING_REPLY_CORR=
 PENDING_REPLY_CREATED=0
 TARGET_TASK_ID=
-if [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(fm_meta_get "$TARGET_META" kind)" = secondmate ]; then
+if [ "$RAW_MODE" = 0 ] && [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(fm_meta_get "$TARGET_META" kind)" = secondmate ]; then
   MARK_FROM_FIRSTMATE=1
   TARGET_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
 fi
@@ -425,10 +433,41 @@ if [ "${1:-}" = "--key" ]; then
   fm_send_record_interrupt "$semantic_key" || exit 1
 else
   MESSAGE=$*
-  # The pre-marker answer text, kept for the closing resolved note so the
-  # durable ledger records the plain answer without marker or corr bytes.
-  RESOLVE_ANSWER_TEXT=$MESSAGE
+  if [ "$RAW_MODE" = 1 ]; then
+    # Best-effort escape hatch: issue the backend's atomic type-then-Enter with
+    # no submit verification and no marker. A zero exit proves only that the send
+    # command was issued, never that the pane accepted or submitted the text.
+    if ! fm_backend_send_text_line "$TARGET_BACKEND" "$T" "$MESSAGE" "$EXPECTED_LABEL"; then
+      echo "error: raw text not sent to $T ($TARGET_BACKEND send failed; tried $RESOLUTION_TRIED)" >&2
+      exit 1
+    fi
+    [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: raw send to $T is best-effort; delivery was not verified" >&2
+    exit 0
+  fi
   if [ "$MARK_FROM_FIRSTMATE" = 1 ]; then
+    # The from-firstmate carrier occupies column 0, and a harness only parses a
+    # slash command when the slash is the FIRST character of the composer line.
+    # A marked "/..." therefore arrives as ordinary prose: the agent reads it,
+    # may narrate compliance, and the command never runs, while fm-send reports a
+    # verified submit and opens a pending-reply expectation for a command that
+    # did not execute (robots-u7gu). Refuse loudly rather than deliver that.
+    # Checked on the body the secondmate would actually read, so an already
+    # marked/correlated recovery resend is judged on its command, not its carrier.
+    fm_pending_reply_carrier_body "$MESSAGE" CARRIER_BODY
+    case "$CARRIER_BODY" in
+      /*)
+        SLASH_VERB=${CARRIER_BODY%%[[:space:]]*}
+        echo "error: refusing to send the slash command '$SLASH_VERB' to secondmate ${TARGET_TASK_ID:-$T}: from-firstmate marked text carries '$FM_FROMFIRST_LABEL' at column 0, so the harness reads the whole line as prose and never runs the command. Recover with one of: bin/fm-teardown.sh to close that agent; an explicit backend target (its own endpoint, e.g. session:window), which is never marked, to drive its harness directly; or the same request as prose." >&2
+        exit 1
+        ;;
+      \$[a-z]*)
+        if [ "$TARGET_HARNESS" = codex ]; then
+          CODEX_VERB=${CARRIER_BODY%%[[:space:]]*}
+          echo "error: refusing to send the codex skill command '$CODEX_VERB' to secondmate ${TARGET_TASK_ID:-$T}: from-firstmate marked text carries '$FM_FROMFIRST_LABEL' at column 0, so codex reads the whole line as prose and never runs the '\$<skill>' command. Recover with one of: bin/fm-teardown.sh to close that agent; an explicit backend target (its own endpoint, e.g. session:window), which is never marked, to drive its harness directly; or the same request as prose." >&2
+          exit 1
+        fi
+        ;;
+    esac
     # Reuse an existing correlation id for recovery resends; otherwise create a
     # durable parent expectation before delivery. Transport success never
     # resolves that expectation (see fm-pending-reply-lib.sh).
@@ -461,7 +500,9 @@ else
   # starts ordinary text ("$5/month", "$HOME"), so a universal `$` rule would
   # needlessly slow plain text to claude/opencode/pi. The target backend's
   # verified submit retry still backs the settle up either way.
-  case "$*" in
+  # Matched on the FINAL text, not the arguments: a marked secondmate line starts
+  # with the carrier, so no popup opens and the fast settle is the correct one.
+  case "$MESSAGE" in
     /*) settle=1.2 ;;
     \$*)
       if [ "$TARGET_HARNESS" = codex ]; then settle=1.2; else settle=0.3; fi
@@ -512,6 +553,9 @@ else
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
       echo "error: text not submitted to $T (delivery unconfirmed; verdict=${verdict:-unknown}; tried $RESOLUTION_TRIED)" >&2
+      if [ -z "$TARGET_META" ]; then
+        echo "  hint: $T is a raw/unmanaged target with no agent composer to verify a submit against. If this is an ad-hoc shell pane, resend best-effort with: fm-send.sh $RAW_TARGET --raw $MESSAGE (no delivery guarantee). Use fm-<id> for a recorded task/lane to get verified delivery." >&2
+      fi
       exit 1
       ;;
   esac
@@ -540,5 +584,26 @@ else
   # turn before its busy footer shows. Pause so an immediate peek catches the
   # crewmate actually working instead of the stale idle pane. FM_SEND_SETTLE=0
   # disables it. Scoped to this path only, never the shared submit core.
+  if [ "${FM_SEND_VERIFY_TRANSITION:-0}" != 0 ]; then
+    # Optional post-submit transition verification: confirm the turn actually
+    # started, not just that the composer cleared. This uses the backend's own
+    # transition-wait primitives to verify idle→working transition.
+    verify_budget=${FM_SEND_VERIFY_TIMEOUT:-0.6}
+    verify_result=$(fm_backend_wait_for_working "$TARGET_BACKEND" "$T" "$verify_budget" "$TARGET_HARNESS")
+    case "$verify_result" in
+      working)
+        : # Turn confirmed started, proceed normally
+        ;;
+      idle)
+        echo "error: SEND DID NOT LAND - text was submitted to $T but the turn did not start (remains idle; tried $RESOLUTION_TRIED)" >&2
+        exit 1
+        ;;
+      unknown|error)
+        # Could not verify (backend error or unavailable), but composer cleared.
+        # Proceed with warning in verbose mode only. Fail only on definitive idle.
+        [ "${FM_SEND_VERBOSE:-0}" = 0 ] || echo "warning: text was submitted to $T but turn start could not be verified (tried $RESOLUTION_TRIED)" >&2
+        ;;
+    esac
+  fi
   [ "${FM_SEND_SETTLE:-1}" = 0 ] || sleep "${FM_SEND_SETTLE:-1}"
 fi

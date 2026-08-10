@@ -54,10 +54,40 @@
 # the retired home. Removing a leased home releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
-# Usage: fm-teardown.sh <task-id> [--force]
+# A clean teardown best-effort deregisters the task from Parlay's live chat
+# panel (see bin/fm-spawn.sh's header for the enrollment contract): the recorded
+# `parlay listen` background pid is always killed, and `parlay agent-down` is
+# called only when `parlay` is on PATH. Neither ever blocks or fails teardown.
+# A task linked to a bead (beads_id= in meta, set by fm-spawn.sh --beads or
+# auto-linked under config/backlog-backend=beads) has that
+# bead closed automatically once teardown reaches this point without --force, i.e.
+# every landed-work gate above already passed. --force never closes the linked bead,
+# since --force tears down without confirming the work landed. Closing is fail-open
+# like fm-bead-stamp.sh: a missing task CLI or a close the CLI rejects warns on
+# stderr and never blocks or fails an already-confirmed teardown. bin/fm-ledger.sh
+# is the safety net for a bead that was claimed but never reaches this path.
+# Usage: fm-teardown.sh <task-id> [--force | --staleness-autoclose [<idle-since-epoch>] | --staleness-file-dead [<idle-since-epoch>]]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
+#   --staleness-autoclose is bin/fm-watch.sh's idle>2h backstop for kind=ship
+#   tasks only: work_is_landed decides the branch. Landed falls through to the
+#   ordinary teardown above unchanged. Unlanded reclaims only the runtime
+#   endpoint and firstmate's own tracking state (never the worktree, its
+#   branch, or any uncommitted change) and files a bin/fm-staleness-file.sh bead
+#   recording the worktree, branch, harness, and idle-since timestamp for later
+#   triage - deletion happens only during that deliberate triage, still under
+#   the never-discard-unlanded-work guard.
+#   --staleness-file-dead is bin/fm-watch.sh's DEAD-window sweep for kind=ship
+#   tasks only: the additive, non-destructive twin of --staleness-autoclose for a
+#   window that DIED on its own with no live process left to reclaim. Unlanded
+#   work files the same bin/fm-staleness-file.sh triage bead (or, when filing
+#   fails, the state/<id>.staleness-unfiled fallback), recording the location for
+#   later triage; landed work files nothing. It NEVER kills an endpoint, removes
+#   the task meta or any tracking state, or touches the worktree, its branch, or
+#   any uncommitted change. Idempotent: a task already filed
+#   (state/<id>.staleness-filed present, or the .staleness-unfiled fallback) is
+#   left untouched, so a repeated sweep never re-files.
 #
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
@@ -122,17 +152,11 @@
 #     grace period to any survivor whose process identity still matches. Both
 #     roots are unique per task and never
 #     shared, so this can never reach another task's or the primary's
-#     processes. Idempotent: nothing left to find is a silent no-op.
-#   Fix 3 - sweep abandoned remote job workers. A remote job worker started
-#     from a worktree's own bin/ outlives that worktree's removal without
-#     being reachable by Fix 2, because its working directory is wherever it
-#     was launched rather than the task worktree (observed 2026-08-07: 29
-#     workers at ppid 1, 1-2 days old, each still polling and appending to a
-#     log in a pruned no-mistakes gate worktree). bin/fm-remote-job-reap-orphans.sh
-#     owns that sweep and its safety rule; it never touches a worker whose code
-#     root still exists, so the account's healthy LaunchAgent worker and every
-#     live remote secondmate worker are out of scope. Best effort: a sweep
-#     failure never blocks this teardown.
+#     processes. Idempotent: nothing left to find is a silent no-op. The lsof
+#     binary is resolved by fm_lsof_bin (bin/fm-lock-lib.sh), never by PATH
+#     alone: macOS ships lsof only as /usr/sbin/lsof, and a PATH without
+#     /usr/sbin would otherwise demote every teardown to the process-group
+#     fallback and quietly lose this reaping (robots-8d5r).
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -146,6 +170,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-control-lib.sh
@@ -172,42 +198,32 @@ if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
 fi
 ID=$1
 FORCE=${2:-}
-# shellcheck source=bin/fm-wake-lib.sh
-. "$SCRIPT_DIR/fm-wake-lib.sh"
-CONTROL_LOCK="$STATE/.control-$ID.lock"
-CONTROL_LOCK_HELD=0
-META_LOCK=
-META_LOCK_HELD=0
-DESCENDANT_LOCK_PATHS=()
-DESCENDANT_TASK_STATES=()
-DESCENDANT_TASK_IDS=()
-DESCENDANT_TASK_KINDS=()
-DESCENDANT_TASK_HOMES=()
-teardown_release_locks() {
-  local status=$? i
-  if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
-    teardown_release_herdr_locks || true
-  fi
-  for ((i=${#DESCENDANT_LOCK_PATHS[@]} - 1; i >= 0; i--)); do
-    fm_lock_release "${DESCENDANT_LOCK_PATHS[$i]}" || true
-  done
-  DESCENDANT_LOCK_PATHS=()
-  if [ "$META_LOCK_HELD" = 1 ]; then
-    fm_lock_release "$META_LOCK" || true
-    META_LOCK_HELD=0
-  fi
-  if [ "$CONTROL_LOCK_HELD" = 1 ]; then
-    fm_lock_release "$CONTROL_LOCK" || true
-    CONTROL_LOCK_HELD=0
-  fi
-  return "$status"
-}
-trap teardown_release_locks EXIT
-fm_lock_try_acquire "$CONTROL_LOCK" || {
-  echo "error: another lifecycle action is already running for task $ID; nothing was changed" >&2
-  exit 1
-}
-CONTROL_LOCK_HELD=1
+# --staleness-autoclose (bin/fm-watch.sh's idle>2h backstop): resolve landed vs
+# unlanded via work_is_landed and either fall through to the ordinary teardown
+# below (landed - FORCE reset to "" so it behaves exactly like a plain call) or
+# take the staleness_chat_only_teardown branch (unlanded - kill only the runtime
+# endpoint, file a staleness-store bead, and never touch the worktree). The
+# optional third argument is the idle-since epoch, recorded on the filed bead.
+# --staleness-file-dead (bin/fm-watch.sh's dead-window sweep): the DEAD-window
+# twin of --staleness-autoclose. A kind=ship task whose window DIED on its own
+# while its worktree still holds committed-but-unlanded or ask-user-parked work
+# is invisible to --staleness-autoclose (there is no live process to reclaim).
+# This mode files the SAME triage record for unlanded work but is strictly
+# ADDITIVE: it kills nothing, removes no meta or tracking state, and never
+# touches the worktree, its branch, or any uncommitted change - the orphan meta
+# and its preserved work stay in place for deliberate triage. It is idempotent
+# via state/<id>.staleness-filed (records the filed bead) or the
+# state/<id>.staleness-unfiled fallback. Also takes the optional idle-since epoch.
+STALENESS_AUTOCLOSE=0
+STALENESS_FILE_DEAD=0
+STALENESS_IDLE_SINCE=${3:-}
+if [ "$FORCE" = "--staleness-autoclose" ]; then
+  STALENESS_AUTOCLOSE=1
+  FORCE=""
+elif [ "$FORCE" = "--staleness-file-dead" ]; then
+  STALENESS_FILE_DEAD=1
+  FORCE=""
+fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -454,6 +470,11 @@ KIND=$(grep '^kind=' "$META" | cut -d= -f2- || true)
 [ -n "$KIND" ] || KIND=ship
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
+if { [ "$STALENESS_AUTOCLOSE" = 1 ] || [ "$STALENESS_FILE_DEAD" = 1 ]; } && [ "$KIND" != ship ]; then
+  echo "error: staleness auto-close only supports kind=ship tasks (task $ID is kind=$KIND)" >&2
+  exit 1
+fi
+BEADS_ID=$(fm_meta_get "$META" beads_id)
 PUBLIC_FOLLOWUP_HOME=$FM_HOME
 PUBLIC_FOLLOWUP_STATE=$STATE
 PUBLIC_FOLLOWUP_WORK_HOME=main
@@ -675,6 +696,48 @@ retire_busy_state() {
   fi
 }
 
+# Best-effort Parlay deregistration (bin/fm-spawn.sh's header owns enrollment).
+# The recorded background pid is killed unconditionally so a `parlay` that went
+# missing from PATH between spawn and teardown never orphans it; only the final
+# `parlay agent-down` network call is gated on `parlay` being present.
+deregister_parlay_agent() {
+  local state_dir=$1 id=$2 pid_file pid
+  pid_file="$state_dir/$id.parlay-listen-pid"
+  pid=$(cat "$pid_file" 2>/dev/null || true)
+  case "$pid" in ''|*[!0-9]*) ;; *) kill "$pid" 2>/dev/null || true ;; esac
+  rm -f "$pid_file"
+  if command -v parlay >/dev/null 2>&1; then
+    parlay agent-down "$id" >/dev/null 2>&1 \
+      || echo "warning: parlay agent-down failed for $id (non-blocking)" >&2
+  fi
+}
+
+# Close the bead linked to this task (beads_id= in meta, set by fm-spawn.sh --beads
+# or auto-linked under config/backlog-backend=beads) once its work is confirmed
+# landed. Only called for a non-force teardown that
+# reached this point, i.e. every REFUSED landed-work gate above already passed.
+# Fail-open by design, matching fm-bead-stamp.sh: a missing task CLI warns on
+# stderr and never blocks or fails an already-confirmed teardown. Any close
+# failure - store unreachable, a transient write-path outage while reads still
+# succeed, or a genuine conflict - is queued via fm-beads-resilience-lib.sh for
+# replay once the store recovers (beads-authority-migration Stage 5 resilience
+# layer, report.md section 5), so the confirmed-landed close is never silently
+# dropped; fm_beads_write_queue_reconcile treats a bead already reported closed
+# on replay as reconciled rather than retrying it forever.
+close_linked_bead() {
+  local beads_id=$1 id=$2 reason
+  reason="landed: firstmate task $id teardown confirmed work landed"
+  command -v task >/dev/null 2>&1 || {
+    echo "warning: task CLI not found on PATH, could not close bead $beads_id for $id" >&2
+    return 0
+  }
+  if task close "$beads_id" --reason "$reason" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "warning: could not close bead $beads_id for $id, queuing for retry" >&2
+  fm_beads_write_enqueue "$beads_id" "close: $id" close "$beads_id" --reason "$reason" || true
+}
+
 validate_pr_poll_cleanup() {
   local state_dir=$1 id=$2 quarantine state_device artifact has_artifact=0
   fm_task_id_path_safe "$id" || return 0
@@ -743,7 +806,7 @@ remove_pr_poll_artifacts() {
   fm_pr_poll_retirement_recover_one "$state_dir" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" || return 1
   rm -f "$state_dir/$id.check.sh" "$state_dir/$id.pr-poll" \
     "$state_dir/$id.pr-poll-registration" "$state_dir/$id.pr-poll-retirement" \
-    "$state_dir/$id.check-trust" || return 1
+    "$state_dir/$id.pr-review-seen" "$state_dir/$id.check-trust" || return 1
   if fm_task_id_path_safe "$id"; then
     quarantine="$state_dir/.pr-check-quarantine"
     if [ -d "$quarantine" ] && [ ! -L "$quarantine" ]; then
@@ -753,6 +816,108 @@ remove_pr_poll_artifacts() {
       done
       rmdir "$quarantine" 2>/dev/null || true
     fi
+  fi
+}
+
+# Best-effort uncommitted/unpushed summary for a staleness-store bead. Read-only
+# (git status/log against $1); never writes into the worktree.
+staleness_worktree_summary() {
+  local wt=$1 dirty unpushed
+  dirty=$(git -C "$wt" status --porcelain 2>/dev/null | head -20)
+  unpushed=$(git -C "$wt" log --oneline HEAD --not --remotes -- 2>/dev/null | head -20)
+  printf 'uncommitted changes:\n%s\nunpushed commits:\n%s' "${dirty:-<none>}" "${unpushed:-<none>}"
+}
+
+# --staleness-autoclose, unlanded branch: reclaim the expensive live process for
+# a task whose worktree has not landed (work_is_landed already returned false),
+# file it to the staleness triage store, and leave the worktree, its branch, and
+# every uncommitted change on disk exactly as-is - deletion happens only later,
+# during deliberate triage. Mirrors the fail-open external-CLI pattern used by
+# close_linked_bead(): a missing/failing staleness CLI never blocks reclaim.
+staleness_chat_only_teardown() {
+  local harness purpose summary bead_out
+  fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+  remove_grok_turnend_auth "$STATE" "$ID"
+  remove_kimi_turnend_auth "$STATE" "$ID"
+  deregister_parlay_agent "$STATE" "$ID"
+  fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
+  remove_pr_poll_artifacts "$STATE" "$ID" || true
+  retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || true
+  harness=$(meta_value "$META" harness)
+  purpose=""
+  if [ -f "$DATA/$ID/brief.md" ]; then
+    purpose=$(awk '/^# Task/{f=1;next} f && NF {print; exit}' "$DATA/$ID/brief.md" 2>/dev/null || true)
+  fi
+  summary=$(staleness_worktree_summary "$WT")
+  bead_out=$("$SCRIPT_DIR/fm-staleness-file.sh" "$ID" "$purpose" "$WT" "$STALENESS_BRANCH" "$PROJ" \
+    "${harness:-unknown}" "$STALENESS_IDLE_SINCE" "$summary" 2>&1) || true
+  [ -z "$bead_out" ] || printf '%s\n' "$bead_out"
+  # fm-staleness-file.sh is fail-open (always exits 0), so a failed filing is
+  # only visible by the absence of its success line. $ID.meta is about to be
+  # removed below, so on failure write a durable fallback record first -
+  # otherwise a preserved unlanded worktree loses its only location pointer.
+  if ! printf '%s\n' "$bead_out" | grep -q '^filed staleness bead '; then
+    printf 'task: %s\npurpose: %s\nworktree: %s\nbranch: %s\nproject: %s\nharness: %s\nidle since: %s\n' \
+      "$ID" "${purpose:-unknown}" "$WT" "${STALENESS_BRANCH:-unknown}" "${PROJ:-unknown}" \
+      "${harness:-unknown}" "$STALENESS_IDLE_SINCE" > "$STATE/$ID.staleness-unfiled"
+  fi
+  rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
+    "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
+  echo "staleness auto-close $ID: chat reclaimed, worktree $WT preserved for triage"
+}
+
+# --staleness-file-dead, unlanded branch: file the SAME triage record
+# staleness_chat_only_teardown files, for a task whose window DIED on its own
+# rather than being reclaimed while live. Strictly ADDITIVE - unlike the
+# chat-only teardown it kills no endpoint, removes no meta/status/token, and
+# leaves the worktree, its branch, and every uncommitted change exactly as-is:
+# a dead-window orphan's preserved work and its tracking meta both stay in place
+# for deliberate triage later. Reuses work_is_landed and the fail-open
+# fm-staleness-file.sh exactly as staleness_chat_only_teardown does. Idempotent:
+# a task already filed (state/<id>.staleness-filed records the bead, or the
+# state/<id>.staleness-unfiled fallback is present) is left untouched, so a
+# repeated sweep never re-files. Files ONLY for unlanded work; landed work is a
+# no-op the ordinary teardown path handles.
+staleness_file_dead_only() {
+  local harness purpose summary bead_out filed_marker unfiled_marker branch
+  filed_marker="$STATE/$ID.staleness-filed"
+  unfiled_marker="$STATE/$ID.staleness-unfiled"
+  if [ -e "$filed_marker" ] || [ -e "$unfiled_marker" ]; then
+    echo "dead-window triage $ID: already filed, worktree $WT and meta left untouched"
+    return 0
+  fi
+  if [ ! -d "$WT" ]; then
+    echo "dead-window triage $ID: worktree $WT is already gone, nothing to preserve or file"
+    return 0
+  fi
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+  if work_is_landed "$branch"; then
+    echo "dead-window triage $ID: work on $branch is landed, nothing to file"
+    return 0
+  fi
+  harness=$(meta_value "$META" harness)
+  purpose=""
+  if [ -f "$DATA/$ID/brief.md" ]; then
+    purpose=$(awk '/^# Task/{f=1;next} f && NF {print; exit}' "$DATA/$ID/brief.md" 2>/dev/null || true)
+  fi
+  summary=$(staleness_worktree_summary "$WT")
+  bead_out=$("$SCRIPT_DIR/fm-staleness-file.sh" "$ID" "$purpose" "$WT" "$branch" "$PROJ" \
+    "${harness:-unknown}" "$STALENESS_IDLE_SINCE" "$summary" 2>&1) || true
+  [ -z "$bead_out" ] || printf '%s\n' "$bead_out"
+  # fm-staleness-file.sh is fail-open (always exits 0), so a failed filing is
+  # only visible by the absence of its success line. Record a durable idempotency
+  # marker either way so a dead-window orphan is filed at most once: the filed
+  # bead line on success, or the state/<id>.staleness-unfiled fallback (the exact
+  # format staleness_chat_only_teardown writes) on failure, which also preserves
+  # the worktree location a captain needs to find the work.
+  if printf '%s\n' "$bead_out" | grep -q '^filed staleness bead '; then
+    printf '%s\n' "$bead_out" | grep '^filed staleness bead ' | head -1 > "$filed_marker"
+    echo "dead-window triage $ID: filed for triage, worktree $WT and meta preserved"
+  else
+    printf 'task: %s\npurpose: %s\nworktree: %s\nbranch: %s\nproject: %s\nharness: %s\nidle since: %s\n' \
+      "$ID" "${purpose:-unknown}" "$WT" "${branch:-unknown}" "${PROJ:-unknown}" \
+      "${harness:-unknown}" "$STALENESS_IDLE_SINCE" > "$unfiled_marker"
+    echo "dead-window triage $ID: bead filing failed, recorded state/$ID.staleness-unfiled; worktree $WT and meta preserved"
   fi
 }
 
@@ -826,6 +991,15 @@ $unpushed
 EOF
 }
 
+squash_merged_pr_contains_work() {
+  local pr_head=$1 pr_tree merged_tree
+  pr_tree=$(git -C "$WT" rev-parse --quiet --verify "$pr_head^{tree}" 2>/dev/null) || return 1
+  [ -n "$pr_tree" ] || return 1
+  merged_tree=$(git -C "$WT" merge-tree --write-tree "$pr_head" HEAD 2>/dev/null) || return 1
+  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
+  [ "$merged_tree" = "$pr_tree" ]
+}
+
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
 # PR from the recorded pr= URL first, then from the branch name, and asks GitHub
 # for both the PR state and head. Returns non-zero when the PR is not merged, the
@@ -851,7 +1025,8 @@ pr_is_merged() {
   ensure_commit_object "$target" "$head" || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null && return 0
-  unpushed_patches_are_in_pr_head "$head"
+  unpushed_patches_are_in_pr_head "$head" && return 0
+  squash_merged_pr_contains_work "$head"
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
@@ -913,6 +1088,8 @@ backlog_refresh_reminder() {
         ;;
     esac
     printf '%s\n' "Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+  elif [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+    printf '%s\n' "Backlog: $ID just finished. The beads store has been updated with the completion status. Run task list --ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else
     printf '%s\n' "Backlog: $ID just finished. Update data/backlog.md - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
   fi
@@ -1148,7 +1325,7 @@ validate_worktree_teardown_safety() {
     echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
     return 1
   fi
-  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' | head -1 || true)
+  dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.opencode/|\.fm-(grok|kimi)-turnend$)' | head -1 || true)
 
   if ! unpushed_raw=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null); then
     if worktree_safety_blocked_by_lock "commits not on a remote"; then
@@ -1289,10 +1466,11 @@ conclude_task_no_mistakes_run() {  # <worktree>
 # documents as slow). Never $$ (this script's own pid). Empty output when
 # nothing matches; failure means the scan could not establish a safe result.
 pids_with_cwd_under() {  # <dir>
-  local dir=$1 out pid path line
+  local dir=$1 out pid path line lsof_bin
   [ -n "$dir" ] && [ -d "$dir" ] || return 0
   dir=$(cd "$dir" && pwd -P) || return 1
-  out=$(lsof -a -d cwd -Fpn 2>/dev/null) || return 1
+  lsof_bin=$(fm_lsof_bin) || return 1
+  out=$("$lsof_bin" -a -d cwd -Fpn 2>/dev/null) || return 1
   [ -n "$out" ] || return 0
   pid=
   while IFS= read -r line; do
@@ -1414,12 +1592,14 @@ reap_task_backend_process_group() {  # <label>
 # first, then KILL after a short grace period for anything still alive; a
 # process that exits on its own between the two passes is simply absent from
 # the recheck. A missing lsof uses the backend process-group fallback; an lsof
-# scan error refuses before destructive teardown.
+# scan error refuses before destructive teardown. "Missing" is decided by
+# fm_lsof_bin (bin/fm-lock-lib.sh), which looks past PATH into the standard
+# system locations - a PATH without /usr/sbin is not a host without lsof.
 reap_task_worktree_processes() {  # <label> <dir>...
   local label=$1 pids pid identity current_pids i pass=1 max_passes=3
   local -a tracked_pids tracked_identities remaining_pids remaining_identities
   shift
-  if ! command -v lsof >/dev/null 2>&1; then
+  if ! fm_lsof_bin >/dev/null 2>&1; then
     reap_task_backend_process_group "$label"
     return 0
   fi
@@ -2090,7 +2270,7 @@ teardown_herdr_require_prerequisites() {  # <task-id>
 }
 
 teardown_herdr_preflight_target() {  # <target> <task-id>
-  local target=$1 task_id=$2 session pane presence lock_path verified_lock_path lock_session held_path attempt
+  local target=$1 task_id=$2 session pane presence lock_path verified_lock_path lock_session held_path attempt lock_max lock_interval
   teardown_herdr_require_prerequisites "$task_id" || return 1
   if ! fm_backend_herdr_parse_target "$target"; then
     echo "error: herdr endpoint $target for $task_id could not be parsed exactly; nothing was changed - repair the endpoint metadata and rerun teardown" >&2
@@ -2123,8 +2303,13 @@ teardown_herdr_preflight_target() {  # <target> <task-id>
 $TEARDOWN_HERDR_LOCK_RECORDS
 FMEOF
   fi
+  # Same bounded wait as fm-spawn.sh's projection lock; see docs/configuration.md
+  # for FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS / _INTERVAL (default 50 x 0.1 = 5s).
+  fm_backend_herdr_presentation_lock_budget
+  lock_max=$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_POLLS
+  lock_interval=$FM_BACKEND_HERDR_PRESENTATION_LOCK_BUDGET_INTERVAL
   attempt=0
-  while [ "$attempt" -lt 50 ]; do
+  while [ "$attempt" -lt "$lock_max" ]; do
     if fm_lock_try_acquire "$lock_path"; then
       if ! verified_lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") \
         || [ "$verified_lock_path" != "$lock_path" ]; then
@@ -2140,7 +2325,7 @@ $session	$lock_path"
       fi
       return 0
     fi
-    sleep 0.1
+    sleep "$lock_interval"
     attempt=$((attempt + 1))
   done
   echo "error: herdr session presentation lock is contended for $task_id; nothing was changed - rerun teardown once the contention clears" >&2
@@ -2247,8 +2432,9 @@ cleanup_firstmate_home_children() {
         safe_rm_rf_child_worktree "$child_wt" "$child_proj"
       fi
     fi
-    remove_grok_turnend_auth "$sub_state" "$child_id" || return 1
-    remove_kimi_turnend_auth "$sub_state" "$child_id" || return 1
+    remove_grok_turnend_auth "$sub_state" "$child_id"
+    remove_kimi_turnend_auth "$sub_state" "$child_id"
+    deregister_parlay_agent "$sub_state" "$child_id"
     remove_pr_poll_artifacts "$sub_state" "$child_id" || return 1
     child_busy_gen=$(meta_value "$child_meta" busy_gen)
     if [ -z "$child_busy_gen" ]; then
@@ -2275,6 +2461,32 @@ remove_secondmate_registry_entry() {
 }
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
+
+if [ "$STALENESS_FILE_DEAD" = 1 ]; then
+  # Dead-window triage filing only: additive, non-destructive, idempotent. Never
+  # falls through to any teardown branch below - it exits after filing (or
+  # skipping) so the worktree, branch, and meta stay in place. See
+  # staleness_file_dead_only.
+  staleness_file_dead_only
+  exit 0
+fi
+
+if [ "$STALENESS_AUTOCLOSE" = 1 ]; then
+  if [ ! -d "$WT" ]; then
+    # Nothing to preserve or file a triage bead about - report the actual
+    # state instead of claiming a worktree that is already gone.
+    echo "staleness auto-close $ID: worktree $WT is already gone, skipping triage filing"
+    rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
+      "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"
+    exit 0
+  fi
+  STALENESS_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+  if ! work_is_landed "$STALENESS_BRANCH"; then
+    staleness_chat_only_teardown
+    exit 0
+  fi
+  # Landed: fall through to the ordinary full teardown below (FORCE is "").
+fi
 
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
@@ -2525,14 +2737,16 @@ if [ "$KIND" = secondmate ]; then
   remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID" || exit $?
   remove_secondmate_registry_entry "$ID"
 fi
-remove_grok_turnend_auth "$STATE" "$ID" || exit 1
-remove_kimi_turnend_auth "$STATE" "$ID" || exit 1
+remove_grok_turnend_auth "$STATE" "$ID"
+remove_kimi_turnend_auth "$STATE" "$ID"
+deregister_parlay_agent "$STATE" "$ID"
 fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
 # Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"
 remove_pr_poll_artifacts "$STATE" "$ID" || exit 1
 retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || exit 1
+[ -z "$BEADS_ID" ] || [ "$FORCE" = "--force" ] || close_linked_bead "$BEADS_ID" "$ID"
 rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.pi-ext.ts" "$STATE/$ID.grok-turnend-token" \
   "$STATE/$ID.kimi-turnend-token" "$STATE/$ID.muse-session" \

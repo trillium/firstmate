@@ -54,35 +54,79 @@ test_explicit_resolution_closes_it() {
   pass "an explicit resolved [key=X] closes the keyed decision"
 }
 
-test_reserved_key_namespace_is_owned_by_its_library() {
+test_correlated_resolution_closes_it() {
   local dir state out
-  dir=$(make_case reserved-key)
+  dir=$(make_case resolved-corr)
   state="$dir/state"
   out="$dir/drain.out"
-  # `pending-reply-<id>` names a decision bin/fm-pending-reply-lib.sh raises and
-  # is the only writer that closes it. Every writer reaches this same stream - a
-  # local mate appends into it directly, and a remote mate's lines are mirrored
-  # into it verbatim - so another writer must not be able to take that key over
-  # or clear it just by naming it.
-  printf 'blocked [key=pending-reply-abcdef0123456789]: pending-reply-missed: task=ios pending-reply-id=abcdef0123456789 request=ship it\n' > "$state/task9.status"
-  printf 'blocked [key=pending-reply-abcdef0123456789]: shipping is blocked on infra\n' >> "$state/task9.status"
-  printf 'resolved [key=pending-reply-abcdef0123456789]: all good now\n' >> "$state/task9.status"
+  # A secondmate answering a marked parent request writes the correlation token
+  # alongside the key (bin/fm-secondmate-report.sh), so its own resolution line
+  # carries TWO bracketed tokens. That line must close the decision exactly like
+  # a bare "resolved [key=X]:" does; when only "[key=" was stripped from the verb
+  # it did not, and the decision stayed falsely open and re-nagged every drain.
+  printf 'needs-decision [key=herdr-web-proto19]: pick the proto19 rollout\n' > "$state/task9.status"
+  printf 'resolved [corr=462dcd5788f7fad1] [key=herdr-web-proto19]: went with the staged rollout\n' >> "$state/task9.status"
 
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on reserved-key lines"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed after a correlated resolution"
 
-  grep -F 'pending-reply-id=abcdef0123456789' "$out" >/dev/null \
-    || fail "a foreign resolution cleared a reserved decision it does not own: $(cat "$out")"
-  if grep -F 'shipping is blocked on infra' "$out" >/dev/null; then
-    fail "a foreign line took over a reserved decision key: $(cat "$out")"
-  fi
-
-  # The owner's own resolution, which speaks that namespace's vocabulary, closes it.
-  printf 'resolved [key=pending-reply-abcdef0123456789]: pending-reply-resolved: task=ios pending-reply-id=abcdef0123456789 via=status\n' >> "$state/task9.status"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed after the owner closed its decision"
   if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
-    fail "the owner's own resolution did not close its reserved decision: $(cat "$out")"
+    fail "a correlated 'resolved [corr=X] [key=Y]:' left the decision open: $(cat "$out")"
   fi
-  pass "a reserved decision key can only be opened or closed by its owning library"
+  pass "a correlated resolved [corr=X] [key=Y] closes the keyed decision"
+}
+
+test_correlated_resolution_closes_it_in_either_token_order() {
+  local dir state out
+  dir=$(make_case resolved-corr-order)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # Token order is a writer's choice, not part of the grammar, so neither the
+  # key parser nor the verb parser may depend on it.
+  printf 'needs-decision [corr=0123456789abcdef] [key=api-shape]: pick REST or RPC\n' > "$state/task10.status"
+  printf 'resolved [key=api-shape] [corr=0123456789abcdef]: went with REST\n' >> "$state/task10.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on reversed token order"
+
+  if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
+    fail "a resolution with the corr token after the key left the decision open: $(cat "$out")"
+  fi
+  pass "correlated open/close lines work in either bracketed-token order"
+}
+
+test_correlated_needs_decision_still_opens() {
+  local dir state out
+  dir=$(make_case needs-decision-corr)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # The mirror risk: if the verb parser mis-reads the corr token the OPENING
+  # line is dropped too, and a real decision silently never surfaces at all.
+  printf 'needs-decision [corr=462dcd5788f7fad1] [key=migration]: pick the rollout plan\n' > "$state/task11.status"
+  printf 'working: continuing\n' >> "$state/task11.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a correlated needs-decision"
+
+  grep -F 'task11' "$out" | grep -F '[key=migration]' | grep -F 'pick the rollout plan' >/dev/null \
+    || fail "a correlated needs-decision line did not open a decision"
+  pass "a correlated needs-decision [corr=X] [key=Y] still opens the keyed decision"
+}
+
+test_correlated_resolution_without_a_key_closes_default() {
+  local dir state out
+  dir=$(make_case resolved-corr-default)
+  state="$dir/state"
+  out="$dir/drain.out"
+  # A correlated line with no key token addresses the historical "default" key,
+  # the same as a bare "resolved:" - the corr token must not change which key it
+  # closes, nor stop it from closing at all.
+  printf 'needs-decision: pick the rollout plan\n' > "$state/task12.status"
+  printf 'resolved [corr=462dcd5788f7fad1]: went with the staged rollout\n' >> "$state/task12.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a keyless correlated resolution"
+
+  if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
+    fail "a correlated keyless resolution left the default decision open: $(cat "$out")"
+  fi
+  pass "a correlated resolved [corr=X] with no key still closes the default decision"
 }
 
 test_later_unrelated_terminal_line_does_not_close_it() {
@@ -218,6 +262,10 @@ test_over_long_decision_note_is_capped_with_a_marker() {
 test_buried_decision_still_surfaces
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
+test_correlated_resolution_closes_it
+test_correlated_resolution_closes_it_in_either_token_order
+test_correlated_needs_decision_still_opens
+test_correlated_resolution_without_a_key_closes_default
 test_later_unrelated_terminal_line_does_not_close_it
 test_reserved_key_namespace_is_owned_by_its_library
 test_no_open_decisions_prints_nothing

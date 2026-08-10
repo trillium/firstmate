@@ -24,6 +24,19 @@ jobs:
       # re-spell the shellcheck command here; keep CI and the pre-push gate on it.
       - run: bin/fm-lint.sh
 
+  fork-features:
+    name: Fork features guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test fork feature presence and behavior
+        run: |
+          set -u
+          bash tests/fork-features.sh
+        # Expected: this test will fail if fork features are missing. That failure
+        # is the accurate statement and serves as a restore checklist. Do not weaken
+        # tests to make them pass.
+
   # Deterministic proof that portable parallel shards + portable serial + Herdr
   # equal the complete tests/*.test.sh inventory with no missing or duplicates,
   # and that the portable serial CI shards partition that serial lane exactly.
@@ -350,8 +363,8 @@ jobs:
           snapshot_output=$(/bin/bash tests/fm-fleet-snapshot-view.test.sh)
           printf '%s\n' "$snapshot_output"
           snapshot_count=$(printf '%s\n' "$snapshot_output" | grep -c '^ok - ')
-          [ "$snapshot_count" -eq 15 ] || {
-            echo "::error::expected 15 snapshot/fleet-view tests, got $snapshot_count"
+          [ "$snapshot_count" -eq 19 ] || {
+            echo "::error::expected 19 snapshot/fleet-view tests, got $snapshot_count"
             exit 1
           }
 

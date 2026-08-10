@@ -129,6 +129,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/coderabbit-pr-gate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/decision-hold-lifecycle/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -154,6 +158,14 @@
     },
     {
       "path": ".agents/skills/harness-adapters/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/herdr-navigation/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/night-ops-directive/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -187,6 +199,10 @@
     {
       "path": "AGENTS.md",
       "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/checksum-probe-inventory.md",
+      "audience": "maintainer-verification"
     },
     {
       "path": "CLAUDE.md",
@@ -249,7 +265,15 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/fork-features.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/examples/crew-dispatch.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/herdr-spur.agents",
       "audience": "operator-example"
     },
     {
@@ -263,6 +287,10 @@
     {
       "path": "docs/fm-test-portable-shards.md",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/gascity-integration-analysis.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/gitlab-merge-watch.md",
@@ -371,6 +399,14 @@
     {
       "path": "docs/zellij-backend.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/no-mistakes-run-liveness.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "persona.md",
+      "audience": "agent-runtime"
     },
     {
       "path": "skills/stow/SKILL.md",

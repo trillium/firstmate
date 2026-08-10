@@ -35,9 +35,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
-# Inert unless FM_TIMING_LOG names a file; only the deferred network stage sets it.
-# shellcheck source=bin/fm-timing-lib.sh
-. "$SCRIPT_DIR/fm-timing-lib.sh"
+# shellcheck source=bin/fm-project-dir-lib.sh
+. "$SCRIPT_DIR/fm-project-dir-lib.sh"
 FM_LOCK_LOG_PREFIX=fleet-sync
 "$FM_ROOT/bin/fm-guard.sh" || true
 
@@ -75,39 +74,12 @@ project_label() {
   esac
 }
 
-# resolve_project_arg <arg>: accept a path (used as-is when it already exists)
-# or a bare/"projects/<name>" project name, resolved against $PROJECTS. Falls
-# back to the original argument unresolved so a genuinely bad path still hits
-# sync_project's existing "not a directory" skip.
+# resolve_project_arg <arg>: accept the same project forms every other entry
+# point accepts (bin/fm-project-dir-lib.sh owns that mapping), but softly - an
+# argument that resolves nowhere is returned unchanged so sync_project's
+# existing "not a directory" skip still reports it here.
 resolve_project_arg() {
-  local arg=$1 candidate
-  case "$arg" in
-    projects/*)
-      candidate="$PROJECTS/${arg#projects/}"
-      if [ -d "$candidate" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-      ;;
-    */*)
-      if [ -d "$arg" ]; then
-        printf '%s\n' "$arg"
-        return 0
-      fi
-      ;;
-    *)
-      candidate="$PROJECTS/$arg"
-      if [ -d "$candidate" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-      if [ -d "$arg" ]; then
-        printf '%s\n' "$arg"
-        return 0
-      fi
-      ;;
-  esac
-  printf '%s\n' "$arg"
+  fm_resolve_project_dir "$1" "$PROJECTS" project 2>/dev/null || printf '%s\n' "$1"
 }
 
 default_branch() {

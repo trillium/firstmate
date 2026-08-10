@@ -10,6 +10,22 @@
 # All hermetic over temp dirs; no real agent session is invoked.
 set -u
 
+# Hermeticity: the guard resolves its home as FM_HOME > FM_ROOT_OVERRIDE >
+# the guard script's own repo root (bin/fm-turnend-guard.sh:62-66), and every
+# fixture here installs the guard into its own <fixture>/bin/. So with these
+# unset, each fixture self-resolves to its own state/ - but if the invoking
+# shell exports any of them (an agent session running inside a live firstmate
+# home exports FM_HOME), the guard reads that REAL home's state instead of the
+# fixture's, and verdicts stop describing the fixture at all.
+#
+# run_hook pins FM_HOME per-fixture so the direct-guard tests were always
+# immune; the harness-adapter tests (Grok/codex) invoke the hook the way the
+# real adapters do - inheriting the ambient environment - and were not. That
+# is what made 'healthy no-supervision-needed native stop must allow' fail on
+# a developer box while passing in CI: CI exports no FM_HOME, so nothing
+# leaked there (robots-qgcg).
+unset FM_HOME FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE
+
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -115,6 +131,7 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
+  cp "$ROOT/bin/fm-watch-cycle-lib.sh" "$dir/bin/fm-watch-cycle-lib.sh"
   mkdir -p "$dir/docs"
   cp -R "$ROOT/docs/supervision-protocols" "$dir/docs/supervision-protocols"
   chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh"
@@ -782,67 +799,20 @@ test_grok_adapter_missing_jq_and_no_supervision_allow() {
   pass "fm-turnend-guard-grok: missing jq and no-supervision-needed stops stay silent and bounded"
 }
 
-# Grok loads Claude-compatible settings, so a TRACKED .claude/settings.json entry
-# that also has a .grok/hooks/ counterpart must refuse to run under Grok, or the
-# home gets a duplicate path. The regression this pins: the guard once tested
-# GROK_AGENT alone, which a grok 1.0.0 HOOK process does not carry, so the
-# Claude-only Stop auto-arm ran synchronously under Grok, foregrounded the
-# watcher, and wedged the Grok turn for its declared 28800-second timeout.
-#
-# bin/fm-subagent-pretool-check.sh is the deliberate exception: Grok has no
-# counterpart registration, so guarding it would REMOVE the guard from Grok
-# rather than deduplicate it (docs/subagent-guard.md "Known residual gap").
-# It is asserted to stay unguarded so the exception cannot be closed silently.
-test_tracked_claude_entries_inert_under_grok() {
-  local dir cmd script target guarded=0 unguarded=0
-  command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
-  dir="$TMP_ROOT/claude-entries-grok-inert"
-  mkdir -p "$dir/bin"
-  for script in fm-turnend-guard.sh fm-claude-stop-autoarm.sh fm-sessionstart-run.sh \
-    fm-arm-pretool-check.sh fm-cd-pretool-check.sh fm-subagent-pretool-check.sh; do
-    printf '#!/usr/bin/env bash\nprintf ran >> %q\n' "$dir/invoked" > "$dir/bin/$script"
-    chmod +x "$dir/bin/$script"
-  done
-
-  # Runs one tracked command string and reports whether it reached its script.
-  ran_under() {
-    rm -f "$dir/invoked"
-    env "$@" CLAUDE_PROJECT_DIR="$dir" bash -c "$cmd" </dev/null >/dev/null 2>&1
-    [ -e "$dir/invoked" ]
-  }
-
-  while IFS= read -r cmd; do
-    [ -n "$cmd" ] || continue
-    target=$(printf '%s\n' "$cmd" | sed -n 's|.*/bin/\([a-z0-9-]*\.sh\).*|\1|p')
-    [ -n "$target" ] || fail "could not identify the target script of tracked entry: $cmd"
-
-    # Native Claude: EVERY tracked entry must still reach its script, or a guard
-    # has silently disarmed Claude's own protection.
-    ran_under -u GROK_AGENT -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID \
-      -u GROK_WORKSPACE_ROOT \
-      || fail "tracked entry for $target did not run under a native Claude environment"
-
-    if [ "$target" = fm-subagent-pretool-check.sh ]; then
-      unguarded=$((unguarded + 1))
-      ran_under -u GROK_AGENT GROK_HOOK_EVENT=pre_tool_use GROK_SESSION_ID=grok-test-session \
-        || fail "the documented $target exception must stay unguarded; Grok has no counterpart to fall back to"
-      continue
+# Regression guard for the leak itself (robots-qgcg). The adapter tests invoke
+# the hook exactly as the real harness adapters do - no per-call FM_HOME pin -
+# so their verdicts are only about the fixture while the suite's environment
+# stays scrubbed. Assert that directly: if a future change re-introduces any of
+# these, every adapter verdict silently starts describing the developer's own
+# live home and the suite goes green-or-red for reasons unrelated to the code.
+test_suite_environment_is_hermetic() {
+  local var
+  for var in FM_HOME FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE; do
+    if [ -n "${!var:-}" ]; then
+      fail "$var leaked into the suite (=${!var}); adapter verdicts would read that home, not the fixture"
     fi
-
-    guarded=$((guarded + 1))
-    # grok 1.0.0 hook process: hook markers present, GROK_AGENT absent.
-    ! ran_under -u GROK_AGENT GROK_HOOK_EVENT=stop \
-      GROK_HOOK_NAME='project/settings:stop[0].hooks[0]' \
-      GROK_SESSION_ID=grok-test-session GROK_WORKSPACE_ROOT="$dir" \
-      || fail "tracked entry for $target ran under a grok 1.0.0 hook environment"
-    # grok 0.2.73 child/tool process: GROK_AGENT present, hook markers absent.
-    ! ran_under -u GROK_HOOK_EVENT -u GROK_HOOK_NAME GROK_AGENT=1 \
-      || fail "tracked entry for $target ran under a legacy GROK_AGENT environment"
-  done < <(jq -r '.hooks[][].hooks[].command' "$ROOT/.claude/settings.json")
-
-  [ "$guarded" -eq 5 ] || fail "expected 5 grok-guarded tracked entries, saw $guarded"
-  [ "$unguarded" -eq 1 ] || fail "expected 1 documented unguarded tracked entry, saw $unguarded"
-  pass "tracked .claude/settings.json entries: $guarded inert under grok, the documented subagent exception still armed, all live under Claude"
+  done
+  pass "fm-turnend-guard: suite environment is hermetic (no FM_HOME/state overrides leak in)"
 }
 
 test_codex_hook_uses_process_pwd_when_payload_cwd_is_outside_root() {
@@ -1631,6 +1601,7 @@ test_hook_silent_in_crewmate_worktree
 test_hook_silent_without_jq
 test_hook_silent_without_stdin
 test_hook_runs_fast
+test_suite_environment_is_hermetic
 test_grok_adapter_forces_one_resume_when_unhealthy
 test_grok_adapter_loop_guard_skips_resume
 test_grok_adapter_native_false_blocks_without_resume

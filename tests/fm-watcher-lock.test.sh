@@ -487,11 +487,15 @@ test_watch_restart_attaches_to_healthy_peer() {
   is_live_non_zombie "$peer" || fail "restart killed a TERM-resistant peer unexpectedly"
   kill -KILL "$peer" 2>/dev/null || true
   wait "$peer" 2>/dev/null || true
+  # Genuine supervision-down: the peer is gone and its beacon has expired. Only a
+  # stale/expired beacon turns a successor gap into a loud FAILED; a fresh beacon
+  # is the benign case (test_arm_benign_when_beacon_fresh_without_successor).
+  touch -t 200001010000 "$state/.last-watcher-beat"
   wait_for_exit "$armpid" 80
   status=$?
   [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "restart arm did not fail after its attached peer ended without a successor (status $status)"
   grep -qF 'watcher: FAILED - cycle ended without an actionable reason' "$out" || fail "restart arm did not surface the attached cycle end"
-  pass "watch restart attaches to a verified healthy peer and later surfaces a successor gap"
+  pass "watch restart attaches to a verified healthy peer and fails loudly when the cycle ends with an expired beacon"
 }
 
 test_watcher_self_evicts_on_lock_takeover() {
@@ -546,12 +550,16 @@ test_arm_self_eviction_is_loud_without_successor() {
   # self-evict normally. With no verified successor, the arm must turn that
   # otherwise clean empty close into the typed nonzero failure.
   printf '%s\n' "$$" > "$state/.watch.lock/pid"
+  # Let the owned watcher self-evict and stop beating, then expire its beacon so
+  # this is a genuine supervision-down (stale beacon), the only case that fails.
+  wait_for_exit "$watcher_pid" 80 >/dev/null 2>&1 || true
+  touch -t 200001010000 "$state/.last-watcher-beat"
   wait_for_exit "$armpid" 80
   status=$?
   [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "self-evicted arm did not fail nonzero (status $status)"
   grep -qF 'watcher: FAILED - cycle ended without an actionable reason' "$armout" || fail "self-evicted arm omitted the typed cycle-end failure"
   grep -q "reason=unexpected-clean-exit" "$state/.watch-cycle-exits.log" || fail "self-evicted cycle was not classified in the lifecycle ledger"
-  pass "arm turns clean self-eviction without a successor into a typed failure"
+  pass "arm turns clean self-eviction without a successor and an expired beacon into a typed failure"
 }
 
 test_arm_attaches_and_waits_for_live_fresh_watcher() {
@@ -586,14 +594,17 @@ test_arm_attaches_and_waits_for_live_fresh_watcher() {
   ! grep -qF 'watcher: FAILED' "$armout" || fail "arm reported FAILED for a healthy watcher"
   [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] || fail "arm disturbed the healthy watcher's lock"
   is_live_non_zombie "$armpid" || fail "arm exited while the seed watcher was still healthy"
-  # After the seed dies without a successor, the attached arm must fail loudly.
+  # After the seed dies AND its beacon expires (genuine supervision-down), the
+  # attached arm must fail loudly. A fresh beacon is the benign case, covered by
+  # test_arm_benign_when_beacon_fresh_without_successor.
   kill "$wpid" 2>/dev/null || true
   wait "$wpid" 2>/dev/null || true
+  touch -t 200001010000 "$state/.last-watcher-beat"
   wait_for_exit "$armpid" 80
   status=$?
   [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "attached arm did not fail after seed died (status $status)"
   grep -qF 'watcher: FAILED - cycle ended without an actionable reason' "$armout" || fail "attached arm did not emit the typed cycle-end failure"
-  pass "arm attaches to a live fresh watcher and fails loudly when that cycle has no successor"
+  pass "arm attaches to a live fresh watcher and fails loudly when that cycle ends with an expired beacon"
 }
 
 test_attached_arm_signal_is_recorded_in_cycle_ledger() {
@@ -774,14 +785,62 @@ test_arm_waits_for_peer_beacon_after_child_stands_down() {
   grep -qF "watcher: attached pid=$peer" "$armout" || fail "arm did not wait for and attach to the peer watcher: $(cat "$armout")"
   ! grep -qF 'watcher: FAILED' "$armout" || fail "arm falsely reported FAILED during peer startup race"
   is_live_non_zombie "$armpid" || fail "arm exited while the peer was still healthy"
-  # After the peer dies without a successor, the attached arm must fail loudly.
+  # After the peer dies AND its beacon expires (genuine supervision-down), the
+  # attached arm must fail loudly.
   kill "$peer" 2>/dev/null || true
   wait "$peer" 2>/dev/null || true
+  touch -t 200001010000 "$state/.last-watcher-beat"
   wait_for_exit "$armpid" 80
   status=$?
   [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "attached arm did not fail after peer died (status $status): $(cat "$armout")"
   grep -qF 'watcher: FAILED - cycle ended without an actionable reason' "$armout" || fail "peer-attached arm did not emit the typed cycle-end failure"
-  pass "arm attaches to a peer watcher after child stands down and surfaces a missing successor"
+  pass "arm attaches to a peer watcher after child stands down and fails loudly when the cycle ends with an expired beacon"
+}
+
+test_arm_benign_when_beacon_fresh_without_successor() {
+  # Regression for the false-failure loop: an attached arm whose watcher makes a
+  # clean one-shot exit (it surfaced its wake, durably enqueued it, and stopped)
+  # with NO immediate successor must NOT report FAILED while the liveness beacon
+  # is still fresh - the adapter layer owns the re-arm. Reporting FAILED here spams
+  # the primary and restarts the watcher, losing its per-episode stale dedup. Only
+  # a stale/expired beacon is genuine supervision-down.
+  local dir state fakebin out armout i wpid armpid status
+  dir=$(make_case arm-benign-fresh-beacon)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  armout="$dir/arm.out"
+  # A genuinely live watcher with a fresh beacon already holds the singleton.
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  wpid=$!
+  i=0
+  while [ "$i" -lt 60 ]; do
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] && [ -e "$state/.last-watcher-beat" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$wpid" ] || fail "seed watcher did not take the lock"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT=1 "$WATCH_ARM" > "$armout" &
+  armpid=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    grep -qF "watcher: attached pid=$wpid" "$armout" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -qF "watcher: attached pid=$wpid" "$armout" || fail "arm did not report attach to the live watcher"
+  # The seed exits one-shot; keep its beacon fresh with NO successor - the exact
+  # benign shape the false-failure loop misclassified as supervision-down.
+  kill "$wpid" 2>/dev/null || true
+  wait "$wpid" 2>/dev/null || true
+  touch "$state/.last-watcher-beat"
+  wait_for_exit "$armpid" 80
+  status=$?
+  [ "$status" -eq 0 ] || fail "arm did not exit zero for a benign fresh-beacon cycle end (status $status): $(cat "$armout")"
+  ! grep -qF 'watcher: FAILED' "$armout" || fail "arm falsely reported FAILED for a fresh-beacon cycle end: $(cat "$armout")"
+  grep -qF 'watcher: idle' "$armout" || fail "arm did not emit the benign idle line: $(cat "$armout")"
+  grep -q 'reason=attached-cycle-ended-benign' "$state/.watch-cycle-exits.log" || fail "benign cycle end was not classified in the lifecycle ledger"
+  pass "arm treats a fresh-beacon cycle end with no successor as benign, not a false FAILED"
 }
 
 test_arm_fails_loud_when_no_fresh_watcher_confirmable() {
@@ -1057,6 +1116,7 @@ test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output
 test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
+test_arm_benign_when_beacon_fresh_without_successor
 test_arm_fails_loud_when_no_fresh_watcher_confirmable
 test_cycle_exit_ledger_links_successor_and_stays_bounded
 test_stopped_watcher_is_live_but_stale_then_exit_is_classified

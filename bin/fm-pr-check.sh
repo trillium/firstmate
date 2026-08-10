@@ -5,6 +5,17 @@
 # live only in a private sidecar and are never interpolated into shell source.
 # A GitHub pull request URL and a GitLab merge request URL are both accepted,
 # including a merge request on a self-hosted GitLab instance.
+#
+# Recording the canonical pr= line is the prerequisite bin/fm-pr-merge.sh and
+# bin/fm-teardown.sh depend on; arming the poll is supervision convenience. A
+# blocked migration therefore downgrades the run to record-only rather than
+# refusing before the record exists, and reports that separately as status 3.
+# Exit status:
+#   0  pr= recorded and the merge poll armed ("armed: state/<id>.check.sh")
+#   2  invalid request; nothing recorded
+#   3  pr= recorded, merge poll NOT armed because the non-executing migration is
+#      blocked; re-arm with bin/fm-watch-arm.sh once that migration is repaired
+#   1  any other failure
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -60,8 +71,11 @@ fi
 
 # Neutralize any pre-fix poll before recording or arming this task. The
 # migration never executes legacy artifacts and holds watcher exclusion while
-# it quarantines or rebuilds them.
-"$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || exit 1
+# it quarantines or rebuilds them. A blocked migration only forbids ARMING: the
+# boundary it defends is publishing or executing a poll, so this run still
+# records its private 0600 metadata, publishes nothing, and exits 3.
+POLL_ARMING_BLOCKED=0
+"$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || POLL_ARMING_BLOCKED=1
 "$FM_ROOT/bin/fm-guard.sh" || true
 
 # pr_head is recorded only when the forge's CLI can supply it. gh exposes the
@@ -93,8 +107,10 @@ pr_check_cleanup() {
 }
 trap pr_check_cleanup EXIT
 trap 'exit 1' HUP INT TERM
-fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
-  || { echo "error: could not prepare PR poll" >&2; exit 1; }
+if [ "$POLL_ARMING_BLOCKED" -eq 0 ]; then
+  fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
+    || { echo "error: could not prepare PR poll" >&2; exit 1; }
+fi
 
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
@@ -129,6 +145,11 @@ fm_pr_metadata_identity_parse "$META" || exit 1
   && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
+
+if [ "$POLL_ARMING_BLOCKED" -ne 0 ]; then
+  echo "error: merge poll NOT armed for $ID: the PR check migration is blocked; pr= metadata was recorded, so re-arm with bin/fm-watch-arm.sh once that migration is repaired" >&2
+  exit 3
+fi
 
 fm_pr_poll_publish_prepared || {
   echo "error: could not publish PR poll" >&2

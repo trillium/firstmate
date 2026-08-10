@@ -6,6 +6,12 @@
 # and the guarded named-session lab helper.
 set -u
 
+# fm-spawn.sh enrolls the spawned agent with the live parlay relay unless this
+# is set, and that listener outlives the test (robots-4nkn). Tests that source
+# tests/lib.sh inherit the guard; this file rolls its own boilerplate, so it
+# sets it directly.
+export FM_SPAWN_SKIP_PARLAY=1
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HERDR_LAB_HELPER=${HERDR_LAB_HELPER:-$ROOT/bin/fm-herdr-lab.sh}
 
@@ -253,6 +259,26 @@ chmod +x "$FAKEBIN/herdr-workspace-mover"
 export PATH="$FAKEBIN:$PATH"
 export FM_BACKEND_HERDR_WORKSPACE_MOVER="$FAKEBIN/herdr-workspace-mover"
 
+# Every Herdr call in this suite is wrapped: the fake adapter routes each one
+# through the guarded lab helper and takes two extra instrumented focus
+# snapshots around every mutation. That makes each holder's critical section
+# far longer than production's, so the shipped 5s bounded wait for the session
+# presentation lock is not a safe budget here - on a loaded box the second
+# concurrent spawn or teardown times out, silently degrades to the flat layout,
+# and the ordering/serialization assertions below fail nondeterministically
+# rather than because the projection is wrong.
+# Widen the wait for the whole suite (still overridable from the environment).
+# The two fixtures that deliberately hold the lock for their entire spawn pass
+# their own short bound at the call site, so they still time out promptly.
+export FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS=${FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS:-600}
+export FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL=${FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL:-0.1}
+# Bound used only by the deliberate lock-contention fixtures below. Both knobs
+# are pinned, not just the poll count: the interval above is overridable, and a
+# large caller-set interval would otherwise stretch these fixtures from a prompt
+# 1s timeout into a long wait even though the poll count is small.
+CONTENDED_LOCK_POLLS=10
+CONTENDED_LOCK_INTERVAL=0.1
+
 # shellcheck source=tests/herdr-test-safety.sh
 . "$ROOT/tests/herdr-test-safety.sh"
 # This suite runs against its own isolated lab session, so a Herdr pane
@@ -386,27 +412,28 @@ spawn_task() {  # <id> <home> <project>
     "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'sleep 120'" --mode no-mistakes --yolo off --backend herdr
 }
 
-finish_concurrent_spawn() {  # <id> <status> <stdout> <stderr>
-  local id=$1 status=$2 out=$3 err=$4
-  [ "$status" -ne 0 ] || return 0
-  grep -F "task set is locked" "$err" >/dev/null 2>&1 \
-    || fail "concurrent projected spawn $id failed unexpectedly: $(cat "$err")"
-  spawn_task "$id" "$HOME_DIR" "$PROJECT_DIR" > "$out" 2> "$err" \
-    || fail "projected spawn $id retry failed after task-set publication completed: $(cat "$err")"
-}
-
-finish_concurrent_expected_abort() {  # <id> <status> <stdout> <stderr>
-  local id=$1 status=$2 out=$3 err=$4
-  [ "$status" -ne 0 ] || fail "post-create abort fixture $id unexpectedly succeeded"
-  if grep -F "task set is locked" "$err" >/dev/null 2>&1; then
-    if spawn_task "$id" "$HOME_DIR" "$PROJECT_DIR" > "$out" 2> "$err"; then
-      fail "post-create abort fixture $id unexpectedly succeeded after task-set publication completed"
-    fi
+register_secondmate() {  # <id> <home>
+  # A --secondmate spawn refuses unless the launching home's own registry binds
+  # the id to that home, exactly as bin/fm-home-seed.sh writes it before a real
+  # launch. The home is recorded physically resolved because fm-spawn compares
+  # it against the resolved path.
+  local id=$1 home=$2 home_abs tmp
+  home_abs=$(cd "$home" 2>/dev/null && pwd -P) || home_abs=$home
+  mkdir -p "$HOME_DIR/data"
+  tmp="$HOME_DIR/data/secondmates.md.tmp.$$"
+  if [ -f "$HOME_DIR/data/secondmates.md" ]; then
+    grep -v "^- $id " "$HOME_DIR/data/secondmates.md" > "$tmp" 2>/dev/null || :
+  else
+    : > "$tmp"
   fi
+  printf -- '- %s - projection fixture (home: %s; scope: projection fixture; projects: ; added 2026-08-05)\n' \
+    "$id" "$home_abs" >> "$tmp"
+  mv "$tmp" "$HOME_DIR/data/secondmates.md"
 }
 
 spawn_secondmate_task() {
   local id=$1 home=$2
+  register_secondmate "$id" "$home"
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$home" "sh -c 'sleep 120'" --secondmate --backend herdr
 }
@@ -493,14 +520,14 @@ printf 'Projection lock contention fixture.\n' > "$HOME_DIR/data/lock-contended/
 printf 'Projection default-on fixture.\n' > "$HOME_DIR/data/default-on/brief.md"
 make_project "$PROJECT_DIR"
 
-# Keep one ordinary primary task live so the durable firstmate workspace is
+# Keep one ordinary primary task live so the durable 1M-FIRSTMATE workspace is
 # first and remains present while disposable workers are projected around it.
 spawn_task anchor "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/anchor.out" 2> "$TMP_ROOT/anchor.err" \
   || fail "opted-out anchor spawn failed: $(cat "$TMP_ROOT/anchor.err")"
 ANCHOR_META="$HOME_DIR/state/anchor.meta"
 remember_meta_worktree "$ANCHOR_META" >/dev/null
 FIRSTMATE_WSID=$(grep '^herdr_workspace_id=' "$ANCHOR_META" | cut -d= -f2-)
-[ -n "$FIRSTMATE_WSID" ] || fail "anchor metadata did not record the firstmate workspace"
+[ -n "$FIRSTMATE_WSID" ] || fail "anchor metadata did not record the 1M-FIRSTMATE workspace"
 
 # The same task id and project run once opted out and once projected, so
 # Treehouse commands and metadata can be compared directly.
@@ -575,9 +602,9 @@ fi
 # projected workspaces that are still live, so this retired one starts them clean.
 : > "$MOVE_CALL_LOG"
 
-SECOND_ONE_OUT=$(lab workspace create --cwd "$PROJECT_DIR" --label 2ndmate-alpha --no-focus) \
+SECOND_ONE_OUT=$(lab workspace create --cwd "$PROJECT_DIR" --label 2M-ALPHA --no-focus) \
   || fail "could not create the first secondmate presentation fixture"
-SECOND_TWO_OUT=$(lab workspace create --cwd "$PROJECT_DIR" --label 2ndmate-bravo --focus) \
+SECOND_TWO_OUT=$(lab workspace create --cwd "$PROJECT_DIR" --label 2M-BRAVO --focus) \
   || fail "could not create the focused secondmate presentation fixture"
 SECOND_ONE_WSID=$(printf '%s' "$SECOND_ONE_OUT" | jq -r '.result.workspace.workspace_id // empty')
 SECOND_TWO_WSID=$(printf '%s' "$SECOND_TWO_OUT" | jq -r '.result.workspace.workspace_id // empty')
@@ -696,7 +723,9 @@ while [ ! -e "$LOCK_CONTENTION_READY" ] && kill -0 "$LOCK_CONTENTION_OWNER_PID" 
 LOCK_CONTENTION_START=$(log_line_count)
 LOCK_CONTENTION_FOCUS_START=$(focus_audit_line_count)
 LOCK_CONTENTION_MOVE_START=$(wc -l < "$MOVE_CALL_LOG" | tr -d '[:space:]')
-if spawn_task lock-contended "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/lock-contended.out" 2> "$TMP_ROOT/lock-contended.err"; then
+if FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS="$CONTENDED_LOCK_POLLS" \
+  FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL="$CONTENDED_LOCK_INTERVAL" \
+  spawn_task lock-contended "$HOME_DIR" "$PROJECT_DIR" > "$TMP_ROOT/lock-contended.out" 2> "$TMP_ROOT/lock-contended.err"; then
   LOCK_CONTENTION_STATUS=0
 else
   LOCK_CONTENTION_STATUS=$?
@@ -712,7 +741,7 @@ LOCK_CONTENTION_META="$HOME_DIR/state/lock-contended.meta"
 remember_meta_worktree "$LOCK_CONTENTION_META" >/dev/null
 LOCK_CONTENTION_WSID=$(grep '^herdr_workspace_id=' "$LOCK_CONTENTION_META" | cut -d= -f2-)
 [ "$LOCK_CONTENTION_WSID" = "$FIRSTMATE_WSID" ] \
-  || fail "bounded lock contention did not use the ordinary flat firstmate workspace"
+  || fail "bounded lock contention did not use the ordinary flat 1M-FIRSTMATE workspace"
 [ ! -e "$HOME_DIR/state/lock-contended.herdr-presentation" ] \
   || fail "bounded lock contention published a projection journal"
 LOCK_CONTENTION_CALLS=$(sed -n "$((LOCK_CONTENTION_START + 1)),\$p" "$HERDR_CALL_LOG")
@@ -760,9 +789,9 @@ remember_meta_worktree "$ORDER_B_META" >/dev/null
 
 ORDER_LIST=$(lab workspace list) || fail "could not inspect concurrent presentation ordering"
 CREATED_LABELS=$(projection_labels_from_log "$PROJECTION_ORDER_START")
-EXPECTED_LABELS=$(printf 'firstmate\n%s\n%s\n2ndmate-alpha\n2ndmate-bravo' "$PROJECTED_LABEL" "$CREATED_LABELS")
+EXPECTED_LABELS=$(printf '1M-FIRSTMATE\n%s\n%s\n2M-ALPHA\n2M-BRAVO' "$PROJECTED_LABEL" "$CREATED_LABELS")
 ACTUAL_LABELS=$(printf '%s' "$ORDER_LIST" | jq -r '.result.workspaces[].label')
-[ "$ACTUAL_LABELS" = "$EXPECTED_LABELS" ] || fail "workspace order was not firstmate, stable primary block, secondmates: $ACTUAL_LABELS"
+[ "$ACTUAL_LABELS" = "$EXPECTED_LABELS" ] || fail "workspace order was not 1M-FIRSTMATE, stable primary block, secondmates: $ACTUAL_LABELS"
 PRIMARY_IDS=$(printf '%s' "$ORDER_LIST" | jq -r '
   .result.workspaces[]
   | select((.label | startswith("└ ")) or (.label | startswith("firstmate/")))
@@ -774,7 +803,7 @@ MOVE_TARGETS=$(cut -f2 "$MOVE_CALL_LOG")
 MOVE_INDEXES=$(cut -f3 "$MOVE_CALL_LOG")
 [ "$MOVE_INDEXES" = $'1\n2\n3' ] \
   || fail "concurrent primary workers did not append stably to the contiguous block: $MOVE_INDEXES"
-SECOND_ORDER_AFTER=$(printf '%s' "$ORDER_LIST" | jq -r '.result.workspaces[] | select(.label | startswith("2ndmate-")) | .workspace_id')
+SECOND_ORDER_AFTER=$(printf '%s' "$ORDER_LIST" | jq -r '.result.workspaces[] | select(.label | startswith("2M-")) | .workspace_id')
 [ "$SECOND_ORDER_AFTER" = "$SECOND_ORDER_BEFORE" ] \
   || fail "primary workspace ordering changed secondmate relative order"
 [ "$(lab workspace get "$SECOND_TWO_WSID" | jq -r '.result.workspace.focused')" = true ] \
@@ -912,11 +941,11 @@ for ROUND in 1 2 3; do
   assert_focus_is "$CAPTAIN_FOCUS" "focus wave $ROUND concurrent spawns"
   assert_raw_presentation_mutations_preserved_since "$WAVE_FOCUS_START" "focus wave $ROUND concurrent spawns"
   WAVE_LABELS=$(projection_labels_from_log "$WAVE_LOG_START")
-  WAVE_EXPECTED=$(printf 'firstmate\n%s\n2ndmate-alpha\n2ndmate-bravo' "$WAVE_LABELS")
-  WAVE_ACTUAL=$(lab workspace list | jq -r '.result.workspaces[] | select(.label == "firstmate" or (.label | startswith("└ ")) or (.label | startswith("2ndmate-"))) | .label')
+  WAVE_EXPECTED=$(printf '1M-FIRSTMATE\n%s\n2M-ALPHA\n2M-BRAVO' "$WAVE_LABELS")
+  WAVE_ACTUAL=$(lab workspace list | jq -r '.result.workspaces[] | select(.label == "1M-FIRSTMATE" or (.label | startswith("└ ")) or (.label | startswith("2M-"))) | .label')
   [ "$WAVE_ACTUAL" = "$WAVE_EXPECTED" ] \
     || fail "focus wave $ROUND lost stable contiguous ordering: $WAVE_ACTUAL"
-  WAVE_SECOND_ORDER=$(lab workspace list | jq -r '.result.workspaces[] | select(.label | startswith("2ndmate-")) | .workspace_id')
+  WAVE_SECOND_ORDER=$(lab workspace list | jq -r '.result.workspaces[] | select(.label | startswith("2M-")) | .workspace_id')
   [ "$WAVE_SECOND_ORDER" = "$SECOND_ORDER_BEFORE" ] \
     || fail "focus wave $ROUND changed secondmate relative order"
 
@@ -928,7 +957,7 @@ for ROUND in 1 2 3; do
   wait "$WAVE_B_TEARDOWN_PID" || fail "focus wave $ROUND teardown B failed"
   assert_focus_is "$CAPTAIN_FOCUS" "focus wave $ROUND concurrent teardowns"
   WAVE_REMAINING=$(lab workspace list | jq -r '.result.workspaces[].label')
-  [ "$WAVE_REMAINING" = $'firstmate\n2ndmate-alpha\n2ndmate-bravo' ] \
+  [ "$WAVE_REMAINING" = $'1M-FIRSTMATE\n2M-ALPHA\n2M-BRAVO' ] \
     || fail "focus wave $ROUND cleanup left a projected workspace behind: $WAVE_REMAINING"
 done
 pass "real Herdr lab: three repeated concurrent create/order/cleanup waves have zero active workspace or tab drift"
@@ -978,7 +1007,7 @@ SECOND_META="$HOME_DIR/state/alpha.meta"
   || fail "secondmate spawn did not record kind=secondmate"
 SECOND_WSID=$(grep '^herdr_workspace_id=' "$SECOND_META" | cut -d= -f2-)
 SECOND_LABEL=$(lab workspace get "$SECOND_WSID" | jq -r '.result.workspace.label')
-[ "$SECOND_LABEL" = 2ndmate-alpha ] \
+[ "$SECOND_LABEL" = 2M-ALPHA ] \
   || fail "secondmate spawn did not use its flat parent workspace: $SECOND_LABEL"
 [ -z "$(projection_labels_from_log "$SECOND_SPAWN_LOG_START")" ] \
   || fail "secondmate spawn created a corner projection workspace"
@@ -998,7 +1027,7 @@ propagate_inheritable_config "$HOME_DIR/config" "$SECOND_HOME_B/config" \
   || fail "primary presentation setting did not reach secondmate B"
 pass "real Herdr lab: the primary presentation setting inherits into real secondmate homes"
 
-# Keep the pre-existing 2ndmate-alpha/bravo workspaces as owning parents and captain focus.
+# Keep the pre-existing 2M-ALPHA/2M-BRAVO workspaces as owning parents and captain focus.
 assert_focus_is "$CAPTAIN_FOCUS" "multi-home captain focus"
 
 mkdir -p "$SECOND_HOME_A/data/a1" "$SECOND_HOME_A/data/a2" \
@@ -1051,17 +1080,17 @@ MULTI_LIST=$(lab workspace list) || fail "could not list multi-home topology"
 MULTI_LABELS=$(printf '%s' "$MULTI_LIST" | jq -r '
   .result.workspaces[]
   | select(
-      .label == "firstmate"
-      or .label == "2ndmate-alpha"
-      or .label == "2ndmate-bravo"
+      .label == "1M-FIRSTMATE"
+      or .label == "2M-ALPHA"
+      or .label == "2M-BRAVO"
       or (.label | startswith("└ "))
     )
   | .label
 ')
 MULTI_EXPECTED=$(printf '%s\n' \
-  firstmate "$P1_LABEL" "$P2_LABEL" \
-  2ndmate-alpha "$A1_LABEL" "$A2_LABEL" \
-  2ndmate-bravo "$B1_LABEL" "$B2_LABEL")
+  1M-FIRSTMATE "$P1_LABEL" "$P2_LABEL" \
+  2M-ALPHA "$A1_LABEL" "$A2_LABEL" \
+  2M-BRAVO "$B1_LABEL" "$B2_LABEL")
 [ "$MULTI_LABELS" = "$MULTI_EXPECTED" ] \
   || fail "multi-home topology was not owning-parent grouped: $MULTI_LABELS"
 pass "real Herdr lab: primary and two secondmate homes each own a top-level contiguous child block"
@@ -1088,18 +1117,18 @@ assert_focus_is "$CAPTAIN_FOCUS" "cross-home concurrent wave"
 assert_raw_presentation_mutations_preserved_since "$WAVE_CROSS_FOCUS" "cross-home concurrent wave"
 CROSS_LIST=$(lab workspace list)
 printf '%s' "$CROSS_LIST" | jq -e '
-  ([.result.workspaces[].label] | index("firstmate")) as $fm
-  | ([.result.workspaces[].label] | index("2ndmate-alpha")) as $a
-  | ([.result.workspaces[].label] | index("2ndmate-bravo")) as $b
+  ([.result.workspaces[].label] | index("1M-FIRSTMATE")) as $fm
+  | ([.result.workspaces[].label] | index("2M-ALPHA")) as $a
+  | ([.result.workspaces[].label] | index("2M-BRAVO")) as $b
   | $fm != null and $a != null and $b != null
   and $fm < $a and $a < $b
 ' >/dev/null 2>&1 || fail "cross-home concurrent wave reordered parents"
 PCW_LABEL=$(lab workspace get "$(grep '^herdr_workspace_id=' "$HOME_DIR/state/pcw.meta" | cut -d= -f2-)" | jq -r '.result.workspace.label')
 ACW_LABEL=$(lab workspace get "$(grep '^herdr_workspace_id=' "$SECOND_HOME_A/state/acw.meta" | cut -d= -f2-)" | jq -r '.result.workspace.label')
 BCW_LABEL=$(lab workspace get "$(grep '^herdr_workspace_id=' "$SECOND_HOME_B/state/bcw.meta" | cut -d= -f2-)" | jq -r '.result.workspace.label')
-case "$PCW_LABEL" in $'└ pcw · p:'*|firstmate) ;; *) fail "cross-home primary label wrong: $PCW_LABEL" ;; esac
-case "$ACW_LABEL" in $'└ acw · p:'*|2ndmate-alpha) ;; *) fail "cross-home A label wrong: $ACW_LABEL" ;; esac
-case "$BCW_LABEL" in $'└ bcw · p:'*|2ndmate-bravo) ;; *) fail "cross-home B label wrong: $BCW_LABEL" ;; esac
+case "$PCW_LABEL" in $'└ pcw · p:'*|1M-FIRSTMATE) ;; *) fail "cross-home primary label wrong: $PCW_LABEL" ;; esac
+case "$ACW_LABEL" in $'└ acw · p:'*|2M-ALPHA) ;; *) fail "cross-home A label wrong: $ACW_LABEL" ;; esac
+case "$BCW_LABEL" in $'└ bcw · p:'*|2M-BRAVO) ;; *) fail "cross-home B label wrong: $BCW_LABEL" ;; esac
 pass "real Herdr lab: concurrent primary/A/B spawns preserve parent order and exact focus"
 
 # Hold the shared session lock from a different home and force flat fallback.
@@ -1119,7 +1148,9 @@ while [ ! -e "$CROSS_LOCK_READY" ] && kill -0 "$CROSS_LOCK_PID" 2>/dev/null; do 
 [ -e "$CROSS_LOCK_READY" ] || fail "could not hold the cross-home session presentation lock"
 mkdir -p "$SECOND_HOME_A/data/aflat"
 printf 'Flat fallback under session lock contention.\n' > "$SECOND_HOME_A/data/aflat/brief.md"
-if spawn_task aflat "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/aflat.out" 2> "$TMP_ROOT/aflat.err"; then
+if FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS="$CONTENDED_LOCK_POLLS" \
+  FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL="$CONTENDED_LOCK_INTERVAL" \
+  spawn_task aflat "$SECOND_HOME_A" "$PROJECT_DIR" > "$TMP_ROOT/aflat.out" 2> "$TMP_ROOT/aflat.err"; then
   AFLAT_STATUS=0
 else
   AFLAT_STATUS=$?
@@ -1133,7 +1164,7 @@ grep -F "presentation focus lock unavailable; using the ordinary flat layout wit
 remember_meta_worktree "$SECOND_HOME_A/state/aflat.meta" >/dev/null
 AFLAT_WSID=$(grep '^herdr_workspace_id=' "$SECOND_HOME_A/state/aflat.meta" | cut -d= -f2-)
 AFLAT_LABEL=$(lab workspace get "$AFLAT_WSID" | jq -r '.result.workspace.label')
-[ "$AFLAT_LABEL" = 2ndmate-alpha ] \
+[ "$AFLAT_LABEL" = 2M-ALPHA ] \
   || fail "cross-home lock contention did not use the ordinary secondmate home workspace: $AFLAT_LABEL"
 [ ! -e "$SECOND_HOME_A/state/aflat.herdr-presentation" ] \
   || fail "cross-home lock contention published a projection journal"
@@ -1314,7 +1345,7 @@ LEGACY_OUT=$(lab workspace create --cwd "$PROJECT_DIR" --label "firstmate/legacy
   || fail "could not seed a legacy old-format presentation space"
 LEGACY_WSID=$(printf '%s' "$LEGACY_OUT" | jq -r '.result.workspace.workspace_id // empty')
 [ -n "$LEGACY_WSID" ] || fail "legacy seed returned no workspace id"
-FLAT_TAB_OUT=$(lab tab create --workspace "$(lab workspace list | jq -r '.result.workspaces[] | select(.label == "2ndmate-alpha") | .workspace_id' | head -1)" --cwd "$PROJECT_DIR" --label fm-flat-legacy-tab --no-focus) \
+FLAT_TAB_OUT=$(lab tab create --workspace "$(lab workspace list | jq -r '.result.workspaces[] | select(.label == "2M-ALPHA") | .workspace_id' | head -1)" --cwd "$PROJECT_DIR" --label fm-flat-legacy-tab --no-focus) \
   || fail "could not seed a flat secondmate child tab"
 FLAT_TAB_ID=$(printf '%s' "$FLAT_TAB_OUT" | jq -r '.result.tab.tab_id // empty')
 mkdir -p "$HOME_DIR/data/post-legacy"

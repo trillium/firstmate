@@ -107,6 +107,31 @@ write_fixture_inventory() {
 JSON
 }
 
+write_fixture_repo() {
+  local repo=$1
+  mkdir -p "$repo/docs"
+  git -C "$repo" init -q
+  printf '%s\n' '[Setup](docs/setup.md) [Policy](docs/policy.md)' > "$repo/README.md"
+  printf '%s\n' '# Setup' > "$repo/docs/setup.md"
+  printf '%s\n' '# Policy' > "$repo/docs/policy.md"
+  printf '%s\n' '# Evidence' > "$repo/docs/evidence.md"
+  write_fixture_inventory "$repo"
+  git -C "$repo" add README.md docs
+}
+
+test_moved_surface_reads_as_rename() {
+  local repo="$TMP_ROOT/moved"
+  write_fixture_repo "$repo"
+  "$CHECK" --root "$repo" >/dev/null || fail "fixture inventory did not start clean"
+
+  mkdir -p "$repo/docs/verification"
+  git -C "$repo" mv docs/evidence.md docs/verification/evidence.md
+  run_expect_failure \
+    "inventory path no longer exists: docs/evidence.md; did it move to docs/verification/evidence.md?" \
+    "$CHECK" --root "$repo"
+  pass "a moved surface reports as one rename instead of two unrelated complaints"
+}
+
 test_local_links_and_no_keyword_heuristic() {
   local repo="$TMP_ROOT/fixture"
   mkdir -p "$repo/docs"
@@ -138,4 +163,5 @@ MD
 test_repository_inventory_passes
 test_duplicate_and_setup_classification_fail
 test_required_pointer_fails
+test_moved_surface_reads_as_rename
 test_local_links_and_no_keyword_heuristic

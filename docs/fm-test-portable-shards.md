@@ -112,3 +112,5 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 | Herdr | 40 | The real-Herdr lane keeps its dedicated timeout. |
 
 Timeouts are hang tripwires rather than expected healthy durations.
+Remeasure the serial lane before adding scripts to it.
+When its healthy wall approaches the cap again, shard the serial remainder across two jobs rather than raising the tripwire far enough that a real hang stops tripping it.

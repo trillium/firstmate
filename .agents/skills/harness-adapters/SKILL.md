@@ -39,6 +39,8 @@ Never dispatch a crewmate or secondmate on an unverified adapter.
 If `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, tell the captain under `AGENTS.md` section 9 that the requested worker runtime is not verified yet, use firstmate's own verified runtime for current work, and ask only whether to verify the requested runtime before future use.
 Do not pause current work for that future-verification choice, and never launch an unverified adapter.
 If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using `fm-spawn`'s raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in `fm-spawn`, its semantic busy source and trust gate in `bin/fm-busy-lib.sh`, any needed `FM_COMPOSER_IDLE_RE` empty-composer override plus any novel bare agent prompt glyph in `bin/fm-composer-lib.sh`'s shared composer classifier (the one fleet-wide owner of the empty/dead-shell/pending decision, so a new harness's own idle composer is not misread as a dead shell), the tmux agent-process liveness classification in `bin/backends/tmux.sh` when the harness can launch a secondmate, and the verified knowledge here.
+Raw launch commands receive the same `launch-brief` positional argument as templated adapters, appended after the caller's own argv untouched; this ensures consistent briefing whether using a named adapter or an escape-hatch raw command.
+Kimi rejects a positional prompt and is the only exception: raw kimi commands do not receive the appended `launch-brief`, instead keying off the TUI readiness gate for pointer delivery like templated kimi launches.
 
 ## Detection
 
@@ -162,6 +164,12 @@ Natural language is acceptable if uncertain.
 - pi and pi-signed: no separate verified skill invocation beyond normal command behavior; use natural language if the exact skill command is uncertain.
 - grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) handles this through the structural composer reader; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
 - kimi: `/<skill>`, for example `/no-mistakes`.
+
+Across every verified harness, a command form is recognized only when its `/` or `$` is the FIRST character of the composer line.
+Any prefix demotes the whole line to prose that the agent merely reads, and the agent may then narrate compliance it never performed, so a prefixed command fails silently rather than erroring.
+Field evidence: `[fm-from-firstmate]<U+2063>corr=... /exit` reached a secondmate, which answered "Exiting secondmate session as requested" and stayed open (robots-u7gu).
+That is why `fm-send` refuses a command to a `kind=secondmate` target: its from-firstmate carrier owns column 0, so no command can be delivered on that path.
+The refusal covers both command forms - a leading `/` for any harness, and a leading `$<skill>` when the target's recorded harness is codex (a leading `$` before a non-skill token like `$5` or `$HOME` stays deliverable prose).
 
 ## Submission acknowledgement hazards
 
@@ -343,7 +351,7 @@ grok loads PROJECT hooks (`<worktree>/.grok/hooks/`, `<worktree>/.claude/setting
 GLOBAL hooks in `~/.grok/hooks/` are always trusted and load on first launch.
 So `fm-spawn` installs ONE firstmate-owned global hook, `~/.grok/hooks/fm-turn-end.json`, plus the companion `~/.grok/hooks/fm-turn-end.sh`, guarded as a no-op for every non-firstmate grok session.
 Its `Stop` command fires only when the current workspace holds a `.fm-grok-turnend` token pointer that matches the firstmate-owned hook registry under `~/.grok/hooks/fm-turn-end.d/`.
-`fm-spawn` writes that per-task pointer (`<worktree>/.fm-grok-turnend`, gitignored via git info/exclude like the other harnesses' worktree hook files) and a matching registry entry naming this task's `state/<id>.turn-ended`.
+`fm-spawn` writes that per-task pointer (`<worktree>/.fm-grok-turnend`, gitignored by the tracked root `.gitignore` like the other harnesses' worktree hook files, with `fm-spawn`'s own per-worktree `git info/exclude` call as a local backstop) and a matching registry entry naming this task's `state/<id>.turn-ended`.
 The hook reads `$GROK_WORKSPACE_ROOT`, which is always set for hooks and equals the worktree.
 This keeps the hook outside the worktree, needs no trust grant, and writes only firstmate-owned files.
 `fm-teardown` removes the worktree pointer before returning a pooled worktree.

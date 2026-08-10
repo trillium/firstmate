@@ -79,16 +79,18 @@
 #          refresh relays any completed fm-fleet-sync.sh output before the
 #          aggregate timeout skip line with timeout and elapsed seconds.
 #          Set FM_FLEET_PRUNE=0 to skip branch pruning during that refresh.
-#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the six MUTATING sweeps
-#          (PR-check migration, secondmate_sync, secondmate_liveness_sweep,
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the seven MUTATING sweeps
+#          (PR-check migration, the beads write-queue reconcile [beads backend
+#          only], secondmate_sync, secondmate_liveness_sweep,
 #          secondmate_handoff_resume, x_mode_setup, fleet_sync) while still
 #          printing every read-only detect line
 #          above; the TANGLE line switches to advisory-only wording with no
 #          checkout command. Used by
 #          fm-session-start.sh's read-only path when another live session holds
 #          the fleet lock, so a second concurrent session never race-mutates
-#          PR-check artifacts, secondmate homes, pending handoff outboxes,
-#          X-mode artifacts, project clones, or repair instructions.
+#          PR-check artifacts, queued beads writes, secondmate homes, pending
+#          handoff outboxes, X-mode artifacts, project clones, or repair
+#          instructions.
 #          Unset/0 (the default) runs every sweep exactly as before - this flag
 #          is purely additive.
 #          Set FM_BOOTSTRAP_NETWORK to split this run by whether a step talks to
@@ -132,6 +134,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-beads-resilience-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
@@ -756,6 +760,7 @@ install_cmd() {
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
     tasks-axi|quota-axi) echo "npm install -g $1" ;;
+    task) echo "go install github.com/steveyegge/beads/cmd/bd@latest && ln -sf bd ~/go/bin/task" ;;
     *) return 1 ;;
   esac
 }
@@ -1200,35 +1205,92 @@ if network_phase; then
   gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
   fm_timing_record phase gh-auth "$__fm_timing_stamp"
 fi
-local_phase && detect_local_config
-
-if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
-  # secondmate_sync consumes SECONDMATE_RESPAWNED_IDS from the liveness sweep, so
-  # those two always run together in the same phase.
-  if network_phase; then
-    if network_sweep_authorized 'dead-secondmate relaunch'; then
-      __fm_timing_stamp=$(fm_timing_now_ms)
-      secondmate_liveness_sweep
-      fm_timing_record phase secondmate-liveness "$__fm_timing_stamp"
-    fi
-    if network_sweep_authorized 'secondmate convergence'; then
-      __fm_timing_stamp=$(fm_timing_now_ms)
-      secondmate_sync
-      fm_timing_record phase secondmate-sync "$__fm_timing_stamp"
-    fi
-    if network_sweep_authorized 'pending handoff delivery'; then
-      __fm_timing_stamp=$(fm_timing_now_ms)
-      secondmate_handoff_resume
-      fm_timing_record phase handoff-delivery "$__fm_timing_stamp"
-    fi
-  fi
-  # x_mode_setup writes local Relay artifacts only and never leaves the machine.
-  local_phase && x_mode_setup
-  if network_phase && network_sweep_authorized 'project clone refresh'; then
-    __fm_timing_stamp=$(fm_timing_now_ms)
-    fleet_sync
-    fm_timing_record phase fleet-sync "$__fm_timing_stamp"
+for t in $BACKEND_TOOLS; do
+  fm_backend_required_tool_available "$BACKEND" "$t" \
+    || missing_tool_diagnostic "$t"
+done
+for t in $COMMON_TOOLS; do
+  command -v "$t" >/dev/null || missing_tool_diagnostic "$t"
+done
+# The treehouse lease-support upgrade check is only relevant when the resolved
+# backend actually requires treehouse (every backend except orca, which owns its
+# own worktrees); an orca home must not be told to upgrade a provider it never uses.
+if fm_backend_list_contains "$TOOLS" treehouse \
+  && command -v treehouse >/dev/null 2>&1 && ! treehouse_supports_lease; then
+  echo "MISSING: treehouse (install: $(install_cmd treehouse))"
+fi
+if command -v no-mistakes >/dev/null 2>&1 && ! tool_version_at_least no-mistakes "$NO_MISTAKES_MIN"; then
+  echo "MISSING: no-mistakes (install: $(install_cmd no-mistakes))"
+fi
+if command -v gh-axi >/dev/null 2>&1 && ! tool_version_at_least gh-axi "$GH_AXI_MIN"; then
+  echo "MISSING: gh-axi (install: $(install_cmd gh-axi))"
+fi
+if command -v lavish-axi >/dev/null 2>&1 && ! tool_version_at_least lavish-axi "$LAVISH_AXI_MIN"; then
+  echo "MISSING: lavish-axi (install: $(install_cmd lavish-axi))"
+fi
+if command -v quota-axi >/dev/null 2>&1 && ! fm_quota_axi_compatible; then
+  echo "MISSING: quota-axi (install: $(install_cmd quota-axi))"
+fi
+if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
+  echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
+fi
+gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
+# Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
+# default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the
+# primary only; linked worktrees and secondmate homes never trip it, whatever
+# branch they are on.
+tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" 2>/dev/null || true)
+if [ -n "$tangle_branch" ]; then
+  tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
+  if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" = 1 ] && [ "${FM_BOOTSTRAP_LOCKED:-0}" != 1 ]; then
+    echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - read-only session must leave restore work to the session holding the fleet lock"
+  else
+    echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
   fi
 fi
-local_phase && secondmate_handoff_detect
+crew=
+[ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
+if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != "default" ]; then
+  echo "BOOTSTRAP_INFO: crew harness override active: $crew"
+fi
+crew_dispatch_validate
+backlog_backend=$(fm_backlog_backend_value "$CONFIG")
+case "$backlog_backend" in
+  beads)
+    if ! command -v task >/dev/null 2>&1; then
+      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+        echo "DEGRADED: task CLI not found (beads store; install: $(install_cmd task)); using local mirror from $mirror_iso until it is"
+      else
+        echo "MISSING: task CLI (beads store; install: $(install_cmd task))"
+      fi
+    elif ! task list --limit 1 >/dev/null 2>&1; then
+      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+        echo "DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from $mirror_iso until it is"
+      else
+        echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list'), and no usable local mirror"
+      fi
+    elif [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
+      echo "BOOTSTRAP_INFO: beads task store available"
+    fi
+    ;;
+  manual)
+    : # manual backend requires no validation
+    ;;
+  *)
+    if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && fm_tasks_axi_compatible; then
+      echo "BOOTSTRAP_INFO: tasks-axi available"
+    fi
+    ;;
+esac
+if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
+  if [ "$backlog_backend" = beads ]; then
+    fm_beads_write_queue_reconcile
+  fi
+  secondmate_liveness_sweep
+  secondmate_sync
+  secondmate_handoff_resume
+  x_mode_setup
+  fleet_sync
+fi
+secondmate_handoff_detect
 exit 0

@@ -6,6 +6,15 @@ The files and environment variables you set to operate firstmate.
 
 The shared orchestrator behavior lives in [`AGENTS.md`](../AGENTS.md) - edit it like any prompt when the fleet is empty, or dispatch shared-repo edits to a crewmate while tasks are in flight.
 
+## Persona (persona.md / config/persona.md)
+
+The captain-facing voice - address term, seasoning policy, house vocabulary, and the fixed routine acknowledgment phrase - lives entirely in [`persona.md`](../persona.md), not in `AGENTS.md`.
+`AGENTS.md` carries only a pointer to it; `AGENTS.md` section 9's functional etiquette (talking in outcomes, the internal-to-plain-English translation table, escalation triggers, evidence-first reporting) is separate and is never affected by a persona swap.
+Swap the voice by editing tracked `persona.md` directly, or by dropping a local, gitignored `config/persona.md` in this home; when present, the local file fully replaces the tracked default rather than merging with it, mirroring `config/crew-harness`'s override pattern.
+`bin/fm-session-start.sh` resolves and prints the active persona's full contents unconditionally, every session, labeled by source (tracked default vs local override), so the voice is always in force with no per-reply trigger to load it.
+An absent persona (both tracked `persona.md` and `config/persona.md` missing) is reported distinctly from an `ABSENT` context-digest file: unlike `data/captain.md` or `data/learnings.md`, there is no built-in-defaults fallback, so it signals the tracked file needs repair.
+A present but unreadable active persona file (for example, a permissions problem) is reported as its own distinct `UNREADABLE` repair failure rather than silently falling back to the other candidate or going unreported.
+
 ## Operational home layout and state
 
 This section is the single owner of the top-level operational-home layout; producer script headers and their help own exact child-file fields and mutation contracts.
@@ -36,15 +45,36 @@ This preference is local to each Firstmate home and is not part of secondmate in
 
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
 When the default backend is selected and compatible `tasks-axi` is on `PATH`, firstmate uses its verbs for routine backlog mutations.
-Secondmate handoffs are separate and unconditional: `fm-backlog-handoff.sh` keeps only its own fleet-level validation and always delegates the item move to `tasks-axi mv`, the single owner of the backlog format.
+Secondmate handoffs are separate and unconditional for the tasks-axi backend: `fm-backlog-handoff.sh` keeps only its own fleet-level validation and always delegates the item move to `tasks-axi mv`, the single owner of the backlog format for tasks-axi.
 It moves in-scope `## Queued` items only and refuses `## In flight` and historical `## Done` records, which stay with their home for pruning or archiving.
 Handoff item bodies must use at least two leading spaces, and the helper refuses a selected item with a single-space or tab-indented continuation rather than risk orphaning it.
+Handoff with the beads backend is not yet supported and requires a different mechanism; secondmates using the beads backend remain without handoff support until that mechanism is implemented.
 Because bootstrap requires `tasks-axi` on `PATH` on every profile, that delegation works fleet-wide, and the `config/backlog-backend=manual` knob governs firstmate's own hand-editing of its backlog, not this validated helper.
 Compatible means the installed build passes the shared version and feature probe owned by [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), including the atomic multi-ID move required by handoff delegation.
 Bootstrap requires compatible `tasks-axi` on every profile; see "Toolchain" below for missing-tool reporting and silent default-backend behavior.
+Set the local, gitignored `config/backlog-backend` file to `beads` to use the beads federated `task` store as the queue source instead of `data/backlog.md`.
+Session-start's digest mirrors `data/backlog.md`'s `## In flight`/`## Queued` split with two beads-sourced sections, both scoped by the firstmate-fleet label below: **In flight** is `task list --label <label> --status in_progress,blocked`, and **Queued** is `task list --label <label> --ready` (bd's dependency-derived readiness with no manual tagging).
+If either read fails, the whole listing falls back to the title-line rendering of `data/backlog.md` rather than printing a partial digest.
+Beads requires the `task` CLI on `PATH` and access to the active beads store.
+Bootstrap validates the beads backend and reports a `MISSING:` line if the CLI is absent or the store is unreachable and no fresh local mirror covers the gap, or a `DEGRADED:` line naming the mirror's timestamp when one does; see "Beads resilience layer" below.
 Set the local, gitignored `config/backlog-backend` file to `manual` to force manual backlog editing and suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not missing-tool reporting.
 Absent or `tasks-axi` selects the default tasks-axi backend.
-The file format is unchanged in both modes; tasks-axi and manual edits produce the same `## In flight`, `## Queued`, and `## Done` sections.
+The file format is unchanged in tasks-axi and manual modes; both produce the same `## In flight`, `## Queued`, and `## Done` sections in `data/backlog.md`.
+The beads backend does not use `data/backlog.md`; all backlog state lives in the beads store and is queried dynamically at session start.
+Under the beads backend, firstmate's own dispatched-work beads carry a firstmate-fleet label, `fleet:firstmate` by default (overridable only for test fixtures via `FM_BEADS_FLEET_LABEL`), so a `task list --label <that label>` call scopes to firstmate's fleet instead of surfacing the shared federated store's full cross-project set; `bin/fm-decision-hold.sh`'s beads-native captain-hold anchor (see [`decision-hold-lifecycle.md`](decision-hold-lifecycle.md)) also creates a bead with that label, alongside `captain-hold`, `human`, and its `hold:<id>` identity labels.
+`bin/fm-tasks-axi-lib.sh`'s `fm_beads_fleet_label` is the single owner of that label; read it from there rather than hardcoding it.
+As of Stage 3 (beads-authority migration), `fm-spawn.sh` mints or resolves that labeled bead for every non-secondmate spawn via `fm_beads_fleet_label`'s sibling helper `fm_beads_resolve_or_create`, so bead-linking under this backend is automatic rather than requiring an explicit `--beads` flag; see AGENTS.md section 7.
+The structured fleet snapshot (`bin/fm-fleet-snapshot.sh --json`), Bearings (`bin/fm-bearings-snapshot.sh`), and session-start's compact digest above all read this fleet's in-flight/queued beads, scoped by that label, when the beads backend is selected; with any other backend their output is unchanged.
+That beads-sourced view covers only status open/in_progress/blocked beads mapped to `records[]` state `queued`/`in_flight`; per-bead dependency graphs and correlation with local `state/*.meta` remain unwired, so `blocked_by_ids` is always empty and `requires_child_metadata` is always false for a beads-sourced record. A record carrying the `captain-hold` label is the exception: its `hold_kind`, `hold_reason`, `current_role`, and `captain_actionable` are populated from the anchor's own labels and `metadata.hold_reason` (see [`decision-hold-lifecycle.md`](decision-hold-lifecycle.md)); every other beads-sourced record leaves those fields null/false.
+
+### Beads resilience layer (state/.beads-mirror-*.json, state/.beads-write-queue)
+
+`bin/fm-beads-resilience-lib.sh` keeps the beads backend from wedging firstmate during a Dolt/beads-store outage (beads-authority-migration Stage 5); its header comment is the single owner of the exact function contracts summarized here.
+On the read side, a successful beads read that firstmate already performs for another reason - session-start's compact listing, `bin/fm-fleet-snapshot.sh` - opportunistically writes its raw output to a local mirror file (`state/.beads-mirror-<view>.json`, one per read shape) with a timestamp; no code path polls beads solely to refresh a mirror, the same discipline as `state/.last-watcher-beat`.
+When a beads read then fails, the caller falls back to the mirror only if it is fresh (`FM_BEADS_MIRROR_MAX_AGE`, default 900 seconds / 15 minutes) and labels every line sourced from it as a stale mirror, naming the store-unreachable-since timestamp; stale mirror data is never presented as current.
+Bootstrap applies the same freshness check across every known view (`fm_beads_mirror_freshest_iso`) to decide its own diagnostic: `DEGRADED:` when a fresh mirror exists, escalating to `MISSING:` only when both the live store and every mirror are unusable (`bootstrap-diagnostics` owns the captain-facing handling of both lines).
+On the write side, a beads write that already tolerated failure by warning and continuing (`fm-bead-stamp.sh`'s dispatch stamp, `fm-teardown.sh`'s `close_linked_bead`) instead enqueues the failed write to a durable FIFO log (`state/.beads-write-queue`, lock-protected) on any write failure, not just an unreachable store; the queue is availability, not a second write authority, and replays each queued write strictly in order, reporting whatever `task` itself returns, with one narrow exception: a queued `close` whose replay fails is checked against the live store (`task show <id> --json`), and a bead already reported absent or closed is reconciled instead of re-queued forever.
+Bootstrap's mutating sweep (beads backend only, real runs only) replays the queue on every session-start bootstrap, so an outage recovers without a new polling loop.
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
@@ -67,6 +97,7 @@ A zellij spawn additionally version-gates against the installed `zellij` binary'
 A cmux spawn additionally version-gates against the installed `cmux` binary's version, requires `jq`, and requires the control socket to be reachable and accessible (see [`docs/cmux-backend.md`](cmux-backend.md) "Setup" for the one-time socket-access configuration this needs; Automation mode is the recommended socket control mode, with Password mode supported via `config/cmux-socket-password`), refusing loudly and non-retryably on a `cmuxOnly`/unauthenticated socket.
 A backend spawn refusal from a missing dependency, version gate, or unauthenticated socket is terminal for that selected backend; firstmate surfaces it as a blocker instead of silently retrying another backend.
 Task meta records `backend=` only for a non-default backend; an absent `backend=` means `tmux`, preserving existing default-path meta files.
+Task meta records `label=` only when `--label` was passed at spawn; an absent `label=` means the task ID was used as the default window label (window name is fm-<id> when --label is absent, fm-<label> when --label is passed).
 Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
 A zellij task additionally records `zellij_session=`, `zellij_tab_id=`, and `zellij_pane_id=`.
@@ -80,9 +111,10 @@ Only metadata-routed task selectors carry secondmate-marker and Codex-harness co
 These five sentences are the single owner of the task-selector vocabulary; backend guides and other documents point here instead of restating the resolution order.
 `fm-teardown.sh <id>` takes a task id directly and validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup mutation.
 Missing, empty, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records are preserved and refused.
-Legacy tmux metadata remains cleanup-compatible when its exact window name is `fm-<id>`; opaque non-tmux endpoints require their recorded `endpoint_task_id=` binding.
-`FM_HOME` determines Herdr's home label: the primary home uses `firstmate`, and a secondmate home marked by `.fm-secondmate-home` uses `2ndmate-<secondmate-id>`.
-[`herdr-backend.md`](herdr-backend.md#watching-and-task-containers) owns launcher-bound workspace placement, the label-only fallback, collision handling, and recovery behavior.
+Legacy tmux metadata remains cleanup-compatible when its exact window name is `fm-<id>`; opaque non-tmux endpoints require their recorded `endpoint_task_id=` binding, except legacy Herdr, Zellij, and cmux metadata lacking that binding, which self-repair by appending it once the live pane/tab/workspace is confirmed to still belong to the task (see [herdr-backend.md](herdr-backend.md#endpoint-metadata), [zellij-backend.md](zellij-backend.md#endpoint-metadata), and [cmux-backend.md](cmux-backend.md#endpoint-metadata)), and otherwise refuse without mutation.
+Orca intentionally refuses unconditionally when the binding is absent, as it has no verified live-identity-check primitive to prove a recorded terminal or worktree still belongs to the task.
+`FM_HOME` determines Herdr's home label: the primary home uses `1M-FIRSTMATE`, and a secondmate home marked by `.fm-secondmate-home` uses `2M-<SCOPE>`, uppercase and derived from its marker id.
+[`herdr-backend.md`](herdr-backend.md#watching-and-task-containers) owns launcher-bound workspace placement, the label-only fallback, collision handling, and recovery behavior, and [Mate naming convention](herdr-backend.md#mate-naming-convention) owns the exact rank/scope derivation.
 The local `config/herdr-presentation-spaces` file instead opts a home out of, or explicitly in to, Herdr's default-on disposable single-task visual projection; [Presentation spaces](herdr-backend.md#presentation-spaces) owns its accepted values, default, Herdr version floor, migration, behavior, safety limits, recovery contract, and narrow locked session-start cleanup of exact restored idle-shell children.
 The setting is inherited into secondmate homes under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 For normal herdr operations, `HERDR_SESSION` selects the named session, but destructive test cleanup must not rely on `HERDR_SESSION` alone.
@@ -204,6 +236,17 @@ The full zellij home label also includes a short hash of the resolved `FM_ROOT` 
 For the cmux backend, `FM_CONFIG_OVERRIDE` overrides where `config/cmux-socket-password` is read from, while `FM_HOME` determines the default config path and readable home prefix embedded in workspace titles.
 The full cmux home label also includes a short hash of the resolved `FM_ROOT` path, and there is no per-home container split.
 
+## Isolated launch (bin/fm-isolated-launch.sh)
+
+`bin/fm-isolated-launch.sh` launches `claude` stripped of the operator's global `~/.claude/` PAI layer - no global CLAUDE.md @-imports, hooks, skills/agents, or auto-memory - while this repo's own project-level CLAUDE.md/AGENTS.md and `.agents/skills/` still load.
+Redirecting `HOME` alone is not enough, so it does two things: it points `HOME` at a fresh `$FM_ROOT/.fm-isolated-home` (override with `FM_ISOLATED_HOME`) to strip the `$HOME/.claude/` global config, and, because Claude Code also walks cwd's ancestor directories for `.claude/CLAUDE.md` independent of `HOME`, it mirrors the repo's tracked files into a detached git worktree outside the real home tree at `/private/tmp/fm-isolated-worktree` (override with `FM_ISOLATED_CWD`) and launches `claude` from there so that ancestor walk never reaches `~/.claude/CLAUDE.md`.
+The mirror is refreshed to the repo's current HEAD every launch, and the launch refuses rather than fall back to `$FM_ROOT` (nested under the real `$HOME`) if the mirror cannot be built.
+`FM_ROOT_OVERRIDE` is exported into the session so every `bin/` script still resolves firstmate's real `data/`, `state/`, `config/`, and `projects/`, and the isolated home's `data/` is symlinked at the real one so the federated `bd` store wrappers keep resolving under the real `$HOME`.
+The session runs in bypass-permissions (YOLO) autonomy - the same `claude --dangerously-skip-permissions` mode `fm-spawn.sh` uses for crewmates - re-applied every launch, so it does not stop for a tool-approval dialog.
+On macOS the first launch seeds the isolated home's file-based credential by copying the existing OAuth token read-only out of the real, already-unlocked Keychain, so the session reuses the same logged-in account; only when that extraction is impossible (non-macOS, no `security`, or no stored credential) does first run fall back to a login prompt.
+Later launches against the same isolated home reuse whatever credential file is already there.
+The script header is the authoritative owner of the full rationale and mechanics.
+
 ## Harness support
 
 claude, codex, opencode, pi, pi-signed, grok, and kimi are empirically verified for crewmate and secondmate launches; [README requirements](../README.md#requirements) own the set supported for the primary session.
@@ -241,6 +284,29 @@ Kimi continues to use the captain's normal Kimi home, including the existing con
 The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config.toml`, `python3` with `tomllib`, and `jq`; it validates but never serializes the captain's TOML and refuses before writing when the config is missing, malformed, or surprising or when either tool requirement is unavailable.
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
+
+## Multi-account Claude Code (bin/claude-account.sh, --account)
+
+A captain with more than one paid Claude subscription can have claude-harness crewmates draw from a second account's quota instead of competing with the primary session's own account.
+[`bin/claude-account.sh <N> [args...]`](../bin/claude-account.sh) is a standalone launcher (it works with no firstmate checkout on `PATH`) that sets `CLAUDE_CONFIG_DIR` to `~/.claude-homes/account<N>/.claude`, symlinks shared config (`commands`, `hooks`, `skills`, `mcp-configs`, `settings.json`, `settings.local.json`, `rules`, `agents`) in from `~/.claude/` idempotently, authenticates the session with the account's long-lived setup token (below), and pre-accepts the onboarding, trust-dialog, and project-scoped MCP prompts so a session isn't dropped into a first-run or approval flow.
+`.claude.json` is never symlinked - it stays a per-account real file, or project/session state leaks across accounts.
+`bin/claude-1.sh` and `bin/claude-2.sh` are one-line direct launchers (`claude-1.sh <args>` == `claude-account.sh 1 <args>`) for a human or an orchestrator to call.
+
+Two current-Claude-Code mechanics the launcher depends on:
+
+- **Onboarding pre-seed location.** When `CLAUDE_CONFIG_DIR` is set, Claude Code reads its global config JSON from `$CLAUDE_CONFIG_DIR/.claude.json` (path = `join(CLAUDE_CONFIG_DIR ?? homedir, ".claude.json")`), *not* from a `.claude.json` in the parent of that dir. The onboarding gate is the single key `hasCompletedOnboarding: true`; once set, the whole welcome/theme/login first-run flow is skipped. The launcher writes its `hasCompletedOnboarding`, per-project `hasTrustDialogAccepted`, and `enableAllProjectMcpServers: true` pre-seed into `$CLAUDE_CONFIG_DIR/.claude.json` for exactly this reason (the last auto-approves project-scoped `.mcp.json` servers, which are never inherited across account homes).
+- **Auth = per-account setup token, exported as `CLAUDE_CODE_OAUTH_TOKEN`.** The launcher resolves a long-lived `claude setup-token` (`sk-ant-oat01-…`) from the macOS keychain - service `ccjuggler-acc<N>`, account `ccjuggler`, the exact entry the `juggle`/ccjuggler switcher uses - validates the prefix, and exports it into the session env, where current Claude Code honors it for interactive sessions. Setup tokens are used on purpose over the `.credentials.json` / `claude /login` blob: they are ~1yr-lived and never silently log out mid-fleet-run (a cleared or expired `.credentials.json` does). The launcher refuses (rather than dropping into a login prompt) when the keychain token is absent or is not an `sk-ant-oat01-` value - a malformed value stored there is what once silently broke a second account.
+
+Seed or rotate an account's setup token once before first use: run `claude setup-token` under the target account (browser flow), then store the printed token in the keychain (or use `juggle add`):
+
+```
+security add-generic-password -U -s "ccjuggler-acc<N>" -a "ccjuggler" -w "<sk-ant-oat01-… token>"
+```
+
+`fm-spawn.sh --account <N>` wires a ship or scout claude-harness spawn to a specific account: it records `account=N` in the task's `state/<id>.meta`, sets `CLAUDE_TRUST_DIR` to the task's worktree in the crewmate's launch environment so the correct directory gets pre-trusted, and launches through `bin/claude-account.sh N` instead of the plain `claude` binary.
+`--account` requires the claude harness and is strictly optional; absent means current behavior (plain `claude`, no account isolation).
+
+Full pattern, rationale, verification steps, and a capacity-aware routing reference: <https://gist.github.com/sjarmak/61e22d3625ecaac2279e8564d1b1b68f>.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
@@ -302,7 +368,7 @@ A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the
 When `config/crew-dispatch.json` exists, bootstrap also requires `jq` for dispatch profile validation.
 When Relay is opted in, bootstrap also requires `curl` and `jq` before arming the relay poll shim.
 `tasks-axi` and `quota-axi` are required bootstrap tools in every profile, the same class as `lavish-axi`.
-An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual` and compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.
+An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)` unless `config/backlog-backend=beads` is set (use the beads store instead) or `config/backlog-backend=manual` (suppress the verbose fact); when compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.
 An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
 An absent or incompatible `lavish-axi` reports `MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)`.
 An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a profile array without a compatible binary.
@@ -417,7 +483,7 @@ These paths need `jq` to build the JSON payload, but they run before token and n
 ### Promised public replies (state/public-followup)
 
 A relay request that spawns real work can leave firstmate owing a specific public reply in a specific thread.
-That promise is a typed `kind=public-followup` obligation owned entirely by `tasks-axi public-followup`, with the full private request context staying in `state/x-context/`; firstmate keeps no parallel copy of either.
+That promise is a typed `kind=public-followup` obligation owned entirely by `tasks-axi public-followup` (requires `tasks-axi` 0.2.3 or newer; the shared bootstrap probe in `bin/fm-tasks-axi-lib.sh` gates at 0.2.2 for backlog-mutation verbs and does not cover this command), with the full private request context staying in `state/x-context/`; firstmate keeps no parallel copy of either.
 `bin/fm-public-followup.sh` is firstmate's side: it registers a commitment, reconciles typed terminal work results into it, and posts the final reply through `bin/fm-x-reply.sh --followup`.
 Run `bin/fm-public-followup.sh --help` for the exact subcommands and flags.
 
@@ -513,14 +579,21 @@ FM_BACKEND_HERDR_BARE_PROMPT_RE='^(❯|›)'  # herdr-only: verified agent glyph
 FM_BACKEND_HERDR_PI_COMPOSER_MAX_LINES=8  # herdr-only: maximum rows admitted between Pi's native-identity-corroborated separator pair; taller or ambiguous candidates stay unknown (docs/herdr-backend.md "Composer and injection safety")
 FM_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across each Enter attempt's budget when confirming a submit (docs/herdr-backend.md "Current transport behavior")
 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline
+FM_BACKEND_HERDR_PRESENTATION_LOCK_POLLS=50  # herdr-only: polls a spawn, teardown, or task kill waits for the shared session presentation lock before degrading (spawn falls back flat, teardown/kill refuse); raise it for a loaded or instrumented run (docs/herdr-backend.md "Optional presentation spaces")
+FM_BACKEND_HERDR_PRESENTATION_LOCK_INTERVAL=0.1  # herdr-only: seconds between those polls; 50 x 0.1 is the shipped 5s bound. Either knob falls back to its default when set to a non-numeric value, so a malformed override degrades to the shipped bound instead of skipping the wait or spinning it without delay
 FM_BACKEND_ORCA_COMPOSER_LINES=200  # orca-only: terminal-read lines scanned to locate the composer row for submit verification
 FM_BACKEND_ORCA_IDLE_RE='^Type a message\.\.\.$'  # orca-only: empty-composer placeholder regex after border/prompt stripping
 FM_ZELLIJ_SESSION=firstmate  # zellij-only: named session for normal backend ops and test isolation (docs/zellij-backend.md)
 FM_BACKEND_CMUX_COMPOSER_LINES=20  # cmux-only: tail lines scanned to locate the composer row for submit verification
 FM_BACKEND_CMUX_IDLE_RE='^Type a message\.\.\.$'  # cmux-only: empty-composer placeholder regex after border/prompt stripping
 CMUX_SOCKET_PASSWORD=   # cmux-only: socket password fallback when config/cmux-socket-password is absent (docs/cmux-backend.md)
-FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest; each line is capped by bin/fm-line-cap-lib.sh
-FM_SESSION_START_QUEUED_LIMIT=20   # plain queued backlog rows in the session-start digest; in-flight, held, and blocked rows are never bounded and done rows are never listed
+FM_REMOTE_BRIDGE_URL=http://localhost:8787   # fm-remote-launch.sh-only: local herdr-web bridge base URL, proxied as /api/remote/<mini>/...
+FM_REMOTE_LAUNCH_HTTP_TIMEOUT=10   # fm-remote-launch.sh-only: seconds allowed per bridge REST call
+FM_REMOTE_LAUNCH_REACHABLE_TIMEOUT=5   # fm-remote-launch.sh-only: seconds allowed for the mini reachability snapshot probe
+FM_REMOTE_LAUNCH_PROBE_TIMEOUT=25   # fm-remote-launch.sh-only: seconds allowed per terminal-websocket marker-based shell probe (project/gh-auth/dirty/landed checks)
+FM_REMOTE_LAUNCH_CLONE_TIMEOUT=90   # fm-remote-launch.sh-only: seconds allowed for the remote `git clone` probe when the project is absent on the mini
+FM_REMOTE_LAUNCH_FRAME_DELAY=2   # fm-remote-launch.sh-only: seconds between fire-and-forget input frames sent to start the agent and type its prompt
+FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest
 FM_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip bootstrap's mutating sweeps and print advisory TANGLE wording
 FM_BOOTSTRAP_NETWORK=all   # internal session-start phase split: all, skip (local steps only), or only (network steps only); see bin/fm-bootstrap.sh
 FM_STARTUP_NETWORK_TIMEOUT=120   # seconds bounding the whole deferred network stage; hitting it prints an actionable NETWORK_CHECKS line
@@ -528,6 +601,7 @@ FM_TASKS_AXI_COMPATIBLE=   # internal one-hop handoff of an already-computed tas
 FM_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; fm-send.sh overrides it to name the requested message specifically
 FM_POLL=15              # seconds between watcher poll cycles
+FM_MD5_SBIN_OVERRIDE=/sbin/md5   # override for hash_pane()'s hardcoded /sbin/md5 fallback tier, mainly for tests; hash_pane also falls back through md5sum, openssl, shasum, and cksum before a pure-shell od+awk content digest last resort that cannot itself be absent, so a watcher's poll-to-poll pane hashing never hard-errors when PATH lacks md5/md5sum
 FM_HEARTBEAT=600        # base seconds between heartbeat scans; no-change heartbeats are absorbed while idle
 FM_HEARTBEAT_MAX=7200   # heartbeat backoff cap
 FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, or Relay dispatch)
@@ -539,6 +613,11 @@ FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-
 FM_TEARDOWN_NM_TIMEOUT=10    # seconds allowed per no-mistakes query or abort inside fm-teardown.sh
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi status cannot be attributed to the current code
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by working/paused watcher triage
+FM_TEARDOWN_BIN=bin/fm-teardown.sh   # test override for the reclaim call staleness auto-close makes against a stale ship task
+FM_AGENT_AXI_TIMEOUT=10     # per-probe hard bound in seconds for fm-agent-axi.sh's herdr, git, and no-mistakes probes
+FM_AGENT_AXI_AGENTS='claude|codex|opencode|grok|kimi|muse|pi'  # '|'-separated agent command basenames counted as live agents by fm-agent-axi.sh
+FM_NM_LIVENESS_TIMEOUT=15   # seconds allowed per no-mistakes query inside fm-no-mistakes-liveness.sh and fm-nm-run-is-live.sh
+FM_NM_LIVENESS_STALE=300    # seconds; a run is considered hung if its active step has not had activity for longer than this threshold
 FMX_PAIRING_TOKEN=      # Relay pairing token; .env opt-in authorizes replies and eligible lifecycle actions
 FMX_RELAY_URL=https://myfirstmate.io   # optional Relay endpoint override, mainly for local relay development
 FMX_ENV_FILE=           # optional alternate .env file for direct Relay client invocations; bootstrap still checks $FM_HOME/.env
@@ -565,11 +644,17 @@ FM_WATCH_REARM_RETRY_MAX_MS=4000   # Pi/OpenCode adapter cap for exponential con
 FM_WATCH_REARM_RETRY_LIMIT=5   # Pi/OpenCode adapter launch-failure retries before surfacing restoration failure
 FM_WATCH_CYCLE_LOG_MAX_BYTES=262144   # size cap for the arm-owned watcher lifecycle ledger
 FM_WATCH_CYCLE_LOG_KEEP_LINES=1000   # newest complete lifecycle rows considered when the ledger is capped
+FM_AUTOARM_MAX_REARMS=20   # Claude Stop auto-arm re-arms per hook firing after a quiet arm close with no live watcher; exhausting the budget escalates to a continuity-lost rewake
 FM_WATCHER_STALE_GRACE=300   # defaults to FM_GUARD_GRACE; seconds a live watcher lock may have a stale beacon before re-arm errors
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
+FM_IDLE_DISCOVERY_INTERVAL=60  # seconds between idle-task-discovery attempts (watcher autonomously dispatches ready tasks when fleet is idle)
 FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status regex; nonterminal progress verbs remain excluded even when their prose matches
 FM_CLASSIFY_PAUSED_VERB=paused     # leading status verb for a declared external wait; excluded from FM_CAPTAIN_RE and distinct from blocked
 FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates; stale panes whose crew is not provably working surface immediately unless they declare the pause verb
+FM_STALENESS_AUTOCLOSE_SECS=7200          # idle seconds before the watcher reclaims an ordinary ship task's live process via `fm-teardown.sh --staleness-autoclose`, ahead of ordinary stale surfacing; skipped for paused/captain-held or captain-relevant-gate status and for a pane crew_is_provably_working still finds working
+FM_STALENESS_AUTOCLOSE_MAX_RETRIES=5      # consecutive failed reclaim attempts allowed for one stale pane hash before the watcher gives up until the hash next changes
+FM_STALENESS_AUTOCLOSE_RETRY_BASE_SECS=300   # seconds before the first retry after a failed reclaim; doubles per additional failure
+FM_STALENESS_AUTOCLOSE_RETRY_MAX_SECS=3600   # cap on the doubling reclaim-retry backoff
 FM_BUSY_TURN_MAX_SECS=3600         # maximum age of a busy pane's latest state/<id>.turn-ended marker, or its state/<id>.meta spawn record before any turn completes, before the same wedge escalation used for a provably-working non-busy stale takes over; inspection-only, never an automatic interrupt or restart
 FM_PAUSE_RESURFACE_SECS=3600       # seconds before an idle declared external wait re-surfaces for a recheck in the watcher or away-mode daemon
 FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added
@@ -580,6 +665,9 @@ FM_STALE_WORKTREE_LOCK_AGE_SECS=30       # min mtime age before fm-teardown.sh t
 FM_TREEHOUSE_RETURN_LOCK_RETRIES=3        # retries after a treehouse return fails on the transient git index.lock signature
 FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=1 # seconds fm-teardown.sh waits before each retry after that signature
 FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=   # legacy alias for FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS when the new variable is unset
+FM_POOL_STALE_LEASE_SECS=7200             # age past which a process-free treehouse pool lease counts as abandoned and bin/fm-pool-reclaim.sh may return it; invalid values use 7200
+FM_SPAWN_SKIP_POOL_RECLAIM=               # set to 1 to skip fm-spawn.sh's best-effort bin/fm-pool-reclaim.sh pre-flight before `treehouse get`
+FM_SPAWN_POOL_RECLAIM_TIMEOUT=30          # seconds fm-spawn.sh allows that pre-flight sweep before abandoning it; a timeout is fail-open like every other reclaim failure
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=3        # fetch retries after fm-fleet-sync.sh hits the orphaned .git/packed-refs.lock signature
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds fm-fleet-sync.sh waits before each of those retries
 FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
@@ -590,6 +678,9 @@ GROK_HOME=              # optional Grok config home for firstmate's global grok 
 FM_SEND_RETRIES=3       # fm-send Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send submit checks
 FM_SEND_SETTLE=1        # seconds fm-send waits after a successful text submit; 0 disables
+FM_SEND_VERIFY_TRANSITION=0   # opt-in: after a successful submit, confirm the target actually transitioned idle->working before returning; non-zero enables. On a confirmed still-idle target (or a backend error) fm-send exits non-zero because the turn did not start
+FM_SEND_VERIFY_TIMEOUT=0.6    # seconds fm-send polls the target's agent state for that idle->working transition
+FM_SEND_VERBOSE=0             # non-zero prints a warning when the transition could not be verified (unknown result) instead of proceeding silently
 FM_PENDING_REPLY_GRACE_SECS=120   # seconds after marked-request delivery before a completed turn without a correlated parent report is eligible for its one recovery repost
 # sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
 FM_SUPERVISOR_BACKEND=             # optional supervisor pane backend override; tmux/herdr only, otherwise detects $TMUX_PANE then HERDR_ENV/HERDR_PANE_ID before tmux fallback
@@ -622,6 +713,7 @@ Teardown never removes a lock during the retry window, and after that window it 
 
 `fm-fleet-sync.sh` applies the same shape to an orphaned `.git/packed-refs.lock`: it retries only Git's `Unable to create '...packed-refs.lock': File exists` fetch failure up to `FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES` times (nonnegative integer; unset, blank, or invalid uses the default of 3), waiting `FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS` seconds (nonnegative whole or fractional; invalid falls back to 1 second) before each.
 Only after those retries exhaust does it remove the lock, and only when it is provably stale - still present, mtime age at least `FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS` (default 30), and no `lsof` holder of the lock file or of the clone worktree itself (a live `git` keeps that as its cwd even in the window after it closes the lock and before it exits).
-A live lock, a missing `lsof`, any failed check, or any other fetch failure keeps today's behavior.
+`lsof` is resolved through `bin/fm-lock-lib.sh`'s `fm_lsof_bin()`, which checks PATH first, then falls back to standard system locations like `/usr/sbin/lsof` (crucial on macOS, where lsof is not in the PATH by default in many shells).
+A live lock, an unavailable `lsof`, any failed check, or any other fetch failure keeps today's behavior.
 Every wait, retry, and removal is printed to stderr, and a successful recovery also prints one `recovered:` summary line to stdout so a session-start refresh - which discards fleet-sync stderr and relays only stdout - still surfaces it.
 The shared staleness proof lives in `bin/fm-lock-lib.sh`, which both `fm-teardown.sh` and `fm-fleet-sync.sh` use.
