@@ -22,6 +22,19 @@ herdr pane layout --current
 
 Your pane ID is also available as `$HERDR_PANE_ID` (injected by fm-spawn). Use either.
 
+## Open a pane and run a command in it
+
+The common task: split a pane and launch a command in the new one.
+
+```bash
+# Split to the right without stealing focus; capture the new pane id
+NEW=$(herdr pane split --current --direction right --ratio 0.5 --no-focus | jq -r '.result.pane.pane_id')
+# Run a command in the newly created pane
+herdr pane run "$NEW" tail -f /path/to/file
+```
+
+The JSON output shape is `{result: {pane: {pane_id, workspace_id, tab_id, ...}}}` — extract `.result.pane.pane_id`.
+
 ## Open a pane relative to yourself
 
 ```bash
@@ -31,12 +44,32 @@ herdr pane split --current --direction right
 # Split below (new pane appears below you)
 herdr pane split --current --direction down
 
-# Split with a specific command running in the new pane
+# Split with a specific cwd (the new pane is an empty shell; use herdr pane run to start a command)
 herdr pane split --current --direction right --cwd "$PWD"
+
+# Split with a custom split proportion
+herdr pane split --current --direction right --ratio 0.6
 
 # Split and focus the new pane
 herdr pane split --current --direction right --focus
+
+# Split without focus (new pane opens but stays in background)
+herdr pane split --current --direction down --no-focus
+
+# Split with environment variables set for the new shell
+herdr pane split --current --direction right --env DEBUG=1 --env LOG_LEVEL=trace
 ```
+
+## Run a command in an existing pane
+
+```bash
+# Launch a command in a specific pane (clean way vs send-text)
+herdr pane run "$PANE_ID" echo hello
+herdr pane run "$PANE_ID" tail -f /var/log/syslog
+herdr pane run "$PANE_ID" bash -c "cd /tmp && ls -la"
+```
+
+`herdr pane run` is preferred for launching commands; `send-text` and `send-keys` type into whatever is already running.
 
 ## Find neighboring panes
 
@@ -59,6 +92,12 @@ herdr pane neighbor --direction left --current
 # Read the last 20 lines of a neighboring pane
 NEIGHBOR=$(herdr pane neighbor --direction right --current --json | jq -r '.pane_id')
 herdr pane read "$NEIGHBOR" --lines 20
+
+# Read with different snapshot sources: visible|recent|recent-unwrapped|detection (default: recent)
+herdr pane read "$NEIGHBOR" --lines 20 --source visible
+
+# Read with ANSI color formatting (default: text)
+herdr pane read "$NEIGHBOR" --lines 20 --format ansi
 ```
 
 ## Send text or keys to another pane
