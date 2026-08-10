@@ -89,6 +89,34 @@ fm_lint_positive_number() {  # <value> <fallback>
   esac
 }
 
+fm_lint_changed_base_ref() {
+  if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    printf 'origin/main\n'
+    return 0
+  fi
+  if git rev-parse --verify -q main >/dev/null 2>&1; then
+    printf 'main\n'
+    return 0
+  fi
+  return 1
+}
+
+fm_lint_is_canonical_root() {
+  local path=$1 dir base
+  case "$path" in
+    */*) dir=${path%/*}; base=${path##*/} ;;
+    *) dir=; base=$path ;;
+  esac
+  case "$base" in
+    *.sh) : ;;
+    *) return 1 ;;
+  esac
+  case "$dir" in
+    bin|bin/backends|tests) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 fm_lint_slot_limit() {
   fm_lint_positive_number "${FM_LINT_GLOBAL_LIMIT:-}" "$FM_LINT_SLOT_LIMIT_DEFAULT"
 }
@@ -381,6 +409,8 @@ case "${FM_LINT_CACHE:-1}" in
   0|1) ;;
   *) printf 'fm-lint.sh: FM_LINT_CACHE must be 0 or 1, got %s.\n' "${FM_LINT_CACHE:-}" >&2; exit 2 ;;
 esac
+
+CHANGED_MODE=0
 
 if [ "$#" -gt 0 ]; then
   ROOTS=("$@")
