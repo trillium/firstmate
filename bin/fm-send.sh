@@ -366,6 +366,8 @@ if [ "${1:-}" = "--raw" ]; then
   fi
 fi
 
+RESOLVE_KEYS=
+
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
 fi
