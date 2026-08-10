@@ -366,7 +366,40 @@ if [ "${1:-}" = "--raw" ]; then
   fi
 fi
 
+# Collect --resolve-key flags (answerer-closes; see the header contract). They
+# must precede --key or the message text; everything after the last flag is the
+# message exactly as before, so ordinary sends are byte-identical.
 RESOLVE_KEYS=
+fm_send_add_resolve_key() {  # <key>
+  local k=$1
+  case "$k" in
+    ''|*[!A-Za-z0-9._-]*)
+      echo "error: --resolve-key '$k' is not a valid decision key (allowed: A-Z a-z 0-9 . _ -)" >&2
+      return 1
+      ;;
+  esac
+  case " $RESOLVE_KEYS " in
+    *" $k "*)
+      echo "error: duplicate --resolve-key '$k'" >&2
+      return 1
+      ;;
+  esac
+  RESOLVE_KEYS="${RESOLVE_KEYS}${RESOLVE_KEYS:+ }$k"
+}
+while :; do
+  case "${1:-}" in
+    --resolve-key)
+      [ $# -ge 2 ] || { echo "error: --resolve-key requires a key" >&2; exit 1; }
+      fm_send_add_resolve_key "$2" || exit 1
+      shift 2
+      ;;
+    --resolve-key=*)
+      fm_send_add_resolve_key "${1#--resolve-key=}" || exit 1
+      shift
+      ;;
+    *) break ;;
+  esac
+done
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
