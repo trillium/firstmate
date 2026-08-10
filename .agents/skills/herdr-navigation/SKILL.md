@@ -126,5 +126,5 @@ herdr pane move "$HERDR_PANE_ID" --new-tab --label "my-work"
 ## Rules
 
 - Always use `--current` (or `$HERDR_PANE_ID`) rather than hardcoding a pane ID — your ID is stable for your session but not across respawns.
-- `herdr pane split` creates a NEW shell in the new pane; the new pane is empty until you send it commands or run it with `--cwd`.
+- `herdr pane split` creates a NEW shell in the new pane; the new pane is empty until you send it commands with `herdr pane run` or `send-text`. The `--cwd` flag sets the working directory only; it does not run a command.
 - If `herdr` is not on PATH, check `~/.local/bin/herdr` or ask firstmate.
