@@ -151,7 +151,11 @@ STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provabl
 # reclaiming wasted idle compute matters most while nobody is watching it - and
 # bin/fm-teardown.sh's own landed-check still guarantees unlanded work is only
 # ever chat-reclaimed (worktree, branch, and uncommitted changes preserved),
-# never force-discarded, regardless of afk state.
+# never force-discarded, regardless of afk state. A ship task the captain is
+# actively reading/typing at (a done: pane in live human review) is the one idle
+# pane that must NOT be reclaimed out from under them: it too shows zero
+# content churn, so staleness_focus_guard_blocks_reap gates the reclaim on the
+# pane's live human-focus signal - see STALENESS_FOCUS_GRACE_SECS below.
 STALENESS_AUTOCLOSE_SECS=${FM_STALENESS_AUTOCLOSE_SECS:-7200}
 # A reclaim call that keeps failing (a broken FM_TEARDOWN_BIN, a wedged
 # git/teardown dependency) must not retry silently forever: bounded attempts
@@ -161,6 +165,16 @@ STALENESS_AUTOCLOSE_SECS=${FM_STALENESS_AUTOCLOSE_SECS:-7200}
 STALENESS_AUTOCLOSE_MAX_RETRIES=${FM_STALENESS_AUTOCLOSE_MAX_RETRIES:-5}
 STALENESS_AUTOCLOSE_RETRY_BASE_SECS=${FM_STALENESS_AUTOCLOSE_RETRY_BASE_SECS:-300}
 STALENESS_AUTOCLOSE_RETRY_MAX_SECS=${FM_STALENESS_AUTOCLOSE_RETRY_MAX_SECS:-3600}
+# Human-conversation guard for the reclaim above. A currently-focused pane blocks
+# the reclaim outright; a pane focused within this many seconds also blocks it, so
+# a captain who glances away from a done: pane mid-review does not lose it in the
+# gap. Focus history is not queryable in herdr (only the current boolean is), so
+# staleness_focus_stamp touches state/.focus-<key> on every poll an idle ship
+# candidate is seen focused - not only past the 2h threshold - so the window is
+# already accurate the instant the pane crosses it; staleness_focus_guard_blocks_reap
+# then ages that marker against this window. Tunable for a captain who wants a
+# longer/shorter courtesy grace; default 5 min.
+STALENESS_FOCUS_GRACE_SECS=${FM_STALENESS_FOCUS_GRACE_SECS:-300}
 # FM_TEARDOWN_BIN lets tests stub the reclaim call, matching the
 # FM_CREW_STATE_BIN seam in bin/fm-classify-lib.sh.
 FM_TEARDOWN_BIN="${FM_TEARDOWN_BIN:-$SCRIPT_DIR/fm-teardown.sh}"
@@ -388,6 +402,61 @@ staleness_autoclose_reclaim() {  # <window> <task> <hash-file>
   return 1
 }
 
+# staleness_focus_stamp: read <window>'s live human-focus once and, when it is
+# focused, (re)touch state/.focus-<key> so the recency window in
+# staleness_focus_guard_blocks_reap ages from the last time a human actually had
+# the pane. Called every poll for an idling ship candidate - at any idle age, not
+# only past the 2h threshold - because herdr exposes no queryable focus history:
+# the marker IS that history, and it must already be accurate the instant the
+# pane crosses the threshold. Echoes the read focus state (focused|unfocused|
+# unknown) for the guard to reuse, or "na" on a focus-unaware backend (tmux et
+# al.) so a single read serves both stamp and guard. Strictly read-only against
+# the backend; the only write is the local marker touch.
+staleness_focus_stamp() {  # <window> <key> -> focused|unfocused|unknown|na
+  local w=$1 key=$2 fstate
+  [ "$(window_backend "$w")" = herdr ] || { printf 'na'; return 0; }
+  fstate=$(fm_backend_pane_focus_state herdr "$w" 2>/dev/null) || fstate=unknown
+  [ "$fstate" = focused ] && { touch "$STATE/.focus-$key" 2>/dev/null || true; }
+  printf '%s' "$fstate"
+}
+
+# staleness_focus_guard_blocks_reap: 0 (BLOCK the idle>2h auto-close reclaim this
+# cycle) when a human is - or was very recently - actively viewing this task's
+# pane; 1 (allow the reclaim) otherwise. The current focus state is read once per
+# poll by staleness_focus_stamp and passed in here, so this is a pure decision
+# with no second backend read. "na" is a focus-unaware backend (tmux et al.):
+# allow the reclaim exactly as before. Otherwise a reclaim is blocked when the
+# pane is currently focused, was focused within STALENESS_FOCUS_GRACE_SECS
+# (state/.focus-<key>, stamped by staleness_focus_stamp on every observed focus),
+# or its focus cannot be read at all (err toward NOT reaping a possibly-watched
+# pane; the watcher retries next cadence). Every blocked reclaim is logged - a
+# silent skip reads as "nothing happened". Never a failure: a focus-blocked skip
+# does not consume the reclaim retry budget.
+staleness_focus_guard_blocks_reap() {  # <window> <task> <key> <focus-state>
+  local w=$1 task=$2 key=$3 fstate=$4 mf
+  mf="$STATE/.focus-$key"
+  case "$fstate" in
+    na)
+      return 1
+      ;;
+    focused)
+      triage_log "staleness auto-close skipped for $w (task $task): pane is focused by a human"
+      return 0
+      ;;
+    unfocused)
+      if [ -e "$mf" ] && [ "$(age_of "$mf")" -lt "$STALENESS_FOCUS_GRACE_SECS" ]; then
+        triage_log "staleness auto-close skipped for $w (task $task): pane focused within ${STALENESS_FOCUS_GRACE_SECS}s"
+        return 0
+      fi
+      return 1
+      ;;
+    *)
+      triage_log "staleness auto-close skipped for $w (task $task): pane focus unreadable ($fstate); erring toward not reaping"
+      return 0
+      ;;
+  esac
+}
+
 # staleness_autoclose_should_retry: 0 (attempt now) unless this key's reclaim
 # has either exhausted STALENESS_AUTOCLOSE_MAX_RETRIES consecutive failures
 # (permanently, until the pane's hash next changes and resets the counters via
@@ -421,7 +490,8 @@ staleness_autoclose_record_failure() {  # <key>
 }
 
 staleness_autoclose_clear_retries() {  # <key>
-  rm -f "$STATE/.staleness-fails-$1" "$STATE/.staleness-next-$1" "$STATE/.staleness-working-$1"
+  rm -f "$STATE/.staleness-fails-$1" "$STATE/.staleness-next-$1" \
+    "$STATE/.staleness-working-$1" "$STATE/.focus-$1"
 }
 
 # busy_turn_over_age: 0 iff <task>'s latest completed-turn marker is at least
@@ -1215,25 +1285,44 @@ EOF
         # provably-working task sits past the threshold.
         if [ "$kind" = ship ] \
           && ! status_is_paused_or_captain_held "$last" \
-          && ! status_is_captain_relevant "$last" \
-          && [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ] \
-          && staleness_autoclose_should_retry "$key"; then
-          if [ "$(cat "$pwf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$task"; then
-              printf '%s' "$h" > "$pwf"
-            else
-              rm -f "$pwf"
+          && ! status_is_captain_relevant "$last"; then
+          # This is an ordinary idling ship pane: the reap-candidate set. Stamp
+          # its live human-focus on every poll while it idles (herdr only; a
+          # no-op that reports "na" on focus-unaware backends) so the recency
+          # window in staleness_focus_guard_blocks_reap has a faithful
+          # time-since-last-focus the instant the pane crosses the threshold.
+          # herdr exposes no queryable focus history, only the current boolean,
+          # so we reconstruct recency from the poll we already run here rather
+          # than adding a second loop. The guard below consumes this same read.
+          focus_state=$(staleness_focus_stamp "$w" "$key")
+          if [ "$(age_of "$hf")" -ge "$STALENESS_AUTOCLOSE_SECS" ] \
+            && staleness_autoclose_should_retry "$key"; then
+            if [ "$(cat "$pwf" 2>/dev/null || true)" != "$h" ]; then
+              if crew_is_provably_working "$task"; then
+                printf '%s' "$h" > "$pwf"
+              else
+                rm -f "$pwf"
+              fi
             fi
-          fi
-          if [ "$(cat "$pwf" 2>/dev/null || true)" != "$h" ]; then
-            if staleness_autoclose_reclaim "$w" "$task" "$hf"; then
-              staleness_autoclose_clear_retries "$key"
-              continue
+            if [ "$(cat "$pwf" 2>/dev/null || true)" != "$h" ]; then
+              # Human-conversation guard: never reclaim a pane the captain is (or
+              # just was) actively viewing - an idle pane in live human review
+              # shows the same zero churn as a finished crew. No-op on
+              # focus-unaware backends; errs toward NOT reaping on an unreadable
+              # focus. Not a failure, so it never touches the retry budget - the
+              # pane is simply reconsidered next cadence.
+              if staleness_focus_guard_blocks_reap "$w" "$task" "$key" "$focus_state"; then
+                continue
+              fi
+              if staleness_autoclose_reclaim "$w" "$task" "$hf"; then
+                staleness_autoclose_clear_retries "$key"
+                continue
+              fi
+              if [ "$(staleness_autoclose_record_failure "$key")" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; then
+                continue
+              fi
+              triage_log "staleness auto-close exhausted retries for $w (task $task); falling through to ordinary stale surfacing"
             fi
-            if [ "$(staleness_autoclose_record_failure "$key")" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; then
-              continue
-            fi
-            triage_log "staleness auto-close exhausted retries for $w (task $task); falling through to ordinary stale surfacing"
           fi
         fi
         # The pane is idle/stale at hash $h. Triage decides whether this wakes

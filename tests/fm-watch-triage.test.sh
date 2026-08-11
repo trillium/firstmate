@@ -1371,6 +1371,165 @@ SH
   pass "a persistently-failing reclaim retries a bounded number of times, then falls through to ordinary stale surfacing"
 }
 
+# --- human-conversation guard on the idle>2h auto-close (bin/fm-watch.sh) ----
+# Captain design, 2026-08-11: a ship pane the captain is actively reading/typing
+# at shows the same zero content churn as a finished crew, so the idle>2h reclaim
+# above would tear it out from under a live review. staleness_focus_guard_blocks_reap
+# gates the reclaim on the pane's live human-focus (a herdr-only signal), and
+# staleness_focus_stamp records a state/.focus-<key> recency marker on every poll
+# an idle ship candidate is seen focused so a captain who glances away mid-review
+# still keeps the pane for STALENESS_FOCUS_GRACE_SECS. These unit tests pin the
+# stamp + guard logic directly; the reclaim wiring around them is covered by the
+# firing/no-op integration tests above (a tmux backend reports no focus signal, so
+# the guard is a proven no-op there and the pane reaps exactly as before). The
+# herdr focus-read classifier itself is pinned by
+# test_herdr_pane_focus_state_classifies_boolean below, with the herdr CLI stubbed
+# the way FM_TEARDOWN_BIN stubs the reclaim call.
+
+# source_watch <state>: load bin/fm-watch.sh's function definitions into the
+# current (sub)shell without running the watcher loop - its Main-entry guard
+# returns when sourced. STATE resolves from FM_STATE_OVERRIDE, so the focus
+# predicates read/write markers under <state>. Mirrors the same-named helper in
+# tests/fm-hash-pane.test.sh.
+source_watch() {
+  local state=$1
+  FM_HOME="$(dirname "$state")"
+  FM_STATE_OVERRIDE="$state"
+  export FM_HOME FM_STATE_OVERRIDE
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-watch.sh"
+}
+
+# The herdr focus-read classifier: focused|unfocused when herdr answers with the
+# per-pane boolean, unknown on every failure mode (absent field, malformed JSON,
+# CLI error, unparseable target). fm_backend_herdr_cli is stubbed to control the
+# socket reply, exactly as tests elsewhere stub it (fm-herdr-session-cleanup).
+test_herdr_pane_focus_state_classifies_boolean() (
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/backends/herdr.sh"
+  FAKE_JSON='{"result":{"pane":{"focused":true}}}'
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { printf '%s\n' "$FAKE_JSON"; }
+  [ "$(fm_backend_herdr_pane_focus_state s:p1)" = focused ] \
+    || fail "a focused pane boolean did not classify as focused"
+  FAKE_JSON='{"result":{"pane":{"focused":false}}}'
+  [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unfocused ] \
+    || fail "an unfocused pane boolean did not classify as unfocused"
+  FAKE_JSON='{"result":{"pane":{}}}'
+  [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unknown ] \
+    || fail "a missing focus field did not fall back to unknown"
+  FAKE_JSON='this is not json'
+  [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unknown ] \
+    || fail "malformed herdr output did not fall back to unknown"
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { return 1; }
+  [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unknown ] \
+    || fail "a failed socket read did not fall back to unknown"
+  # An unparseable target must never reach the CLI (never start a server).
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { printf 'SHOULD_NOT_RUN'; return 0; }
+  [ "$(fm_backend_herdr_pane_focus_state notarget)" = unknown ] \
+    || fail "an unparseable target did not classify as unknown without touching the CLI"
+  pass "herdr focus read classifies the pane boolean and errs to unknown on every failure mode"
+)
+
+# focused-now: the stamp reports focused and touches the recency marker; the
+# guard blocks the reclaim this cycle.
+test_focus_guard_blocks_focused_pane() (
+  local dir state fs
+  dir=$(make_case focus-guard-focused); state="$dir/state"
+  source_watch "$state"
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_pane_focus_state() { printf 'focused'; }
+  fs=$(staleness_focus_stamp "sess:w1:p2" fockey)
+  [ "$fs" = focused ] || fail "the stamp did not report the pane as focused"
+  [ -e "$state/.focus-fockey" ] || fail "the stamp did not touch the recency marker on an observed focus"
+  staleness_focus_guard_blocks_reap "sess:w1:p2" task-x fockey "$fs" \
+    || fail "a currently-focused pane was not blocked from the auto-close reclaim"
+  pass "a currently-focused pane blocks the idle>2h auto-close and records its focus recency"
+)
+
+# recently-focused: not focused now, but the marker was touched within the grace
+# window - the reclaim is still blocked so a glance away mid-review is forgiven.
+test_focus_guard_blocks_recently_focused_pane() (
+  local dir state
+  dir=$(make_case focus-guard-recent); state="$dir/state"
+  source_watch "$state"
+  : > "$state/.focus-reckey"   # fresh: age ~0 < STALENESS_FOCUS_GRACE_SECS
+  staleness_focus_guard_blocks_reap "sess:w1:p2" task-x reckey unfocused \
+    || fail "a pane focused within the grace window was not blocked from the reclaim"
+  pass "a pane focused within STALENESS_FOCUS_GRACE_SECS still blocks the auto-close reclaim"
+)
+
+# stale-unfocused: not focused now, and the last focus is older than the grace
+# window - the reclaim is allowed, exactly as before the guard existed.
+test_focus_guard_allows_stale_unfocused_pane() (
+  local dir state
+  dir=$(make_case focus-guard-stale); state="$dir/state"
+  source_watch "$state"
+  : > "$state/.focus-stalekey"
+  set_mtime "$(( $(date +%s) - (STALENESS_FOCUS_GRACE_SECS + 100) ))" "$state/.focus-stalekey"
+  if staleness_focus_guard_blocks_reap "sess:w1:p2" task-x stalekey unfocused; then
+    fail "an unfocused pane past the focus-grace window was wrongly blocked from the reclaim"
+  fi
+  pass "an unfocused pane whose last focus is older than the grace window is allowed to reclaim"
+)
+
+# non-herdr backend: no focus concept, so the stamp reports na and the guard is a
+# pure no-op that allows the reclaim (the P1 tmux backend and every other one).
+test_focus_guard_allows_non_herdr_backend() (
+  local dir state fs
+  dir=$(make_case focus-guard-tmux); state="$dir/state"
+  source_watch "$state"
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo tmux; }
+  # shellcheck disable=SC2329 # a negative-assertion stub: the sourced code must NOT reach it on a non-herdr backend
+  fm_backend_pane_focus_state() { fail "the focus signal must never be read on a non-herdr backend"; }
+  fs=$(staleness_focus_stamp "sess:w1:p2" nakey)
+  [ "$fs" = na ] || fail "a non-herdr backend did not report the focus state as na"
+  [ ! -e "$state/.focus-nakey" ] || fail "a non-herdr backend wrongly wrote a focus recency marker"
+  if staleness_focus_guard_blocks_reap "sess:w1:p2" task-x nakey "$fs"; then
+    fail "a non-herdr backend wrongly blocked the auto-close reclaim"
+  fi
+  pass "a focus-unaware backend is a no-op that allows the reclaim exactly as before"
+)
+
+# focus read fails/times out: err toward safety - never reap a pane that MIGHT be
+# under active review just because its focus could not be read.
+test_focus_guard_blocks_on_unreadable_focus() (
+  local dir state fs
+  dir=$(make_case focus-guard-unknown); state="$dir/state"
+  source_watch "$state"
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_pane_focus_state() { printf 'unknown'; }
+  fs=$(staleness_focus_stamp "sess:w1:p2" unkkey)
+  [ "$fs" = unknown ] || fail "an unreadable focus did not surface as unknown"
+  [ ! -e "$state/.focus-unkkey" ] || fail "an unreadable focus wrongly wrote a recency marker"
+  staleness_focus_guard_blocks_reap "sess:w1:p2" task-x unkkey "$fs" \
+    || fail "an unreadable focus did not err toward blocking the reclaim"
+  pass "an unreadable/timed-out focus query blocks the reclaim, never erroneously reaping"
+)
+
+# The stamp records recency ONLY on a real observed focus, so an unfocused pane
+# never fabricates a fresh last-focus that would spare it forever.
+test_focus_stamp_only_records_real_focus() (
+  local dir state fs
+  dir=$(make_case focus-stamp-unfocused); state="$dir/state"
+  source_watch "$state"
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_pane_focus_state() { printf 'unfocused'; }
+  fs=$(staleness_focus_stamp "sess:w1:p2" nfkey)
+  [ "$fs" = unfocused ] || fail "the stamp did not pass through the unfocused read"
+  [ ! -e "$state/.focus-nfkey" ] || fail "the stamp wrote a recency marker for a pane that was not focused"
+  pass "the focus stamp records recency only on a real observed focus"
+)
+
 # --- dead-window triage sweep (bin/fm-watch.sh) -----------------------------
 # The idle>2h auto-close reclaims a LIVE idle window; the stale loop skips a
 # window whose pane capture fails. Neither files triage for a kind=ship task
@@ -2185,6 +2344,13 @@ test_staleness_autoclose_does_not_fire_while_provably_working
 test_staleness_autoclose_does_not_fire_at_needs_decision_gate
 test_staleness_autoclose_fires_during_afk_and_logs_evidence
 test_staleness_autoclose_exhausts_retries_then_surfaces
+test_herdr_pane_focus_state_classifies_boolean
+test_focus_guard_blocks_focused_pane
+test_focus_guard_blocks_recently_focused_pane
+test_focus_guard_allows_stale_unfocused_pane
+test_focus_guard_allows_non_herdr_backend
+test_focus_guard_blocks_on_unreadable_focus
+test_focus_stamp_only_records_real_focus
 test_dead_window_sweep_delegates_for_confidently_dead_ship
 test_dead_window_sweep_skips_live_ship
 test_dead_window_sweep_skips_ambiguous_endpoint

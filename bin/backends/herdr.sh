@@ -3160,6 +3160,33 @@ fm_backend_herdr_busy_state() {  # <target>
     "$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")"
 }
 
+# fm_backend_herdr_pane_focus_state: read-only current human-focus of <target>'s
+# pane. Herdr exposes focus as a per-pane boolean (`.result.pane.focused`) in its
+# socket API; there is no queryable last-focus timestamp, so callers that need a
+# recency window reconstruct one themselves from repeated reads of this signal.
+# Prints `focused` or `unfocused` when herdr answers, and `unknown` on any
+# parse/socket/absent-server failure so the caller can err toward safety. Uses
+# `parse_target` (not `target_ready`) deliberately: this must never start a server
+# or otherwise mutate herdr state - a missing server is just an unreadable focus
+# (`unknown`), never something to spin up.
+fm_backend_herdr_pane_focus_state() {  # <target> -> focused|unfocused|unknown
+  local out focused
+  fm_backend_herdr_parse_target "$1" || { printf 'unknown'; return 0; }
+  out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane get "$FM_BACKEND_HERDR_PANE" 2>/dev/null) \
+    || { printf 'unknown'; return 0; }
+  # Read the raw boolean, NOT `.focused // empty`: jq's `//` treats a literal
+  # `false` as empty, so an unfocused pane would collapse to the unknown branch
+  # and the guard would err toward NOT reaping a pane nobody is watching. A
+  # missing field yields `null`, and malformed JSON makes jq exit non-zero
+  # (stderr suppressed), leaving `focused` empty; both fall through to unknown.
+  focused=$(printf '%s' "$out" | jq -r '.result.pane.focused' 2>/dev/null)
+  case "$focused" in
+    true)  printf 'focused' ;;
+    false) printf 'unfocused' ;;
+    *)     printf 'unknown' ;;
+  esac
+}
+
 # fm_backend_herdr_wait_for_working: poll <session>:<pane_id>'s NATIVE
 # agent-state (agent get) up to <polls> times spread evenly across
 # <budget-seconds>, returning on stdout the STRONGEST signal observed:

@@ -851,6 +851,24 @@ fm_backend_busy_state() {  # <backend> <target>
   esac
 }
 
+# fm_backend_pane_focus_state: focused|unfocused|unknown live human-focus of
+# <target>'s pane, for backends that expose a focus signal (herdr - focus is a
+# per-pane boolean in its socket API). Backends with no focus concept (tmux and
+# every other pane multiplexer here) report unknown, so a focus-unaware backend
+# is indistinguishable to the caller from a failed read; the sole caller that
+# needs the distinction (bin/fm-watch.sh's idle>2h staleness auto-close guard)
+# gates on backend=herdr itself before treating unknown as a failed read. This is
+# strictly read-only: it never focuses, starts a server, or otherwise mutates.
+fm_backend_pane_focus_state() {  # <backend> <target> -> focused|unfocused|unknown
+  local backend=$1
+  shift
+  fm_backend_source "$backend" || { printf 'unknown'; return 0; }
+  case "$backend" in
+    herdr) fm_backend_herdr_pane_focus_state "$@" ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
 # fm_backend_composer_state: classify the composer/input row of <target> as
 # empty|pending|pending-unproven|unknown for callers that need a pre-submit
 # input guard or an adapter's conservative submit fallback. It is exposed so a
