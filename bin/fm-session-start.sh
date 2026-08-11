@@ -50,9 +50,9 @@
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs, and prints before persona and
 #                       context.
-#   7. network-checks - the deferred non-blocking harvest of the four network
-#                       sweeps (GitHub auth, project clone refresh, secondmate
-#                       liveness and convergence, pending handoff delivery);
+#   7. network-checks - the deferred non-blocking harvest of the five network
+#                       checks (GitHub auth, project clone refresh, secondmate
+#                       liveness, secondmate convergence, pending handoff delivery);
 #                       whatever the worker has published by now is printed and
 #                       the rest is named as not yet confirmed.
 #   8. persona        - the active persona file (config/persona.md local
