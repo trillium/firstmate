@@ -415,10 +415,24 @@ staleness_autoclose_reclaim() {  # <window> <task> <hash-file>
 # (tmux et al.) so a single read serves both stamp and guard. Strictly read-only
 # against the backend; the only write is the local marker touch.
 staleness_focus_stamp() {  # <window> <key> -> focused|unfocused|unsupported|unknown|na
-  local w=$1 key=$2 fstate
+  local w=$1 key=$2 fstate uf n
   [ "$(window_backend "$w")" = herdr ] || { printf 'na'; return 0; }
+  uf="$STATE/.focus-unknown-$key"
   fstate=$(fm_backend_pane_focus_state herdr "$w" 2>/dev/null) || fstate=unknown
-  [ "$fstate" = focused ] && { touch "$STATE/.focus-$key" 2>/dev/null || true; }
+  case "$fstate" in
+    focused)
+      touch "$STATE/.focus-$key" 2>/dev/null || true
+      rm -f "$uf" 2>/dev/null || true
+      ;;
+    unknown)
+      n=$(cat "$uf" 2>/dev/null || echo 0)
+      case "$n" in ''|*[!0-9]*) n=0 ;; esac
+      echo "$(( n + 1 ))" > "$uf" 2>/dev/null || true
+      ;;
+    *)
+      rm -f "$uf" 2>/dev/null || true
+      ;;
+  esac
   printf '%s' "$fstate"
 }
 
@@ -433,11 +447,17 @@ staleness_focus_stamp() {  # <window> <key> -> focused|unfocused|unsupported|unk
 # pane is currently focused, was focused within STALENESS_FOCUS_GRACE_SECS
 # (state/.focus-<key>, stamped by staleness_focus_stamp on every observed focus),
 # or its focus cannot be read at all (err toward NOT reaping a possibly-watched,
-# focus-capable pane; the watcher retries next cadence). Every blocked reclaim is
-# logged - a silent skip reads as "nothing happened". Never a failure: a
-# focus-blocked skip does not consume the reclaim retry budget.
+# focus-capable pane; the watcher retries next cadence). The unreadable-focus
+# block is BOUNDED by STALENESS_AUTOCLOSE_MAX_RETRIES the same way a reclaim
+# failure is: staleness_focus_stamp advances state/.focus-unknown-<key> on every
+# consecutive unknown poll and resets it on any readable poll, so a transient
+# focus-read blip stays protective while a persistently-unreadable pane (a dead or
+# destroyed herdr runtime) falls through after the bound instead of wedging the
+# backstop forever. Every blocked reclaim is logged - a silent skip reads as
+# "nothing happened". Never a failure: a focus-blocked skip does not consume the
+# reclaim retry budget.
 staleness_focus_guard_blocks_reap() {  # <window> <task> <key> <focus-state>
-  local w=$1 task=$2 key=$3 fstate=$4 mf
+  local w=$1 task=$2 key=$3 fstate=$4 mf ucount
   mf="$STATE/.focus-$key"
   case "$fstate" in
     na|unsupported)
@@ -455,6 +475,12 @@ staleness_focus_guard_blocks_reap() {  # <window> <task> <key> <focus-state>
       return 1
       ;;
     *)
+      ucount=$(cat "$STATE/.focus-unknown-$key" 2>/dev/null || echo 0)
+      case "$ucount" in ''|*[!0-9]*) ucount=0 ;; esac
+      if [ "$ucount" -ge "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; then
+        triage_log "staleness auto-close focus unreadable ($fstate) for $w (task $task) persisted $ucount polls (bound $STALENESS_AUTOCLOSE_MAX_RETRIES); falling through to reap"
+        return 1
+      fi
       triage_log "staleness auto-close skipped for $w (task $task): pane focus unreadable ($fstate); erring toward not reaping"
       return 0
       ;;
@@ -495,7 +521,7 @@ staleness_autoclose_record_failure() {  # <key>
 
 staleness_autoclose_clear_retries() {  # <key>
   rm -f "$STATE/.staleness-fails-$1" "$STATE/.staleness-next-$1" \
-    "$STATE/.staleness-working-$1" "$STATE/.focus-$1"
+    "$STATE/.staleness-working-$1" "$STATE/.focus-$1" "$STATE/.focus-unknown-$1"
 }
 
 # busy_turn_over_age: 0 iff <task>'s latest completed-turn marker is at least
@@ -1313,7 +1339,9 @@ EOF
               # just was) actively viewing - an idle pane in live human review
               # shows the same zero churn as a finished crew. No-op on
               # focus-unaware backends; errs toward NOT reaping on an unreadable
-              # focus. Not a failure, so it never touches the retry budget - the
+              # focus, but only until STALENESS_AUTOCLOSE_MAX_RETRIES consecutive
+              # unknown polls, after which a dead/unreadable pane falls through to
+              # reap. Not a failure, so it never touches the retry budget - the
               # pane is simply reconsidered next cadence.
               if staleness_focus_guard_blocks_reap "$w" "$task" "$key" "$focus_state"; then
                 continue

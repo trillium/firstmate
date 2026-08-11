@@ -1575,6 +1575,106 @@ test_focus_guard_blocks_on_unreadable_focus() (
   pass "an unreadable/timed-out focus query blocks the reclaim, never erroneously reaping"
 )
 
+# Dead-pane path: a herdr runtime that died/was destroyed answers `pane get` with
+# no `.result.pane` object, so the focus read is unknown on every poll. That block
+# is BOUNDED by STALENESS_AUTOCLOSE_MAX_RETRIES the same way a reclaim failure is:
+# below the bound the unreadable focus keeps blocking (transient blips stay
+# protective), and once consecutive unknown polls reach the bound the guard no
+# longer blocks so the dead pane falls through to reap instead of wedging forever.
+# Driven through the real reader (CLI stubbed to a dead-pane reply).
+test_focus_guard_bounds_persistent_unknown() (
+  local dir state fs i
+  dir=$(make_case focus-guard-unknown-bound); state="$dir/state"
+  source_watch "$state"
+  STALENESS_AUTOCLOSE_MAX_RETRIES=3
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/backends/herdr.sh"
+  _FM_BACKEND_HERDR_SOURCED=1
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # A dead pane: pane get returns a reply with no .result.pane object -> unknown.
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { printf '%s\n' '{"result":{}}'; }
+  i=1
+  while [ "$i" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; do
+    fs=$(staleness_focus_stamp "sess:w1:p2" deadkey)
+    [ "$fs" = unknown ] || fail "a dead pane focus read did not surface as unknown"
+    staleness_focus_guard_blocks_reap "sess:w1:p2" task-x deadkey "$fs" \
+      || fail "an unreadable focus below the bound did not still block the reclaim"
+    i=$(( i + 1 ))
+  done
+  fs=$(staleness_focus_stamp "sess:w1:p2" deadkey)
+  [ "$fs" = unknown ] || fail "the bound-reaching poll did not surface as unknown"
+  if staleness_focus_guard_blocks_reap "sess:w1:p2" task-x deadkey "$fs"; then
+    fail "a persistently-unreadable dead pane kept wedging the reap past the bound"
+  fi
+  pass "consecutive unreadable-focus polls are bounded; a dead pane falls through to reap after the bound"
+)
+
+# Transient blip: an unknown poll followed by a readable FOCUSED poll resets the
+# consecutive-unknown counter, so a later unknown poll starts fresh below the bound
+# and still blocks - a real human view is never eroded by earlier read failures.
+test_focus_guard_unknown_reset_by_focused() (
+  local dir state fs
+  dir=$(make_case focus-guard-unknown-reset-focused); state="$dir/state"
+  source_watch "$state"
+  STALENESS_AUTOCLOSE_MAX_RETRIES=3
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/backends/herdr.sh"
+  _FM_BACKEND_HERDR_SOURCED=1
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { printf '%s\n' "$RESET_JSON"; }
+  # Two unknown polls advance the counter toward the bound (still blocking).
+  RESET_JSON='{"result":{}}'
+  fs=$(staleness_focus_stamp "sess:w1:p2" reskey)
+  fs=$(staleness_focus_stamp "sess:w1:p2" reskey)
+  [ "$fs" = unknown ] || fail "the unknown-focus reads did not surface as unknown"
+  [ "$(cat "$state/.focus-unknown-reskey")" = 2 ] || fail "the unknown counter did not advance across consecutive unknown polls"
+  # A readable focused poll resets the counter and stamps recency.
+  RESET_JSON='{"result":{"pane":{"pane_id":"p2","tab_id":"t1","workspace_id":"w1","focused":true}}}'
+  fs=$(staleness_focus_stamp "sess:w1:p2" reskey)
+  [ "$fs" = focused ] || fail "the readable poll did not surface as focused"
+  [ ! -e "$state/.focus-unknown-reskey" ] || fail "a readable focused poll did not reset the unknown counter"
+  # A subsequent unknown poll is fresh (count 1 < bound) and still blocks.
+  RESET_JSON='{"result":{}}'
+  fs=$(staleness_focus_stamp "sess:w1:p2" reskey)
+  [ "$fs" = unknown ] || fail "the follow-up unknown read did not surface as unknown"
+  [ "$(cat "$state/.focus-unknown-reskey")" = 1 ] || fail "the reset unknown counter did not restart at one"
+  staleness_focus_guard_blocks_reap "sess:w1:p2" task-x reskey "$fs" \
+    || fail "a fresh unreadable focus below the bound did not block the reclaim after a reset"
+  pass "a readable focused poll resets the unknown-focus bound so a transient blip stays protective"
+)
+
+# Readable NOT-FOCUSED poll after an unknown poll: the counter resets and, with no
+# fresh recency marker, the guard allows the reap immediately - a not-focused read
+# is a definitive "nobody is watching", never carried by a prior read failure.
+test_focus_guard_unknown_reset_by_unfocused() (
+  local dir state fs
+  dir=$(make_case focus-guard-unknown-reset-unfocused); state="$dir/state"
+  source_watch "$state"
+  STALENESS_AUTOCLOSE_MAX_RETRIES=3
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/backends/herdr.sh"
+  _FM_BACKEND_HERDR_SOURCED=1
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { printf '%s\n' "$NF_JSON"; }
+  NF_JSON='{"result":{}}'
+  fs=$(staleness_focus_stamp "sess:w1:p2" nfrkey)
+  [ "$fs" = unknown ] || fail "the unknown-focus read did not surface as unknown"
+  NF_JSON='{"result":{"pane":{"pane_id":"p2","tab_id":"t1","workspace_id":"w1","focused":false}}}'
+  fs=$(staleness_focus_stamp "sess:w1:p2" nfrkey)
+  [ "$fs" = unfocused ] || fail "the readable poll did not surface as unfocused"
+  [ ! -e "$state/.focus-unknown-nfrkey" ] || fail "a readable unfocused poll did not reset the unknown counter"
+  if staleness_focus_guard_blocks_reap "sess:w1:p2" task-x nfrkey "$fs"; then
+    fail "a not-focused pane with no fresh recency marker was wrongly blocked from the reap"
+  fi
+  pass "a readable not-focused poll resets the unknown-focus bound and the reap proceeds"
+)
+
 # The stamp records recency ONLY on a real observed focus, so an unfocused pane
 # never fabricates a fresh last-focus that would spare it forever.
 test_focus_stamp_only_records_real_focus() (
@@ -2412,6 +2512,9 @@ test_focus_guard_allows_stale_unfocused_pane
 test_focus_guard_allows_non_herdr_backend
 test_focus_guard_capability_gated_pair
 test_focus_guard_blocks_on_unreadable_focus
+test_focus_guard_bounds_persistent_unknown
+test_focus_guard_unknown_reset_by_focused
+test_focus_guard_unknown_reset_by_unfocused
 test_focus_stamp_only_records_real_focus
 test_dead_window_sweep_delegates_for_confidently_dead_ship
 test_dead_window_sweep_skips_live_ship
