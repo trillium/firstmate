@@ -440,22 +440,23 @@ staleness_focus_stamp() {  # <window> <key> -> focused|unfocused|unsupported|unk
 # cycle) when a human is - or was very recently - actively viewing this task's
 # pane; 1 (allow the reclaim) otherwise. The current focus state is read once per
 # poll by staleness_focus_stamp and passed in here, so this is a pure decision
-# with no second backend read. "na" is a focus-unaware backend (tmux et al.) and
-# "unsupported" is a herdr build that structurally cannot report pane focus: both
-# allow the reclaim exactly as before, so a focus-less backend can never
-# permanently wedge the idle>2h auto-close. Otherwise a reclaim is blocked when the
-# pane is currently focused, was focused within STALENESS_FOCUS_GRACE_SECS
-# (state/.focus-<key>, stamped by staleness_focus_stamp on every observed focus),
-# or its focus cannot be read at all (err toward NOT reaping a possibly-watched,
-# focus-capable pane; the watcher retries next cadence). The unreadable-focus
-# block is BOUNDED by STALENESS_AUTOCLOSE_MAX_RETRIES the same way a reclaim
-# failure is: staleness_focus_stamp advances state/.focus-unknown-<key> on every
-# consecutive unknown poll and resets it on any readable poll, so a transient
-# focus-read blip stays protective while a persistently-unreadable pane (a dead or
-# destroyed herdr runtime) falls through after the bound instead of wedging the
-# backstop forever. Every blocked reclaim is logged - a silent skip reads as
-# "nothing happened". Never a failure: a focus-blocked skip does not consume the
-# reclaim retry budget.
+# with no second backend read. All three focus branches converge on ONE reap
+# rule: reap iff the pane is NOT focused now AND has no fresh state/.focus-<key>
+# recency marker within STALENESS_FOCUS_GRACE_SECS. "na" (a focus-unaware backend
+# such as tmux) and "unsupported" (a herdr build that structurally cannot report
+# pane focus) skip the guard entirely and allow the reclaim, so a focus-less
+# backend can never permanently wedge the idle>2h auto-close. A currently-focused
+# pane always blocks. An unreadable ("unknown") pane stays protective while its
+# consecutive-unknown count is below the bound (a transient focus-read blip is
+# forgiven, err toward NOT reaping); once STALENESS_AUTOCLOSE_MAX_RETRIES
+# consecutive unknown polls accumulate (staleness_focus_stamp advances
+# state/.focus-unknown-<key> and resets it on any readable poll) the unknown pane
+# is subjected to the SAME within-grace recency check as an unfocused pane, so a
+# persistently-unreadable dead/destroyed herdr runtime (no fresh marker) falls
+# through to reap while a live pane focused within the grace window stays blocked
+# even through a sustained unreadable stretch. Every blocked reclaim is logged - a
+# silent skip reads as "nothing happened". Never a failure: a focus-blocked skip
+# does not consume the reclaim retry budget.
 staleness_focus_guard_blocks_reap() {  # <window> <task> <key> <focus-state>
   local w=$1 task=$2 key=$3 fstate=$4 mf ucount
   mf="$STATE/.focus-$key"
@@ -468,23 +469,22 @@ staleness_focus_guard_blocks_reap() {  # <window> <task> <key> <focus-state>
       return 0
       ;;
     unfocused)
-      if [ -e "$mf" ] && [ "$(age_of "$mf")" -lt "$STALENESS_FOCUS_GRACE_SECS" ]; then
-        triage_log "staleness auto-close skipped for $w (task $task): pane focused within ${STALENESS_FOCUS_GRACE_SECS}s"
-        return 0
-      fi
-      return 1
       ;;
     *)
       ucount=$(cat "$STATE/.focus-unknown-$key" 2>/dev/null || echo 0)
       case "$ucount" in ''|*[!0-9]*) ucount=0 ;; esac
-      if [ "$ucount" -ge "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; then
-        triage_log "staleness auto-close focus unreadable ($fstate) for $w (task $task) persisted $ucount polls (bound $STALENESS_AUTOCLOSE_MAX_RETRIES); falling through to reap"
-        return 1
+      if [ "$ucount" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; then
+        triage_log "staleness auto-close skipped for $w (task $task): pane focus unreadable ($fstate); erring toward not reaping"
+        return 0
       fi
-      triage_log "staleness auto-close skipped for $w (task $task): pane focus unreadable ($fstate); erring toward not reaping"
-      return 0
       ;;
   esac
+  if [ -e "$mf" ] && [ "$(age_of "$mf")" -lt "$STALENESS_FOCUS_GRACE_SECS" ]; then
+    triage_log "staleness auto-close skipped for $w (task $task): pane focused within ${STALENESS_FOCUS_GRACE_SECS}s"
+    return 0
+  fi
+  [ "$fstate" = unfocused ] || triage_log "staleness auto-close focus unreadable ($fstate) for $w (task $task) persisted $ucount polls (bound $STALENESS_AUTOCLOSE_MAX_RETRIES) with no focus within ${STALENESS_FOCUS_GRACE_SECS}s; falling through to reap"
+  return 1
 }
 
 # staleness_autoclose_should_retry: 0 (attempt now) unless this key's reclaim
@@ -1340,8 +1340,11 @@ EOF
               # shows the same zero churn as a finished crew. No-op on
               # focus-unaware backends; errs toward NOT reaping on an unreadable
               # focus, but only until STALENESS_AUTOCLOSE_MAX_RETRIES consecutive
-              # unknown polls, after which a dead/unreadable pane falls through to
-              # reap. Not a failure, so it never touches the retry budget - the
+              # unknown polls, after which the unreadable pane honors the same
+              # within-grace recency check as an unfocused one so a dead/unreadable
+              # pane with no fresh focus marker falls through to reap while a pane
+              # focused within the grace window stays blocked even at the bound.
+              # Not a failure, so it never touches the retry budget - the
               # pane is simply reconsidered next cadence.
               if staleness_focus_guard_blocks_reap "$w" "$task" "$key" "$focus_state"; then
                 continue

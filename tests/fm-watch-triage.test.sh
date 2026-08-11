@@ -1675,6 +1675,79 @@ test_focus_guard_unknown_reset_by_unfocused() (
   pass "a readable not-focused poll resets the unknown-focus bound and the reap proceeds"
 )
 
+# Convergence guarantee (a): a live pane focused within the grace window stays
+# BLOCKED even after MAX_RETRIES consecutive unreadable polls reach the bound. The
+# unknown fall-through honors the same within-grace recency check as an unfocused
+# pane, so a captain reading a pane whose focus read then flickers unreadable never
+# loses it mid-look. Driven through the real reader (CLI stubbed).
+test_focus_guard_unknown_within_grace_stays_blocked() (
+  local dir state fs i
+  dir=$(make_case focus-guard-unknown-within-grace); state="$dir/state"
+  source_watch "$state"
+  STALENESS_AUTOCLOSE_MAX_RETRIES=3
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/backends/herdr.sh"
+  _FM_BACKEND_HERDR_SOURCED=1
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { printf '%s\n' "$GRACE_JSON"; }
+  # A focused poll stamps a fresh recency marker and clears the unknown counter.
+  GRACE_JSON='{"result":{"pane":{"pane_id":"p2","tab_id":"t1","workspace_id":"w1","focused":true}}}'
+  fs=$(staleness_focus_stamp "sess:w1:p2" gracekey)
+  [ "$fs" = focused ] || fail "the focused poll did not surface as focused"
+  [ -e "$state/.focus-gracekey" ] || fail "the focused poll did not stamp a recency marker"
+  # Then MAX_RETRIES consecutive unreadable polls drive the counter to the bound.
+  GRACE_JSON='{"result":{}}'
+  i=0
+  while [ "$i" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; do
+    fs=$(staleness_focus_stamp "sess:w1:p2" gracekey)
+    [ "$fs" = unknown ] || fail "the unreadable poll did not surface as unknown"
+    i=$(( i + 1 ))
+  done
+  [ "$(cat "$state/.focus-unknown-gracekey")" -ge "$STALENESS_AUTOCLOSE_MAX_RETRIES" ] \
+    || fail "the unknown counter did not reach the bound"
+  staleness_focus_guard_blocks_reap "sess:w1:p2" task-x gracekey "$fs" \
+    || fail "an unreadable pane focused within the grace window was wrongly reaped at the bound"
+  pass "the unknown fall-through keeps blocking at the bound while the within-grace focus marker is fresh"
+)
+
+# Convergence guarantee (b): once the focus marker has aged past the grace window, a
+# pane that then goes persistently unreadable and reaches the bound DOES fall through
+# to reap. The unknown fall-through shares the unfocused branch's single recency rule
+# (reap only when neither focused now nor focused within the grace window), so a
+# stale focus can no longer spare a dead pane forever. Driven through the real reader.
+test_focus_guard_unknown_aged_marker_reaps_at_bound() (
+  local dir state fs i
+  dir=$(make_case focus-guard-unknown-aged); state="$dir/state"
+  source_watch "$state"
+  STALENESS_AUTOCLOSE_MAX_RETRIES=3
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/backends/herdr.sh"
+  _FM_BACKEND_HERDR_SOURCED=1
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { printf '%s\n' "$AGED_JSON"; }
+  # A focused poll stamps recency, then that marker is aged past the grace window.
+  AGED_JSON='{"result":{"pane":{"pane_id":"p2","tab_id":"t1","workspace_id":"w1","focused":true}}}'
+  fs=$(staleness_focus_stamp "sess:w1:p2" agedkey)
+  [ "$fs" = focused ] || fail "the focused poll did not surface as focused"
+  set_mtime "$(( $(date +%s) - (STALENESS_FOCUS_GRACE_SECS + 100) ))" "$state/.focus-agedkey"
+  # The pane then goes persistently unreadable and reaches the bound.
+  AGED_JSON='{"result":{}}'
+  i=0
+  while [ "$i" -lt "$STALENESS_AUTOCLOSE_MAX_RETRIES" ]; do
+    fs=$(staleness_focus_stamp "sess:w1:p2" agedkey)
+    [ "$fs" = unknown ] || fail "the unreadable poll did not surface as unknown"
+    i=$(( i + 1 ))
+  done
+  if staleness_focus_guard_blocks_reap "sess:w1:p2" task-x agedkey "$fs"; then
+    fail "a dead pane whose focus marker aged past the grace window was wrongly blocked at the bound"
+  fi
+  pass "the unknown fall-through reaps at the bound once the focus marker has aged past the grace window"
+)
+
 # The stamp records recency ONLY on a real observed focus, so an unfocused pane
 # never fabricates a fresh last-focus that would spare it forever.
 test_focus_stamp_only_records_real_focus() (
@@ -2515,6 +2588,8 @@ test_focus_guard_blocks_on_unreadable_focus
 test_focus_guard_bounds_persistent_unknown
 test_focus_guard_unknown_reset_by_focused
 test_focus_guard_unknown_reset_by_unfocused
+test_focus_guard_unknown_within_grace_stays_blocked
+test_focus_guard_unknown_aged_marker_reaps_at_bound
 test_focus_stamp_only_records_real_focus
 test_dead_window_sweep_delegates_for_confidently_dead_ship
 test_dead_window_sweep_skips_live_ship
