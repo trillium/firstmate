@@ -318,6 +318,41 @@ fm_send_resolve_target "$RAW_TARGET" || exit 1
 T=$RESOLVED_TARGET
 shift
 
+# Collect --resolve-key flags (answerer-closes; see the header contract). They
+# must precede --key or the message text; everything after the last flag is the
+# message exactly as before, so ordinary sends are byte-identical.
+RESOLVE_KEYS=
+fm_send_add_resolve_key() {  # <key>
+  local k=$1
+  case "$k" in
+    ''|*[!A-Za-z0-9._-]*)
+      echo "error: --resolve-key '$k' is not a valid decision key (allowed: A-Z a-z 0-9 . _ -)" >&2
+      return 1
+      ;;
+  esac
+  case " $RESOLVE_KEYS " in
+    *" $k "*)
+      echo "error: duplicate --resolve-key '$k'" >&2
+      return 1
+      ;;
+  esac
+  RESOLVE_KEYS="${RESOLVE_KEYS}${RESOLVE_KEYS:+ }$k"
+}
+while :; do
+  case "${1:-}" in
+    --resolve-key)
+      [ $# -ge 2 ] || { echo "error: --resolve-key requires a key" >&2; exit 1; }
+      fm_send_add_resolve_key "$2" || exit 1
+      shift 2
+      ;;
+    --resolve-key=*)
+      fm_send_add_resolve_key "${1#--resolve-key=}" || exit 1
+      shift
+      ;;
+    *) break ;;
+  esac
+done
+
 # Raw/unmanaged pane escape hatch: best-effort literal send + Enter with no
 # submit verification and no from-firstmate marking (see header). Parsed here so
 # it precedes both the --key branch and the verified text path.
@@ -433,6 +468,9 @@ if [ "${1:-}" = "--key" ]; then
   fm_send_record_interrupt "$semantic_key" || exit 1
 else
   MESSAGE=$*
+  # The pre-marker answer text, kept for the closing resolved note so the
+  # durable ledger records the plain answer without marker or corr bytes.
+  RESOLVE_ANSWER_TEXT=$MESSAGE
   if [ "$RAW_MODE" = 1 ]; then
     # Best-effort escape hatch: issue the backend's atomic type-then-Enter with
     # no submit verification and no marker. A zero exit proves only that the send

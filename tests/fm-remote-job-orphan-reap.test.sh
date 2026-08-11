@@ -89,7 +89,20 @@ start_worker() {
     # shellcheck source=bin/fm-remote-job-lib.sh
     . "$ROOT/bin/fm-remote-job-lib.sh"
     fm_remote_job_start_linux_worker "$root" "$account_home" >&2 || exit 1
-    pgrep -f "^/bin/bash $root/bin/fm-remote-job-worker.sh\$" | head -n 1
+    # The library backgrounds the worker and returns before the nohup/env chain
+    # has necessarily exec'd into "/bin/bash <worker>". On a loaded host (a CI
+    # runner reading /proc as the exec still resolves) that morph can lag a
+    # single immediate read, so poll for the supervisor to surface rather than
+    # racing it - a miss here is a timing artifact, not an unstarted worker.
+    found=''
+    deadline=$(( $(date +%s) + 10 ))
+    while :; do
+      found=$(pgrep -f "^/bin/bash $root/bin/fm-remote-job-worker.sh\$" | head -n 1)
+      [ -z "$found" ] || break
+      [ "$(date +%s)" -lt "$deadline" ] || break
+      sleep 0.1
+    done
+    printf '%s\n' "$found"
   ) || return 1
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   printf '%s\n' "$pid"

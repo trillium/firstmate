@@ -125,26 +125,57 @@ resolve_permissive_tmux_kill_ref() {
   return 1
 }
 
+# A genuinely historical bin/fm-send.sh that still defines RESOLVE_KEYS (the
+# fork's --resolve-key handling), content-addressed from first-parent history so
+# the conformance baseline is a correct pre-bug fm-send even when merge-base with
+# main is the broken/self-referential reconcile commit that dropped RESOLVE_KEYS -
+# which would otherwise crash the "old" fixture with 'RESOLVE_KEYS: unbound
+# variable'.
+#
+# Picking the newest RESOLVE_KEYS commit would be wrong here: this branch RESTORED
+# RESOLVE_KEYS, so the newest such commit is HEAD's own fm-send.sh, and overlaying
+# that onto the old fixture collapses the old-vs-new conformance diff into a
+# current-vs-current tautology. Instead, walk first-parent from HEAD newest-first,
+# skip the leading run of RESOLVE_KEYS commits (this branch's restoration), and
+# accept the first RESOLVE_KEYS commit that appears AFTER a commit which dropped
+# it. That is the fork's pre-reconcile fm-send - a real historical baseline that a
+# behavioral regression in the current fm-send.sh would diverge from - and it is
+# resolved the same way regardless of where the local main ref points. This
+# differs from resolve_permissive_tmux_kill_ref, whose target property the current
+# code no longer has, so its newest match is already historical.
+resolve_correct_fm_send_ref() {
+  local commit body seen_drop=0
+  while IFS= read -r commit; do
+    [ -n "$commit" ] || continue
+    body=$(git -C "$ROOT" show "$commit:bin/fm-send.sh" 2>/dev/null) || continue
+    # shellcheck disable=SC2016
+    case "$body" in
+      *'RESOLVE_KEYS='*)
+        if [ "$seen_drop" -eq 1 ]; then
+          printf '%s\n' "$commit"
+          return 0
+        fi
+        ;;
+      *)
+        seen_drop=1
+        ;;
+    esac
+  done < <(git -C "$ROOT" log --first-parent --format='%H' HEAD -- bin/fm-send.sh)
+  return 1
+}
+
 # --- shared: a pre-refactor bin/ shim --------------------------------------
 #
-# build_old_bin echoes a directory whose bin/ subdir holds the PRE-REFACTOR
-# fm-send.sh, fm-peek.sh, fm-watch.sh, fm-spawn.sh, fm-teardown.sh, and any
-# changed source-library dependency (all extracted from BASE_REF), plus copies
-# of every OTHER sibling script those five entrypoints source, so those copies are exactly
-# what BASE_REF would have used too. Copies keep BASH_SOURCE-based sibling
-# resolution inside the synthetic tree on both macOS and Linux; symlinks make
-# that resolution shell/platform-dependent. FM_ROOT_OVERRIDE pointed at this dir's
-# root makes "$FM_ROOT/bin/fm-project-mode.sh" (etc.) resolve correctly.
-# fm-backend.sh (and its bin/backends/ adapters) is the dispatcher every one
-# of the five REFACTORED scripts sources; it must be a real, reachable file in
-# the old bin/ too or `. "$SCRIPT_DIR/fm-backend.sh"` aborts under set -eu -
-# hence the dispatcher is a copied sibling, while the tmux adapter is extracted
-# from BASE_REF so conformance tests retain the exact historical behavior even
-# when this branch changes tmux dispatch semantics.
-OLD_BIN_UNCHANGED_SIBLINGS="fm-gate-refuse-lib.sh fm-guard.sh fm-lock-lib.sh fm-tasks-axi-lib.sh fm-pr-lib.sh fm-tangle-lib.sh fm-tmux-lib.sh fm-composer-lib.sh fm-wake-lib.sh fm-classify-lib.sh fm-supervision-lib.sh fm-ff-lib.sh fm-config-inherit-lib.sh fm-project-mode.sh fm-harness.sh fm-crew-state.sh fm-nm-run-lib.sh fm-decision-hold.sh fm-backend.sh fm-operational-input.sh fm-public-followup-lib.sh fm-secondmate-registry-lib.sh fm-secondmate-parent-lib.sh fm-x-lib.sh"
-# A pull-request merge may add a new main-only dependency that the branch's older baseline does not have yet.
-OLD_BIN_OPTIONAL_SIBLINGS="fm-pending-reply-lib.sh fm-beads-resilience-lib.sh"
-OLD_BIN_REFACTORED="fm-send.sh fm-peek.sh fm-watch.sh fm-spawn.sh fm-teardown.sh fm-marker-lib.sh"
+# build_old_bin echoes a directory whose bin/ subdir is the complete bin/ tree
+# from BASE_REF.
+# Materializing the whole historical tree keeps every entrypoint and sourced
+# sibling on the same revision, while avoiding a hand-maintained dependency
+# list that can omit a newly sourced helper and make the old process abort
+# before it reaches the behavior under test.
+# FM_ROOT_OVERRIDE pointed at this dir's root makes
+# "$FM_ROOT/bin/fm-project-mode.sh" (etc.) resolve correctly.
+# The teardown conformance case applies its explicitly historical tmux adapter
+# after this complete baseline has been materialized.
 
 build_old_bin() {  # <name> -> echoes root dir (root/bin/<script> is the entry point)
   local name=$1 root archive
@@ -681,8 +712,18 @@ strip_send_preflight() {  # <log>
 }
 
 test_send_conformance_old_vs_new() {
-  local old_bin fb log_old log_new home rc_old rc_new filtered_old filtered_new
+  local old_bin fb log_old log_new home rc_old rc_new filtered_old filtered_new send_ref
   old_bin=$(build_old_bin send-old)
+  # The materialized old bin/ comes from BASE_REF = merge-base(HEAD, main),
+  # which on this bug-fix branch and on CI is the broken reconcile commit whose
+  # fm-send.sh dropped RESOLVE_KEYS and crashes with 'RESOLVE_KEYS: unbound
+  # variable'. Overlay a genuinely historical, correct fm-send.sh so the "old"
+  # fixture reflects pre-bug fork behavior, mirroring the teardown-conformance
+  # case's historical tmux adapter overlay.
+  send_ref=$(resolve_correct_fm_send_ref) \
+    || fail "no historical fm-send.sh with RESOLVE_KEYS found for conformance baseline"
+  git -C "$ROOT" show "$send_ref:bin/fm-send.sh" > "$old_bin/bin/fm-send.sh" \
+    || fail "could not overlay historical fm-send.sh"
   fb=$(make_send_fakebin "$TMP_ROOT/send-fake")
   home="$TMP_ROOT/send-home"; mkdir -p "$home/state"
   log_old="$TMP_ROOT/send-old.log"; log_new="$TMP_ROOT/send-new.log"
