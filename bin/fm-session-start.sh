@@ -35,7 +35,7 @@
 #                       reconcile [beads backend only], secondmate convergence,
 #                       secondmate liveness, pending remote handoff retry,
 #                       X-mode artifact writes, fleet sync) also run only when
-#                       locked; the four network sweeps run in the deferred
+#                       locked; the five network sweeps run in the deferred
 #                       stage rather than this synchronous bootstrap section.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
