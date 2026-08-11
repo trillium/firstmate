@@ -383,7 +383,7 @@ A teardown refusal for uncommitted or unlanded work is a stop-and-investigate re
 Never force teardown without explicit discard authority.
 After successful teardown, record completion, retain only the configured recent Done history, and re-evaluate queued work whose blockers and time gates have cleared.
 
-The watcher also reclaims a ship task's live process on its own once its window has sat idle past the configured staleness threshold (default two hours) and the crew is not provably working, parked at a captain-relevant gate, or a pane the captain is actively or recently viewing.
+The watcher also reclaims a ship task's live process on its own once its window has sat idle past the configured staleness threshold (default two hours), unless the crew is provably working, the crew is parked at a captain-relevant gate, or the pane is being actively or recently viewed by the captain.
 Landed work gets the ordinary full teardown above; unlanded work only has its runtime endpoint reclaimed and a triage record filed, leaving the worktree, branch, and every uncommitted change untouched for later deliberate triage.
 Treat a task whose endpoint has gone quiet with no captain-facing wake as a possible automatic reclaim rather than a crash; the filed staleness bead (or, if filing failed, `state/<id>.staleness-unfiled`), the preserved worktree and branch, and `state/.staleness-autoclose.log` still hold the evidence.
 

@@ -1496,6 +1496,24 @@ test_focus_guard_allows_stale_unfocused_pane() (
   pass "an unfocused pane whose last focus is older than the grace window is allowed to reclaim"
 )
 
+# malformed grace override: a non-numeric FM_STALENESS_FOCUS_GRACE_SECS must not
+# reach the guard's integer age comparison (which would error and drop the
+# protection). The load-time sanitize reverts it to the shipped 300 default, and a
+# pane focused within that default window is still blocked from the reclaim.
+test_focus_guard_malformed_grace_falls_back_to_default() (
+  local dir state
+  dir=$(make_case focus-guard-badgrace); state="$dir/state"
+  FM_STALENESS_FOCUS_GRACE_SECS='not-a-number'
+  export FM_STALENESS_FOCUS_GRACE_SECS
+  source_watch "$state"
+  [ "$STALENESS_FOCUS_GRACE_SECS" = 300 ] \
+    || fail "a non-numeric grace override did not fall back to the 300s default"
+  : > "$state/.focus-badkey"   # fresh: age ~0 < the restored 300s default
+  staleness_focus_guard_blocks_reap "sess:w1:p2" task-x badkey unfocused \
+    || fail "a within-grace pane was not protected after the grace override fell back to default"
+  pass "a malformed grace override reverts to 300 and the guard still protects a within-grace pane"
+)
+
 # non-herdr backend: no focus concept, so the stamp reports na and the guard is a
 # pure no-op that allows the reclaim (the P1 tmux backend and every other one).
 test_focus_guard_allows_non_herdr_backend() (
@@ -2582,6 +2600,7 @@ test_herdr_pane_focus_state_classifies_boolean
 test_focus_guard_blocks_focused_pane
 test_focus_guard_blocks_recently_focused_pane
 test_focus_guard_allows_stale_unfocused_pane
+test_focus_guard_malformed_grace_falls_back_to_default
 test_focus_guard_allows_non_herdr_backend
 test_focus_guard_capability_gated_pair
 test_focus_guard_blocks_on_unreadable_focus

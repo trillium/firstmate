@@ -175,8 +175,12 @@ STALENESS_AUTOCLOSE_RETRY_MAX_SECS=${FM_STALENESS_AUTOCLOSE_RETRY_MAX_SECS:-3600
 # candidate is seen focused - not only past the 2h threshold - so the window is
 # already accurate the instant the pane crosses it; staleness_focus_guard_blocks_reap
 # then ages that marker against this window. Tunable for a captain who wants a
-# longer/shorter courtesy grace; default 5 min.
+# longer/shorter courtesy grace; default 5 min. A malformed override (non-numeric
+# or empty) would break the guard's integer age comparison below and silently drop
+# the reclaim protection, so reject anything that is not all-digits and fall back to
+# the shipped default - the same ''|*[!0-9]* sanitize the retry counters use.
 STALENESS_FOCUS_GRACE_SECS=${FM_STALENESS_FOCUS_GRACE_SECS:-300}
+case "$STALENESS_FOCUS_GRACE_SECS" in ''|*[!0-9]*) STALENESS_FOCUS_GRACE_SECS=300 ;; esac
 # FM_TEARDOWN_BIN lets tests stub the reclaim call, matching the
 # FM_CREW_STATE_BIN seam in bin/fm-classify-lib.sh.
 FM_TEARDOWN_BIN="${FM_TEARDOWN_BIN:-$SCRIPT_DIR/fm-teardown.sh}"
