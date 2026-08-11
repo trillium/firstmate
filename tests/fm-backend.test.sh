@@ -125,6 +125,29 @@ resolve_permissive_tmux_kill_ref() {
   return 1
 }
 
+# Newest first-parent revision whose bin/fm-send.sh still defines RESOLVE_KEYS
+# (the fork's --resolve-key handling). Content-addressed from history so the
+# conformance baseline stays a genuinely correct fm-send even when merge-base
+# with main is the broken/self-referential commit that the upstream reconcile
+# merge left without RESOLVE_KEYS - which would otherwise crash the "old"
+# fixture with 'RESOLVE_KEYS: unbound variable'. Mirrors
+# resolve_permissive_tmux_kill_ref.
+resolve_correct_fm_send_ref() {
+  local commit body
+  while IFS= read -r commit; do
+    [ -n "$commit" ] || continue
+    body=$(git -C "$ROOT" show "$commit:bin/fm-send.sh" 2>/dev/null) || continue
+    # shellcheck disable=SC2016
+    case "$body" in
+      *'RESOLVE_KEYS='*)
+        printf '%s\n' "$commit"
+        return 0
+        ;;
+    esac
+  done < <(git -C "$ROOT" log --first-parent --format='%H' HEAD -- bin/fm-send.sh)
+  return 1
+}
+
 # --- shared: a pre-refactor bin/ shim --------------------------------------
 #
 # build_old_bin echoes a directory whose bin/ subdir is the complete bin/ tree
@@ -673,8 +696,18 @@ strip_send_preflight() {  # <log>
 }
 
 test_send_conformance_old_vs_new() {
-  local old_bin fb log_old log_new home rc_old rc_new filtered_old filtered_new
+  local old_bin fb log_old log_new home rc_old rc_new filtered_old filtered_new send_ref
   old_bin=$(build_old_bin send-old)
+  # The materialized old bin/ comes from BASE_REF = merge-base(HEAD, main),
+  # which on this bug-fix branch and on CI is the broken reconcile commit whose
+  # fm-send.sh dropped RESOLVE_KEYS and crashes with 'RESOLVE_KEYS: unbound
+  # variable'. Overlay a genuinely historical, correct fm-send.sh so the "old"
+  # fixture reflects pre-bug fork behavior, mirroring the teardown-conformance
+  # case's historical tmux adapter overlay.
+  send_ref=$(resolve_correct_fm_send_ref) \
+    || fail "no historical fm-send.sh with RESOLVE_KEYS found for conformance baseline"
+  git -C "$ROOT" show "$send_ref:bin/fm-send.sh" > "$old_bin/bin/fm-send.sh" \
+    || fail "could not overlay historical fm-send.sh"
   fb=$(make_send_fakebin "$TMP_ROOT/send-fake")
   home="$TMP_ROOT/send-home"; mkdir -p "$home/state"
   log_old="$TMP_ROOT/send-old.log"; log_new="$TMP_ROOT/send-new.log"
