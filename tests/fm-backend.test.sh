@@ -125,23 +125,39 @@ resolve_permissive_tmux_kill_ref() {
   return 1
 }
 
-# Newest first-parent revision whose bin/fm-send.sh still defines RESOLVE_KEYS
-# (the fork's --resolve-key handling). Content-addressed from history so the
-# conformance baseline stays a genuinely correct fm-send even when merge-base
-# with main is the broken/self-referential commit that the upstream reconcile
-# merge left without RESOLVE_KEYS - which would otherwise crash the "old"
-# fixture with 'RESOLVE_KEYS: unbound variable'. Mirrors
-# resolve_permissive_tmux_kill_ref.
+# A genuinely historical bin/fm-send.sh that still defines RESOLVE_KEYS (the
+# fork's --resolve-key handling), content-addressed from first-parent history so
+# the conformance baseline is a correct pre-bug fm-send even when merge-base with
+# main is the broken/self-referential reconcile commit that dropped RESOLVE_KEYS -
+# which would otherwise crash the "old" fixture with 'RESOLVE_KEYS: unbound
+# variable'.
+#
+# Picking the newest RESOLVE_KEYS commit would be wrong here: this branch RESTORED
+# RESOLVE_KEYS, so the newest such commit is HEAD's own fm-send.sh, and overlaying
+# that onto the old fixture collapses the old-vs-new conformance diff into a
+# current-vs-current tautology. Instead, walk first-parent from HEAD newest-first,
+# skip the leading run of RESOLVE_KEYS commits (this branch's restoration), and
+# accept the first RESOLVE_KEYS commit that appears AFTER a commit which dropped
+# it. That is the fork's pre-reconcile fm-send - a real historical baseline that a
+# behavioral regression in the current fm-send.sh would diverge from - and it is
+# resolved the same way regardless of where the local main ref points. This
+# differs from resolve_permissive_tmux_kill_ref, whose target property the current
+# code no longer has, so its newest match is already historical.
 resolve_correct_fm_send_ref() {
-  local commit body
+  local commit body seen_drop=0
   while IFS= read -r commit; do
     [ -n "$commit" ] || continue
     body=$(git -C "$ROOT" show "$commit:bin/fm-send.sh" 2>/dev/null) || continue
     # shellcheck disable=SC2016
     case "$body" in
       *'RESOLVE_KEYS='*)
-        printf '%s\n' "$commit"
-        return 0
+        if [ "$seen_drop" -eq 1 ]; then
+          printf '%s\n' "$commit"
+          return 0
+        fi
+        ;;
+      *)
+        seen_drop=1
         ;;
     esac
   done < <(git -C "$ROOT" log --first-parent --format='%H' HEAD -- bin/fm-send.sh)

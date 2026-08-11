@@ -173,11 +173,18 @@ network_phase() { [ "$FM_BOOTSTRAP_NETWORK_PHASE" != skip ]; }
 # lock to a fresh worker. Before any mutating sweep, re-confirm this process still
 # owns the lock it started under (FM_BOOTSTRAP_NETWORK_LOCK_PID matches the live
 # STATE/.lock); a stale worker skips the sweep loudly rather than mutating shared
-# state behind the current lock holder's back. An unset expectation authorizes
-# (single-phase runs never hand off).
+# state behind the current lock holder's back.
+#
+# A single-phase run (phase "all") performs the sweeps inline in the same process
+# that already holds the session-start lock, so no handoff and no staleness is
+# possible and it is authorized without a PID expectation. Only the deferred
+# network-only worker can go stale, and it is spawned with an explicit
+# FM_BOOTSTRAP_NETWORK_LOCK_PID; a deferred worker with a missing or unverifiable
+# owner is refused rather than authorized, so the guard never fails open.
 network_mutation_authorized() {
   local expected=${FM_BOOTSTRAP_NETWORK_LOCK_PID:-} current
-  [ -n "$expected" ] || return 0
+  local_phase && return 0
+  [ -n "$expected" ] || return 1
   case "$expected" in *[!0-9]*) return 1 ;; esac
   [ -f "$STATE/.lock" ] && [ ! -L "$STATE/.lock" ] || return 1
   current=$(cat "$STATE/.lock" 2>/dev/null) || return 1
@@ -1210,35 +1217,42 @@ crew=
 if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != "default" ]; then
   echo "BOOTSTRAP_INFO: crew harness override active: $crew"
 fi
-crew_dispatch_validate
+# crew_dispatch_validate and the backlog-backend validation below emit local
+# diagnostics only, so they are gated on local_phase; the network-only deferred
+# worker (FM_BOOTSTRAP_NETWORK=only) must not re-emit them in its NETWORK CHECKS
+# output. backlog_backend itself stays unconditional because the deferred worker
+# reads it for the beads write-queue reconcile further down.
+local_phase && crew_dispatch_validate
 backlog_backend=$(fm_backlog_backend_value "$CONFIG")
-case "$backlog_backend" in
-  beads)
-    if ! command -v task >/dev/null 2>&1; then
-      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
-        echo "DEGRADED: task CLI not found (beads store; install: $(install_cmd task)); using local mirror from $mirror_iso until it is"
-      else
-        echo "MISSING: task CLI (beads store; install: $(install_cmd task))"
+if local_phase; then
+  case "$backlog_backend" in
+    beads)
+      if ! command -v task >/dev/null 2>&1; then
+        if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+          echo "DEGRADED: task CLI not found (beads store; install: $(install_cmd task)); using local mirror from $mirror_iso until it is"
+        else
+          echo "MISSING: task CLI (beads store; install: $(install_cmd task))"
+        fi
+      elif ! task list --limit 1 >/dev/null 2>&1; then
+        if mirror_iso=$(fm_beads_mirror_freshest_iso); then
+          echo "DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from $mirror_iso until it is"
+        else
+          echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list'), and no usable local mirror"
+        fi
+      elif [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
+        echo "BOOTSTRAP_INFO: beads task store available"
       fi
-    elif ! task list --limit 1 >/dev/null 2>&1; then
-      if mirror_iso=$(fm_beads_mirror_freshest_iso); then
-        echo "DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from $mirror_iso until it is"
-      else
-        echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list'), and no usable local mirror"
+      ;;
+    manual)
+      : # manual backend requires no validation
+      ;;
+    *)
+      if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && fm_tasks_axi_compatible; then
+        echo "BOOTSTRAP_INFO: tasks-axi available"
       fi
-    elif [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
-      echo "BOOTSTRAP_INFO: beads task store available"
-    fi
-    ;;
-  manual)
-    : # manual backend requires no validation
-    ;;
-  *)
-    if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && fm_tasks_axi_compatible; then
-      echo "BOOTSTRAP_INFO: tasks-axi available"
-    fi
-    ;;
-esac
+      ;;
+  esac
+fi
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   if [ "$backlog_backend" = beads ]; then
     fm_beads_write_queue_reconcile
