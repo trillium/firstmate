@@ -41,26 +41,33 @@
 #                       when locked.
 #   4. supervision-instructions - the one emitted operating block for the
 #                       detected primary harness, after the wake queue and
-#                       before persona and context.
-#   5. persona        - the active persona file (config/persona.md local
-#                       override, else tracked persona.md): read-only, always
-#                       safe, always runs (including on lock refusal), and
-#                       prints early - before the context and fleet-state
-#                       digests - so the captain-facing voice is reliably
-#                       in force.
-#   6. context digest - data/projects.md, data/secondmates.md, data/captain.md,
-#                       data/captain-shared.md, data/learnings.md: read-only,
-#                       always safe, always runs.
-#   7. fleet digest   - a compact data/backlog.md identity/metadata listing,
+#                       before the read-once contract and the digests.
+#   5. read-once      - the read-once contract, printed ahead of the two digests
+#                       it governs so the next turn does not re-read everything
+#                       the digest just printed: read-only, always runs.
+#   6. fleet-state    - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
-#                       read-only, always runs.
-#   8. closing reminder - prints the context-specific watcher next step; this
+#                       read-only, always runs, and prints before persona and
+#                       context.
+#   7. network-checks - the deferred non-blocking harvest of the four network
+#                       sweeps (GitHub auth, project clone refresh, secondmate
+#                       liveness and convergence, pending handoff delivery);
+#                       whatever the worker has published by now is printed and
+#                       the rest is named as not yet confirmed.
+#   8. persona        - the active persona file (config/persona.md local
+#                       override, else tracked persona.md): read-only, always
+#                       safe, always runs (including on lock refusal), so the
+#                       captain-facing voice is reliably in force.
+#   9. context digest - data/projects.md, data/secondmates.md, data/captain.md,
+#                       data/captain-shared.md, data/learnings.md: read-only,
+#                       always safe, always runs.
+#  10. closing reminder - prints the context-specific watcher next step; this
 #                       script points back to the emitted harness supervision
 #                       block (step 4) and deliberately never arms the watcher
 #                       itself.
 #
-# Those eight names are also the runtime-bound stage list below, so a truncated
+# Those ten names are also the runtime-bound stage list below, so a truncated
 # startup can name exactly which of them never ran.
 #
 # NO NETWORK ON THE BLOCKING PATH. This digest runs on a session-open hook that
@@ -138,8 +145,9 @@
 #     FM_SESSION_START_QUEUED_LIMIT, default 20. Anything it omits is disclosed
 #     with an exact remainder count and the command that shows the rest, so a
 #     deep queue costs a counter rather than kilobytes.
-#     (This replaces FM_SESSION_START_BACKLOG_LIMIT, which bounded the whole
-#     listing indiscriminately and so could drop a held or blocked row.)
+#     (FM_SESSION_START_BACKLOG_LIMIT, default 80, still lives and bounds the
+#     beads-backend compact listing sections, while FM_SESSION_START_QUEUED_LIMIT
+#     bounds only this plain queued listing.)
 # When compatible tasks-axi is selected and available, the shared tasks-axi
 # backend probe remains the compatibility owner and this script asks
 # `tasks-axi list` for the compact identity fields plus blocked_by, hold_kind,
@@ -232,7 +240,7 @@ done
 # The ordered stage list is the contract behind the truncation banner: the child
 # names the stage it is entering, and the parent reports every stage at or after
 # that one as never emitted. Keep it in the exact order the digest prints.
-SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions persona context fleet-state next-step'
+SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions read-once fleet-state network-checks persona context next-step'
 
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${FM_SESSION_START_STAGE_FILE:-}" ] || return 0
