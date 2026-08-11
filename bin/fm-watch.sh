@@ -151,11 +151,13 @@ STALE_ESCALATE_SECS=${FM_STALE_ESCALATE_SECS:-240}  # idle secs before a provabl
 # reclaiming wasted idle compute matters most while nobody is watching it - and
 # bin/fm-teardown.sh's own landed-check still guarantees unlanded work is only
 # ever chat-reclaimed (worktree, branch, and uncommitted changes preserved),
-# never force-discarded, regardless of afk state. A ship task the captain is
-# actively reading/typing at (a done: pane in live human review) is the one idle
-# pane that must NOT be reclaimed out from under them: it too shows zero
-# content churn, so staleness_focus_guard_blocks_reap gates the reclaim on the
-# pane's live human-focus signal - see STALENESS_FOCUS_GRACE_SECS below.
+# never force-discarded, regardless of afk state. A reap-candidate pane the
+# captain is actively reading/scrolling in herdr (a non-captain-relevant idle
+# pane such as a quiet working:/resolved: pane whose crew looks finished but the
+# captain is still reviewing it) is the one idle pane that must NOT be reclaimed
+# out from under them: it too shows zero content churn, so
+# staleness_focus_guard_blocks_reap gates the reclaim on the pane's live
+# human-focus signal - see STALENESS_FOCUS_GRACE_SECS below.
 STALENESS_AUTOCLOSE_SECS=${FM_STALENESS_AUTOCLOSE_SECS:-7200}
 # A reclaim call that keeps failing (a broken FM_TEARDOWN_BIN, a wedged
 # git/teardown dependency) must not retry silently forever: bounded attempts
@@ -167,8 +169,8 @@ STALENESS_AUTOCLOSE_RETRY_BASE_SECS=${FM_STALENESS_AUTOCLOSE_RETRY_BASE_SECS:-30
 STALENESS_AUTOCLOSE_RETRY_MAX_SECS=${FM_STALENESS_AUTOCLOSE_RETRY_MAX_SECS:-3600}
 # Human-conversation guard for the reclaim above. A currently-focused pane blocks
 # the reclaim outright; a pane focused within this many seconds also blocks it, so
-# a captain who glances away from a done: pane mid-review does not lose it in the
-# gap. Focus history is not queryable in herdr (only the current boolean is), so
+# a captain who glances away from a quiet working:/resolved: pane mid-review does
+# not lose it in the gap. Focus history is not queryable in herdr (only the current boolean is), so
 # staleness_focus_stamp touches state/.focus-<key> on every poll an idle ship
 # candidate is seen focused - not only past the 2h threshold - so the window is
 # already accurate the instant the pane crosses it; staleness_focus_guard_blocks_reap
