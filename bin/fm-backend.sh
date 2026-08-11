@@ -851,15 +851,17 @@ fm_backend_busy_state() {  # <backend> <target>
   esac
 }
 
-# fm_backend_pane_focus_state: focused|unfocused|unknown live human-focus of
-# <target>'s pane, for backends that expose a focus signal (herdr - focus is a
-# per-pane boolean in its socket API). Backends with no focus concept (tmux and
-# every other pane multiplexer here) report unknown, so a focus-unaware backend
-# is indistinguishable to the caller from a failed read; the sole caller that
-# needs the distinction (bin/fm-watch.sh's idle>2h staleness auto-close guard)
-# gates on backend=herdr itself before treating unknown as a failed read. This is
+# fm_backend_pane_focus_state: focused|unfocused|unsupported|unknown live
+# human-focus of <target>'s pane, for backends that expose a focus signal (herdr -
+# focus is a per-pane boolean in its socket API). A herdr build that structurally
+# never reports pane focus surfaces as `unsupported` (distinct from a failed read);
+# every non-herdr backend has no focus concept and reports unknown, so a
+# focus-unaware backend is indistinguishable to the caller from a failed read. The
+# sole caller that needs these distinctions (bin/fm-watch.sh's idle>2h staleness
+# auto-close guard) gates on backend=herdr itself before treating unknown as a
+# failed read, and treats `unsupported` like a focus-unaware backend. This is
 # strictly read-only: it never focuses, starts a server, or otherwise mutates.
-fm_backend_pane_focus_state() {  # <backend> <target> -> focused|unfocused|unknown
+fm_backend_pane_focus_state() {  # <backend> <target> -> focused|unfocused|unsupported|unknown
   local backend=$1
   shift
   fm_backend_source "$backend" || { printf 'unknown'; return 0; }

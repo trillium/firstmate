@@ -411,10 +411,10 @@ staleness_autoclose_reclaim() {  # <window> <task> <hash-file>
 # only past the 2h threshold - because herdr exposes no queryable focus history:
 # the marker IS that history, and it must already be accurate the instant the
 # pane crosses the threshold. Echoes the read focus state (focused|unfocused|
-# unknown) for the guard to reuse, or "na" on a focus-unaware backend (tmux et
-# al.) so a single read serves both stamp and guard. Strictly read-only against
-# the backend; the only write is the local marker touch.
-staleness_focus_stamp() {  # <window> <key> -> focused|unfocused|unknown|na
+# unsupported|unknown) for the guard to reuse, or "na" on a focus-unaware backend
+# (tmux et al.) so a single read serves both stamp and guard. Strictly read-only
+# against the backend; the only write is the local marker touch.
+staleness_focus_stamp() {  # <window> <key> -> focused|unfocused|unsupported|unknown|na
   local w=$1 key=$2 fstate
   [ "$(window_backend "$w")" = herdr ] || { printf 'na'; return 0; }
   fstate=$(fm_backend_pane_focus_state herdr "$w" 2>/dev/null) || fstate=unknown
@@ -426,19 +426,21 @@ staleness_focus_stamp() {  # <window> <key> -> focused|unfocused|unknown|na
 # cycle) when a human is - or was very recently - actively viewing this task's
 # pane; 1 (allow the reclaim) otherwise. The current focus state is read once per
 # poll by staleness_focus_stamp and passed in here, so this is a pure decision
-# with no second backend read. "na" is a focus-unaware backend (tmux et al.):
-# allow the reclaim exactly as before. Otherwise a reclaim is blocked when the
+# with no second backend read. "na" is a focus-unaware backend (tmux et al.) and
+# "unsupported" is a herdr build that structurally cannot report pane focus: both
+# allow the reclaim exactly as before, so a focus-less backend can never
+# permanently wedge the idle>2h auto-close. Otherwise a reclaim is blocked when the
 # pane is currently focused, was focused within STALENESS_FOCUS_GRACE_SECS
 # (state/.focus-<key>, stamped by staleness_focus_stamp on every observed focus),
-# or its focus cannot be read at all (err toward NOT reaping a possibly-watched
-# pane; the watcher retries next cadence). Every blocked reclaim is logged - a
-# silent skip reads as "nothing happened". Never a failure: a focus-blocked skip
-# does not consume the reclaim retry budget.
+# or its focus cannot be read at all (err toward NOT reaping a possibly-watched,
+# focus-capable pane; the watcher retries next cadence). Every blocked reclaim is
+# logged - a silent skip reads as "nothing happened". Never a failure: a
+# focus-blocked skip does not consume the reclaim retry budget.
 staleness_focus_guard_blocks_reap() {  # <window> <task> <key> <focus-state>
   local w=$1 task=$2 key=$3 fstate=$4 mf
   mf="$STATE/.focus-$key"
   case "$fstate" in
-    na)
+    na|unsupported)
       return 1
       ;;
     focused)

@@ -3164,26 +3164,40 @@ fm_backend_herdr_busy_state() {  # <target>
 # pane. Herdr exposes focus as a per-pane boolean (`.result.pane.focused`) in its
 # socket API; there is no queryable last-focus timestamp, so callers that need a
 # recency window reconstruct one themselves from repeated reads of this signal.
-# Prints `focused` or `unfocused` when herdr answers, and `unknown` on any
-# parse/socket/absent-server failure so the caller can err toward safety. Uses
+# The live herdr 0.8.0 `pane get <pane_id>` reply carries `.result.pane` as an
+# object with `focused` (bool) alongside pane_id/tab_id/workspace_id/agent_status.
+# Returns FOUR distinguishable outcomes so the caller can tell a build that
+# structurally cannot report pane focus from one whose focus query merely failed:
+#   focused     - `.result.pane.focused` == true (a human is watching)
+#   unfocused   - `.result.pane.focused` == false
+#   unsupported - `.result.pane` parses as an object but has no `focused` key
+#                 (a herdr build that never exposes pane focus); the caller treats
+#                 this like a focus-unaware backend and does NOT err toward safety,
+#                 so a focus-less build can never permanently wedge the reap
+#   unknown     - any transient/unreadable failure (CLI error, malformed JSON,
+#                 absent `.result.pane`, non-bool `focused`); the caller errs
+#                 toward NOT reaping a possibly-watched, focus-capable pane
+# `has("focused")` (not `// empty`) distinguishes a structurally absent key from a
+# literal `false`, which `//` would collapse into the unknown branch. Uses
 # `parse_target` (not `target_ready`) deliberately: this must never start a server
 # or otherwise mutate herdr state - a missing server is just an unreadable focus
 # (`unknown`), never something to spin up.
-fm_backend_herdr_pane_focus_state() {  # <target> -> focused|unfocused|unknown
+fm_backend_herdr_pane_focus_state() {  # <target> -> focused|unfocused|unsupported|unknown
   local out focused
   fm_backend_herdr_parse_target "$1" || { printf 'unknown'; return 0; }
   out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane get "$FM_BACKEND_HERDR_PANE" 2>/dev/null) \
     || { printf 'unknown'; return 0; }
-  # Read the raw boolean, NOT `.focused // empty`: jq's `//` treats a literal
-  # `false` as empty, so an unfocused pane would collapse to the unknown branch
-  # and the guard would err toward NOT reaping a pane nobody is watching. A
-  # missing field yields `null`, and malformed JSON makes jq exit non-zero
-  # (stderr suppressed), leaving `focused` empty; both fall through to unknown.
-  focused=$(printf '%s' "$out" | jq -r '.result.pane.focused' 2>/dev/null)
+  focused=$(printf '%s' "$out" | jq -r '
+    if (.result.pane | type) == "object" then
+      if (.result.pane | has("focused")) then (.result.pane.focused | tostring)
+      else "unsupported" end
+    else "unknown" end
+  ' 2>/dev/null) || { printf 'unknown'; return 0; }
   case "$focused" in
-    true)  printf 'focused' ;;
-    false) printf 'unfocused' ;;
-    *)     printf 'unknown' ;;
+    true)        printf 'focused' ;;
+    false)       printf 'unfocused' ;;
+    unsupported) printf 'unsupported' ;;
+    *)           printf 'unknown' ;;
   esac
 }
 

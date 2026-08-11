@@ -1400,24 +1400,43 @@ source_watch() {
   . "$ROOT/bin/fm-watch.sh"
 }
 
-# The herdr focus-read classifier: focused|unfocused when herdr answers with the
-# per-pane boolean, unknown on every failure mode (absent field, malformed JSON,
-# CLI error, unparseable target). fm_backend_herdr_cli is stubbed to control the
-# socket reply, exactly as tests elsewhere stub it (fm-herdr-session-cleanup).
+# The herdr focus-read classifier's four outcomes. The live herdr 0.8.0
+# `pane get <pane_id>` reply carries `.result.pane` as an object whose shape is
+# {"pane_id","tab_id","workspace_id","agent_status","focused":<bool>,...}, e.g.
+# {"result":{"pane":{"pane_id":"p1","tab_id":"t1","workspace_id":"w1","focused":true}}};
+# the `focused` boolean is the signal read here. A build that structurally omits
+# the `focused` key (pane object present, no `focused`) is `unsupported` - a
+# distinct outcome from a transient/unreadable failure (`unknown`), so a focus-less
+# herdr can never permanently wedge the reap. focused|unfocused on the boolean,
+# unsupported when the key is structurally absent, unknown on every failure mode
+# (absent pane object, malformed JSON, CLI error, unparseable target).
+# fm_backend_herdr_cli is stubbed to control the socket reply, exactly as tests
+# elsewhere stub it (fm-herdr-session-cleanup).
 test_herdr_pane_focus_state_classifies_boolean() (
   # shellcheck source=/dev/null
   . "$ROOT/bin/backends/herdr.sh"
-  FAKE_JSON='{"result":{"pane":{"focused":true}}}'
+  FAKE_JSON='{"result":{"pane":{"pane_id":"p1","tab_id":"t1","workspace_id":"w1","focused":true}}}'
   # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
   fm_backend_herdr_cli() { printf '%s\n' "$FAKE_JSON"; }
   [ "$(fm_backend_herdr_pane_focus_state s:p1)" = focused ] \
     || fail "a focused pane boolean did not classify as focused"
-  FAKE_JSON='{"result":{"pane":{"focused":false}}}'
+  FAKE_JSON='{"result":{"pane":{"pane_id":"p1","tab_id":"t1","workspace_id":"w1","focused":false}}}'
   [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unfocused ] \
     || fail "an unfocused pane boolean did not classify as unfocused"
-  FAKE_JSON='{"result":{"pane":{}}}'
+  # Structural absence of the focused key (a focus-less herdr build): unsupported,
+  # NOT unknown - the guard must let the reap proceed rather than err toward safety.
+  FAKE_JSON='{"result":{"pane":{"pane_id":"p1","tab_id":"t1","workspace_id":"w1"}}}'
+  [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unsupported ] \
+    || fail "a pane object missing the focused key did not classify as unsupported"
+  # A pane object present but the focused value null is a malformed/transient read,
+  # not a structural absence: err toward safety with unknown.
+  FAKE_JSON='{"result":{"pane":{"focused":null}}}'
   [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unknown ] \
-    || fail "a missing focus field did not fall back to unknown"
+    || fail "a null focused value did not fall back to unknown"
+  # Absent pane object entirely: an unreadable/malformed reply, unknown.
+  FAKE_JSON='{"result":{}}'
+  [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unknown ] \
+    || fail "an absent pane object did not fall back to unknown"
   FAKE_JSON='this is not json'
   [ "$(fm_backend_herdr_pane_focus_state s:p1)" = unknown ] \
     || fail "malformed herdr output did not fall back to unknown"
@@ -1430,7 +1449,7 @@ test_herdr_pane_focus_state_classifies_boolean() (
   fm_backend_herdr_cli() { printf 'SHOULD_NOT_RUN'; return 0; }
   [ "$(fm_backend_herdr_pane_focus_state notarget)" = unknown ] \
     || fail "an unparseable target did not classify as unknown without touching the CLI"
-  pass "herdr focus read classifies the pane boolean and errs to unknown on every failure mode"
+  pass "herdr focus read classifies the four outcomes: focused/unfocused, unsupported on absent key, unknown on failures"
 )
 
 # focused-now: the stamp reports focused and touches the recency marker; the
@@ -1494,6 +1513,48 @@ test_focus_guard_allows_non_herdr_backend() (
     fail "a non-herdr backend wrongly blocked the auto-close reclaim"
   fi
   pass "a focus-unaware backend is a no-op that allows the reclaim exactly as before"
+)
+
+# Capability-gated pair, driven end-to-end through the REAL herdr reader (CLI
+# stubbed to a live-shaped pane get reply), not a stubbed classifier: a herdr
+# build that reports pane focus blocks the reap, and a herdr build that
+# structurally omits the focused key no-ops (reap allowed) - the latter must never
+# be able to permanently wedge the idle>2h auto-close. The live herdr 0.8.0 reply
+# is {"result":{"pane":{"pane_id","tab_id","workspace_id","agent_status","focused":<bool>}}};
+# a build without pane-focus support simply omits the focused key.
+test_focus_guard_capability_gated_pair() (
+  local dir state fs
+  dir=$(make_case focus-guard-capability); state="$dir/state"
+  source_watch "$state"
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/backends/herdr.sh"
+  # Route fm_backend_pane_focus_state herdr through the real reader (skip the
+  # re-source that would clobber the CLI stub) and pin the socket reply.
+  _FM_BACKEND_HERDR_SOURCED=1
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  window_backend() { echo herdr; }
+  # shellcheck disable=SC2329 # invoked indirectly through the sourced watcher/backend functions
+  fm_backend_herdr_cli() { printf '%s\n' "$CAP_JSON"; }
+
+  # WITH focused=true: the reader classifies focused, the stamp marks recency, and
+  # the guard blocks the reap.
+  CAP_JSON='{"result":{"pane":{"pane_id":"p2","tab_id":"t1","workspace_id":"w1","focused":true}}}'
+  fs=$(staleness_focus_stamp "sess:w1:p2" capfocus)
+  [ "$fs" = focused ] || fail "a focus-capable herdr pane did not stamp as focused"
+  [ -e "$state/.focus-capfocus" ] || fail "an observed focus did not touch the recency marker"
+  staleness_focus_guard_blocks_reap "sess:w1:p2" task-x capfocus "$fs" \
+    || fail "a focus-capable, currently-focused herdr pane was not blocked from the reap"
+
+  # WITHOUT the focused key: the reader classifies unsupported, the stamp writes no
+  # marker, and the guard is a pure no-op that allows the reap.
+  CAP_JSON='{"result":{"pane":{"pane_id":"p3","tab_id":"t1","workspace_id":"w1"}}}'
+  fs=$(staleness_focus_stamp "sess:w1:p3" capunsup)
+  [ "$fs" = unsupported ] || fail "a focus-less herdr build did not stamp as unsupported"
+  [ ! -e "$state/.focus-capunsup" ] || fail "an unsupported focus wrongly wrote a recency marker"
+  if staleness_focus_guard_blocks_reap "sess:w1:p3" task-x capunsup "$fs"; then
+    fail "a focus-less herdr build wrongly wedged the auto-close reap"
+  fi
+  pass "capability gate: focus-capable herdr blocks the reap; a focus-less herdr build no-ops and allows it"
 )
 
 # focus read fails/times out: err toward safety - never reap a pane that MIGHT be
@@ -2349,6 +2410,7 @@ test_focus_guard_blocks_focused_pane
 test_focus_guard_blocks_recently_focused_pane
 test_focus_guard_allows_stale_unfocused_pane
 test_focus_guard_allows_non_herdr_backend
+test_focus_guard_capability_gated_pair
 test_focus_guard_blocks_on_unreadable_focus
 test_focus_stamp_only_records_real_focus
 test_dead_window_sweep_delegates_for_confidently_dead_ship
