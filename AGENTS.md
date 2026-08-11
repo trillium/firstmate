@@ -124,7 +124,7 @@ state/               volatile runtime signals; gitignored
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
   .claude-autoarm.lock .claude-autoarm-epoch .claude-autoarm-failure-notified .claude-autoarm-failure-alarmed .turnend-claude-blocks .turnend-claude-blocks.lock   Claude Stop auto-arm single-flight, epoch, failure-episode, attended-alarm, guard-budget, and budget-lock records; never touch
-  .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak .staleness-fails-* .staleness-next-* .staleness-working-*   watcher internals; never touch
+  .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak .staleness-fails-* .staleness-next-* .staleness-working-* .focus-*   watcher internals; never touch
   .staleness-autoclose.log  append-only log of the watcher's idle>2h staleness auto-close reclaim attempts against a ship task (bin/fm-teardown.sh --staleness-autoclose); never relied on, safe to delete
   .staleness-autoclose-afk.log  durable evidence of staleness auto-close reclaims made while away; surfaced by /afk return as catch-up evidence, then cleared
   .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
@@ -383,7 +383,7 @@ A teardown refusal for uncommitted or unlanded work is a stop-and-investigate re
 Never force teardown without explicit discard authority.
 After successful teardown, record completion, retain only the configured recent Done history, and re-evaluate queued work whose blockers and time gates have cleared.
 
-The watcher also reclaims a ship task's live process on its own once its window has sat idle past the configured staleness threshold (default two hours) and the crew is not provably working or parked at a captain-relevant gate.
+The watcher also reclaims a ship task's live process on its own once its window has sat idle past the configured staleness threshold (default two hours), unless the crew is provably working, the crew is parked at a captain-relevant gate, or the pane is being actively or recently viewed by the captain.
 Landed work gets the ordinary full teardown above; unlanded work only has its runtime endpoint reclaimed and a triage record filed, leaving the worktree, branch, and every uncommitted change untouched for later deliberate triage.
 Treat a task whose endpoint has gone quiet with no captain-facing wake as a possible automatic reclaim rather than a crash; the filed staleness bead (or, if filing failed, `state/<id>.staleness-unfiled`), the preserved worktree and branch, and `state/.staleness-autoclose.log` still hold the evidence.
 
