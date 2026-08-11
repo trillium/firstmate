@@ -169,6 +169,7 @@ esac
 local_phase() { [ "$FM_BOOTSTRAP_NETWORK_PHASE" != only ]; }
 network_phase() { [ "$FM_BOOTSTRAP_NETWORK_PHASE" != skip ]; }
 
+# shellcheck disable=SC2329 # Invoked indirectly by network_sweep_authorized.
 network_mutation_authorized() {
   local expected=${FM_BOOTSTRAP_NETWORK_LOCK_PID:-} current
   [ -n "$expected" ] || return 0
@@ -178,6 +179,7 @@ network_mutation_authorized() {
   [ "$current" = "$expected" ]
 }
 
+# shellcheck disable=SC2329 # Defined for network phase authorization checks.
 network_sweep_authorized() {
   local label=$1
   if network_mutation_authorized; then
@@ -1162,6 +1164,7 @@ detect_local_tools() {
   fi
 }
 
+# shellcheck disable=SC2329 # Defined for local configuration detection.
 detect_local_config() {
   # Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
   # default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the
