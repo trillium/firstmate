@@ -1042,8 +1042,15 @@ SH
   assert_contains "$skip_out" "MISSING: node (install:" "the local half lost its own diagnostic"
   assert_not_contains "$skip_out" "NEEDS_GH_AUTH" "the local half still made a network call"
 
+  # The deferred network-only worker is always spawned with the lock PID it
+  # started under (bin/fm-startup-network.sh) so its mutating sweeps can confirm
+  # they still own the fleet lock before touching shared state; model that here
+  # so the sweeps run rather than skipping loudly as an unauthorized stale worker.
+  mkdir -p "$case_dir/home/state"
+  printf '%s\n' 424242 > "$case_dir/home/state/.lock"
   only_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only "$ROOT/bin/fm-bootstrap.sh")
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$only_out" "NEEDS_GH_AUTH" "the network half lost its own diagnostic"
   assert_not_contains "$only_out" "MISSING: node" "the network half repeated the local half's work"
 

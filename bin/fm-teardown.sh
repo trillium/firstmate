@@ -198,6 +198,40 @@ if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
 fi
 ID=$1
 FORCE=${2:-}
+CONTROL_LOCK="$STATE/.control-$ID.lock"
+CONTROL_LOCK_HELD=0
+META_LOCK=
+META_LOCK_HELD=0
+DESCENDANT_LOCK_PATHS=()
+DESCENDANT_TASK_STATES=()
+DESCENDANT_TASK_IDS=()
+DESCENDANT_TASK_KINDS=()
+DESCENDANT_TASK_HOMES=()
+teardown_release_locks() {
+  local status=$? i
+  if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
+    teardown_release_herdr_locks || true
+  fi
+  for ((i=${#DESCENDANT_LOCK_PATHS[@]} - 1; i >= 0; i--)); do
+    fm_lock_release "${DESCENDANT_LOCK_PATHS[$i]}" || true
+  done
+  DESCENDANT_LOCK_PATHS=()
+  if [ "$META_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$META_LOCK" || true
+    META_LOCK_HELD=0
+  fi
+  if [ "$CONTROL_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$CONTROL_LOCK" || true
+    CONTROL_LOCK_HELD=0
+  fi
+  return "$status"
+}
+trap teardown_release_locks EXIT
+fm_lock_try_acquire "$CONTROL_LOCK" || {
+  echo "error: another lifecycle action is already running for task $ID; nothing was changed" >&2
+  exit 1
+}
+CONTROL_LOCK_HELD=1
 # --staleness-autoclose (bin/fm-watch.sh's idle>2h backstop): resolve landed vs
 # unlanded via work_is_landed and either fall through to the ordinary teardown
 # below (landed - FORCE reset to "" so it behaves exactly like a plain call) or

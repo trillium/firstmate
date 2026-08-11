@@ -37,6 +37,9 @@ PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-project-dir-lib.sh
 . "$SCRIPT_DIR/fm-project-dir-lib.sh"
+# Inert unless FM_TIMING_LOG names a file; only the deferred network stage sets it.
+# shellcheck source=bin/fm-timing-lib.sh
+. "$SCRIPT_DIR/fm-timing-lib.sh"
 FM_LOCK_LOG_PREFIX=fleet-sync
 "$FM_ROOT/bin/fm-guard.sh" || true
 
