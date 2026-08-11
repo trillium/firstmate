@@ -2196,7 +2196,6 @@ EOF
     T="$ORCA_TERMINAL"
     ;;
 esac
-fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
     propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" \
