@@ -1411,15 +1411,16 @@ EOF
     # no-change case (advance the schedule and back off exactly as wake() would,
     # without exiting); the away-mode daemon, when present, owns triage and wants
     # every heartbeat.
+    heartbeat_payload=$(parlay_heartbeat_payload)
     if afk_present; then
-      fm_wake_append heartbeat heartbeat "$(parlay_heartbeat_payload)" || exit 1
+      fm_wake_append heartbeat heartbeat "$heartbeat_payload" || exit 1
       touch "$STATE/.last-heartbeat"
       wake "heartbeat"
     elif heartbeat_scan_finds_actionable; then
       # Backstop: a captain-relevant status the per-wake path absorbed by mistake.
       # Enqueue first, then mark every captain-relevant status surfaced so the next
       # heartbeat does not re-fire them (enqueue-before-suppress preserved).
-      fm_wake_append heartbeat heartbeat "$(parlay_heartbeat_payload)" || exit 1
+      fm_wake_append heartbeat heartbeat "$heartbeat_payload" || exit 1
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced
       wake "heartbeat"

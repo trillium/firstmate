@@ -470,7 +470,7 @@ print_parlay_section() {
   command -v parlay >/dev/null 2>&1 || return 0
   section "PARLAY"
   sweep=$(parlay sweep 2>/dev/null) || sweep=
-  held=$(printf '%s\n' "$sweep" | grep -E '^HOLD[[:space:]].*state=(needs-decision|blocked|failed)' || true)
+  held=$(printf '%s\n' "$sweep" | grep -E '^HOLD[[:space:]].*state=(needs-decision|blocked|failed)(\s|$)' || true)
   count=0
   [ -n "$held" ] && count=$(printf '%s\n' "$held" | grep -c .)
   if [ "$count" -eq 0 ]; then
