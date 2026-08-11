@@ -655,6 +655,7 @@ FM_STALENESS_AUTOCLOSE_SECS=7200          # idle seconds before the watcher recl
 FM_STALENESS_AUTOCLOSE_MAX_RETRIES=5      # consecutive failed reclaim attempts allowed for one stale pane hash before the watcher gives up until the hash next changes
 FM_STALENESS_AUTOCLOSE_RETRY_BASE_SECS=300   # seconds before the first retry after a failed reclaim; doubles per additional failure
 FM_STALENESS_AUTOCLOSE_RETRY_MAX_SECS=3600   # cap on the doubling reclaim-retry backoff
+FM_STALENESS_FOCUS_GRACE_SECS=300        # herdr only: seconds a reap-candidate pane stays protected from the staleness auto-close reclaim after a human last focused it; a currently- or recently-focused (or unreadable) pane blocks the reclaim without consuming the retry budget
 FM_BUSY_TURN_MAX_SECS=3600         # maximum age of a busy pane's latest state/<id>.turn-ended marker, or its state/<id>.meta spawn record before any turn completes, before the same wedge escalation used for a provably-working non-busy stale takes over; inspection-only, never an automatic interrupt or restart
 FM_PAUSE_RESURFACE_SECS=3600       # seconds before an idle declared external wait re-surfaces for a recheck in the watcher or away-mode daemon
 FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added
