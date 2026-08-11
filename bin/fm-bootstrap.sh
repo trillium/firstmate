@@ -169,24 +169,6 @@ esac
 local_phase() { [ "$FM_BOOTSTRAP_NETWORK_PHASE" != only ]; }
 network_phase() { [ "$FM_BOOTSTRAP_NETWORK_PHASE" != skip ]; }
 
-network_mutation_authorized() {
-  local expected=${FM_BOOTSTRAP_NETWORK_LOCK_PID:-} current
-  [ -n "$expected" ] || return 0
-  case "$expected" in *[!0-9]*) return 1 ;; esac
-  [ -f "$STATE/.lock" ] && [ ! -L "$STATE/.lock" ] || return 1
-  current=$(cat "$STATE/.lock" 2>/dev/null) || return 1
-  [ "$current" = "$expected" ]
-}
-
-network_sweep_authorized() {
-  local label=$1
-  if network_mutation_authorized; then
-    return 0
-  fi
-  echo "NETWORK_CHECKS: fleet lock ownership changed before $label, so this stale worker skipped that sweep"
-  return 1
-}
-
 fleet_sync_origin_backed_project_count() {
   local count proj
   count=0
@@ -1159,31 +1141,6 @@ detect_local_tools() {
   fi
   if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
     echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
-  fi
-}
-
-detect_local_config() {
-  # Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
-  # default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the
-  # primary only; detached-HEAD worktrees and secondmate homes never trip it.
-  tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" 2>/dev/null || true)
-  if [ -n "$tangle_branch" ]; then
-    tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
-    if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" = 1 ] && [ "${FM_BOOTSTRAP_LOCKED:-0}" != 1 ]; then
-      echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - read-only session must leave restore work to the session holding the fleet lock"
-    else
-      echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
-    fi
-  fi
-  crew=
-  [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
-  if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != "default" ]; then
-    echo "BOOTSTRAP_INFO: crew harness override active: $crew"
-  fi
-  crew_dispatch_validate
-  if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
-    && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
-    echo "BOOTSTRAP_INFO: tasks-axi available"
   fi
 }
 

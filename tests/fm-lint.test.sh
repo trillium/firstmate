@@ -140,7 +140,12 @@ test_changed_mode_lints_only_the_changed_file() {
 
   # Clear the ambient CI/GITHUB_ACTIONS signals so changed-file mode is actually
   # exercised: a CI run sets them and would otherwise force the full lint here.
-  out=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_LINT_JOBS=1 \
+  # FM_LINT_CACHE=0: this proves which files changed-file mode SELECTS, asserted
+  # through the ShellCheck stub's log. The content cache is orthogonal to
+  # selection and would let a prior case's verdict for the same file satisfy this
+  # run without the stub ever being invoked, so disable it to keep the assertion
+  # about selection rather than cache state.
+  out=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_LINT_JOBS=1 FM_LINT_CACHE=0 \
     FM_TEST_GIT_BRANCH=feature \
     FM_TEST_GIT_DIFF_FILE="$diff_file" "$LINT" 2>&1) \
     || fail "changed-mode lint run failed"$'\n'"$out"
@@ -189,7 +194,11 @@ test_explicit_path_bypasses_changed_logic() {
   # under the no-args default. Clearing CI/GITHUB_ACTIONS keeps changed-file
   # selection live so this proves the explicit path bypasses it, not that CI
   # already forced full mode. An explicit path must never even consult git.
-  out=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_LINT_JOBS=1 \
+  # FM_LINT_CACHE=0: this asserts the explicit path is linted via the ShellCheck
+  # stub's log. A prior case caches a clean verdict for the same file, so with the
+  # content cache live the stub would never run and the log would be empty; the
+  # cache is orthogonal to the explicit-path-bypasses-git behavior under test.
+  out=$(PATH="$fakebin:$PATH" GITHUB_ACTIONS='' CI='' FM_LINT_JOBS=1 FM_LINT_CACHE=0 \
     FM_TEST_GIT_MERGE_BASE_OK=0 \
     "$LINT" "$target" 2>&1) || fail "explicit-path lint failed"$'\n'"$out"
   [ "$(cat "$log")" = "$target" ] \

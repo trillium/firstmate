@@ -966,7 +966,7 @@ fi
   echo "usage: fm-spawn.sh <task-id> <project-dir> [flags]   (--help for the full contract)" >&2
   exit 2
 }
-[ "$KIND" = secondmate ] || [ "${#POS[@]}" -ge 2 ] || {
+[ "$KIND" = secondmate ] || [ "$RELAUNCH" -eq 1 ] || [ "${#POS[@]}" -ge 2 ] || {
   echo "error: missing <project-dir> for ${POS[0]}" >&2
   echo "usage: fm-spawn.sh <task-id> <project-dir> [flags]   (--help for the full contract)" >&2
   exit 2
@@ -1678,7 +1678,16 @@ if [ "$KIND" = secondmate ]; then
   sm_parent_route=$(resolve_path "$PROJ_ABS/data/.parent-route")
   sm_home_marker=
   [ ! -f "$PROJ_ABS/.fm-secondmate-home" ] || sm_home_marker=$(cat "$PROJ_ABS/.fm-secondmate-home")
-  if [ "$sm_data_abs" = "$sm_parent_route" ] && [ "$sm_home_marker" = "$ID" ]; then
+  if [ "$RELAUNCH" -eq 1 ]; then
+    # A relaunch adopts the secondmate already recorded in THIS home: the
+    # existence of state/$ID.meta here is the relaunch precondition checked
+    # above, so the meta is being rewritten into the exact home that already
+    # holds it - the same wrong-home protection the registry check below gives a
+    # FRESH spawn. Re-validating the registry here would only reject a legitimate
+    # replacement whose durable record already proved its home, so carry the
+    # recorded projects list forward instead of re-reading the registry.
+    SECONDMATE_PROJECTS=$(fm_meta_get "$RELAUNCH_META" projects)
+  elif [ "$sm_data_abs" = "$sm_parent_route" ] && [ "$sm_home_marker" = "$ID" ]; then
     : # delegated remote launch into this secondmate's own parent-route directory
   elif ! secondmate_registry_validate_bindings "$DATA/secondmates.md" resolve_path "$ID" "$FIRSTMATE_HOME"; then
     echo "error: $SECONDMATE_REGISTRY_ERROR" >&2
@@ -1958,6 +1967,18 @@ if [ -n "$LABEL_ARG" ]; then
 else
   W="fm-$ID"
 fi
+if [ "$RELAUNCH" -eq 1 ]; then
+  # Adopt the recorded endpoint instead of creating one. This is what keeps a
+  # relaunch a REPLACEMENT rather than a second copy of the task: no new
+  # terminal, no second worktree, and every uncommitted change left exactly
+  # where the previous agent left it.
+  T=$RELAUNCH_TARGET
+  # A secondmate's home already resolved WT above through the same validation a
+  # fresh secondmate spawn uses; every other kind takes the recorded worktree.
+  [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
+  WT_TARGET=$T
+  SES=${T%%:*}
+else
 case "$BACKEND" in
   tmux)
     SES=$(fm_backend_tmux_container_ensure)
@@ -2196,6 +2217,7 @@ EOF
     T="$ORCA_TERMINAL"
     ;;
 esac
+fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
     propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" \
@@ -2294,7 +2316,24 @@ kimi_spawn_fail() {  # <detail>
   echo "error: $1; inspect window $T" >&2
 }
 
-if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+if [ "$RELAUNCH" -eq 1 ]; then
+  # No worktree is acquired: the recorded one is reused as-is. What must be
+  # proven instead is that the adopted endpoint's shell is actually sitting in
+  # that worktree, so the replacement agent starts where the work is rather
+  # than wherever the pane happened to drift.
+  relaunch_wt_real=$(real_path_or_raw "$WT")
+  relaunch_seen=
+  for _ in $(seq 1 10); do
+    relaunch_seen=$(spawn_current_path "$WT_TARGET" || true)
+    [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ] || break
+    sleep 0.5
+  done
+  if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
+    echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}', not its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
+    exit 1
+  fi
+  [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
+elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Pre-flight the pool only when it has nothing left to hand out. A treehouse
   # pool only shrinks - an endpoint that dies without reaching fm-teardown.sh
   # leaks its slot, and neither `treehouse prune` nor a later `get` ever takes
@@ -2867,6 +2906,29 @@ if [ "$KIND" = secondmate ]; then
   # injected carrier and this on/off snapshot are guaranteed to agree.
   LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE FM_SUPERVISION_MODEL=$supervision_model $LAUNCH"
 fi
+if [ -z "$SPAWN_TRACEPARENT" ] && [ "$RELAUNCH" -eq 1 ]; then
+  LAUNCH="unset TRACEPARENT; $LAUNCH"
+fi
+
+spawn_record_traceparent() {
+  local meta="$STATE/$ID.meta" tmp status=0
+  SPAWN_META_LOCK=$(fm_meta_lock_path "$meta") || return 1
+  fm_lock_acquire_wait "$SPAWN_META_LOCK"
+  SPAWN_META_LOCK_HELD=1
+  SPAWN_META_TMP="$STATE/.$ID.meta.trace.${BASHPID:-$$}"
+  if [ ! -f "$meta" ] || [ ! -w "$meta" ] \
+     || ! awk -F= '$1 != "traceparent"' "$meta" > "$SPAWN_META_TMP" \
+     || ! printf 'traceparent=%s\n' "$SPAWN_TRACEPARENT" >> "$SPAWN_META_TMP" \
+     || ! mv -f "$SPAWN_META_TMP" "$meta"; then
+    status=1
+    rm -f "$SPAWN_META_TMP" 2>/dev/null || true
+  fi
+  SPAWN_META_TMP=
+  fm_lock_release "$SPAWN_META_LOCK" || status=1
+  SPAWN_META_LOCK_HELD=0
+  return "$status"
+}
+
 # Export pane-environment variables into the crewmate's pane shell so the agent
 # and every child process inherit them. Both are sent before the launch command
 # so the env is set when the agent starts; the brief sleep lets both exports land.
