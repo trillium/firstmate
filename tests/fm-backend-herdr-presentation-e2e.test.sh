@@ -412,6 +412,25 @@ spawn_task() {  # <id> <home> <project>
     "$ROOT/bin/fm-spawn.sh" "$id" "$project" "sh -c 'sleep 120'" --mode no-mistakes --yolo off --backend herdr
 }
 
+finish_concurrent_spawn() {  # <id> <status> <stdout> <stderr>
+  local id=$1 status=$2 out=$3 err=$4
+  [ "$status" -ne 0 ] || return 0
+  grep -F "task set is locked" "$err" >/dev/null 2>&1 \
+    || fail "concurrent projected spawn $id failed unexpectedly: $(cat "$err")"
+  spawn_task "$id" "$HOME_DIR" "$PROJECT_DIR" > "$out" 2> "$err" \
+    || fail "projected spawn $id retry failed after task-set publication completed: $(cat "$err")"
+}
+
+finish_concurrent_expected_abort() {  # <id> <status> <stdout> <stderr>
+  local id=$1 status=$2 out=$3 err=$4
+  [ "$status" -ne 0 ] || fail "post-create abort fixture $id unexpectedly succeeded"
+  if grep -F "task set is locked" "$err" >/dev/null 2>&1; then
+    if spawn_task "$id" "$HOME_DIR" "$PROJECT_DIR" > "$out" 2> "$err"; then
+      fail "post-create abort fixture $id unexpectedly succeeded after task-set publication completed"
+    fi
+  fi
+}
+
 register_secondmate() {  # <id> <home>
   # A --secondmate spawn refuses unless the launching home's own registry binds
   # the id to that home, exactly as bin/fm-home-seed.sh writes it before a real

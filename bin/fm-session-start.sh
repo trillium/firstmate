@@ -310,6 +310,8 @@ STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
 QUEUED_LIMIT=${FM_SESSION_START_QUEUED_LIMIT:-20}
 case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
+BACKLOG_LIMIT=${FM_SESSION_START_BACKLOG_LIMIT:-80}
+case "$BACKLOG_LIMIT" in ''|*[!0-9]*|0) BACKLOG_LIMIT=80 ;; esac
 BACKLOG_FIELDS=blocked_by,hold_kind,hold_reason
 
 RULE='================================================================================'
@@ -760,25 +762,38 @@ fi
   --afk "$AFK_PRESENT" \
   --x-mode "$X_MODE_PRESENT"
 
-# --- 5. persona ----------------------------------------------------------
-# Always-in-force captain-facing voice (AGENTS.md persona pointer): printed
-# every session, unconditionally, so it never depends on a per-reply trigger.
-# config/persona.md (local, gitignored) overrides the tracked persona.md
-# default in full.
-stage persona
-section "PERSONA"
-print_persona
+# --- 5. read-once contract -------------------------------------------------
+# Ahead of the two digests it governs, not after them: a truncated tail is
+# exactly what drops a closing reminder, and this contract is what stops the
+# next turn from re-reading everything the digest just printed. Because it now
+# arrives BEFORE its subject, it also names the one condition that voids it -
+# a stage that never ran, which the truncation banner names by stage.
+stage read-once
+section "READ-ONCE CONTRACT"
+cat <<'EOF'
+Everything below is printed in full for this session start: every state/*.meta,
+a compact data/backlog.md listing, a bounded tail of every state/*.status,
+data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
+and data/learnings.md.
+Do NOT re-read any of them after reading this digest, and do NOT bulk-read
+data/backlog.md or state/*.status: re-reading everything defeats the entire
+point of this command.
 
-# --- 6. context digest -----------------------------------------------------
-stage context
-section "CONTEXT"
-print_file_or_absent "$DATA/projects.md" "data/projects.md"
-print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
-print_file_or_absent "$DATA/captain.md" "data/captain.md"
-print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
-print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
+Go to a source directly only when:
+  - this digest flagged it ABSENT (then rebuild or create it per AGENTS.md),
+  - its contents looked unparseable or corrupt,
+  - an individual full status log is needed for older wake-event history, or a
+    status line was capped and its tail matters (each task's full log path is
+    printed with its tail),
+  - a full task body is needed (tasks-axi show <id> --full, or data/backlog.md),
+  - the backlog listing disclosed omitted queued items and this turn needs them,
+  - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
+    turn needs their verdict (bin/fm-startup-network.sh report),
+  - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
+    which case that stage's sources were never emitted and must be reconciled.
+EOF
 
-# --- 7. fleet-state digest ---------------------------------------------
+# --- 6. fleet-state digest ---------------------------------------------
 stage fleet-state
 section "FLEET STATE"
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
@@ -850,7 +865,48 @@ if fm_pf_relay_active "$FM_HOME" \
   fi
 fi
 
-# --- 8. closing reminder -----------------------------------------------
+# --- 7. network checks ------------------------------------------------------
+# Deliberately here and not later: these lines are actionable (a stuck clone, a
+# secondmate that could not be relaunched, broken GitHub auth), and the section
+# after this one is the curated memory a truncated tail is meant to take first.
+# Deliberately here and not earlier: this is the last point in the digest, so the
+# worker started at step 1 has had the whole composition above to finish in. It
+# is a NON-BLOCKING read either way - whatever the worker has published by now is
+# printed, and whatever it has not is named as not yet confirmed.
+stage network-checks
+section "NETWORK CHECKS"
+if [ "$READ_ONLY" -eq 1 ]; then
+  printf 'skipped (read-only session) - GitHub authentication, project clone refresh,\n'
+  printf 'secondmate liveness and convergence, and pending handoff delivery were not run.\n'
+  printf 'They need the fleet lock, and this session must not spawn, steer, or merge, so it\n'
+  printf 'has no action they would gate. The session holding the lock runs them.\n'
+else
+  "$SCRIPT_DIR/fm-startup-network.sh" harvest --pid $$ 2>&1 || true
+fi
+
+# --- 8. persona ----------------------------------------------------------
+# Always-in-force captain-facing voice (AGENTS.md persona pointer): printed
+# every session, unconditionally, so it never depends on a per-reply trigger.
+# config/persona.md (local, gitignored) overrides the tracked persona.md
+# default in full.
+stage persona
+section "PERSONA"
+print_persona
+
+# --- 9. context digest -----------------------------------------------------
+# Last of the bulk sections deliberately: curated memory is stable session to
+# session, already governed by config/startup-memory-budget, and recoverable
+# with one targeted read, so it is the cheapest thing for a truncated tail to
+# take (see this file's ORDERING note).
+stage context
+section "CONTEXT"
+print_file_or_absent "$DATA/projects.md" "data/projects.md"
+print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
+print_file_or_absent "$DATA/captain.md" "data/captain.md"
+print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
+print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
+
+# --- 10. closing reminder -----------------------------------------------
 stage next-step
 section "NEXT STEP"
 if [ "$READ_ONLY" -eq 1 ]; then
@@ -882,18 +938,8 @@ This script never starts supervision itself.
 EOF
 fi
 cat <<'EOF'
-The digest above is complete for this session start. Do NOT re-read
-persona.md, config/persona.md, data/projects.md, data/secondmates.md,
-data/captain.md, data/captain-shared.md, data/learnings.md,
-or state/*.meta now - they were just printed in full.
-Do NOT bulk-read data/backlog.md now either: the compact identity/metadata
-listing was just printed with a pointer for targeted full-body follow-up.
-Do NOT bulk-read state/*.status now either: their bounded tails were just
-printed with full log paths for targeted follow-up when older wake-event
-history is actually needed. Re-reading everything defeats the entire point
-of this command. Re-read a file only if this digest flagged it ABSENT (then
-rebuild or create it per AGENTS.md), its contents looked unparseable/corrupt,
-or an individual full status log is needed for older wake-event history.
+The digest above is complete for this session start. The READ-ONCE CONTRACT
+section near the top of it governs what may still be read from disk.
 EOF
 
 if [ "$READ_ONLY" -eq 0 ] && [ "$REEMIT" -eq 0 ]; then

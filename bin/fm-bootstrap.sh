@@ -169,6 +169,30 @@ esac
 local_phase() { [ "$FM_BOOTSTRAP_NETWORK_PHASE" != only ]; }
 network_phase() { [ "$FM_BOOTSTRAP_NETWORK_PHASE" != skip ]; }
 
+# A deferred network sweep may run long after the local pass handed the fleet
+# lock to a fresh worker. Before any mutating sweep, re-confirm this process still
+# owns the lock it started under (FM_BOOTSTRAP_NETWORK_LOCK_PID matches the live
+# STATE/.lock); a stale worker skips the sweep loudly rather than mutating shared
+# state behind the current lock holder's back. An unset expectation authorizes
+# (single-phase runs never hand off).
+network_mutation_authorized() {
+  local expected=${FM_BOOTSTRAP_NETWORK_LOCK_PID:-} current
+  [ -n "$expected" ] || return 0
+  case "$expected" in *[!0-9]*) return 1 ;; esac
+  [ -f "$STATE/.lock" ] && [ ! -L "$STATE/.lock" ] || return 1
+  current=$(cat "$STATE/.lock" 2>/dev/null) || return 1
+  [ "$current" = "$expected" ]
+}
+
+network_sweep_authorized() {
+  local label=$1
+  if network_mutation_authorized; then
+    return 0
+  fi
+  echo "NETWORK_CHECKS: fleet lock ownership changed before $label, so this stale worker skipped that sweep"
+  return 1
+}
+
 fleet_sync_origin_backed_project_count() {
   local count proj
   count=0
@@ -1162,36 +1186,6 @@ if network_phase; then
   gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
   fm_timing_record phase gh-auth "$__fm_timing_stamp"
 fi
-for t in $BACKEND_TOOLS; do
-  fm_backend_required_tool_available "$BACKEND" "$t" \
-    || missing_tool_diagnostic "$t"
-done
-for t in $COMMON_TOOLS; do
-  command -v "$t" >/dev/null || missing_tool_diagnostic "$t"
-done
-# The treehouse lease-support upgrade check is only relevant when the resolved
-# backend actually requires treehouse (every backend except orca, which owns its
-# own worktrees); an orca home must not be told to upgrade a provider it never uses.
-if fm_backend_list_contains "$TOOLS" treehouse \
-  && command -v treehouse >/dev/null 2>&1 && ! treehouse_supports_lease; then
-  echo "MISSING: treehouse (install: $(install_cmd treehouse))"
-fi
-if command -v no-mistakes >/dev/null 2>&1 && ! tool_version_at_least no-mistakes "$NO_MISTAKES_MIN"; then
-  echo "MISSING: no-mistakes (install: $(install_cmd no-mistakes))"
-fi
-if command -v gh-axi >/dev/null 2>&1 && ! tool_version_at_least gh-axi "$GH_AXI_MIN"; then
-  echo "MISSING: gh-axi (install: $(install_cmd gh-axi))"
-fi
-if command -v lavish-axi >/dev/null 2>&1 && ! tool_version_at_least lavish-axi "$LAVISH_AXI_MIN"; then
-  echo "MISSING: lavish-axi (install: $(install_cmd lavish-axi))"
-fi
-if command -v quota-axi >/dev/null 2>&1 && ! fm_quota_axi_compatible; then
-  echo "MISSING: quota-axi (install: $(install_cmd quota-axi))"
-fi
-if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
-  echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
-fi
-gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
 # Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
 # default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the
 # primary only; linked worktrees and secondmate homes never trip it, whatever
@@ -1243,11 +1237,33 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   if [ "$backlog_backend" = beads ]; then
     fm_beads_write_queue_reconcile
   fi
-  secondmate_liveness_sweep
-  secondmate_sync
-  secondmate_handoff_resume
-  x_mode_setup
-  fleet_sync
+  # secondmate_sync consumes SECONDMATE_RESPAWNED_IDS from the liveness sweep, so
+  # those two always run together in the same phase. Each mutating network sweep
+  # rechecks fleet-lock ownership first and records its own elapsed time.
+  if network_phase; then
+    if network_sweep_authorized 'dead-secondmate relaunch'; then
+      __fm_timing_stamp=$(fm_timing_now_ms)
+      secondmate_liveness_sweep
+      fm_timing_record phase secondmate-liveness "$__fm_timing_stamp"
+    fi
+    if network_sweep_authorized 'secondmate convergence'; then
+      __fm_timing_stamp=$(fm_timing_now_ms)
+      secondmate_sync
+      fm_timing_record phase secondmate-sync "$__fm_timing_stamp"
+    fi
+    if network_sweep_authorized 'pending handoff delivery'; then
+      __fm_timing_stamp=$(fm_timing_now_ms)
+      secondmate_handoff_resume
+      fm_timing_record phase handoff-delivery "$__fm_timing_stamp"
+    fi
+  fi
+  # x_mode_setup writes local Relay artifacts only and never leaves the machine.
+  local_phase && x_mode_setup
+  if network_phase && network_sweep_authorized 'project clone refresh'; then
+    __fm_timing_stamp=$(fm_timing_now_ms)
+    fleet_sync
+    fm_timing_record phase fleet-sync "$__fm_timing_stamp"
+  fi
 fi
-secondmate_handoff_detect
+local_phase && secondmate_handoff_detect
 exit 0
