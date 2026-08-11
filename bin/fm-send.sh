@@ -610,7 +610,7 @@ else
   # Delivery is fully confirmed: close each answered decision in this home's
   # ledger (answerer-closes; see the header contract).
   if [ -n "$RESOLVE_KEYS" ]; then
-    fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
+    fm_send_close_resolved_keys "$MESSAGE" || exit 1
   fi
   # Submit landed with exact empty. Confirmation only proves the text was
   # accepted; the harness still needs a beat to spin up the
