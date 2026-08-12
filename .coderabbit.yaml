@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Firstmate ships its own changes via plain direct-PR with no external reviewer.
+# Disable CodeRabbit automatic reviews and its review status check on this repo.
+reviews:
+  auto_review:
+    enabled: false
+  review_status: false
