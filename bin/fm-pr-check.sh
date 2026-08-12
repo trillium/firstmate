@@ -60,11 +60,15 @@ fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || 
   exit 1
 }
 
-# Advisory: warn when the PR is not in the captain's fork namespace.
-case "$PROJECT_PATH" in
-  trillium/*) ;;
-  *) echo "WARNING: PR URL does not appear to be in the captain's fork (trillium/); escalate before merging" >&2 ;;
-esac
+# Advisory: warn when a GitHub PR is not in the captain's fork namespace.
+# Scoped to GitHub because a GitLab merge-request project path never contains
+# "trillium/", so an unscoped check would false-warn on every GitLab MR.
+if [ "$PROVIDER" = github ]; then
+  case "$PROJECT_PATH" in
+    trillium/*) ;;
+    *) echo "WARNING: PR URL does not appear to be in the captain's fork (trillium/); escalate before merging" >&2 ;;
+  esac
+fi
 
 # Refuse to arm a GitLab watch with no glab on PATH. The poll is silent on
 # every error by design, so a missing CLI would be indistinguishable from a

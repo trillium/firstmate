@@ -3518,7 +3518,23 @@ test_fork_namespace_warning() {
   grep -qxF "armed: state/task-a.check.sh" "$dir/check.out" \
     || fail "poll was not armed for a fork URL (stdout: $(cat "$dir/check.out"))"
 
-  pass "fm-pr-check.sh: fork-namespace warning fires for non-trillium URLs, silent for trillium/ URLs, poll always armed"
+  # GitLab MR URL: the warning is GitHub-only, because a GitLab merge-request
+  # project path never contains "trillium/" and would otherwise always warn.
+  dir=$(make_case fork-ns-gitlab)
+  write_task_meta "$dir"
+  set +e
+  run_check_entry "$dir" task-a https://gitlab.com/group/project/-/merge_requests/1 \
+    > "$dir/check.out" 2> "$dir/check.err"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "GitLab MR check should arm without error (exit $rc)"
+  assert_not_contains "$(cat "$dir/check.err")" \
+    "WARNING: PR URL does not appear to be in the captain's fork" \
+    "a GitLab merge request must not trigger the GitHub-only fork-namespace warning"
+  grep -qxF "armed: state/task-a.check.sh" "$dir/check.out" \
+    || fail "poll was not armed for a GitLab MR URL (stdout: $(cat "$dir/check.out"))"
+
+  pass "fm-pr-check.sh: fork-namespace warning fires for non-trillium GitHub URLs, silent for trillium/ and GitLab URLs, poll always armed"
 }
 
 test_parser_matrix
