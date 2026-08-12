@@ -19,6 +19,14 @@
 #        convention that fm-decision-hold.sh owns, and the origin must be present
 #        in the active home (its state/<origin>.meta or data/<origin>/report.md);
 #        otherwise the item fails closed rather than migrating incorrectly.
+#   - `blocked-by: <id>` (one or more) -> a real beads dependency edge, wired in
+#     a second pass after every bead exists so a blocker defined later in the
+#     file still resolves (`task dep <blocker-bead> --blocks <item-bead>`). The
+#     reference is kept in the description too, so nothing is dropped.
+#   - a clearly-dated queued time gate `(since <YYYY-MM-DD>)` -> the bead's defer
+#     date (`task update --defer`), so the bead stays hidden from `task ready`
+#     until then. beads' own semantics handle either meaning: a past date leaves
+#     the bead ready now (age marker), a future date withholds it (time gate).
 #   - the full item text (title-line metadata plus indented continuation lines)
 #     -> the bead's description, so nothing is dropped.
 #
@@ -171,15 +179,31 @@ open_human_gate_count() {
     else 0 end' 2>/dev/null || printf '0'
 }
 
+# resolved_human_gate_count <bead-id> - echo how many human gates that once
+# blocked this bead have since been RESOLVED (closed). A resolved gate stays
+# listed in the bead's dependencies with status other than "open", so a re-run
+# can tell "the captain already answered this" apart from "no gate was ever
+# added" and avoid resurrecting a decision the captain has already made.
+resolved_human_gate_count() {
+  task show "$1" --json 2>/dev/null | jq '
+    if type=="array" and length>0
+    then [.[0].dependencies[]? | select(.issue_type=="gate" and .dependency_type=="blocks" and .status!="open")] | length
+    else 0 end' 2>/dev/null || printf '0'
+}
+
 # ensure_human_gate <bead-id> <reason> - attach a beads-native human gate that
 # blocks this bead, unless one already does. A captain-held backlog item that is
 # not a decision-hold identity has no separate origin/anchor, so the item's own
 # bead carries the gate directly (the same `task gate --type=human` primitive
-# fm-decision-hold.sh uses for anchored decision holds). Idempotent.
+# fm-decision-hold.sh uses for anchored decision holds). Idempotent, and it never
+# re-adds a gate the captain has already resolved: it adds one only when NEITHER
+# an open gate is still withholding the bead NOR a resolved one records that the
+# captain already answered.
 ensure_human_gate() {
-  local bead=$1 reason=$2 have
-  have=$(open_human_gate_count "$bead")
-  if [ "$have" -ge 1 ]; then
+  local bead=$1 reason=$2 open resolved
+  open=$(open_human_gate_count "$bead")
+  resolved=$(resolved_human_gate_count "$bead")
+  if [ "$open" -ge 1 ] || [ "$resolved" -ge 1 ]; then
     return 1
   fi
   task gate create --type=human --blocks "$bead" --reason "$reason" >/dev/null \
@@ -187,10 +211,26 @@ ensure_human_gate() {
   return 0
 }
 
-# apply_common_fields <bead-id> <status> <priority> <desc-file> - set the bead's
-# status, priority, and verbatim description. Idempotent (all replacements).
+# dependency_exists <blocked-bead> <blocker-bead> - true if a blocks-dependency
+# edge from blocker to blocked already exists (the blocker appears among the
+# blocked bead's dependencies). Read-only; keeps the pass-2 edge wiring
+# idempotent across re-runs.
+dependency_exists() {
+  local blocked=$1 blocker=$2 hit
+  hit=$(task show "$blocked" --json 2>/dev/null | jq -r --arg b "$blocker" '
+    if type=="array" and length>0
+    then ([.[0].dependencies[]? | select(.dependency_type=="blocks" and .id==$b)] | length)
+    else 0 end' 2>/dev/null) || hit=0
+  [ "${hit:-0}" -ge 1 ]
+}
+
+# apply_common_fields <bead-id> <status> <priority> <defer> <desc-file> - set the
+# bead's status, priority, defer date, and verbatim description. Idempotent (all
+# replacements). An empty field is left untouched; in particular an empty defer
+# never touches the bead's defer date, so an item with no time gate stays
+# ready-now while a dated gate keeps the bead hidden from `task ready` until then.
 apply_common_fields() {
-  local id=$1 status=$2 priority=$3 desc_file=$4
+  local id=$1 status=$2 priority=$3 defer=$4 desc_file=$5
   if [ -n "$status" ]; then
     task update "$id" --status "$status" >/dev/null \
       || fail "could not set status $status on bead $id"
@@ -198,6 +238,10 @@ apply_common_fields() {
   if [ -n "$priority" ]; then
     task update "$id" --priority "$priority" >/dev/null \
       || fail "could not set priority $priority on bead $id"
+  fi
+  if [ -n "$defer" ]; then
+    task update "$id" --defer "$defer" >/dev/null \
+      || fail "could not set defer date $defer on bead $id"
   fi
   task update "$id" --body-file "$desc_file" >/dev/null \
     || fail "could not set description on bead $id"
@@ -288,6 +332,21 @@ while [ "$i" -lt "$count" ]; do
     esac
   fi
 
+  # A queued time gate is the item's `(since <date>)` marker: it becomes the
+  # bead's defer date so the bead stays hidden from `task ready` until then. Only
+  # a clearly-dated gate (YYYY-MM-DD) is parsed; anything else is left ungated so
+  # an item without a real date is never guessed at. beads' own defer semantics
+  # then do the right thing for either meaning: a past date leaves the bead ready
+  # now (age marker), a future date withholds it (time gate).
+  defer=$(printf '%s' "$body" | sed -n 's/.*(since[[:space:]]\{1,\}\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)).*/\1/p' | head -1)
+
+  # blocked-by references are wired into real bead dependency edges in a second
+  # pass (below), after every bead exists, so a blocker defined later in the file
+  # still resolves. Record this item's blocked-by targets now; the verbatim body
+  # keeps the text too, so nothing is dropped from the description.
+  printf '%s' "$body" | grep -oE 'blocked-by:[[:space:]]+[^[:space:])]+' \
+    | sed 's/blocked-by:[[:space:]]*//' > "$IMPORT_TMP/item.$i.blockedby" || true
+
   if [ "$status" = in_progress ]; then inflight=$((inflight + 1)); else queued=$((queued + 1)); fi
 
   # A captain-held thread parsed from the backlog becomes a beads-native human
@@ -326,13 +385,14 @@ while [ "$i" -lt "$count" ]; do
         # state is the open anchor plus its human gate, so status is left as
         # fm-decision-hold.sh set it rather than forced.
         printf '%s' "$body" > "$IMPORT_TMP/desc.$i"
-        apply_common_fields "$anchor" "" "$priority" "$IMPORT_TMP/desc.$i"
+        apply_common_fields "$anchor" "" "$priority" "$defer" "$IMPORT_TMP/desc.$i"
         ;;
       *)
         existing=$(resolve_existing_bead "$id")
         if [ "$APPLY" -eq 0 ]; then
-          printf '  captain-hold  %-40s (gated work item)%s\n' \
-            "$id" "$( [ -n "$existing" ] && echo ' (exists)' )"
+          printf '  captain-hold  %-40s (gated work item)%s%s\n' \
+            "$id" "$( [ -n "$defer" ] && echo " defer=$defer" )" \
+            "$( [ -n "$existing" ] && echo ' (exists)' )"
           continue
         fi
         bead=$(fm_beads_resolve_or_create "$id" "$title") \
@@ -341,7 +401,7 @@ while [ "$i" -lt "$count" ]; do
         printf '%s' "$body" > "$IMPORT_TMP/desc.$i"
         # A gated work item keeps its section status so it is visible; the human
         # gate is what withholds it from `task ready` until the captain resolves.
-        apply_common_fields "$bead" "$status" "$priority" "$IMPORT_TMP/desc.$i"
+        apply_common_fields "$bead" "$status" "$priority" "$defer" "$IMPORT_TMP/desc.$i"
         ensure_human_gate "$bead" "$reason" || true
         ;;
     esac
@@ -350,8 +410,10 @@ while [ "$i" -lt "$count" ]; do
 
   existing=$(resolve_existing_bead "$id")
   if [ "$APPLY" -eq 0 ]; then
-    printf '  %-13s %-40s priority=%s%s\n' \
-      "$status" "$id" "${priority:-default}" "$( [ -n "$existing" ] && echo ' (exists)' )"
+    printf '  %-13s %-40s priority=%s%s%s\n' \
+      "$status" "$id" "${priority:-default}" \
+      "$( [ -n "$defer" ] && echo " defer=$defer" )" \
+      "$( [ -n "$existing" ] && echo ' (exists)' )"
     continue
   fi
 
@@ -359,14 +421,71 @@ while [ "$i" -lt "$count" ]; do
     || fail "could not resolve or create a bead for $id"
   if [ -n "$existing" ]; then skipped=$((skipped + 1)); else imported=$((imported + 1)); fi
   printf '%s' "$body" > "$IMPORT_TMP/desc.$i"
-  apply_common_fields "$bead" "$status" "$priority" "$IMPORT_TMP/desc.$i"
+  apply_common_fields "$bead" "$status" "$priority" "$defer" "$IMPORT_TMP/desc.$i"
+done
+
+# target_imported <task-id> - true if some parsed item carries that backlog id,
+# i.e. a blocked-by target is (or will be) imported by this run. Used only to
+# annotate the dry-run report; the apply path resolves the real bead instead.
+target_imported() {
+  local want=$1 k=0
+  while [ "$k" -lt "$count" ]; do
+    k=$((k + 1))
+    [ "$(cat "$IMPORT_TMP/item.$k.id")" = "$want" ] && return 0
+  done
+  return 1
+}
+
+# Pass 2: wire each item's blocked-by references into real bead dependency edges.
+# Every bead exists now (pass 1 created/resolved them all), so a blocker defined
+# later in the file resolves here. `blocked-by: X` means X blocks this item, so
+# the edge is `task dep <X-bead> --blocks <item-bead>`. Idempotent: an edge that
+# already exists is not re-added, and the dry run only reports what it would add.
+edges_added=0
+edges_planned=0
+i=0
+while [ "$i" -lt "$count" ]; do
+  i=$((i + 1))
+  [ -s "$IMPORT_TMP/item.$i.blockedby" ] || continue
+  dep_id=$(cat "$IMPORT_TMP/item.$i.id")
+  while IFS= read -r target || [ -n "$target" ]; do
+    [ -n "$target" ] || continue
+    if [ "$APPLY" -eq 0 ]; then
+      edges_planned=$((edges_planned + 1))
+      if [ -n "$(resolve_existing_bead "$target")" ]; then
+        note=' (blocker exists)'
+      elif target_imported "$target"; then
+        note=
+      else
+        note=' (blocker not found in this import)'
+      fi
+      printf '  dep           %-40s blocked-by %s%s\n' "$dep_id" "$target" "$note"
+      continue
+    fi
+    item_bead=$(resolve_existing_bead "$dep_id")
+    if [ -z "$item_bead" ]; then
+      warn "item $dep_id: cannot wire blocked-by (its bead was not found)"
+      continue
+    fi
+    blocker_bead=$(resolve_existing_bead "$target")
+    if [ -z "$blocker_bead" ]; then
+      warn "item $dep_id: blocked-by target '$target' has no imported bead; skipping that edge"
+      continue
+    fi
+    if dependency_exists "$item_bead" "$blocker_bead"; then
+      continue
+    fi
+    task dep "$blocker_bead" --blocks "$item_bead" >/dev/null \
+      || fail "could not add dependency edge: $blocker_bead blocks $item_bead"
+    edges_added=$((edges_added + 1))
+  done < "$IMPORT_TMP/item.$i.blockedby"
 done
 
 if [ "$APPLY" -eq 0 ]; then
-  printf 'DRY RUN complete: %d item(s) (%d in-flight, %d queued, %d captain-hold). Re-run with --apply to import.\n' \
-    "$count" "$inflight" "$queued" "$captain"
+  printf 'DRY RUN complete: %d item(s) (%d in-flight, %d queued, %d captain-hold, %d dependency edge(s)). Re-run with --apply to import.\n' \
+    "$count" "$inflight" "$queued" "$captain" "$edges_planned"
 else
-  printf 'Import complete: %d created, %d already present (%d in-flight, %d queued, %d captain-hold).\n' \
-    "$imported" "$skipped" "$inflight" "$queued" "$captain"
+  printf 'Import complete: %d created, %d already present (%d in-flight, %d queued, %d captain-hold, %d dependency edge(s) added).\n' \
+    "$imported" "$skipped" "$inflight" "$queued" "$captain" "$edges_added"
   printf 'Next: review with "task list --label %s", then set config/backlog-backend to beads.\n' "$FLEET_LABEL"
 fi

@@ -103,6 +103,26 @@ open_human_gates() {  # <bead-id> -> count of open blocking gates
     | jq '[.[0].dependencies[]? | select(.issue_type=="gate" and .dependency_type=="blocks" and .status=="open")] | length'
 }
 
+total_human_gates() {  # <bead-id> -> count of blocking gates in any state (open or closed)
+  beads -C "$STORE" show "$1" --json 2>/dev/null \
+    | jq '[.[0].dependencies[]? | select(.issue_type=="gate" and .dependency_type=="blocks")] | length'
+}
+
+gate_on() {  # <bead-id> -> id of a blocking gate on the bead, or empty
+  beads -C "$STORE" show "$1" --json 2>/dev/null \
+    | jq -r '[.[0].dependencies[]? | select(.issue_type=="gate" and .dependency_type=="blocks")][0].id // empty'
+}
+
+is_ready() {  # <bead-id> -> 0 if the bead appears in bd ready
+  beads -C "$STORE" ready --json 2>/dev/null \
+    | jq -e --arg b "$1" 'any(.[]?; .id == $b)' >/dev/null
+}
+
+has_blocks_edge() {  # <blocked-bead> <blocker-bead> -> count of blocks edges from blocker
+  beads -C "$STORE" show "$1" --json 2>/dev/null \
+    | jq --arg b "$2" '[.[0].dependencies[]? | select(.dependency_type=="blocks" and .id==$b)] | length'
+}
+
 anchor_for_hold() {  # <hold-id> -> anchor bead carrying hold:<id>, or empty
   beads -C "$STORE" list --label "hold:$1" --all --json 2>/dev/null \
     | jq -r 'if type=="array" and length>0 then .[0].id else empty end'
@@ -238,11 +258,106 @@ test_unreachable_store_fails_closed() {
   pass "the importer fails closed and writes nothing when the store is unreachable"
 }
 
+test_blocked_by_becomes_real_dependency_edge() {
+  local home waiter blocker out
+  home=$(make_home blocked-by)
+  # The blocker is declared AFTER the waiter, so a correct import must resolve it
+  # in a second pass rather than at the moment the waiter's bead is created.
+  write_backlog "$home" \
+    '## Queued' \
+    '- [ ] dep-waiter - Waits on the blocker (repo: alpha) (kind: ship) blocked-by: dep-blocker - needs it first' \
+    '- [ ] dep-blocker - The blocker (repo: alpha) (kind: ship)'
+
+  # Dry run must report the edge it would add, and write nothing.
+  out=$(run_import "$home")
+  assert_contains "$out" "blocked-by dep-blocker" "blocked-by: dry run should report the dependency edge"
+  [ "$(bead_count_for dep-waiter)" = 0 ] \
+    || fail "blocked-by: dry run created a bead"
+
+  run_import "$home" --apply >/dev/null
+  waiter=$(bead_for dep-waiter)
+  blocker=$(bead_for dep-blocker)
+  [ -n "$waiter" ] && [ -n "$blocker" ] \
+    || fail "blocked-by: beads were not created for the pair"
+  [ "$(has_blocks_edge "$waiter" "$blocker")" = 1 ] \
+    || fail "blocked-by: no real dependency edge from blocker to waiter"
+  # The edge must actually withhold the waiter from ready while the blocker is open.
+  is_ready "$waiter" \
+    && fail "blocked-by: waiter appears ready despite an open blocker"
+  is_ready "$blocker" \
+    || fail "blocked-by: the blocker itself should be ready"
+
+  # Idempotent: a re-run must not duplicate the edge.
+  run_import "$home" --apply >/dev/null
+  [ "$(has_blocks_edge "$waiter" "$blocker")" = 1 ] \
+    || fail "blocked-by: re-running the import duplicated the dependency edge"
+  pass "blocked-by becomes a real bead dependency edge that hides the waiter until its blocker closes, idempotently"
+}
+
+test_dated_gate_defers_bead() {
+  local home gated ungated out
+  home=$(make_home dated-gate)
+  # A far-future dated gate must hide the bead; an item with no gate is untouched.
+  write_backlog "$home" \
+    '## Queued' \
+    '- [ ] gate-future - Held until a future date (repo: alpha) (kind: ship) (since 2099-01-01)' \
+    '- [ ] gate-none - No time gate here (repo: alpha) (kind: ship)'
+
+  # Dry run must report the defer it would set, and write nothing.
+  out=$(run_import "$home")
+  assert_contains "$out" "defer=2099-01-01" "dated-gate: dry run should report the defer date"
+  [ "$(bead_count_for gate-future)" = 0 ] \
+    || fail "dated-gate: dry run created a bead"
+
+  run_import "$home" --apply >/dev/null
+  gated=$(bead_for gate-future)
+  ungated=$(bead_for gate-none)
+  [ -n "$gated" ] && [ -n "$ungated" ] \
+    || fail "dated-gate: beads were not created"
+  is_ready "$gated" \
+    && fail "dated-gate: the dated-gate item appears ready despite a future defer date"
+  is_ready "$ungated" \
+    || fail "dated-gate: an item with no gate was wrongly withheld from ready"
+  pass "a dated (since) time gate defers the bead so it is hidden from ready; an ungated item is unaffected"
+}
+
+test_resolved_gate_not_resurrected() {
+  local home bead gate
+  home=$(make_home resolved-gate)
+  write_backlog "$home" \
+    '## Queued' \
+    '- [ ] resolve-me - Captain-gated thread (repo: alpha) (kind: ship) (hold: awaiting captain) (hold-kind: captain)'
+  run_import "$home" --apply >/dev/null
+  bead=$(bead_for resolve-me)
+  [ -n "$bead" ] || fail "resolved-gate: no bead created for the gated item"
+  [ "$(open_human_gates "$bead")" = 1 ] \
+    || fail "resolved-gate: expected exactly one open human gate initially"
+
+  # The captain resolves (closes) the gate: the decision is now made.
+  gate=$(gate_on "$bead")
+  [ -n "$gate" ] || fail "resolved-gate: could not find the gate to resolve"
+  beads -C "$STORE" gate resolve "$gate" >/dev/null 2>&1 \
+    || fail "resolved-gate: could not resolve the human gate"
+  [ "$(open_human_gates "$bead")" = 0 ] \
+    || fail "resolved-gate: the gate was not actually resolved"
+
+  # A re-run must NOT re-add a gate the captain has already resolved.
+  run_import "$home" --apply >/dev/null
+  [ "$(open_human_gates "$bead")" = 0 ] \
+    || fail "resolved-gate: re-running the import resurrected a captain-resolved gate"
+  [ "$(total_human_gates "$bead")" = 1 ] \
+    || fail "resolved-gate: re-run added a second gate alongside the resolved one"
+  pass "a re-run does not resurrect a human gate the captain has already resolved"
+}
+
 test_inflight_and_queued_status_and_priority
 test_dry_run_writes_nothing
 test_idempotent_no_duplicates
 test_captain_decision_hold_becomes_anchor_and_gate
 test_captain_gated_work_item_gets_human_gate
 test_unreachable_store_fails_closed
+test_blocked_by_becomes_real_dependency_edge
+test_dated_gate_defers_bead
+test_resolved_gate_not_resurrected
 
 echo "# all fm-backlog-import-beads tests passed"
