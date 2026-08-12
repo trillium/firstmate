@@ -1752,9 +1752,11 @@ else
 fi
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
 
-# Auto-linked beads case (see AUTO_BEADS_LINKED above): fm-brief.sh scaffolded
-# this brief before a bead existed, so its hook loop (fm-brief-hooks.d/*.sh,
-# keyed on FM_HOOK_BEADS_ID) never ran. Re-run that same hook loop now that
+# Auto-linked beads case (see AUTO_BEADS_LINKED above): fm-brief.sh leaves
+# FM_HOOK_BEADS_ID unset at scaffold time, so its hook loop (fm-brief-hooks.d/*.sh,
+# keyed on that var) never ran - true whether or not fm-brief.sh already minted the
+# task's intake bead under config/backlog-backend=beads, since it deliberately does
+# not inject the worker-facing sections there. Re-run that same hook loop now that
 # BEADS_ARG is resolved, and splice any output into the already-written brief
 # at the same position fm-brief.sh would have used: immediately before the
 # "# Setup" section. An explicit --beads spawn is exempt because its caller

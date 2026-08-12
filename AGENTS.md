@@ -300,6 +300,7 @@ Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in sec
 The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.
 After spawning, confirm the worker is processing the brief, handle any trust dialog through `harness-adapters`, and record ship or scout work as under way.
 When spawning with `--beads <id>`, the task is linked to an external bead item for progress tracking on `mg` or similar tools; under `config/backlog-backend=beads`, every non-secondmate spawn is linked this way automatically when `--beads` was not given, auto-resolving or minting the bead via `fm_beads_resolve_or_create` (`bin/fm-tasks-axi-lib.sh`) so firstmate's own work is always represented in the store; `fm-bead-stamp.sh` stamps the bead's `dispatch=sent` and `lifecycle=sent` state dimensions, and the generated brief includes instructions for the worker to confirm `dispatch=claimed` and `lifecycle=claimed` after reading, and to close the bead on completion.
+Under that backend the bead is opened at intake, not only at dispatch: `bin/fm-brief.sh` mints or resolves it (the same idempotent `fm_beads_resolve_or_create`, keyed on the `task:<id>` label) the moment a task's brief is scaffolded, so a task firstmate is aware of but has not yet spawned already has an open bead and spawn's later resolve returns that same bead.
 `fm-teardown.sh` also closes the linked bead itself once a non-force teardown confirms the task's work landed, so a worker that cannot reach the closing step is still covered; `--force` and a refused teardown never close it.
 `bin/fm-ledger.sh` is the fleet-wide safety net for a bead that falls outside both paths - claimed, still open, and gone quiet past its staleness window - and can list or close those likely-dropped beads.
 A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
@@ -499,6 +500,7 @@ Mention cost as a courtesy when unusually much work is running, but never block 
 ## 10. Backlog contract
 
 `data/backlog.md` is the durable queue (for tasks-axi and manual backends); when `config/backlog-backend=beads` is set, the beads federated task store is the queue source instead.
+Under the beads backend an open bead must represent every task firstmate is aware of from intake onward, not only from dispatch; scaffolding a task's brief opens that bead (section 7's bead-linked dispatch owns the mechanism).
 It tracks work items only, never agents; persistent secondmates never appear as backlog items.
 Work routed to a secondmate is recorded in that secondmate home's own backlog, not the main backlog.
 When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item; use `tasks-axi hold <id> --reason "<reason>" --kind captain` for a captain-gated thread.
