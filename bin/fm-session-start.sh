@@ -521,8 +521,13 @@ print_backlog_tasks_axi_compact() {
 # print_backlog_beads_compact - beads-authority migration Stage 2 (see
 # data/beads-authority-migration-scout/report.md section 4). Mirrors
 # data/backlog.md's `## In flight`/`## Queued` structure instead of listing
-# only bd's native --ready set, which silently drops in_progress/blocked
-# work from the digest. Both sections are scoped by fm_beads_fleet_label so
+# only bd's native ready set, which silently drops in_progress/blocked
+# work from the digest. The In flight section is `task list --status
+# in_progress,blocked`; the Queued section is `task ready` (bd's
+# dependency-derived, blocker-aware ready work), whose default `--sort
+# priority` makes the queued listing priority-ordered - the ready set is the
+# source of truth for what to dispatch next, so it leads with the highest-
+# priority claimable work. Both sections are scoped by fm_beads_fleet_label so
 # this stays firstmate's fleet view, not the shared federated store's full
 # cross-project set (same label fm-fleet-snapshot.sh's Stage 1 beads read
 # uses). Any read failure falls back to the whole title-line rendering, same
@@ -544,7 +549,7 @@ print_backlog_beads_compact() {
     inflight_ok=1
   fi
 
-  out_queued=$(task list --label "$label" --ready --limit "$BACKLOG_LIMIT" 2>&1)
+  out_queued=$(task ready --label "$label" --limit "$BACKLOG_LIMIT" 2>&1)
   rc_queued=$?
   if [ "$rc_queued" -eq 0 ]; then
     fm_beads_mirror_write ready "$out_queued" 2>/dev/null || true
