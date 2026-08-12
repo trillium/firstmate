@@ -89,34 +89,6 @@ fm_lint_positive_number() {  # <value> <fallback>
   esac
 }
 
-fm_lint_changed_base_ref() {
-  if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
-    printf 'origin/main\n'
-    return 0
-  fi
-  if git rev-parse --verify -q main >/dev/null 2>&1; then
-    printf 'main\n'
-    return 0
-  fi
-  return 1
-}
-
-fm_lint_is_canonical_root() {
-  local path=$1 dir base
-  case "$path" in
-    */*) dir=${path%/*}; base=${path##*/} ;;
-    *) dir=; base=$path ;;
-  esac
-  case "$base" in
-    *.sh) : ;;
-    *) return 1 ;;
-  esac
-  case "$dir" in
-    bin|bin/backends|tests) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 fm_lint_slot_limit() {
   fm_lint_positive_number "${FM_LINT_GLOBAL_LIMIT:-}" "$FM_LINT_SLOT_LIMIT_DEFAULT"
 }
@@ -127,41 +99,6 @@ fm_lint_slot_wait() {
 
 fm_lint_slot_dir() {
   printf '%s\n' "${FM_LINT_STATE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/fm-lint}/slots"
-}
-
-# fm_lint_changed_base_ref prints the ref to diff the working branch against:
-# the local origin/main tracking ref when present, else local main. Returns
-# nonzero when neither is resolvable, which the caller treats as "no
-# merge-base found" and falls back to a full lint.
-fm_lint_changed_base_ref() {
-  if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
-    printf 'origin/main\n'
-    return 0
-  fi
-  if git rev-parse --verify -q main >/dev/null 2>&1; then
-    printf 'main\n'
-    return 0
-  fi
-  return 1
-}
-
-# fm_lint_is_canonical_root tests membership in the canonical set (a direct
-# *.sh child of bin/, bin/backends/, or tests/) without the shell case
-# statement's non-pathname wildcard matching a path separator by accident.
-fm_lint_is_canonical_root() {
-  local path=$1 dir base
-  case "$path" in
-    */*) dir=${path%/*}; base=${path##*/} ;;
-    *) dir=; base=$path ;;
-  esac
-  case "$base" in
-    *.sh) : ;;
-    *) return 1 ;;
-  esac
-  case "$dir" in
-    bin|bin/backends|tests) return 0 ;;
-    *) return 1 ;;
-  esac
 }
 
 FM_LINT_WORKER_SLOT=
@@ -405,8 +342,6 @@ fm_lint_require_count() {  # <name> <value>
 }
 
 fm_lint_changed_base_ref() {
-  # Return the base git reference for comparing against changed files.
-  # Prefers origin/main, then upstream/main (fork convention), then local main.
   git rev-parse --verify origin/main >/dev/null 2>&1 && printf 'origin/main\n' && return 0
   git rev-parse --verify upstream/main >/dev/null 2>&1 && printf 'upstream/main\n' && return 0
   git rev-parse --verify main >/dev/null 2>&1 && printf 'main\n' && return 0
@@ -414,10 +349,17 @@ fm_lint_changed_base_ref() {
 }
 
 fm_lint_is_canonical_root() {
-  # Check if a path is one of the canonical lint roots.
-  local path=$1
+  local path=$1 dir base
   case "$path" in
-    bin/*.sh|bin/backends/*.sh|tests/*.sh) return 0 ;;
+    */*) dir=${path%/*}; base=${path##*/} ;;
+    *) dir=; base=$path ;;
+  esac
+  case "$base" in
+    *.sh) : ;;
+    *) return 1 ;;
+  esac
+  case "$dir" in
+    bin|bin/backends|tests) return 0 ;;
     *) return 1 ;;
   esac
 }
