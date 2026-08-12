@@ -232,7 +232,7 @@ done
 # The ordered stage list is the contract behind the truncation banner: the child
 # names the stage it is entering, and the parent reports every stage at or after
 # that one as never emitted. Keep it in the exact order the digest prints.
-SESSION_START_STAGES='lock bootstrap wake-queue read-once supervision-instructions persona fleet-state context next-step'
+SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions persona context fleet-state next-step'
 
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${FM_SESSION_START_STAGE_FILE:-}" ] || return 0
@@ -732,36 +732,19 @@ else
   fi
 fi
 
-# --- 4. read-once contract --------------------------------------------------
-# Ahead of the two digests it governs, not after them: a truncated tail is
-# exactly what drops a closing reminder, and this contract is what stops the
-# next turn from re-reading everything the digest just printed. Because it now
-# arrives BEFORE its subject, it also names the one condition that voids it -
-# a stage that never ran, which the truncation banner names by stage.
-stage read-once
+# --- 4. read-once contract -------------------------------------------------
+stage read-once-contract
 section "READ-ONCE CONTRACT"
 cat <<'EOF'
-Everything below is printed in full for this session start: every state/*.meta,
-a compact data/backlog.md listing, a bounded tail of every state/*.status,
-data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
-and data/learnings.md.
-Do NOT re-read any of them after reading this digest, and do NOT bulk-read
-data/backlog.md or state/*.status: re-reading everything defeats the entire
-point of this command.
-
-Go to a source directly only when:
-  - this digest flagged it ABSENT (then rebuild or create it per AGENTS.md),
-  - its contents looked unparseable or corrupt,
-  - an individual full status log is needed for older wake-event history, or a
-    status line was capped and its tail matters (each task's full log path is
-    printed with its tail),
-  - a full task body is needed (tasks-axi show <id> --full, or data/backlog.md),
-  - the backlog listing disclosed omitted queued items and this turn needs them,
-  - or a STARTUP TRUNCATED banner named the stage that would have printed it, in
-    which case that stage's sources were never emitted and must be reconciled.
+The digest above is complete for this session start. Do NOT re-read
+persona.md, config/persona.md, data/projects.md, data/secondmates.md,
+data/captain.md, data/captain-shared.md, data/learnings.md,
+or state/*.meta now - they were just printed in full.
+Do NOT bulk-read data/backlog.md now either: the compact identity/metadata
+listing was just printed with a pointer for targeted full-body follow-up.
 EOF
 
-# --- 6. supervision operating instructions ----------------------------------
+# --- 5. supervision operating instructions ----------------------------------
 stage supervision-instructions
 AFK_PRESENT=0
 [ -e "$STATE/.afk" ] && AFK_PRESENT=1
@@ -789,7 +772,7 @@ fi
   --afk "$AFK_PRESENT" \
   --x-mode "$X_MODE_PRESENT"
 
-# --- 7. persona ----------------------------------------------------------
+# --- 6. persona ----------------------------------------------------------
 # Always-in-force captain-facing voice (AGENTS.md persona pointer): printed
 # every session, unconditionally, so it never depends on a per-reply trigger.
 # config/persona.md (local, gitignored) overrides the tracked persona.md
@@ -798,9 +781,16 @@ stage persona
 section "PERSONA"
 print_persona
 
-# --- 8. fleet-state digest -----------------------------------------------
-# Before CONTEXT: see this file's ORDERING note. Live fleet identity is what a
-# truncated tail must never take.
+# --- 7. context digest -----------------------------------------------------
+stage context
+section "CONTEXT"
+print_file_or_absent "$DATA/projects.md" "data/projects.md"
+print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
+print_file_or_absent "$DATA/captain.md" "data/captain.md"
+print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
+print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
+
+# --- 8. fleet-state digest ---------------------------------------------
 stage fleet-state
 section "FLEET STATE"
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
@@ -872,16 +862,7 @@ if fm_pf_relay_active "$FM_HOME" \
   fi
 fi
 
-# --- 9. context digest -----------------------------------------------------
-stage context
-section "CONTEXT"
-print_file_or_absent "$DATA/projects.md" "data/projects.md"
-print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
-print_file_or_absent "$DATA/captain.md" "data/captain.md"
-print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
-print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
-
-# --- 10. closing reminder -----------------------------------------------
+# --- 8. closing reminder -----------------------------------------------
 stage next-step
 section "NEXT STEP"
 if [ "$READ_ONLY" -eq 1 ]; then
@@ -913,8 +894,18 @@ This script never starts supervision itself.
 EOF
 fi
 cat <<'EOF'
-The digest above is complete for this session start. The READ-ONCE CONTRACT
-section near the top of it governs what may still be read from disk.
+The digest above is complete for this session start. Do NOT re-read
+persona.md, config/persona.md, data/projects.md, data/secondmates.md,
+data/captain.md, data/captain-shared.md, data/learnings.md,
+or state/*.meta now - they were just printed in full.
+Do NOT bulk-read data/backlog.md now either: the compact identity/metadata
+listing was just printed with a pointer for targeted full-body follow-up.
+Do NOT bulk-read state/*.status now either: their bounded tails were just
+printed with full log paths for targeted follow-up when older wake-event
+history is actually needed. Re-reading everything defeats the entire point
+of this command. Re-read a file only if this digest flagged it ABSENT (then
+rebuild or create it per AGENTS.md), its contents looked unparseable/corrupt,
+or an individual full status log is needed for older wake-event history.
 EOF
 
 if [ "$READ_ONLY" -eq 0 ] && [ "$REEMIT" -eq 0 ]; then

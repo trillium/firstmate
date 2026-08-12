@@ -403,6 +403,25 @@ fm_lint_require_count() {  # <name> <value>
       ;;
   esac
 }
+
+fm_lint_changed_base_ref() {
+  # Return the base git reference for comparing against changed files.
+  # Prefers origin/main, then upstream/main (fork convention), then local main.
+  git rev-parse --verify origin/main >/dev/null 2>&1 && printf 'origin/main\n' && return 0
+  git rev-parse --verify upstream/main >/dev/null 2>&1 && printf 'upstream/main\n' && return 0
+  git rev-parse --verify main >/dev/null 2>&1 && printf 'main\n' && return 0
+  return 1
+}
+
+fm_lint_is_canonical_root() {
+  # Check if a path is one of the canonical lint roots.
+  local path=$1
+  case "$path" in
+    bin/*.sh|bin/backends/*.sh|tests/*.sh) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 [ -z "${FM_LINT_GLOBAL_LIMIT:-}" ] || fm_lint_require_count FM_LINT_GLOBAL_LIMIT "$FM_LINT_GLOBAL_LIMIT"
 [ -z "${FM_LINT_GLOBAL_WAIT:-}" ] || fm_lint_require_count FM_LINT_GLOBAL_WAIT "$FM_LINT_GLOBAL_WAIT"
 case "${FM_LINT_CACHE:-1}" in
