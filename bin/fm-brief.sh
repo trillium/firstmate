@@ -52,12 +52,17 @@
 # stdout is prepended to the generated brief. The beads hook (fm-brief-hooks.d/beads.sh)
 # is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt and
 # Bead Closure sections that ask the worker to confirm dispatch/lifecycle state changes
-# and close the bead on completion. FM_HOOK_BEADS_ID is never auto-populated here: bead
-# minting/resolution is deliberately deferred to fm-spawn.sh (beads-authority migration
-# Stage 3), which is the point where a task is actually dispatched, so a brief that is
-# scaffolded but never spawned never leaves an orphaned bead in the shared store. This
-# section only renders when a caller sets FM_HOOK_BEADS_ID explicitly before scaffolding
-# (the pre-existing --beads opt-in path); secondmate charters are exempt.
+# and close the bead on completion. FM_HOOK_BEADS_ID is never auto-populated here: those
+# worker-facing sections are always added at dispatch by fm-spawn.sh, since a
+# not-yet-spawned task has no worker to act on them, which keeps section injection
+# single-sourced there. Under config/backlog-backend=beads, however, this script does
+# mint or resolve the task's bead at intake (via fm_beads_resolve_or_create) the moment
+# the brief is scaffolded, so a task firstmate is aware of but has not yet spawned is
+# represented by an open bead immediately rather than only at dispatch (AGENTS.md
+# sections 7 and 10); the shared task:<id> idempotency label means fm-spawn.sh's later
+# resolve returns that same bead. The Bead Receipt/Closure section only renders when a
+# caller sets FM_HOOK_BEADS_ID explicitly before scaffolding (the pre-existing --beads
+# opt-in path); secondmate charters are exempt.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -157,6 +162,13 @@ if [ -n "${FM_STATE_OVERRIDE:-}" ]; then
 else
   STATE="$FM_HOME/state"
 fi
+# CONFIG may be absent (absent = defaults); fm_backlog_backend_value handles a
+# missing backlog-backend file, so this is a plain path, never resolve_directory_input.
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# For intake-time bead capture under config/backlog-backend=beads (see the
+# FM_HOOK_BEADS_ID note in this file's header and the minting block below).
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -406,14 +418,25 @@ fi
 
 REPO=${POS[1]}
 
-# beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
-# "Stage 3"): bead minting/resolution under config/backlog-backend=beads happens only
-# in fm-spawn.sh, at actual dispatch time, not here. Minting here at scaffold time
-# would create a bead the moment a brief is written, before the task is ever spawned;
-# if the captain declines after review or spawn fails, that bead would be permanently
-# orphaned in the shared store since no state/<id>.meta ever records its beads_id= for
-# fm-teardown.sh to close. FM_HOOK_BEADS_ID is therefore left exactly as the caller set
-# it (unset unless an explicit --beads workflow pre-populated it).
+# Intake-time bead capture (AGENTS.md sections 7 and 10). Under
+# config/backlog-backend=beads, open this task's bead the moment its brief is
+# scaffolded, so a task firstmate is aware of but has not yet spawned (queued,
+# blocked, awaiting a captain go-ahead) is already represented by an open bead
+# rather than only appearing at dispatch. fm_beads_resolve_or_create is
+# idempotent on the task:<id> label, so fm-spawn.sh's later resolve returns THIS
+# same bead (never a duplicate) and records it as beads_id= for fm-teardown.sh /
+# fm-ledger.sh to close. FM_HOOK_BEADS_ID is deliberately left unset here: the
+# worker-facing Bead Receipt/Closure sections are added at dispatch by
+# fm-spawn.sh (a not-yet-spawned task has no worker to act on them), which keeps
+# section injection single-sourced there. An explicit opt-in that already owns
+# the bead link and its sections is exempt, in either shape: the --beads flag
+# (BEADS_ID set) or a caller-preset FM_HOOK_BEADS_ID env var. Fails open like the
+# rest of the beads integration: a resolve failure (task/jq missing, store
+# unreachable) is swallowed and scaffolding proceeds unchanged.
+if [ -z "$BEADS_ID" ] && [ -z "${FM_HOOK_BEADS_ID:-}" ] &&
+  [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+  fm_beads_resolve_or_create "$ID" >/dev/null 2>&1 || true
+fi
 
 # Hook system (see header comment above): scripts in fm-brief-hooks.d/ are sourced
 # in a subshell, and any stdout they produce is collected into HOOK_SECTION and
@@ -421,7 +444,7 @@ REPO=${POS[1]}
 # below exits with no output when FM_HOOK_BEADS_ID is unset), so HOOK_SECTION stays
 # empty and briefs are unchanged when no hook has anything to add.
 # An explicit --beads workflow pre-populates FM_HOOK_BEADS_ID here; otherwise it is
-# left exactly as the caller already set it (see the Stage 3 comment above).
+# left exactly as the caller already set it (see the intake-capture comment above).
 [ -z "$BEADS_ID" ] || export FM_HOOK_BEADS_ID="$BEADS_ID"
 export FM_HOOK_TASK_ID="$ID"
 HOOK_SECTION=""

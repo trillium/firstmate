@@ -136,9 +136,10 @@ fm_beads_backend_available() {
 # Stage 0; see data/beads-authority-migration-scout/report.md section 4 and
 # docs/configuration.md "Backlog backend"). A `task list --label <this>` call
 # scopes to firstmate's fleet instead of the shared federated store's full
-# cross-project set. As of Stage 4, fm-decision-hold.sh's beads-native
-# captain-hold anchor is the only bin/ code that creates a bead with this
-# label; fm-fleet-snapshot.sh and fm-bearings-snapshot.sh read it.
+# cross-project set. Multiple bin/ scripts call fm_beads_resolve_or_create to
+# mint fleet-labeled beads: fm-decision-hold.sh (captain-hold anchor), fm-brief.sh
+# (intake capture), and fm-spawn.sh (dispatch). fm-fleet-snapshot.sh and
+# fm-bearings-snapshot.sh read it.
 # FM_BEADS_FLEET_LABEL is an override for test fixtures; production code
 # should call this function rather than hardcoding the label.
 fm_beads_fleet_label() {
