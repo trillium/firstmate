@@ -215,9 +215,12 @@ SH
 
 # make_fake_task_beads_compact <fakebin>: a fake `task` (beads) CLI whose
 # `list --limit 1` (availability probe), `list --label fleet:firstmate
-# --status in_progress,blocked` (In flight section), and `list --label
-# fleet:firstmate --ready` (Queued section) all succeed, each scoped by the
-# firstmate-fleet label so unscoped or wrong-status regressions are caught.
+# --status in_progress,blocked` (In flight section), and `ready --label
+# fleet:firstmate` (Queued section - bd's priority-ordered ready set) all
+# succeed, each scoped by the firstmate-fleet label so unscoped or
+# wrong-status regressions are caught. The Queued fixture emits ready-task-1
+# before ready-task-2 so the digest's order-preservation of bd ready's
+# priority sort is assertable.
 make_fake_task_beads_compact() {
   local fakebin=$1
   cat > "$fakebin/task" <<'SH'
@@ -236,7 +239,7 @@ case "$*" in
     printf '%s\n' 'inflight-task-2'
     exit 0
     ;;
-  *'--label fleet:firstmate'*'--ready'*)
+  'ready --label fleet:firstmate'*)
     case "$*" in *'--limit 80'*) : ;; *) printf '%s\n' 'missing compact limit' >&2; exit 9 ;; esac
     printf '%s\n' 'ready-task-1'
     printf '%s\n' 'ready-task-2'
@@ -250,7 +253,7 @@ SH
 
 # make_fake_task_beads_inflight_read_fails <fakebin>: same availability probe
 # as make_fake_task_beads_compact, but the In flight `--status
-# in_progress,blocked` call fails while the Queued `--ready` call would
+# in_progress,blocked` call fails while the Queued `ready` call would
 # otherwise succeed, so the whole beads listing must fall back to title-line
 # rendering rather than printing a partial digest.
 make_fake_task_beads_inflight_read_fails() {
@@ -269,7 +272,7 @@ case "$*" in
     printf '%s\n' 'store timeout' >&2
     exit 1
     ;;
-  *'--ready'*)
+  'ready '*)
     printf '%s\n' 'ready-task-1'
     exit 0
     ;;
@@ -1886,10 +1889,23 @@ EOF
   assert_contains "$out" "ready-task-2" "beads compact listing omitted a second Queued item"
   assert_grep "list --label fleet:firstmate --status in_progress,blocked --limit 80" "$log" \
     "session start did not query beads for its own fleet's in_progress/blocked set with the bounded limit"
-  assert_grep "list --label fleet:firstmate --ready --limit 80" "$log" \
-    "session start did not query beads for its own fleet's ready set with the bounded limit"
+  assert_grep "ready --label fleet:firstmate --limit 80" "$log" \
+    "session start did not source the Queued set from bd ready (priority-ordered) with the bounded limit"
+  # Regression guard: the Queued set must come from the priority-ordered `bd
+  # ready` command, never the unordered `list --ready` path it replaced.
+  if grep -q -- 'list --label fleet:firstmate --ready' "$log"; then
+    fail "session start used the unordered 'list --ready' path instead of the priority-ordered 'task ready'"
+  fi
+  # Order preservation: bd ready returns highest-priority claimable work first
+  # (default --sort priority); the digest must render that order unchanged.
+  local pos1 pos2
+  pos1=$(printf '%s\n' "$out" | grep -n 'ready-task-1' | head -1 | cut -d: -f1)
+  pos2=$(printf '%s\n' "$out" | grep -n 'ready-task-2' | head -1 | cut -d: -f1)
+  if [ -z "$pos1" ] || [ -z "$pos2" ] || [ "$pos1" -ge "$pos2" ]; then
+    fail "beads Queued section did not preserve bd ready's priority order (ready-task-1 must precede ready-task-2)"
+  fi
 
-  pass "beads backend digest shows In flight (in_progress/blocked) and Queued (ready) sections, both scoped by the fleet label"
+  pass "beads backend digest shows In flight (in_progress/blocked) and priority-ordered Queued (bd ready) sections, both scoped by the fleet label"
 }
 
 test_backlog_compact_beads_partial_failure_falls_back_to_manual() {
@@ -1939,7 +1955,7 @@ case "$*" in
     printf '%s\n' 'inflight-task-1'
     exit 0
     ;;
-  *'--ready'*)
+  'ready '*)
     printf '%s\n' 'ready-task-1'
     printf '%s\n' 'ready-task-2'
     exit 0
