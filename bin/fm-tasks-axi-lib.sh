@@ -171,3 +171,26 @@ fm_beads_resolve_or_create() {
   [ -n "$id" ] || return 1
   printf '%s\n' "$id"
 }
+
+# fm_beads_is_closed <bead-id> - true ONLY when the bead exists and its status is
+# closed. This is the authoritative task-completion signal read by
+# bin/fm-crew-state.sh under config/backlog-backend=beads: the worker closes its
+# linked bead as the terminal lifecycle step before reporting done, and
+# fm-teardown.sh/fm-ledger.sh close it on confirmed landing or drop-recovery, so a
+# closed bead means the task is complete regardless of a stale status-event tail.
+# Distinct from fm-beads-resilience-lib.sh's fm_beads_close_already_applied, which
+# treats an ABSENT bead as "already applied" for idempotent write-queue replay:
+# here an absent, open, or unreadable bead is NOT closed, so reconciliation falls
+# through to the existing pane/run-step logic rather than inventing a completion.
+# Fails open like the rest of the beads integration (returns non-zero on any
+# missing tool or store error), never marking live work done.
+fm_beads_is_closed() { # <bead-id>
+  local id=$1 out status
+  [ -n "$id" ] || return 1
+  command -v task >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  out=$(task show "$id" --json 2>/dev/null) || return 1
+  [ -n "$out" ] || return 1
+  status=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null) || return 1
+  [ "$status" = closed ]
+}

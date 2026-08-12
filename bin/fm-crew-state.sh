@@ -20,6 +20,12 @@
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta.
+#   1b. Under config/backlog-backend=beads only: a CLOSED linked bead (beads_id=
+#      in meta) is an authoritative lifecycle "done" - the worker closes it as
+#      its terminal step and teardown/ledger close it on landing, so a closed
+#      bead means complete regardless of a stale status-event tail. Fires only
+#      when closed; an open bead falls through untouched, so live work is never
+#      marked done prematurely. Other backends never consult a bead here.
 #   2. Matching no-mistakes run for this crew's branch AND current code identity,
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
@@ -55,9 +61,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 # shellcheck source=bin/fm-tmux-lib.sh
 . "$SCRIPT_DIR/fm-tmux-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -106,6 +115,24 @@ HARNESS=$(meta_value harness)
 # A torn-down (or never-created) worktree has no current state to read.
 if [ -z "$WT" ] || [ ! -d "$WT" ]; then
   emit unknown none "worktree gone (torn down?)"
+fi
+
+# --- lifecycle completion: a closed linked bead is authoritative "done" -----
+# Under config/backlog-backend=beads every task carries a linked bead (beads_id=
+# in meta). The worker closes that bead as its terminal step before reporting
+# done, and fm-teardown.sh/fm-ledger.sh close it on confirmed landing or
+# drop-recovery, so a CLOSED bead is a lifecycle-derived truth that the task is
+# complete - authoritative over a stale status-event tail. This fires ONLY when
+# the bead is closed: an OPEN bead (live work) never reaches `emit` here and
+# stays governed by the pane/run-step logic below, so live work is never marked
+# done prematurely. Config-gated to the beads backend (fm_backlog_backend_value);
+# tasks-axi/manual backends never consult a bead here. fm_beads_is_closed fails
+# open (missing tool or store error -> not closed -> existing logic governs).
+BEADS_ID=$(meta_value beads_id)
+if [ -n "$BEADS_ID" ] \
+  && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ] \
+  && fm_beads_is_closed "$BEADS_ID"; then
+  emit "done" bead "linked bead $BEADS_ID closed: task complete"
 fi
 
 # --- status log ------------------------------------------------------------
