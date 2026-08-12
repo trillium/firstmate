@@ -196,7 +196,7 @@ The outbox is the whole recovery record: its presence means delivery is unfinish
 There is no two-phase handoff journal and no tasks-axi release beyond the already-required atomic `mv` capability.
 Bootstrap retries pending outboxes when mutation is authorized and emits `SECONDMATE_HANDOFF:` for any that remain.
 This delegated route remains required when `config/backlog-backend=manual`, which controls only routine firstmate backlog edits.
-Handoff with the beads backend is not yet supported and requires a different mechanism; secondmates using the beads backend remain without handoff support until that mechanism is implemented.
+Automated handoff into a beads-backed secondmate is deferred (beads-authority migration Stage 7); route such work directly and keep a handoff destination on tasks-axi or manual, while main-home-on-beads stays fully supported (see `docs/configuration.md` "Backlog backend").
 It moves each queued item's whole block - the `- [ ] <id> ...` header plus every following two-or-more-space-indented body line and blank separator, up to the next item or column-0 section heading - byte-exact under the same section, treating an indented `## ...` line as body rather than a section boundary, so neither the header nor its body is duplicated or orphaned.
 It refuses a selected item with a single-space or tab-indented continuation rather than risk leaving content orphaned in the main backlog.
 It accepts in-scope `## Queued` entries only and refuses `## In flight` and historical `## Done` entries.

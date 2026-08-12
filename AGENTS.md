@@ -501,8 +501,8 @@ Mention cost as a courtesy when unusually much work is running, but never block 
 `data/backlog.md` is the durable queue (for tasks-axi and manual backends); when `config/backlog-backend=beads` is set, the beads federated task store is the queue source instead.
 It tracks work items only, never agents; persistent secondmates never appear as backlog items.
 Work routed to a secondmate is recorded in that secondmate home's own backlog, not the main backlog.
-When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item; use `tasks-axi hold <id> --reason "<reason>" --kind captain` for a captain-gated thread.
-Captain-held decision threads are not supported when `config/backlog-backend=beads` or `config/backlog-backend=manual` is set; they require the tasks-axi backend.
+When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item; under tasks-axi use `tasks-axi hold <id> --reason "<reason>" --kind captain` for a captain-gated thread, and under beads use the beads-native captain hold owned by `bin/fm-decision-hold.sh` (a labeled anchor plus a human gate).
+Captain-held decision threads are unavailable only under `config/backlog-backend=manual`.
 Unresolved decisions discovered by investigations or visual reviews follow `decision-hold-lifecycle`, which owns their mandatory backlog lifecycle.
 Update the backlog on every dispatch, completion, and decision for a work item.
 Re-evaluate queued work after every teardown and heartbeat, dispatching items only when dependencies and time gates have cleared.
