@@ -63,7 +63,7 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 
 **Observable behavior:**
 - Every spawn without `--beads <id>` auto-links to a new or matched beads task (no manual step)
-- Captain decision holds in beads survive recovery and restart (`tasks-axi hold ... --kind captain`)
+- Captain decision holds in beads survive recovery and restart (`bin/fm-decision-hold.sh`, a labeled anchor plus a human gate)
 - Backlog queries work transparently (`bd ready`, `bd show`, `bd update`, `bd close`)
 - Secondmate homes have isolated beads stores with inherited shared labels
 - Open decisions are tracked durably in beads and recovered on startup
@@ -122,9 +122,9 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 - Beads store labels for decision state tracking
 
 **Observable behavior:**
-- `tasks-axi hold <id> --kind captain --reason "<reason>"` creates a captain hold (native beads)
+- `bin/fm-decision-hold.sh hold <origin> <key>` creates a captain hold (a labeled anchor bead plus a `task gate create --type=human`)
 - Holds appear in startup OPEN DECISIONS section
-- Holds are marked resolved when captain responds (`tasks-axi close <id>`)
+- Holds are marked resolved when the captain responds (`bin/fm-decision-hold.sh resolve`)
 - Holds survive session restarts and secondmate transfers
 
 **References:**
@@ -139,6 +139,7 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 - `.tasks.toml` — tasks-axi configuration pointing to beads backend
 - `bin/fm-backlog-handoff.sh` — safe backlog transfer between homes
 - `bin/fm-backlog-receive.sh` — receive and integrate transferred backlog
+- `bin/fm-backlog-import-beads.sh` — Stage 6 one-time importer from `data/backlog.md` into the beads store
 - `bin/fm-beads-resilience-lib.sh` — Stage 5 transactional safety
 - `docs/configuration.md` — backlog-backend configuration
 
@@ -147,6 +148,7 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 - `task ready`, `task show <id>`, `task list` work transparently
 - Backlog is durable and survives crashes within transaction boundaries
 - Backlog transfers between homes work safely with Stage 5 resilience
+- A markdown backlog can be migrated once into the beads store with `bin/fm-backlog-import-beads.sh` (dry run, then `--apply`)
 
 **References:**
 - Commits: 613b284, 4b0e473, 6b093e2
