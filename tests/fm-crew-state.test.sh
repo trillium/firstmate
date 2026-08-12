@@ -19,14 +19,14 @@
 #   (h) dead pane: no run -> unknown/none; with a run -> run-step (not the shell)
 #   (i) kind=scout skips the run lookup                           -> pane/status-log
 #   (j) torn-down worktree / missing meta                         -> unknown/none
-#   (l) backend=beads: a CLOSED linked bead is authoritative done  -> bead;
-#       an OPEN bead leaves live work unaffected; tasks-axi/manual ignore beads
 #   (k) crew_is_provably_working end-to-end over the REAL helper (not a canned
 #       fake fm-crew-state.sh verdict): cross-branch attribution via the runs
 #       list -> absorbed; genuinely no run anywhere + idle pane -> surfaced.
 #       This is the direct regression pair for the 2026-07-02 herdr incident,
 #       proving the watcher's own absorb-only-when-provably-working predicate
 #       benefits from the fix in both directions.
+#   (l) backend=beads: a CLOSED linked bead is authoritative done  -> bead;
+#       an OPEN bead leaves live work unaffected; tasks-axi/manual ignore beads
 set -u
 
 # shellcheck source=tests/lib.sh
