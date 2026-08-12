@@ -208,7 +208,7 @@ The parent guards every marked request against a missing correlated report witho
 Explicit backend-target sends and direct human typing stay unmarked, so captain intervention in a secondmate pane remains conversational.
 Because that carrier occupies column 0 and a harness only parses a slash command whose slash is the line's first character, a marked request can never be one: `fm-send.sh` refuses a marked slash command and, for a `harness=codex` target, a marked `$<skill>` command, naming the carrier and pointing at `bin/fm-teardown.sh` for a close and at the never-marked explicit backend target for driving that harness directly, rather than reporting a verified submit and opening a correlated expectation for a command the secondmate would only read as prose.
 After seeding a secondmate with the tasks-axi backend, `fm-backlog-handoff.sh` validates the fleet-specific handoff, then atomically delegates already-judged in-scope queued item moves to `tasks-axi mv` so the domain queue starts in the right place.
-Handoff with the beads backend is not yet supported.
+Automated handoff into a beads-backed destination is deferred (beads-authority migration Stage 7); `docs/configuration.md` "Backlog backend" owns the reason and the supported configurations.
 Remote routes move that dependency-closed set into a non-dispatchable backlog-format outbox before transfer, then use an idempotent remote receive under the destination backlog's own lock.
 The outbox is the complete retry record, so no two-phase journal or transport-level retry is needed.
 An unreachable remote host is unknown rather than dead, preserves its route and durable work, and is never failed over or relaunched locally.

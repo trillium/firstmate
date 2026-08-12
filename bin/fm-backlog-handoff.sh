@@ -5,9 +5,21 @@
 # so the secondmate owns its queue from day one instead of the item staying
 # stranded in the main backlog.
 #
-# Handoff works only with the tasks-axi backend. Handoff with the beads backend
-# is not yet supported and requires a different mechanism; secondmates using the
-# beads backend remain without handoff support until that mechanism is implemented.
+# Handoff works only with the tasks-axi backend (beads-authority migration Stage
+# 7 is deliberately deferred, not merely unimplemented). tasks-axi handoff is an
+# atomic `tasks-axi mv` between two per-home markdown files, so ownership of a
+# moved item is unambiguous. The beads backend has no equivalent per-home owning
+# key: a home's in-flight/queued beads are scoped by the SHARED `fleet:firstmate`
+# label (bin/fm-tasks-axi-lib.sh's fm_beads_fleet_label), which is identical
+# across the main home and every secondmate home, so moving a bead between homes
+# cannot re-own it without a new per-home key threaded through the Stage 1/2
+# listing queries - a cross-cutting change beyond a single handoff helper. Until
+# that key exists, handoff refuses when the destination secondmate is on beads.
+# This does NOT block running the main home on beads: main-home-on-beads with
+# secondmates on tasks-axi or manual is fully supported; only the automated
+# cross-home backlog transfer is unavailable when a beads home is involved. See
+# docs/configuration.md "Backlog backend" (Stage 7 note) for the operator-facing
+# framing.
 #
 # Scope-matching is firstmate's JUDGMENT: you pass the task-id keys you have
 # already judged in-scope for the secondmate. This script performs only the
@@ -477,7 +489,7 @@ RAW_HOME=$(secondmate_home "$ID") || exit 1
 [ -n "$RAW_HOME" ] || { echo "error: secondmate $ID has no home in $REG" >&2; exit 1; }
 SUB_HOME=$(validate_secondmate_home "$ID" "$RAW_HOME") || exit 1
 if [ "$(fm_backlog_backend_value "$SUB_HOME/config")" = beads ]; then
-  echo "error: secondmate $ID uses beads backend; backlog handoff is not supported with beads" >&2
+  echo "error: secondmate $ID uses the beads backend; automated backlog handoff is deferred there (no per-home owning key distinguishes homes under the shared fleet label). Route this work directly, or keep the destination on tasks-axi/manual. See docs/configuration.md 'Backlog backend' (Stage 7)." >&2
   exit 1
 fi
 SUB_BACKLOG="$SUB_HOME/data/backlog.md"
