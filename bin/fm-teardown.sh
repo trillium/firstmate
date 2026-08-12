@@ -267,8 +267,16 @@ META="$STATE/$ID.meta"
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
-META_LOCK_HELD=1
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
+
+# Serialize with concurrent lifecycle actions (control plane): fm-control.sh and fm-promote.sh
+# hold the control lock while modifying task state. Check BEFORE reading mutable task metadata
+# (endpoint_task_id), so a task whose metadata is being modified while locked is refused cleanly
+# rather than failing on a stale endpoint check.
+CONTROL_LOCK="$STATE/.control-$ID.lock"
+fm_lock_try_acquire "$CONTROL_LOCK" \
+  || { echo "REFUSED: another lifecycle action is already running for task $ID; preserving task state." >&2; exit 1; }
+fm_lock_release "$CONTROL_LOCK"
 
 REMOTE_HANDOFF_DIR_PRESENT=0
 REMOTE_HANDOFF_DIR_REAL=
@@ -2789,7 +2797,6 @@ rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note"
 fm_lock_release "$META_LOCK"
-META_LOCK_HELD=0
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
