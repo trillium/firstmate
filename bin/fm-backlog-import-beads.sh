@@ -118,9 +118,17 @@ IMPORT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-backlog-import.XXXXXX") || fail "coul
 cleanup() { rm -rf "$IMPORT_TMP"; }
 trap cleanup EXIT
 
-# extract_title <remainder> - the human-readable title is the item text up to the
-# first trailing metadata marker, inline note, or URL. The full remainder is kept
-# verbatim as the bead description, so this only shapes the short title field.
+# extract_title <remainder> - the human-readable title is the FIRST line's text
+# up to the first trailing metadata marker, inline note, or URL. The full
+# remainder is kept verbatim as the bead description, so this only shapes the
+# short title field.
+#
+# First line only, and exactly one output line: an item body is multi-line (the
+# title line plus its indented continuation lines) while a bead title is not.
+# Without the trailing `exit` the awk block runs once per body line and prints
+# one cut line PER line, so the caller's command substitution captures a
+# multi-line string as the "title" - which `task create` then rejects, aborting
+# the whole import on the first item that actually needs creating.
 extract_title() {
   printf '%s' "$1" | awk '
     {
@@ -136,6 +144,7 @@ extract_title() {
       title = substr(line, 1, res - 1)
       sub(/[[:space:]]+$/, "", title)
       print title
+      exit
     }'
 }
 
@@ -147,6 +156,42 @@ resolve_existing_bead() {
   local existing
   existing=$(task list --label "task:$1" --limit 1 --json 2>/dev/null) || existing=
   printf '%s' "$existing" | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null || true
+}
+
+# beads_create_failure_reason <task-id> <title> - a one-line, actionable reason a
+# bead create was refused, for the abort message below.
+#
+# fm_beads_resolve_or_create fails open by design (see its contract in
+# bin/fm-tasks-axi-lib.sh): it discards the CLI's stderr and returns 1 with no
+# diagnostic, which is right for dispatch but leaves this importer's fail-closed
+# abort unexplained - a rejected create used to read only as "could not resolve
+# or create a bead for <id>", which took a shell trace to attribute. This
+# reconstructs the distinguishing evidence AFTER the fact with read-only probes
+# plus the exact rejected input, so it explains the write without re-attempting
+# it. The three causes it separates need opposite responses: an unreachable
+# store is retried, a create that landed without returning its id converges on
+# re-run, and a refused create is a bad field on this item.
+beads_create_failure_reason() {
+  local id=$1 title=$2 lines chars shown existing
+  if ! task list --limit 1 >/dev/null 2>&1; then
+    printf 'the beads store went unreachable mid-import'
+    return 0
+  fi
+  existing=$(resolve_existing_bead "$id")
+  if [ -n "$existing" ]; then
+    printf 'the store is reachable and bead %s now carries task:%s, so the create landed without returning its id; re-run --apply to converge' \
+      "$existing" "$id"
+    return 0
+  fi
+  lines=$(printf '%s\n' "$title" | wc -l | tr -d ' ')
+  chars=${#title}
+  # Render the rejected title on one line so the abort stays greppable: an
+  # embedded newline is the failure this guard was written for, and printing it
+  # raw would hide it in the very message meant to expose it.
+  shown=${title//$'\n'/\\n}
+  [ "${#shown}" -le 200 ] || shown="${shown:0:200}..."
+  printf "the store is reachable and no bead carries task:%s, so 'task create' itself refused this title (%s line(s), %s chars): '%s'" \
+    "$id" "$lines" "$chars" "$shown"
 }
 
 # resolve_existing_hold_anchor <hold-id> - echo the anchor bead id already
@@ -365,8 +410,15 @@ while [ "$i" -lt "$count" ]; do
     [ -n "$reason" ] || reason="$title"
     case "$id" in
       *-decision-*)
-        origin=${id%-decision-*}
-        key=${id##*-decision-}
+        # Split on the FIRST "-decision-", the exact inverse of the identity
+        # fm-decision-hold.sh's hold_id() composes as <origin>-decision-<key>.
+        # A decision KEY may itself contain "decision-" (a hold about decision
+        # holds), so anchoring on the last occurrence instead silently shifts the
+        # boundary: the id still round-trips, but the origin it checks for
+        # existence does not exist, and the item fails closed against a home that
+        # is in fact holding the real origin.
+        origin=${id%%-decision-*}
+        key=${id#*-decision-}
         anchor=$(resolve_existing_hold_anchor "$id")
         if [ "$APPLY" -eq 0 ]; then
           printf '  captain-hold  %-40s (decision-hold origin=%s key=%s)%s\n' \
@@ -398,7 +450,7 @@ while [ "$i" -lt "$count" ]; do
           continue
         fi
         bead=$(fm_beads_resolve_or_create "$id" "$title") \
-          || fail "could not resolve or create a bead for $id"
+          || fail "the beads CLI rejected the bead create for $id: $(beads_create_failure_reason "$id" "$title")"
         if [ -n "$existing" ]; then skipped=$((skipped + 1)); else imported=$((imported + 1)); fi
         printf '%s' "$body" > "$IMPORT_TMP/desc.$i"
         # A gated work item keeps its section status so it is visible; the human
@@ -420,7 +472,7 @@ while [ "$i" -lt "$count" ]; do
   fi
 
   bead=$(fm_beads_resolve_or_create "$id" "$title") \
-    || fail "could not resolve or create a bead for $id"
+    || fail "the beads CLI rejected the bead create for $id: $(beads_create_failure_reason "$id" "$title")"
   if [ -n "$existing" ]; then skipped=$((skipped + 1)); else imported=$((imported + 1)); fi
   printf '%s' "$body" > "$IMPORT_TMP/desc.$i"
   apply_common_fields "$bead" "$status" "$priority" "$defer" "$IMPORT_TMP/desc.$i"
