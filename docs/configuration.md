@@ -90,6 +90,8 @@ It runs `task dolt commit`, then `task dolt push`, then `task dolt pull`, in tha
 Each step is bounded by `FM_BEADS_SYNC_TIMEOUT` (default 45 seconds), and the sweep runs at most once per `FM_BEADS_SYNC_MIN_INTERVAL` (default 900 seconds), stamped at `state/.beads-sync-last`.
 The stamp is written when the sweep is attempted, not when it succeeds, so a broken remote backs off instead of being retried by every session that starts.
 Sync is best-effort throughout: a failing step is reported as a `BEADS_SYNC:` line, the remaining steps still run, and bootstrap itself still succeeds, because an unreachable remote must never block dispatch.
+Best-effort never means silent, though. The commit step separates "the working set was clean" from a genuine commit failure on the commit's own output and reports the latter, so a push line can never announce success over writes that are still stranded uncommitted.
+Likewise, a remote listing that cannot be read at all is reported as its own distinct skip rather than as the no-remote line below, since a home that is silently not syncing to a configured remote is the opposite of a home that has none.
 
 Firstmate configures no Dolt remote, because adding one publishes the fleet's task store to that destination and the destination is the captain's decision; with none configured the sweep reports that the store is single-machine only and does nothing else.
 [`docs/beads-sync-topology.md`](beads-sync-topology.md) is the owner of that recommendation, its trade-offs, and the one question the captain answers to enable off-machine durability.

@@ -39,6 +39,7 @@ new_case() {
   local platform=$1 want_herdr=${2:-with-herdr} want_gui=${3:-gui}
   unset CASE_REMOTE_JOB_ACTIVE
   unset CASE_PLATFORM_OVERRIDE
+  unset CASE_PATH
   CASE_N=$((CASE_N + 1))
   CASE_DIR="$TMP_ROOT/case$CASE_N"
   CASE_BIN="$CASE_DIR/bin"
@@ -214,12 +215,14 @@ SH
 
 # doctor [args...] -> runs the real doctor against the current fixture,
 # capturing merged output in DOCTOR_OUT and its status in DOCTOR_RC.
+# A case may set CASE_PATH to present a different invoking PATH - notably one
+# without ~/.local/bin, which is what a plain-SSH invocation actually inherits.
 doctor() {
   set +e
   DOCTOR_OUT=$(
     HOME="$CASE_HOME" \
     FM_HOME="$CASE_PROJECT_HOME" \
-    PATH="$CASE_HOME/.local/bin:$CASE_BIN:$BASE_PATH" \
+    PATH="${CASE_PATH:-$CASE_HOME/.local/bin:$CASE_BIN:$BASE_PATH}" \
     FM_FAKE_STATE="$CASE_STATE" \
     FM_FAKE_LAUNCHCTL_LOG="$CASE_LAUNCHCTL_LOG" \
     FM_FAKE_FORBIDDEN_LOG="$CASE_FORBIDDEN_LOG" \
@@ -661,25 +664,42 @@ assert_absent "$CASE_HOME/.local/bin/task" \
   "--fix provisioned a task wrapper for a home that does not use the beads backend"
 pass "the beads store check skips a home whose backlog backend is not beads"
 
-# --- beads selected with no bd binary on the host is a human gap -------------
+# --- beads selected with no bd binary is advisory, never a readiness gap -----
+#
+# A task-store gap says nothing about whether this host can start and supervise
+# an agent, and --fix cannot close this one at all because the doctor installs
+# no packages. Gating on it would make bin/fm-remote-readiness-lib.sh refuse
+# every seed, launch, and liveness relaunch on a host whose route works today.
 
 new_case Darwin with-herdr gui
 mkdir -p "$CASE_PROJECT_HOME/config"
 printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
 doctor
-expect_code 1 "$DOCTOR_RC" "a host with no beads store was reported ready"
-assert_contains "$DOCTOR_OUT" 'check beads-store=human:' \
-  "a host with no bd binary was not tagged as a human gap"
+assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
+  "a host with no bd binary was not tagged as an advisory gap"
+assert_not_contains "$DOCTOR_OUT" 'check beads-store=human:' \
+  "the missing bd binary was still recorded as a gating human gap"
 assert_contains "$DOCTOR_OUT" 'action: beads-store:' \
-  "the missing bd binary came with no operator action"
+  "an advisory gap came with no operator action"
+
+# --fix closes every OTHER gap on this fixture, so what remains afterwards is
+# the store gap alone. That is the case that matters: the host can start and
+# supervise an agent, so the readiness verdict must be ready.
 doctor --fix
-assert_contains "$DOCTOR_OUT" 'check beads-store=human:' \
+expect_code 0 "$DOCTOR_RC" "--fix reported an agent-ready host as unready over its task store"
+assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
   "--fix stopped reporting the missing bd binary"
 assert_not_contains "$DOCTOR_OUT" 'fix beads-store=applied' \
   "--fix claimed to have installed beads"
 assert_absent "$CASE_HOME/.local/bin/task" \
   "--fix wrote a task wrapper with no bd binary to point it at"
-pass "a host with no bd binary is a human gap that --fix never claims to close"
+doctor
+expect_code 0 "$DOCTOR_RC" "a missing beads store blocked a host that is otherwise ready"
+assert_contains "$DOCTOR_OUT" 'ok: remote second-mate readiness confirmed on this host' \
+  "the readiness verdict was withheld over a task-store gap"
+assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
+  "the still-open store gap stopped being reported once it was advisory"
+pass "a host with no bd binary is an advisory gap that neither --fix nor readiness pretends to close"
 
 # --- bd present but unpinned is fixable, and --fix provisions the store ------
 
@@ -690,7 +710,6 @@ BD_LOG="$CASE_STATE/bd.log"
 : > "$BD_LOG"
 add_beads_bd "$CASE_BIN" "$BD_LOG"
 doctor
-expect_code 1 "$DOCTOR_RC" "a host whose beads store does not answer was reported ready"
 assert_contains "$DOCTOR_OUT" 'check beads-store=fixable:' \
   "a resolvable bd with no working task CLI was not tagged fixable"
 assert_absent "$CASE_HOME/.local/bin/task" \
@@ -725,6 +744,54 @@ assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
 [ "$(grep -c bootstrap "$BD_LOG")" = 1 ] \
   || fail "--fix bootstrapped again over a store that already answers"
 pass "a repeat --fix leaves a working store alone and never bootstraps over it"
+
+# --- a repairable store gap is advisory too, on an otherwise-ready host ------
+#
+# Continues the fixture above, which --fix has just left fully ready: dropping
+# the wrapper reopens the store gap and nothing else, so the readiness verdict
+# must still be ready. Otherwise every seed, launch, and liveness relaunch on a
+# working route would refuse over a task store the agent runtime never touches.
+
+rm -f "$CASE_HOME/.local/bin/task"
+doctor
+expect_code 0 "$DOCTOR_RC" "a repairable store gap blocked a host that can start and supervise an agent"
+assert_contains "$DOCTOR_OUT" 'check beads-store=fixable:' \
+  "the reopened store gap was not reported at all"
+assert_contains "$DOCTOR_OUT" 'ok: remote second-mate readiness confirmed on this host' \
+  "the readiness verdict was withheld over a repairable task-store gap"
+pass "a repairable store gap is reported without withholding the readiness verdict"
+
+# --- the store resolves through ~/.local/bin even when PATH omits it ---------
+#
+# ~/.local/bin is where this check publishes the wrapper and is always on the
+# remote runtime PATH, but a plain-SSH invocation of the doctor routinely
+# inherits a PATH without it - the same hole the bd probe already works around.
+# Resolving `task` through the bare invoking PATH would make --fix fail to see
+# the wrapper it just wrote and report a store it did provision as broken.
+
+new_case Darwin with-herdr gui
+mkdir -p "$CASE_PROJECT_HOME/config"
+printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
+BD_LOG="$CASE_STATE/bd.log"
+: > "$BD_LOG"
+add_beads_bd "$CASE_BIN" "$BD_LOG"
+CASE_PATH="$CASE_BIN:$BASE_PATH"
+
+doctor --fix
+assert_contains "$DOCTOR_OUT" 'fix beads-store=applied:' \
+  "--fix did not publish the wrapper when ~/.local/bin was off PATH"
+assert_not_contains "$DOCTOR_OUT" 'fix beads-store=failed:' \
+  "--fix could not see the wrapper it had just written"
+assert_contains "$(cat "$BD_LOG")" bootstrap \
+  "--fix skipped provisioning because the fresh wrapper did not resolve"
+assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
+  "a store provisioned behind ~/.local/bin was still reported unreachable"
+
+doctor
+expect_code 0 "$DOCTOR_RC" "a healthy store behind ~/.local/bin left the host unready"
+assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
+  "a read-only run could not see a healthy store through ~/.local/bin"
+pass "the beads store resolves through ~/.local/bin even when the invoking PATH omits it"
 
 # --- an operator-owned task wrapper is never overwritten --------------------
 

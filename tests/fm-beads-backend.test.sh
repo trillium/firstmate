@@ -411,6 +411,10 @@ SH
 #   calls.log     every argv the fake saw, one line per call (written by the fake)
 #   list.rc       exit status for `task list`      (default 0, store answers)
 #   remotes.json  what `task dolt remote list --json` prints  (default "[]")
+#   remote.rc     exit status for `task dolt remote list`  (default 0; non-zero
+#                 makes the listing itself fail, as an older bd without the
+#                 subcommand or an unreachable store would)
+#   commit.out    what `task dolt commit` prints  (default nothing)
 #   commit.rc / push.rc / pull.rc   exit status per dolt subcommand (default 0)
 #   push.sleep    seconds `task dolt push` hangs before answering (default 0)
 #   bootstrap.rc  exit status for `task bootstrap` (default 0)
@@ -428,11 +432,19 @@ read_control() { # <file> <default>
 }
 case "\${1:-} \${2:-}" in
   'dolt remote')
+    remote_rc=\$(read_control remote.rc 0)
+    if [ "\$remote_rc" != 0 ]; then
+      printf 'unknown command "remote" for "bd dolt"\n' >&2
+      exit "\$remote_rc"
+    fi
     read_control remotes.json '[]'
     printf '\n'
     exit 0
     ;;
-  'dolt commit') exit "\$(read_control commit.rc 0)" ;;
+  'dolt commit')
+    read_control commit.out ''
+    exit "\$(read_control commit.rc 0)"
+    ;;
   'dolt push')
     hang=\$(read_control push.sleep 0)
     [ "\$hang" = 0 ] || sleep "\$hang"
@@ -557,6 +569,108 @@ test_beads_sync_is_inert_without_a_configured_remote() {
   pass "fm_beads_sync_once stays inert and succeeds when no Dolt remote is configured"
 }
 
+# Test: an unreadable remote listing is never reported as "no remote
+# configured". The empty-listing line is documented as the expected steady state
+# and explicitly not a failure, so folding a failing listing into it would leave
+# a home that IS configured silently not syncing, behind the one line that tells
+# the reader not to investigate.
+test_beads_sync_separates_an_unreadable_remote_list_from_an_empty_one() {
+  local fakebin control out
+  read -r fakebin control <<< "$(beads_sync_fixture sync-remote-unreadable)"
+  printf '1' > "$control/remote.rc"
+
+  if out=$(PATH="$fakebin:$PATH" fm_beads_sync_once 2>&1); then
+    fail "an unreadable remote listing was reported as a clean no-op, got: $out"
+  fi
+  case "$out" in
+    *'could not read the Dolt remote list'*) ;;
+    *) fail "sync did not report that it could not read the remote list, got: $out" ;;
+  esac
+  case "$out" in
+    *'no Dolt remote configured'*)
+      fail "an unreadable remote listing was reported as the benign single-machine posture, got: $out"
+      ;;
+  esac
+  assert_no_grep "dolt push" "$control/calls.log" \
+    "sync pushed without knowing whether a remote is configured"
+  pass "fm_beads_sync_once separates an unreadable remote listing from a genuinely empty one"
+}
+
+# Test: the same separation when jq itself is absent. jq is not an unconditional
+# requirement of bootstrap, so this path is reachable on a real host, and it
+# must not masquerade as a store that has no remote.
+test_beads_sync_reports_a_missing_jq_rather_than_assuming_no_remote() {
+  local fakebin control out
+  read -r fakebin control <<< "$(beads_sync_fixture sync-no-jq)"
+
+  if out=$(PATH="$fakebin:$(fm_path_without jq)" fm_beads_sync_once 2>&1); then
+    fail "sync with no jq was reported as a clean no-op, got: $out"
+  fi
+  case "$out" in
+    *'could not read the Dolt remote list'*) ;;
+    *) fail "sync did not report that it could not read the remote list, got: $out" ;;
+  esac
+  case "$out" in
+    *'jq'*) ;;
+    *) fail "sync did not name the missing tool, got: $out" ;;
+  esac
+  case "$out" in
+    *'no Dolt remote configured'*)
+      fail "a missing jq was reported as the benign single-machine posture, got: $out"
+      ;;
+  esac
+  pass "fm_beads_sync_once names a missing jq instead of assuming no remote is configured"
+}
+
+# Test: a genuine commit failure is reported. The default auto-commit policy is
+# off, so a failed commit leaves this home's writes in the Dolt working set;
+# swallowing it would let the push line announce success over exactly the
+# durability gap routine sync exists to close.
+test_beads_sync_reports_a_genuine_commit_failure() {
+  local fakebin control out
+  read -r fakebin control <<< "$(beads_sync_fixture sync-commit-fails)"
+  printf '%s' '[{"name":"origin"}]' > "$control/remotes.json"
+  printf '1' > "$control/commit.rc"
+  printf 'error: cannot commit: schema skew detected\n' > "$control/commit.out"
+
+  if out=$(PATH="$fakebin:$PATH" fm_beads_sync_once 2>&1); then
+    fail "a genuine commit failure was reported as a successful sync, got: $out"
+  fi
+  case "$out" in
+    *'commit failed'*) ;;
+    *) fail "sync did not report the failing commit, got: $out" ;;
+  esac
+  case "$out" in
+    *'schema skew detected'*) ;;
+    *) fail "the commit failure did not carry the CLI's own reason, got: $out" ;;
+  esac
+  assert_grep "dolt push" "$control/calls.log" \
+    "a failed commit abandoned the push instead of degrading best-effort"
+  pass "fm_beads_sync_once reports a genuine commit failure instead of calling the sweep a success"
+}
+
+# Test: the other side of that separation. A clean working set legitimately
+# exits non-zero with nothing to do, and must stay silent so the routine sweep
+# does not cry wolf on every session that wrote nothing.
+test_beads_sync_treats_a_clean_working_set_as_nothing_to_do() {
+  local fakebin control out
+  read -r fakebin control <<< "$(beads_sync_fixture sync-commit-clean)"
+  printf '%s' '[{"name":"origin"}]' > "$control/remotes.json"
+  printf '1' > "$control/commit.rc"
+  printf 'nothing to commit, working set clean\n' > "$control/commit.out"
+
+  out=$(PATH="$fakebin:$PATH" fm_beads_sync_once 2>&1) ||
+    fail "a clean working set was reported as a sync failure, got: $out"
+  case "$out" in
+    *'commit failed'*) fail "a clean working set was reported as a commit failure, got: $out" ;;
+  esac
+  case "$out" in
+    *'pushed local commits'*) ;;
+    *) fail "sync stopped short of the push after a clean working set, got: $out" ;;
+  esac
+  pass "fm_beads_sync_once treats a clean working set as nothing to do, not as a failure"
+}
+
 # Test: the happy path commits, pushes, then pulls, in that order. Commit comes
 # first because the auto-commit policy leaves writes in the working set, and
 # push comes before pull because durability is the gap being closed.
@@ -646,6 +760,10 @@ test_beads_bootstrap_refuses_over_a_live_store
 test_beads_bootstrap_provisions_an_unreachable_store
 test_beads_bootstrap_verifies_rather_than_trusting_exit_status
 test_beads_sync_is_inert_without_a_configured_remote
+test_beads_sync_separates_an_unreadable_remote_list_from_an_empty_one
+test_beads_sync_reports_a_missing_jq_rather_than_assuming_no_remote
+test_beads_sync_reports_a_genuine_commit_failure
+test_beads_sync_treats_a_clean_working_set_as_nothing_to_do
 test_beads_sync_commits_pushes_then_pulls
 test_beads_sync_failure_degrades_best_effort
 test_beads_sync_bounds_a_hanging_remote

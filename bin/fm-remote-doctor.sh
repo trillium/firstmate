@@ -30,11 +30,17 @@
 #   check <check>=skip: <why this host is exempt>
 #   check <check>=fixable: <gap --fix can close>
 #   check <check>=human: <gap only a person at that machine can close>
+#   check <check>=info: <advisory-only gap this command cannot close>
 #   action: <check>: <the exact step to take>
 # Every check line is authoritative for the moment it printed: under --fix it is
 # the state after the repair attempt, so a human gap is never presented as
-# fixed. Any remaining fixable or human gap, and any missing required tool,
-# exits non-zero.
+# fixed. Any remaining fixable or human gap on a READINESS check, and any
+# missing required tool, exits non-zero.
+#
+# ADVISORY checks (see ADVISORY_CHECKS below) are the exception: they print
+# their state and their operator action like every other check, and --fix still
+# repairs a fixable one, but no value of theirs ever makes this command exit
+# non-zero, because they do not describe whether an agent can run on this host.
 #
 # --fix is idempotent and closes only automatable gaps: it writes and reloads
 # both Firstmate-owned Aqua agents, starts the Linux workers where no Aqua agent
@@ -52,7 +58,8 @@
 # repair publishes an owned BEADS_DIR-pinning `task` wrapper in front of a bd
 # binary already present on the host, then provisions a store with the
 # non-destructive `bd bootstrap` only when none answers; a host with no bd
-# binary stays a reported human gap, because --fix installs no packages.
+# binary stays a reported gap, because --fix installs no packages. It is also
+# the one ADVISORY check, so none of its states gates readiness.
 set -eu
 
 # Resolve this script's directory with builtins only: a host missing a required
@@ -122,6 +129,24 @@ check_value() { # <name>; prints the recorded value, empty when unrecorded
 
 check_is_ok() { # <name>
   case "$(check_value "$1" 2>/dev/null || true)" in ok:*) return 0 ;; esac
+  return 1
+}
+
+# Advisory checks report and repair like any other check but never contribute
+# to the readiness verdict, so an open one is printed with its operator action
+# and still exits 0.
+#
+# beads-store is the only one, and deliberately so. "Ready for a remote second
+# mate" means that host can start and supervise an agent; the task store is a
+# separate concern that the parent home's inherited backlog backend drags onto
+# a host whose route already works. Gating on it would refuse every seed,
+# launch, and liveness relaunch through bin/fm-remote-readiness-lib.sh over a
+# gap unrelated to the agent runtime - and in the no-bd case, over one --fix
+# cannot close at all, because this command installs no packages.
+ADVISORY_CHECKS="beads-store"
+
+check_is_advisory() { # <name>
+  case " $ADVISORY_CHECKS " in *" $1 "*) return 0 ;; esac
   return 1
 }
 
@@ -633,18 +658,36 @@ beads_bd_binary() {
   return 1
 }
 
+# The `task` wrapper this check reports on and publishes lives in ~/.local/bin,
+# which the remote runtime PATH always contains but a plain-SSH invocation of
+# this command routinely does not - the same PATH hole beads_bd_binary probes
+# around for bd. Resolving the CLI through a bare `command -v task` would
+# therefore misreport a healthy host as broken, and would make --fix verify its
+# own freshly published wrapper through a PATH that cannot see it. Both helpers
+# run in a subshell so the augmented PATH never leaks into the `path=` line this
+# command reports or into any other check.
+beads_store_reachable_here() (
+  PATH="${HOME:-}/.local/bin:${PATH:-}"
+  fm_beads_store_reachable
+)
+
+beads_bootstrap_store_here() (
+  PATH="${HOME:-}/.local/bin:${PATH:-}"
+  fm_beads_bootstrap_store
+)
+
 check_beads_store() {
   local bd_bin
   if ! beads_backend_selected; then
     record beads-store "skip: this home does not select the beads backlog backend"
     return 0
   fi
-  if fm_beads_store_reachable; then
+  if beads_store_reachable_here; then
     record beads-store "ok: the task CLI resolves and the beads store answers a read"
     return 0
   fi
   if ! bd_bin=$(beads_bd_binary); then
-    record beads-store "human: this home selects the beads backend but no bd binary exists on this host" \
+    record beads-store "info: this home selects the beads backend but no bd binary exists on this host" \
       "install beads on that account with 'go install github.com/steveyegge/beads/cmd/bd@latest', then rerun this command with --fix to add the task wrapper and provision the store"
     return 0
   fi
@@ -690,7 +733,7 @@ fix_beads_store() {
   fi
   fix_report beads-store applied "wrote $BEADS_TASK_WRAPPER pinning BEADS_DIR=$BEADS_STORE_DIR in front of $bd_bin"
 
-  if fm_beads_store_reachable; then
+  if beads_store_reachable_here; then
     fix_report beads-store applied "the beads store answers a read through the new wrapper; no bootstrap needed"
     return 0
   fi
@@ -698,7 +741,7 @@ fix_beads_store() {
     fix_report beads-store failed "cannot create $BEADS_STORE_DIR"
     return 1
   fi
-  if fm_beads_bootstrap_store >/dev/null 2>&1; then
+  if beads_bootstrap_store_here >/dev/null 2>&1; then
     fix_report beads-store applied "provisioned the store with the non-destructive 'task bootstrap'"
     return 0
   fi
@@ -908,15 +951,22 @@ for tool in "${OPTIONAL_TOOLS[@]}"; do
 done
 
 GAPS=()
+ADVISORIES=()
 i=0
 while [ "$i" -lt "${#CHECK_NAMES[@]}" ]; do
   printf 'check %s=%s\n' "${CHECK_NAMES[$i]}" "${CHECK_VALUES[$i]}"
-  case "${CHECK_VALUES[$i]}" in
-    fixable:*|human:*) GAPS+=("$i") ;;
-  esac
+  if check_is_advisory "${CHECK_NAMES[$i]}"; then
+    case "${CHECK_VALUES[$i]}" in
+      fixable:*|human:*|info:*) ADVISORIES+=("$i") ;;
+    esac
+  else
+    case "${CHECK_VALUES[$i]}" in
+      fixable:*|human:*) GAPS+=("$i") ;;
+    esac
+  fi
   i=$((i + 1))
 done
-for i in ${GAPS[@]+"${GAPS[@]}"}; do
+for i in ${GAPS[@]+"${GAPS[@]}"} ${ADVISORIES[@]+"${ADVISORIES[@]}"}; do
   [ -z "${CHECK_ACTIONS[$i]}" ] || printf 'action: %s: %s\n' "${CHECK_NAMES[$i]}" "${CHECK_ACTIONS[$i]}"
 done
 

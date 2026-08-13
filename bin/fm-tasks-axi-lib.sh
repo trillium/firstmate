@@ -176,27 +176,67 @@ fm_beads_bootstrap_store() {
   fm_beads_store_reachable
 }
 
-# fm_beads_sync_remote_count - number of configured Dolt remotes, from the
-# machine-readable listing (`[]` when none). Prints 0 on any failure, so a
-# caller treats an unreadable remote list the same as an unconfigured one and
-# stays inert rather than guessing a destination.
-fm_beads_sync_remote_count() {
+# fm_beads_sync_remote_state - what the machine-readable Dolt remote listing
+# says, as exactly one of:
+#   configured        at least one remote exists
+#   none              the listing answered and is empty (`[]`)
+#   unreadable: <why> the listing could not be read at all
+#
+# "No remote is configured" and "this host cannot tell whether one is
+# configured" are opposite facts and must never collapse into one another. An
+# empty listing is the intended steady state today and is reported as a benign
+# no-op, so folding a missing jq or a failing `task dolt remote list` into it
+# would turn a home that silently stopped syncing into a line the diagnostics
+# skill documents as expected. Every unreadable case therefore keeps its own
+# reason, and no caller ever guesses a destination from it.
+fm_beads_sync_remote_state() {
   local out count
-  command -v task >/dev/null 2>&1 || { printf '0\n'; return 0; }
-  command -v jq >/dev/null 2>&1 || { printf '0\n'; return 0; }
-  out=$(task dolt remote list --json 2>/dev/null) || { printf '0\n'; return 0; }
-  count=$(printf '%s' "$out" | jq -r 'if type=="array" then length else 0 end' 2>/dev/null) || count=0
-  case "$count" in '' | *[!0-9]*) count=0 ;; esac
-  printf '%s\n' "$count"
+  command -v task >/dev/null 2>&1 || { printf 'unreadable: task CLI not found\n'; return 0; }
+  command -v jq >/dev/null 2>&1 || { printf 'unreadable: jq is not on PATH\n'; return 0; }
+  out=$(task dolt remote list --json 2>&1) || {
+    printf "unreadable: 'task dolt remote list --json' failed: %s\n" "$(fm_beads_diag_line "$out")"
+    return 0
+  }
+  count=$(printf '%s' "$out" | jq -r 'if type=="array" then length else "" end' 2>/dev/null) || count=
+  case "$count" in
+    '' | *[!0-9]*) printf 'unreadable: the Dolt remote listing was not a JSON array\n' ;;
+    0) printf 'none\n' ;;
+    *) printf 'configured\n' ;;
+  esac
 }
 
-# fm_beads_sync_configured - true when at least one Dolt remote exists, which
-# is the only condition under which firstmate syncs at all. Firstmate never
-# adds a remote: choosing a destination publishes the captain's task store to
-# that destination, so it is a captain decision, and until one is made every
-# sync path below is a reported no-op rather than a guess.
+# fm_beads_sync_configured - true only when the listing was readable AND names
+# at least one remote, which is the only condition under which firstmate syncs
+# at all. Firstmate never adds a remote: choosing a destination publishes the
+# captain's task store to that destination, so it is a captain decision, and
+# until one is made every sync path below is a reported no-op rather than a
+# guess.
 fm_beads_sync_configured() {
-  [ "$(fm_beads_sync_remote_count)" -gt 0 ]
+  [ "$(fm_beads_sync_remote_state)" = configured ]
+}
+
+# fm_beads_diag_line - collapse captured command output into one bounded line,
+# so a multi-line CLI error still fits the single-line BEADS_SYNC: diagnostic
+# vocabulary the bootstrap-diagnostics skill parses.
+fm_beads_diag_line() { # <captured output>
+  local line
+  line=$(printf '%s' "${1:-}" | tr '\n\t' '  ' | sed -e 's/  */ /g' -e 's/^ //' -e 's/ $//' | cut -c1-200)
+  printf '%s' "${line:-no output}"
+}
+
+# fm_beads_commit_found_nothing - true when a non-zero `task dolt commit` only
+# found a clean working set.
+#
+# The default `--dolt-auto-commit` policy is `off`, so a home that has written
+# nothing since the last sweep legitimately exits non-zero here with nothing to
+# do. Every OTHER non-zero status is a real failure - a Dolt error, schema
+# skew, a permission problem - that leaves this home's writes sitting
+# uncommitted in the working set. Treating those two the same is what would let
+# the push line report success over a durability gap, so the two are separated
+# on the commit's own output rather than assumed equivalent.
+fm_beads_commit_found_nothing() { # <captured commit output>
+  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | grep -Eq \
+    'nothing to commit|no changes to commit|no changes|no uncommitted changes|working set is clean|clean working set|working tree clean|up to date'
 }
 
 FM_BEADS_SYNC_TIMEOUT=${FM_BEADS_SYNC_TIMEOUT:-45}
@@ -233,15 +273,25 @@ fm_beads_require_timeout_lib() {
 # because durability - getting this home's own commits off this machine - is
 # the gap being closed, and a pull failure must not prevent that.
 fm_beads_sync_once() {
-  local rc=0 step_rc
+  local rc=0 step_rc remote_state commit_out
   command -v task >/dev/null 2>&1 || {
     echo "BEADS_SYNC: skipped: task CLI not found"
     return 1
   }
-  if ! fm_beads_sync_configured; then
-    echo "BEADS_SYNC: skipped: no Dolt remote configured, so this store is single-machine only"
-    return 0
-  fi
+  remote_state=$(fm_beads_sync_remote_state)
+  case "$remote_state" in
+    configured) ;;
+    none)
+      echo "BEADS_SYNC: skipped: no Dolt remote configured, so this store is single-machine only"
+      return 0
+      ;;
+    *)
+      # Not the benign single-machine posture: this host cannot tell whether a
+      # remote exists, so it must not be reported as one that has none.
+      echo "BEADS_SYNC: skipped: could not read the Dolt remote list, so a configured remote is indistinguishable from none (${remote_state#unreadable: })"
+      return 1
+      ;;
+  esac
   fm_beads_require_timeout_lib
 
   # Each step captures its status with `|| step_rc=$?` rather than a bare call
@@ -249,12 +299,17 @@ fm_beads_sync_once() {
   # caller sourced this library. Best-effort must not depend on the caller
   # happening to invoke this function inside an `if` or a `|| true`.
   step_rc=0
-  fm_run_timed "$FM_BEADS_SYNC_TIMEOUT" task dolt commit >/dev/null 2>&1 || step_rc=$?
+  commit_out=$(fm_run_timed "$FM_BEADS_SYNC_TIMEOUT" task dolt commit 2>&1) || step_rc=$?
   # A clean working set makes `dolt commit` non-zero with nothing to do, which
-  # is not a failure; only the timeout is reported, and push still runs because
-  # previously committed work may still be unpushed.
+  # is not a failure. Anything else non-zero is, and it is reported here rather
+  # than swallowed, because leaving it silent is what would let the push line
+  # below announce success while this home's writes were never committed. Push
+  # still runs either way, since previously committed work may still be unpushed.
   if [ "$step_rc" -eq 124 ]; then
     echo "BEADS_SYNC: commit failed: timed out after ${FM_BEADS_SYNC_TIMEOUT}s"
+    rc=1
+  elif [ "$step_rc" -ne 0 ] && ! fm_beads_commit_found_nothing "$commit_out"; then
+    echo "BEADS_SYNC: commit failed: 'task dolt commit' exited $step_rc: $(fm_beads_diag_line "$commit_out")"
     rc=1
   fi
 
