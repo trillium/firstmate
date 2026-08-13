@@ -195,8 +195,10 @@ build_fixture_repo() {
   cp "$ROOT/bin/fm-test-run.sh" "$dir/bin/"
 
   printf '#!/usr/bin/env bash\necho deep\n' >"$dir/bin/fm-deep-lib.sh"
+  # shellcheck disable=SC2016 # $() is literal content written into a fixture script.
   printf '#!/usr/bin/env bash\n. "$(dirname "$0")/fm-deep-lib.sh"\necho mid\n' \
     >"$dir/bin/fm-mid-lib.sh"
+  # shellcheck disable=SC2016 # $() is literal content written into a fixture script.
   printf '#!/usr/bin/env bash\nsource "$(dirname "$0")/fm-mid-lib.sh"\necho top\n' \
     >"$dir/bin/fm-top.sh"
   printf '#!/usr/bin/env bash\necho other\n' >"$dir/bin/fm-other.sh"
