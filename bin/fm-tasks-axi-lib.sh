@@ -213,7 +213,10 @@ if ! declare -f fm_run_timed >/dev/null 2>&1 && [ -f "$_FM_TASKS_AXI_LIB_DIR/fm-
   . "$_FM_TASKS_AXI_LIB_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
 fi
 FM_BEADS_STATUS_TIMEOUT=${FM_BEADS_STATUS_TIMEOUT:-4}
-case "$FM_BEADS_STATUS_TIMEOUT" in ''|*[!0-9]*) FM_BEADS_STATUS_TIMEOUT=4 ;; esac
+case "$FM_BEADS_STATUS_TIMEOUT" in
+  ''|*[!0-9]*) FM_BEADS_STATUS_TIMEOUT=4 ;;
+  *) [ "$FM_BEADS_STATUS_TIMEOUT" -gt 0 ] 2>/dev/null || FM_BEADS_STATUS_TIMEOUT=4 ;;
+esac
 FM_BEADS_STATUS_RC_ABSENT=1
 FM_BEADS_STATUS_RC_UNREADABLE=2
 

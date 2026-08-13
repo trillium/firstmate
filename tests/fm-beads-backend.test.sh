@@ -257,6 +257,50 @@ SH
   pass "fm_beads_status reports an unreachable store as unreadable rather than an absent bead"
 }
 
+# Test: a non-positive bound is not a bound. bin/fm-timeout-lib.sh documents that
+# `timeout 0` and the perl fallback's `alarm 0` both DISABLE the deadline, so an
+# operator-supplied zero must be rejected before it reaches fm_run_timed - it is
+# all-digits and would otherwise pass a digits-only validator and let a wedged
+# store stall the read forever. Runs in a child process because the bound is
+# sanitized from the environment when the library is sourced.
+test_beads_status_rejects_non_positive_bound() {
+  local dir fakebin consumer rc value
+  command -v jq >/dev/null 2>&1 || { pass "fm_beads_status bound skipped without jq"; return; }
+  dir="$TMP_ROOT/beads-status-bound"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'list --limit 1') exit 0 ;;
+  'show bd-hang --json') sleep 30 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+
+  consumer="$dir/consumer.sh"
+  cat > "$consumer" <<SH
+#!/usr/bin/env bash
+set -u
+. "$ROOT/bin/fm-tasks-axi-lib.sh"
+fm_beads_status bd-hang
+exit \$?
+SH
+  chmod +x "$consumer"
+
+  for value in 0 00; do
+    PATH="$fakebin:$PATH" FM_BEADS_STATUS_TIMEOUT="$value" \
+      fm_run_timed 15 "$consumer" >/dev/null 2>&1 && rc=0 || rc=$?
+    [ "$rc" -ne 124 ] \
+      || fail "FM_BEADS_STATUS_TIMEOUT=$value left the store read unbounded"
+    [ "$rc" -eq "$FM_BEADS_STATUS_RC_UNREADABLE" ] \
+      || fail "FM_BEADS_STATUS_TIMEOUT=$value must fall back to a real bound and report unreadable, got $rc"
+  done
+  pass "fm_beads_status rejects a non-positive bound instead of running the read unbounded"
+}
+
 # Run all tests
 test_beads_backend_value
 test_beads_backend_available
@@ -268,5 +312,6 @@ test_beads_resolve_or_create_reuses_existing
 test_lib_sources_without_its_siblings
 test_beads_status_read_outcomes
 test_beads_status_down_store_is_not_absent
+test_beads_status_rejects_non_positive_bound
 
 echo "ok - all beads backend tests passed"
