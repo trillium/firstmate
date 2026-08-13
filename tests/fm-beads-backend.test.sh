@@ -505,6 +505,62 @@ test_beads_store_reachable_tracks_the_cli_answer() {
   pass "fm_beads_store_reachable decides on the CLI's answer, not on a local .beads directory"
 }
 
+# Test: fm_beads_store_reachable honours the bound its CALLER passed, and stays
+# unbounded when the caller passed none. Both halves are load-bearing and pull in
+# opposite directions, which is why the bound is a per-call argument rather than
+# one library-wide default:
+#   - bin/fm-bootstrap.sh's sync sweep passes a bound carved out of the session
+#     start budget. Substituting a shorter library default silently shrinks that
+#     budget; substituting a longer one lets the probe overrun the whole stage.
+#   - fm_beads_bootstrap_store's refuse-over-a-live-store guard passes NO bound
+#     on purpose. A live-but-slow store answering late still means "live", and
+#     reading it as unreachable is the one mistake provisioning must never make,
+#     because the next step creates a second empty database beside the real one.
+# A merge that leaves two definitions of this function in the file compiles and
+# passes every other test in this suite while breaking exactly these guarantees,
+# so they are asserted directly on observable return codes.
+test_beads_store_reachable_honours_the_callers_bound() {
+  local fakebin control
+  read -r fakebin control <<< "$(beads_sync_fixture store-reachable-bound)"
+  # The store answers, but only after 2s - longer than the status-read default.
+  printf '2' > "$control/list.sleep"
+
+  # A bound WIDER than the store is slow must let the read succeed, and the
+  # library default is deliberately set narrower than the store's 2s so a
+  # definition that substitutes it fails here instead of passing by luck.
+  FM_BEADS_STATUS_TIMEOUT=1 PATH="$fakebin:$PATH" fm_beads_store_reachable 10 \
+    || fail "an explicit 10s bound must let a store that answers in 2s read as reachable"
+
+  # ...and a bound NARROWER than the store is slow must cut the read off, with
+  # the default set wide this time so the bound cannot be credited to it.
+  if FM_BEADS_STATUS_TIMEOUT=30 PATH="$fakebin:$PATH" fm_beads_store_reachable 1; then
+    fail "an explicit 1s bound must not be widened by a library default"
+  fi
+
+  FM_BEADS_STATUS_TIMEOUT=1 PATH="$fakebin:$PATH" fm_beads_store_reachable \
+    || fail "the unbounded form must not inherit a library default and read a live store as gone"
+
+  pass "fm_beads_store_reachable applies the caller's bound, and none when the caller passed none"
+}
+
+# Test: the safety consequence of the above, asserted end to end. A store that is
+# alive but slow to answer must still make provisioning REFUSE. This is the case
+# that turns a silently-ignored bound into data loss rather than a slow session:
+# bootstrap cannot see a Dolt sql-server store, so a false "unreachable" here is
+# what puts a fresh empty database next to the live one.
+test_beads_bootstrap_refuses_over_a_slow_live_store() {
+  local fakebin control out
+  read -r fakebin control <<< "$(beads_sync_fixture bootstrap-refuse-slow)"
+  printf '2' > "$control/list.sleep"
+
+  if out=$(FM_BEADS_STATUS_TIMEOUT=1 PATH="$fakebin:$PATH" fm_beads_bootstrap_store 2>&1); then
+    fail "bootstrap should refuse a live-but-slow store, got success: $out"
+  fi
+  assert_no_grep "bootstrap" "$control/calls.log" \
+    "bootstrap ran over a live store that merely answered slowly"
+  pass "fm_beads_bootstrap_store refuses a live store that answers slower than the status-read default"
+}
+
 # Test: fm_beads_bootstrap_store() refuses whenever the store already answers.
 # This guard is the whole safety margin for provisioning: `bd bootstrap` inspects
 # the .beads/ directory and cannot see a store served by a Dolt sql-server, so
@@ -855,7 +911,9 @@ test_beads_status_down_store_is_not_absent
 test_beads_status_rejects_non_positive_bound
 
 test_beads_store_reachable_tracks_the_cli_answer
+test_beads_store_reachable_honours_the_callers_bound
 test_beads_bootstrap_refuses_over_a_live_store
+test_beads_bootstrap_refuses_over_a_slow_live_store
 test_beads_bootstrap_provisions_an_unreachable_store
 test_beads_bootstrap_verifies_rather_than_trusting_exit_status
 test_beads_sync_is_inert_without_a_configured_remote

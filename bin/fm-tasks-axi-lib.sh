@@ -160,7 +160,10 @@ fm_beads_backend_available() {
 fm_beads_store_reachable() { # [bound seconds]
   command -v task >/dev/null 2>&1 || return 1
   if [ -n "${1:-}" ]; then
-    fm_beads_require_timeout_lib
+    # A caller that asked for a bound gets a bound or gets nothing: without
+    # fm_run_timed the read cannot be held to it, and answering unbounded would
+    # hand back the stall the bound exists to prevent.
+    fm_beads_require_timeout_lib || return 1
     fm_run_timed "$1" task list --limit 1 >/dev/null 2>&1
     return
   fi
@@ -274,8 +277,18 @@ fm_beads_sync_step_bound() { # <deadline epoch>
 _FM_BEADS_TIMEOUT_LIB_LOADED=0
 fm_beads_require_timeout_lib() {
   [ "$_FM_BEADS_TIMEOUT_LIB_LOADED" = 1 ] && return 0
+  # Already provided - by this library's own eager source, or by a consumer that
+  # loaded fm-timeout-lib.sh first. Re-sourcing would be pointless work, and in
+  # a partially-synced remote code root that carries this library without its
+  # siblings it would abort the caller under `set -e` on a file that is absent
+  # precisely because nothing needs to be loaded.
+  if declare -f fm_run_timed >/dev/null 2>&1; then
+    _FM_BEADS_TIMEOUT_LIB_LOADED=1
+    return 0
+  fi
   local lib_dir
   lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$lib_dir/fm-timeout-lib.sh" ] || return 1
   # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
   . "$lib_dir/fm-timeout-lib.sh"
   _FM_BEADS_TIMEOUT_LIB_LOADED=1
@@ -494,14 +507,15 @@ esac
 FM_BEADS_STATUS_RC_ABSENT=1
 FM_BEADS_STATUS_RC_UNREADABLE=2
 
-# fm_beads_store_reachable - bounded liveness probe for the beads store, the same
-# `task list --limit 1` predicate fm_beads_write_queue_reconcile gates its whole
-# replay on. True only when the store actually answered.
-fm_beads_store_reachable() {
-  command -v task >/dev/null 2>&1 || return 1
-  declare -f fm_run_timed >/dev/null 2>&1 || return 1
-  fm_run_timed "$FM_BEADS_STATUS_TIMEOUT" task list --limit 1 >/dev/null 2>&1
-}
+# fm_beads_store_reachable is defined once, above, as the single owner of the
+# `task list --limit 1` liveness predicate that fm_beads_write_queue_reconcile
+# gates its whole replay on. It takes an OPTIONAL bound rather than always
+# applying one, because its two callers need opposite defaults: the read below
+# must never stall the heartbeat and so passes FM_BEADS_STATUS_TIMEOUT
+# explicitly, while fm_beads_bootstrap_store's refuse-over-a-live-store guard
+# must not read a merely slow store as absent and so stays unbounded. Making
+# the bound explicit per call site keeps both guarantees instead of picking a
+# default that silently breaks one of them.
 
 fm_beads_status() { # <bead-id> - print the bead's status token, empty if unreadable
   local id=${1:-} out rc status
@@ -513,7 +527,8 @@ fm_beads_status() { # <bead-id> - print the bead's status token, empty if unread
   rc=$?
   [ "$rc" -ne 124 ] || return "$FM_BEADS_STATUS_RC_UNREADABLE"
   if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
-    fm_beads_store_reachable || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+    fm_beads_store_reachable "$FM_BEADS_STATUS_TIMEOUT" \
+      || return "$FM_BEADS_STATUS_RC_UNREADABLE"
     return "$FM_BEADS_STATUS_RC_ABSENT"
   fi
   status=$(printf '%s' "$out" | jq -r '.[0].status // empty' 2>/dev/null) \
