@@ -442,6 +442,248 @@ SH
   pass "bootstrap reconciles the durable beads write queue against a recovered store, with no separate polling loop"
 }
 
+# make_beads_sync_home <case-name> [push_rc] [backend]: build a home on the
+# beads backend plus a fake `task` whose store answers, reports one configured
+# Dolt remote, and logs every call it is given. Prints "<home> <fakebin> <log>".
+make_beads_sync_home() {
+  local case_name=$1 push_rc=${2:-0} backend=${3:-beads} case_dir home fakebin log
+  case_dir="$TMP_ROOT/$case_name"
+  home="$case_dir/home"
+  log="$case_dir/task.log"
+  mkdir -p "$home/config" "$home/state"
+  printf '%s\n' "$backend" > "$home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_real_jq "$fakebin"
+  cat > "$fakebin/task" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$log"
+case "\$*" in
+  'list --limit 1') exit 0 ;;
+  'dolt remote list --json') printf '%s\n' '[{"name":"origin"}]'; exit 0 ;;
+  'dolt commit') exit 0 ;;
+  'dolt push') exit $push_rc ;;
+  'dolt pull') exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  : > "$log"
+  printf '%s %s %s\n' "$home" "$fakebin" "$log"
+}
+
+# count_task_calls <log> <pattern>: how many times the fake task CLI saw a call.
+count_task_calls() {
+  grep -c -F -- "$2" "$1" 2>/dev/null || true
+}
+
+# Test: under the beads backend, the store sync is a routine network-phase sweep
+# that pushes this home's commits off the machine, and its own minimum interval
+# keeps it from running on every single session start.
+test_beads_sync_sweep_runs_and_rate_limits() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-runs)"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BEADS_SYNC: pushed local commits" \
+    "bootstrap did not sync the beads store to its configured remote"
+  assert_grep "dolt push" "$log" "the sync sweep never reached the Dolt remote"
+  assert_present "$home/state/.beads-sync-last" \
+    "the sync sweep left no stamp, so it would run again on the very next session"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$(count_task_calls "$log" 'dolt push')" = 1 ] \
+    || fail "the sync sweep ignored its own minimum interval and synced twice in a row"
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a rate-limited sweep still reported a sync it did not run"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_BEADS_SYNC_MIN_INTERVAL=0 FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$(count_task_calls "$log" 'dolt push')" = 2 ] \
+    || fail "the sync sweep did not run again once its interval had elapsed"
+  pass "bootstrap syncs the beads store on a bounded routine interval, not on every session start"
+}
+
+# Test: the sweep is config-gated. A home on the tasks-axi backend must be
+# byte-for-byte unaffected, even with a task CLI sitting right there on PATH.
+test_beads_sync_sweep_is_gated_on_the_beads_backend() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-gated 0 tasks-axi)"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a tasks-axi home reported a beads sync it should never run"
+  assert_no_grep "dolt" "$log" "a tasks-axi home reached for the Dolt remote"
+  assert_absent "$home/state/.beads-sync-last" \
+    "a tasks-axi home was left beads sync state it does not own"
+  pass "the beads store sync never runs on a home that did not select the beads backend"
+}
+
+# Test: sync is a network sweep, so the local half of bootstrap - the half
+# session start blocks on - never waits for a remote. This is what keeps a slow
+# or unreachable remote off the critical path of every session.
+test_beads_sync_sweep_stays_off_the_blocking_local_phase() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-phase)"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_BOOTSTRAP_NETWORK=skip FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "BEADS_SYNC:" "the blocking local phase ran a network sync"
+  assert_no_grep "dolt" "$log" "the blocking local phase reached for the Dolt remote"
+
+  printf '%s\n' 424242 > "$home/state/.lock"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BEADS_SYNC: pushed local commits" \
+    "the deferred network phase did not run the store sync"
+
+  printf '%s\n' 999999 > "$home/state/.lock"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_BEADS_SYNC_MIN_INTERVAL=0 FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "changed before beads store sync" \
+    "a stale worker synced the store after the fleet lock had changed hands"
+  pass "the beads store sync runs in the deferred network phase, never on session start's blocking path"
+}
+
+# Test: a failing remote is a reported diagnostic, never a stall. Bootstrap still
+# succeeds, and the attempt is stamped so a broken remote backs off instead of
+# being retried by every session that starts.
+test_beads_sync_sweep_failure_is_reported_not_fatal() {
+  local home fakebin log out rc
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-fails 1)"
+
+  # This file runs under `set -u` alone, never errexit, so the status is captured
+  # with `|| rc=$?` rather than by toggling `set -e` around the call. Toggling it
+  # ON here would leave errexit enabled for every test defined after this one,
+  # and the first later command that legitimately exits non-zero would kill the
+  # run mid-file with no failure message.
+  rc=0
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh") || rc=$?
+  expect_code 0 "$rc" "a failing beads sync failed the whole bootstrap run"
+  assert_contains "$out" "BEADS_SYNC: push failed" \
+    "a failing sync was swallowed instead of reported as a diagnostic"
+  assert_present "$home/state/.beads-sync-last" \
+    "a failing sync left no stamp, so every session would retry the broken remote"
+  pass "a failing beads sync is a reported diagnostic that never wedges or fails bootstrap"
+}
+
+# Test: a store that does not answer already has an owner - the local phase
+# reports it as MISSING or DEGRADED against the mirror it fell back to. Syncing
+# against it can accomplish nothing and would only re-report the same outage in
+# a second, more alarming vocabulary pointed at the wrong cause. The cadence
+# stamp must stay unwritten too, so sync resumes on the first session after the
+# store recovers instead of waiting out the whole interval.
+test_beads_sync_sweep_skips_an_unreachable_store() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-unreachable)"
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+exit 1
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a known store outage was re-reported a second time as a sync diagnostic"
+  assert_no_grep "dolt" "$log" "the sweep reached for the Dolt remote over a store that does not answer"
+  assert_absent "$home/state/.beads-sync-last" \
+    "an unreachable store burned the cadence window, delaying sync past the recovery"
+  pass "the beads sync sweep skips a store outage that the local phase already owns"
+}
+
+# Test: sync runs LAST among the deferred network sweeps and takes only a slice
+# of their shared budget. It is the one sweep whose remote nobody has confirmed
+# is reachable, so running it first, or letting its three steps each take the
+# per-step bound, would let a blackholed remote starve the sweeps that keep the
+# fleet running.
+test_beads_sync_sweep_runs_last_and_within_a_slice_of_the_stage_budget() {
+  local home fakebin log out timing started elapsed
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-budget)"
+  timing="$home/timing.log"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_TIMING_LOG="$timing" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BEADS_SYNC: pushed local commits" "the sweep did not run at all"
+  [ "$(grep -c 'phase' "$timing")" -gt 1 ] || fail "bootstrap recorded no phase timings to order"
+  [ "$(grep -n 'beads-sync' "$timing" | cut -d: -f1)" \
+    -gt "$(grep -n 'fleet-sync' "$timing" | cut -d: -f1)" ] \
+    || fail "the beads sync ran before the project clone refresh it must not starve"
+
+  # A hanging push proves the sweep's own budget comes from the stage budget: a
+  # third of 3s is 1s, well under the 45s per-step bound left at its default.
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+case "$*" in
+  'list --limit 1') exit 0 ;;
+  'dolt remote list --json') printf '%s\n' '[{"name":"origin"}]'; exit 0 ;;
+  'dolt commit') exit 0 ;;
+  'dolt push') sleep 30; exit 0 ;;
+  'dolt pull') exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  started=$(date +%s)
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_BEADS_SYNC_MIN_INTERVAL=0 FM_STARTUP_NETWORK_TIMEOUT=3 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  elapsed=$(( $(date +%s) - started ))
+  assert_contains "$out" "BEADS_SYNC: push failed: timed out after 1s" \
+    "the sweep did not take its bound from the network stage's own budget"
+  [ "$elapsed" -lt 15 ] \
+    || fail "the sweep held the network stage for ${elapsed}s against a 3s stage budget"
+  pass "the beads sync sweep runs last and bounds itself to a slice of the network stage budget"
+}
+
+# Test: the sweep's budget starts before its FIRST command, not before the three
+# steps it names. The store-reachability read runs ahead of every bounded step,
+# so a Dolt server that accepts the connection and then never answers would hold
+# the whole deferred network stage on a probe nobody bounded - starving the
+# secondmate, handoff, and clone-refresh sweeps that share that stage's budget.
+test_beads_sync_sweep_bounds_its_reachability_probe() {
+  local home fakebin log out started elapsed
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-probe)"
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+case "$*" in
+  'list --limit 1') sleep 30; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  printf '%s\n' 424242 > "$home/state/.lock"
+
+  started=$(date +%s)
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_STARTUP_NETWORK_TIMEOUT=3 \
+    FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  elapsed=$(( $(date +%s) - started ))
+  [ "$elapsed" -lt 15 ] \
+    || fail "the sweep hung ${elapsed}s on its reachability probe against a 3s stage budget"
+  assert_grep 'list --limit 1' "$log" \
+    "the sweep never ran the reachability probe this case exists to bound"
+  assert_no_grep "dolt" "$log" "the sweep synced against a store that never answered its probe"
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a store that never answered was reported as a sync outcome"
+  assert_absent "$home/state/.beads-sync-last" \
+    "a store that never answered burned the cadence window, delaying sync past the recovery"
+  pass "the beads sync sweep bounds the reachability probe that precedes its steps"
+}
+
 test_no_mistakes_min_version() {
   local label version mode case_dir fakebin out missing n
   missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
@@ -1287,6 +1529,13 @@ ROWS
 test_bootstrap_reporting
 test_beads_backend_missing_vs_degraded
 test_beads_write_queue_reconciled_on_bootstrap
+test_beads_sync_sweep_runs_and_rate_limits
+test_beads_sync_sweep_is_gated_on_the_beads_backend
+test_beads_sync_sweep_stays_off_the_blocking_local_phase
+test_beads_sync_sweep_failure_is_reported_not_fatal
+test_beads_sync_sweep_skips_an_unreachable_store
+test_beads_sync_sweep_runs_last_and_within_a_slice_of_the_stage_budget
+test_beads_sync_sweep_bounds_its_reachability_probe
 test_no_mistakes_min_version
 test_gh_axi_min_version
 test_lavish_axi_min_version

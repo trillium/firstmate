@@ -229,6 +229,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/beads-sync-topology.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/calm-mode-feasibility.md",
       "audience": "maintainer-verification"
     },

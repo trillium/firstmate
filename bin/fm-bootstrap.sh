@@ -79,10 +79,11 @@
 #          refresh relays any completed fm-fleet-sync.sh output before the
 #          aggregate timeout skip line with timeout and elapsed seconds.
 #          Set FM_FLEET_PRUNE=0 to skip branch pruning during that refresh.
-#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the seven MUTATING sweeps
-#          (PR-check migration, the beads write-queue reconcile [beads backend
-#          only], secondmate_sync, secondmate_liveness_sweep,
-#          secondmate_handoff_resume, x_mode_setup, fleet_sync) while still
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the eight MUTATING sweeps
+#          (PR-check migration, the beads write-queue reconcile and the beads
+#          store sync [both beads backend only], secondmate_sync,
+#          secondmate_liveness_sweep, secondmate_handoff_resume, x_mode_setup,
+#          fleet_sync) while still
 #          printing every read-only detect line
 #          above; the TANGLE line switches to advisory-only wording with no
 #          checkout command. Used by
@@ -248,6 +249,72 @@ fleet_sync_relay_all_output() {
     [ -n "$line" ] || continue
     echo "FLEET_SYNC: $line"
   done < "$tmp"
+}
+
+# Routine beads store sync (config/backlog-backend=beads only).
+#
+# This runs as an ordinary network-phase mutating sweep beside fleet_sync
+# rather than as new machinery: the deferred network stage already bounds and
+# reports this class of work, so beads sync inherits its "never on the
+# session-start critical path" property instead of re-deriving one. It runs
+# LAST among those sweeps and under a slice of the stage budget, so a wedged
+# remote costs a printed line and nothing else - never the secondmate,
+# handoff, or clone-refresh sweeps' share of the budget - and dispatch is never
+# gated on it.
+#
+# The cadence stamp keeps a fleet that opens many sessions from syncing on
+# every one. It is touched whenever a sync is attempted, not only when one
+# succeeds, so a persistently failing remote backs off to one attempt per
+# interval rather than retrying on every session start.
+FM_BEADS_SYNC_MIN_INTERVAL=${FM_BEADS_SYNC_MIN_INTERVAL:-900}
+case "$FM_BEADS_SYNC_MIN_INTERVAL" in '' | *[!0-9]*) FM_BEADS_SYNC_MIN_INTERVAL=900 ;; esac
+
+beads_sync_stamp_mtime() { # <path>; epoch seconds, empty when unreadable
+  if [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then
+    stat -f %m "$1" 2>/dev/null
+  else
+    stat -c %Y "$1" 2>/dev/null
+  fi
+}
+
+beads_sync_due() {
+  local stamp=$STATE/.beads-sync-last mtime
+  [ -f "$stamp" ] || return 0
+  mtime=$(beads_sync_stamp_mtime "$stamp") || mtime=
+  # An unreadable stamp must not silently suppress sync forever, so treat it as
+  # due rather than assuming it is recent.
+  [ -n "$mtime" ] || return 0
+  [ "$(( $(date +%s) - mtime ))" -ge "$FM_BEADS_SYNC_MIN_INTERVAL" ]
+}
+
+beads_sync_sweep() {
+  local stage_budget=${FM_STARTUP_NETWORK_TIMEOUT:-120} deadline bound
+  command -v task >/dev/null 2>&1 || return 0
+  if ! beads_sync_due; then
+    return 0
+  fi
+  # The whole sweep gets a third of the deferred network stage's budget, which
+  # bounds every sweep sharing it. Without a sweep-wide bound the three
+  # per-step bounds could sum past that budget on a blackholed remote and cut
+  # off the secondmate, handoff, and clone-refresh sweeps that follow. The
+  # deadline is set here, before the first probe, and handed to the sync so the
+  # reachability read below is inside the same budget as the steps it precedes.
+  case "$stage_budget" in '' | *[!0-9]* | 0) stage_budget=120 ;; esac
+  local FM_BEADS_SYNC_BUDGET=$((stage_budget / 3))
+  [ "$FM_BEADS_SYNC_BUDGET" -gt 0 ] || FM_BEADS_SYNC_BUDGET=1
+  deadline=$(( $(date +%s) + FM_BEADS_SYNC_BUDGET ))
+  bound=$(fm_beads_sync_step_bound "$deadline") || return 0
+  # A store that does not answer already has an owner: the local phase reports
+  # it as MISSING or DEGRADED with the mirror it fell back to. Syncing against
+  # it can accomplish nothing and would only re-report the same outage in a
+  # second, more alarming vocabulary pointed at the wrong cause. The cadence
+  # stamp is deliberately not touched here either, so sync resumes on the first
+  # session after the store recovers instead of waiting out the interval. A
+  # store that hangs past the bound is one that does not answer.
+  fm_beads_store_reachable "$bound" || return 0
+  mkdir -p "$STATE" 2>/dev/null || true
+  : > "$STATE/.beads-sync-last" 2>/dev/null || true
+  fm_beads_sync_once "$deadline" || true
 }
 
 fleet_sync() {
@@ -1237,7 +1304,7 @@ if local_phase; then
         if mirror_iso=$(fm_beads_mirror_freshest_iso); then
           echo "DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from $mirror_iso until it is"
         else
-          echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list'), and no usable local mirror"
+          echo "MISSING: task store is unreachable or broken (beads backend configured, cannot run 'task list'), and no usable local mirror (provision non-destructively with: task bootstrap --yes)"
         fi
       elif [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
         echo "BOOTSTRAP_INFO: beads task store available"
@@ -1255,6 +1322,11 @@ if local_phase; then
 fi
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   if [ "$backlog_backend" = beads ]; then
+    # The write-queue reconcile is local: it replays against this home's own
+    # store. Sync is a network step and runs last among the deferred network
+    # sweeps below, because it is the one sweep whose remote nobody has
+    # confirmed is reachable and it must not spend the shared stage budget
+    # ahead of the sweeps that keep the fleet running.
     fm_beads_write_queue_reconcile
   fi
   # secondmate_sync consumes SECONDMATE_RESPAWNED_IDS from the liveness sweep, so
@@ -1283,6 +1355,11 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     __fm_timing_stamp=$(fm_timing_now_ms)
     fleet_sync
     fm_timing_record phase fleet-sync "$__fm_timing_stamp"
+  fi
+  if [ "$backlog_backend" = beads ] && network_phase && network_sweep_authorized 'beads store sync'; then
+    __fm_timing_stamp=$(fm_timing_now_ms)
+    beads_sync_sweep
+    fm_timing_record phase beads-sync "$__fm_timing_stamp"
   fi
 fi
 local_phase && secondmate_handoff_detect

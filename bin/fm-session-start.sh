@@ -30,12 +30,13 @@
 #                       mutating step runs.
 #   2. bootstrap      - home-local stale Herdr projection cleanup runs only
 #                       when this session actually holds the lock. Detect-only
-#                       diagnostics always run. Bootstrap's seven MUTATING sweeps
+#                       diagnostics always run. Bootstrap's eight MUTATING sweeps
 #                       (legacy PR-check migration, the beads write-queue
-#                       reconcile [beads backend only], secondmate convergence,
+#                       reconcile and the beads store sync [both beads backend
+#                       only], secondmate convergence,
 #                       secondmate liveness, pending remote handoff retry,
 #                       X-mode artifact writes, fleet sync) also run only when
-#                       locked; the five network sweeps run in the deferred
+#                       locked; the six network sweeps run in the deferred
 #                       stage rather than this synchronous bootstrap section.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
@@ -50,9 +51,11 @@
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs, and prints before persona and
 #                       context.
-#   7. network-checks - the deferred non-blocking harvest of the five network
+#   7. network-checks - the deferred non-blocking harvest of the six network
 #                       checks (GitHub auth, project clone refresh, secondmate
-#                       liveness, secondmate convergence, pending handoff delivery);
+#                       liveness, secondmate convergence, pending handoff
+#                       delivery, and the beads store sync [beads backend
+#                       only]);
 #                       whatever the worker has published by now is printed and
 #                       the rest is named as not yet confirmed.
 #   8. persona        - the active persona file (config/persona.md local
@@ -890,7 +893,8 @@ stage network-checks
 section "NETWORK CHECKS"
 if [ "$READ_ONLY" -eq 1 ]; then
   printf 'skipped (read-only session) - GitHub authentication, project clone refresh,\n'
-  printf 'secondmate liveness and convergence, and pending handoff delivery were not run.\n'
+  printf 'secondmate liveness and convergence, pending handoff delivery, and the beads\n'
+  printf 'store sync under the beads backlog backend were not run.\n'
   printf 'They need the fleet lock, and this session must not spawn, steer, or merge, so it\n'
   printf 'has no action they would gate. The session holding the lock runs them.\n'
 else

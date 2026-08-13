@@ -131,6 +131,323 @@ fm_beads_backend_available() {
   task list --limit 1 >/dev/null 2>&1
 }
 
+# --- Beads store provisioning and Dolt sync (config/backlog-backend=beads only) ---
+#
+# Every function below is inert on the tasks-axi and manual backends: callers
+# gate on fm_backlog_backend_value before invoking them, and none of them runs
+# unless a `task` CLI is on PATH. The beads store stays the single write
+# authority throughout; provisioning only creates a store where none answers,
+# and sync only moves that store's own commits to and from a Dolt remote the
+# operator configured, exactly the availability-not-authority doctrine
+# bin/fm-beads-resilience-lib.sh states for the mirror and write queue.
+#
+# STORE RESOLUTION IS THE CLI'S JOB, NOT FIRSTMATE'S. The `task` wrapper pins
+# BEADS_DIR for the whole federation, so firstmate never derives, guesses, or
+# hardcodes a store path; it asks the CLI whether the store answers and reports
+# what it says. That is why a home with no local .beads/ directory is not
+# evidence of a missing store: the shared store the wrapper points at can live
+# anywhere, including a Dolt sql-server this host merely connects to.
+
+# fm_beads_store_reachable - true when the beads store answers a cheap read.
+# This, not the presence of a .beads/ directory, is the store-usable test.
+#
+# The optional bound is for callers running under a deadline. A Dolt sql-server
+# that accepts the connection and then never answers makes this read hang, so a
+# caller whose whole budget this probe precedes must pass a bound or the budget
+# is not the bound it claims to be. A store that does not answer within it is a
+# store that does not answer, which is exactly what an unbounded false means.
+# shellcheck disable=SC2120 # The bound comes from callers outside this library.
+fm_beads_store_reachable() { # [bound seconds]
+  command -v task >/dev/null 2>&1 || return 1
+  if [ -n "${1:-}" ]; then
+    # A caller that asked for a bound gets a bound or gets nothing: without
+    # fm_run_timed the read cannot be held to it, and answering unbounded would
+    # hand back the stall the bound exists to prevent.
+    fm_beads_require_timeout_lib || return 1
+    fm_run_timed "$1" task list --limit 1 >/dev/null 2>&1
+    return
+  fi
+  task list --limit 1 >/dev/null 2>&1
+}
+
+# fm_beads_bootstrap_store - provision a store non-destructively with
+# `task bootstrap`, the verb whose own help documents that it never deletes
+# existing issues (unlike the forbidden `bd init --force`).
+#
+# REFUSES WHEN THE STORE ALREADY ANSWERS. This guard is the whole safety
+# margin, because bootstrap's own auto-detection reads the .beads/ directory
+# and does NOT see a store served by a Dolt sql-server: against a healthy
+# server-mode store it reports `"action":"init","has_existing":false` and would
+# create a fresh empty database beside the live one. Firstmate therefore
+# decides reachability itself and only ever bootstraps a store that is
+# genuinely not answering, so a working home can never be bootstrapped over.
+fm_beads_bootstrap_store() {
+  command -v task >/dev/null 2>&1 || return 1
+  if fm_beads_store_reachable; then
+    printf 'BEADS_STORE: store already reachable; bootstrap refused (never bootstrap over a live store)\n'
+    return 1
+  fi
+  BD_NON_INTERACTIVE=1 task bootstrap --yes >/dev/null 2>&1 || return 1
+  fm_beads_store_reachable
+}
+
+# fm_beads_sync_remote_state - what the machine-readable Dolt remote listing
+# says, as exactly one of:
+#   configured        at least one remote exists
+#   none              the listing answered and is empty (`[]`)
+#   unreadable: <why> the listing could not be read at all
+#
+# "No remote is configured" and "this host cannot tell whether one is
+# configured" are opposite facts and must never collapse into one another. An
+# empty listing is the intended steady state today and is reported as a benign
+# no-op, so folding a missing jq or a failing `task dolt remote list` into it
+# would turn a home that silently stopped syncing into a line the diagnostics
+# skill documents as expected. Every unreadable case therefore keeps its own
+# reason, and no caller ever guesses a destination from it.
+#
+# The optional bound exists for the same reason fm_beads_store_reachable's does:
+# this listing is the sync sweep's first command, so leaving it unbounded lets a
+# stalled Dolt server spend more wall clock than the whole sweep budget before a
+# single bounded step runs. A listing that does not answer in time is one more
+# unreadable case, never a home that has no remote.
+fm_beads_sync_remote_state() { # [bound seconds]
+  local out count rc=0 bound=${1:-}
+  command -v task >/dev/null 2>&1 || { printf 'unreadable: task CLI not found\n'; return 0; }
+  command -v jq >/dev/null 2>&1 || { printf 'unreadable: jq is not on PATH\n'; return 0; }
+  if [ -n "$bound" ]; then
+    fm_beads_require_timeout_lib || { printf 'unreadable: timeout library unavailable\n'; return 0; }
+    out=$(fm_run_timed "$bound" task dolt remote list --json 2>&1) || rc=$?
+  else
+    out=$(task dolt remote list --json 2>&1) || rc=$?
+  fi
+  if [ "$rc" -eq 124 ] && [ -n "$bound" ]; then
+    printf "unreadable: 'task dolt remote list --json' timed out after %ss\n" "$bound"
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    printf "unreadable: 'task dolt remote list --json' failed: %s\n" "$(fm_beads_diag_line "$out")"
+    return 0
+  fi
+  count=$(printf '%s' "$out" | jq -r 'if type=="array" then length else "" end' 2>/dev/null) || count=
+  case "$count" in
+    '' | *[!0-9]*) printf 'unreadable: the Dolt remote listing was not a JSON array\n' ;;
+    0) printf 'none\n' ;;
+    *) printf 'configured\n' ;;
+  esac
+}
+
+# fm_beads_diag_line - collapse captured command output into one bounded line,
+# so a multi-line CLI error still fits the single-line BEADS_SYNC: diagnostic
+# vocabulary the bootstrap-diagnostics skill parses.
+fm_beads_diag_line() { # <captured output>
+  local line
+  line=$(printf '%s' "${1:-}" | tr '\n\t' '  ' | sed -e 's/  */ /g' -e 's/^ //' -e 's/ $//' | cut -c1-200)
+  printf '%s' "${line:-no output}"
+}
+
+FM_BEADS_SYNC_TIMEOUT=${FM_BEADS_SYNC_TIMEOUT:-45}
+case "$FM_BEADS_SYNC_TIMEOUT" in '' | *[!0-9]* | 0) FM_BEADS_SYNC_TIMEOUT=45 ;; esac
+
+# FM_BEADS_SYNC_BUDGET bounds the WHOLE sweep, not each step. Per-step bounds
+# alone let the three steps sum past whatever budget the caller is itself
+# running under, so a blackholed remote could starve every other sweep sharing
+# that budget. The caller that has a stage budget sets this from it; the
+# default is deliberately smaller than 3 x FM_BEADS_SYNC_TIMEOUT so the sum can
+# never be the thing that decides.
+FM_BEADS_SYNC_BUDGET=${FM_BEADS_SYNC_BUDGET:-40}
+case "$FM_BEADS_SYNC_BUDGET" in '' | *[!0-9]* | 0) FM_BEADS_SYNC_BUDGET=40 ;; esac
+
+# fm_beads_now - epoch seconds without depending on `date` being on PATH.
+#
+# The sync path runs under callers that restrict PATH, and its own tests strip
+# whole PATH directories to simulate one missing dependency. On a host where
+# `date` shares a directory with the stripped command - jq and date are both in
+# /usr/bin on Linux - it disappears too. A bare `$(date +%s)` then expands to
+# nothing, so `$(( + FM_BEADS_SYNC_BUDGET ))` silently evaluates to the budget
+# alone: a 1970 deadline that makes every bounded step report the budget as
+# already spent. That is an unreadable clock masquerading as an exhausted
+# budget, exactly the collapse of two distinct causes that
+# fm_beads_sync_remote_state's header forbids for the remote listing.
+#
+# EPOCHSECONDS is a shell variable and needs no PATH at all; `date` remains the
+# fallback for a shell that does not export it. A clock that cannot be read is
+# reported as a failure and never rendered as a number, because a wrong number
+# here is indistinguishable downstream from a legitimately spent budget.
+fm_beads_now() {
+  local now
+  if [ -n "${EPOCHSECONDS:-}" ]; then
+    printf '%s' "$EPOCHSECONDS"
+    return 0
+  fi
+  now=$(date +%s 2>/dev/null) || return 1
+  case "$now" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  printf '%s' "$now"
+}
+
+# fm_beads_sync_step_bound - seconds the next step may take: whatever remains of
+# the sweep budget, capped at the per-step bound. Non-zero when the budget is
+# spent, so a caller reports the skipped step rather than starting one it has
+# no time for.
+fm_beads_sync_step_bound() { # <deadline epoch>
+  local remaining now
+  now=$(fm_beads_now) || return 1
+  remaining=$(( $1 - now ))
+  [ "$remaining" -gt 0 ] || return 1
+  [ "$remaining" -le "$FM_BEADS_SYNC_TIMEOUT" ] || remaining=$FM_BEADS_SYNC_TIMEOUT
+  printf '%s' "$remaining"
+}
+
+# fm-timeout-lib.sh is loaded lazily by the sync path alone. Every other
+# consumer of this library (bootstrap's detect-only pass, teardown, the
+# secondmate handoff, the remote doctor) must not pay for a library it never
+# calls, the same discipline fm-beads-resilience-lib.sh applies to its own
+# lazily-sourced lock library.
+_FM_BEADS_TIMEOUT_LIB_LOADED=0
+fm_beads_require_timeout_lib() {
+  [ "$_FM_BEADS_TIMEOUT_LIB_LOADED" = 1 ] && return 0
+  # Already provided - by this library's own eager source, or by a consumer that
+  # loaded fm-timeout-lib.sh first. Re-sourcing would be pointless work, and in
+  # a partially-synced remote code root that carries this library without its
+  # siblings it would abort the caller under `set -e` on a file that is absent
+  # precisely because nothing needs to be loaded.
+  if declare -f fm_run_timed >/dev/null 2>&1; then
+    _FM_BEADS_TIMEOUT_LIB_LOADED=1
+    return 0
+  fi
+  local lib_dir
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$lib_dir/fm-timeout-lib.sh" ] || return 1
+  # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
+  . "$lib_dir/fm-timeout-lib.sh"
+  _FM_BEADS_TIMEOUT_LIB_LOADED=1
+}
+
+# fm_beads_sync_once - best-effort commit, push, then pull against the
+# configured Dolt remote, printing one BEADS_SYNC: line per outcome.
+#
+# BEST-EFFORT IS THE CONTRACT, NOT A WEAKNESS. Every step is hard-bounded by
+# fm_run_timed (exit 124 means the bound was hit), the three steps together are
+# bounded by FM_BEADS_SYNC_BUDGET, and every failure is a reported diagnostic,
+# so an unreachable remote, a stalled network, or a broken Dolt server degrades
+# to a printed line and never wedges the caller or eats a budget it shares. The
+# function returns non-zero only to tell the caller a step failed; the caller's
+# own work continues either way.
+#
+# Order is commit, push, pull. The commit comes first because the default
+# `--dolt-auto-commit` policy is `off`, so a home's writes sit in the Dolt
+# working set and a push without it would publish nothing. Push precedes pull
+# because durability - getting this home's own commits off this machine - is
+# the gap being closed, and a pull failure must not prevent that.
+#
+# The deadline is established before the FIRST command runs, and the caller may
+# supply one it has already been spending against, so every probe and every step
+# the sweep runs is inside one budget rather than the budget covering only the
+# three steps it happens to name.
+fm_beads_sync_once() { # [deadline epoch]
+  local rc=0 step_rc remote_state commit_out deadline bound now
+  command -v task >/dev/null 2>&1 || {
+    echo "BEADS_SYNC: skipped: task CLI not found"
+    return 1
+  }
+  fm_beads_require_timeout_lib || { echo "BEADS_SYNC: skipped: timeout library unavailable"; return 1; }
+  # The clock is read once, up front, and its own failure gets its own line. A
+  # caller-supplied deadline skips the read entirely, so this is also the only
+  # place the default path can discover an unreadable clock before
+  # fm_beads_sync_step_bound would report it as a spent budget instead.
+  deadline=${1:-}
+  if [ -z "$deadline" ]; then
+    if now=$(fm_beads_now); then
+      deadline=$(( now + FM_BEADS_SYNC_BUDGET ))
+    else
+      echo "BEADS_SYNC: skipped: the clock is unreadable, so the ${FM_BEADS_SYNC_BUDGET}s sync budget cannot be bounded"
+      return 1
+    fi
+  fi
+  if ! bound=$(fm_beads_sync_step_bound "$deadline"); then
+    echo "BEADS_SYNC: skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent before the Dolt remote list could be read"
+    return 1
+  fi
+  remote_state=$(fm_beads_sync_remote_state "$bound")
+  case "$remote_state" in
+    configured) ;;
+    none)
+      echo "BEADS_SYNC: skipped: no Dolt remote configured, so this store is single-machine only"
+      return 0
+      ;;
+    *)
+      # Not the benign single-machine posture: this host cannot tell whether a
+      # remote exists, so it must not be reported as one that has none.
+      echo "BEADS_SYNC: skipped: could not read the Dolt remote list, so a configured remote is indistinguishable from none (${remote_state#unreadable: })"
+      return 1
+      ;;
+  esac
+
+  # Each step captures its status with `|| step_rc=$?` rather than a bare call
+  # followed by `$?`, so a failing step is exempt from `set -e` no matter which
+  # caller sourced this library. Best-effort must not depend on the caller
+  # happening to invoke this function inside an `if` or a `|| true`.
+  #
+  # `task dolt commit` exits 0 whether it committed or found a clean working
+  # set, so the exit status alone separates success from failure and no vendor
+  # wording is parsed to decide it. A non-zero status means this home's writes
+  # are still sitting uncommitted in the Dolt working set, which is reported
+  # rather than swallowed: leaving it silent is what would let the push line
+  # below announce success over exactly that durability gap. Push still runs
+  # either way, since previously committed work may still be unpushed.
+  if bound=$(fm_beads_sync_step_bound "$deadline"); then
+    step_rc=0
+    commit_out=$(fm_run_timed "$bound" task dolt commit 2>&1) || step_rc=$?
+    if [ "$step_rc" -eq 124 ]; then
+      echo "BEADS_SYNC: commit failed: timed out after ${bound}s"
+      rc=1
+    elif [ "$step_rc" -ne 0 ]; then
+      echo "BEADS_SYNC: commit failed: 'task dolt commit' exited $step_rc: $(fm_beads_diag_line "$commit_out")"
+      rc=1
+    fi
+  else
+    echo "BEADS_SYNC: commit skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent"
+    rc=1
+  fi
+
+  if bound=$(fm_beads_sync_step_bound "$deadline"); then
+    step_rc=0
+    fm_run_timed "$bound" task dolt push >/dev/null 2>&1 || step_rc=$?
+    if [ "$step_rc" -eq 0 ]; then
+      echo "BEADS_SYNC: pushed local commits to the configured Dolt remote"
+    elif [ "$step_rc" -eq 124 ]; then
+      echo "BEADS_SYNC: push failed: timed out after ${bound}s"
+      rc=1
+    else
+      echo "BEADS_SYNC: push failed: 'task dolt push' exited $step_rc"
+      rc=1
+    fi
+  else
+    echo "BEADS_SYNC: push skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent"
+    rc=1
+  fi
+
+  if bound=$(fm_beads_sync_step_bound "$deadline"); then
+    step_rc=0
+    fm_run_timed "$bound" task dolt pull >/dev/null 2>&1 || step_rc=$?
+    if [ "$step_rc" -eq 0 ]; then
+      echo "BEADS_SYNC: pulled remote commits into the local store"
+    elif [ "$step_rc" -eq 124 ]; then
+      echo "BEADS_SYNC: pull failed: timed out after ${bound}s"
+      rc=1
+    else
+      echo "BEADS_SYNC: pull failed: 'task dolt pull' exited $step_rc"
+      rc=1
+    fi
+  else
+    echo "BEADS_SYNC: pull skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent"
+    rc=1
+  fi
+
+  return "$rc"
+}
+
 # fm_beads_fleet_label - the label firstmate's own dispatched-work beads are
 # meant to carry once bead creation is wired to it (beads-authority migration
 # Stage 0; see data/beads-authority-migration-scout/report.md section 4 and
@@ -232,14 +549,15 @@ esac
 FM_BEADS_STATUS_RC_ABSENT=1
 FM_BEADS_STATUS_RC_UNREADABLE=2
 
-# fm_beads_store_reachable - bounded liveness probe for the beads store, the same
-# `task list --limit 1` predicate fm_beads_write_queue_reconcile gates its whole
-# replay on. True only when the store actually answered.
-fm_beads_store_reachable() {
-  command -v task >/dev/null 2>&1 || return 1
-  declare -f fm_run_timed >/dev/null 2>&1 || return 1
-  fm_run_timed "$FM_BEADS_STATUS_TIMEOUT" task list --limit 1 >/dev/null 2>&1
-}
+# fm_beads_store_reachable is defined once, above, as the single owner of the
+# `task list --limit 1` liveness predicate that fm_beads_write_queue_reconcile
+# gates its whole replay on. It takes an OPTIONAL bound rather than always
+# applying one, because its two callers need opposite defaults: the read below
+# must never stall the heartbeat and so passes FM_BEADS_STATUS_TIMEOUT
+# explicitly, while fm_beads_bootstrap_store's refuse-over-a-live-store guard
+# must not read a merely slow store as absent and so stays unbounded. Making
+# the bound explicit per call site keeps both guarantees instead of picking a
+# default that silently breaks one of them.
 
 fm_beads_status() { # <bead-id> - print the bead's status token, empty if unreadable
   local id=${1:-} out rc status
@@ -251,7 +569,8 @@ fm_beads_status() { # <bead-id> - print the bead's status token, empty if unread
   rc=$?
   [ "$rc" -ne 124 ] || return "$FM_BEADS_STATUS_RC_UNREADABLE"
   if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
-    fm_beads_store_reachable || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+    fm_beads_store_reachable "$FM_BEADS_STATUS_TIMEOUT" \
+      || return "$FM_BEADS_STATUS_RC_UNREADABLE"
     return "$FM_BEADS_STATUS_RC_ABSENT"
   fi
   status=$(printf '%s' "$out" | jq -r '.[0].status // empty' 2>/dev/null) \
