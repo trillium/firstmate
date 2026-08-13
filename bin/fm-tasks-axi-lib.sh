@@ -172,6 +172,34 @@ fm_beads_resolve_or_create() {
   printf '%s\n' "$id"
 }
 
+# fm_beads_status <bead-id> - the single owner of reading one bead's status.
+# `task show <id> --json` returns a JSON ARRAY ([{...}]), so the status lives at
+# .[0].status; every other bin/ reader of a single bead unwraps it the same way
+# (fm-decision-hold.sh, fm-backlog-import-beads.sh). Prints the status token to
+# stdout, or nothing when the bead is absent, unreadable, or the tools are
+# missing. The read is bounded by FM_BEADS_STATUS_TIMEOUT so a wedged Dolt store
+# can never stall a caller on the fleet-snapshot/heartbeat path - the same
+# bounded-read discipline as FM_CREW_STATE_NM_TIMEOUT / FM_SNAPSHOT_BEADS_TIMEOUT.
+# Fails open: any missing tool, timeout, store error, or absent bead prints empty,
+# so a caller reads it as "not closed" / "no evidence" rather than a completion.
+_FM_TASKS_AXI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! declare -f fm_run_timed >/dev/null 2>&1; then
+  # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
+  . "$_FM_TASKS_AXI_LIB_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
+fi
+FM_BEADS_STATUS_TIMEOUT=${FM_BEADS_STATUS_TIMEOUT:-4}
+case "$FM_BEADS_STATUS_TIMEOUT" in ''|*[!0-9]*) FM_BEADS_STATUS_TIMEOUT=4 ;; esac
+
+fm_beads_status() { # <bead-id> - print the bead's status token, empty if unreadable
+  local id=${1:-} out
+  [ -n "$id" ] || return 0
+  command -v task >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  out=$(fm_run_timed "$FM_BEADS_STATUS_TIMEOUT" task show "$id" --json 2>/dev/null) || return 0
+  [ -n "$out" ] || return 0
+  printf '%s' "$out" | jq -r '.[0].status // empty' 2>/dev/null
+}
+
 # fm_beads_is_closed <bead-id> - true ONLY when the bead exists and its status is
 # closed. This is the authoritative task-completion signal read by
 # bin/fm-crew-state.sh under config/backlog-backend=beads: the worker closes its
@@ -182,15 +210,11 @@ fm_beads_resolve_or_create() {
 # treats an ABSENT bead as "already applied" for idempotent write-queue replay:
 # here an absent, open, or unreadable bead is NOT closed, so reconciliation falls
 # through to the existing pane/run-step logic rather than inventing a completion.
-# Fails open like the rest of the beads integration (returns non-zero on any
-# missing tool or store error), never marking live work done.
+# Reads status through fm_beads_status (the one array-unwrap owner), so it fails
+# open the same way and never marks live work done.
 fm_beads_is_closed() { # <bead-id>
-  local id=$1 out status
+  local id=${1:-} status
   [ -n "$id" ] || return 1
-  command -v task >/dev/null 2>&1 || return 1
-  command -v jq >/dev/null 2>&1 || return 1
-  out=$(task show "$id" --json 2>/dev/null) || return 1
-  [ -n "$out" ] || return 1
-  status=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null) || return 1
+  status=$(fm_beads_status "$id")
   [ "$status" = closed ]
 }

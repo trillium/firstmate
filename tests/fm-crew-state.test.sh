@@ -51,6 +51,20 @@ make_repo_on_branch() {  # <dir> <branch>
   export FM_FAKE_RUN_HEAD
 }
 
+# Mark a repo's work as LANDED: add a bare remote and push HEAD, so
+# `git log HEAD --not --remotes` is empty (no unpushed commits) over a clean
+# tree. The bead-done path in fm-crew-state.sh only fires when the task has no
+# unlanded work, so the closed-bead happy path needs the branch to be pushed.
+# The bare remote lives OUTSIDE the worktree (a sibling path), so it never shows
+# up as an untracked entry in `git status --porcelain` - which the unlanded-work
+# probe reads as uncommitted work and would otherwise trip on.
+land_repo() {  # <dir>
+  local dir=$1 remote="$1.remote.git"
+  git init -q --bare "$remote"
+  git -C "$dir" remote add origin "$remote"
+  git -C "$dir" push -q origin HEAD
+}
+
 # A fakebin with a fake `no-mistakes` (serves the env-driven run output) and a
 # fake `tmux` (serves a busy or idle pane). The fake no-mistakes mirrors the real
 # command surface the helper uses: `axi status`, `axi status --run <id>` (the
@@ -127,13 +141,15 @@ SH
   cat > "$fb/task" <<'SH'
 #!/usr/bin/env bash
 set -u
-# Fake beads `task` CLI. fm-crew-state.sh (via fm_beads_is_closed) only ever calls
-# `task show <id> --json`. FM_FAKE_BEAD_STATUS drives the reported status; empty
-# emits no JSON, modelling an absent bead (which must never read as closed).
+# Fake beads `task` CLI. fm-crew-state.sh reads a single bead through
+# fm_beads_status, which calls `task show <id> --json`; the real CLI returns a
+# JSON ARRAY ([{...}]), so the fake emits that shape too. FM_FAKE_BEAD_STATUS
+# drives the reported status; empty emits no JSON, modelling an absent bead
+# (which must never read as closed).
 case "${1:-}" in
   show)
     [ -n "${FM_FAKE_BEAD_STATUS:-}" ] || exit 0
-    printf '{"status":"%s"}\n' "$FM_FAKE_BEAD_STATUS" ;;
+    printf '[{"id":"%s","status":"%s"}]\n' "${2:-bead}" "$FM_FAKE_BEAD_STATUS" ;;
 esac
 exit 0
 SH
@@ -1327,29 +1343,78 @@ test_missing_run_head_falls_back_to_current_state() {
 
 # (l) config/backlog-backend=beads: a CLOSED linked bead is an authoritative
 # lifecycle "done" - the worker closes it as its terminal step and
-# teardown/ledger close it on landing - so it overrides even a stale
-# needs-decision status-event tail. Config-gated: tasks-axi/manual backends
-# never consult a bead here, and an OPEN bead leaves live work fully governed by
-# the existing pane/run-step logic (no premature done).
+# teardown/ledger close it on landing - so it overrides a stale status-event tail
+# (here a lingering `working:` line) once the task has landed and holds no open
+# decision. Config-gated: tasks-axi/manual backends never consult a bead here, and
+# an OPEN bead leaves live work fully governed by the existing pane/run-step logic
+# (no premature done).
 test_beads_closed_bead_reconciles_done() {
   command -v jq >/dev/null 2>&1 || { pass "beads closed-bead done skipped without jq"; return; }
   reset_fakes
   local d; d=$(new_case beads-closed)
   make_repo_on_branch "$d/wt" fm/feat-bead
+  land_repo "$d/wt"
   make_fakebin "$d" >/dev/null
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
   fm_write_meta "$d/state/feat-bead.meta" "window=fm:fm-feat-bead" "worktree=$d/wt" \
     "kind=ship" "beads_id=task-zz01"
-  # A stale needs-decision tail a bare status-log read would surface: the closed
-  # bead must win over it.
-  printf 'working: started\nneeds-decision: pick A or B\n' > "$d/state/feat-bead.status"
+  # A stale working tail a bare status-log read would surface as still-active: the
+  # closed bead on landed work with no open decision must win over it.
+  printf 'working: started\nworking: still grinding\n' > "$d/state/feat-bead.status"
   FM_FAKE_BEAD_STATUS=closed
   local out; out=$(run_crew_state "$d" feat-bead)
   assert_contains "$out" "state: done" "closed linked bead -> done"
   assert_contains "$out" "source: bead" "closed bead -> bead source"
   assert_contains "$out" "task-zz01" "detail names the closed bead"
-  assert_not_contains "$out" "needs-decision" "stale status tail must not surface over a closed bead"
+  assert_not_contains "$out" "state: working" "stale working tail must not surface over a closed bead"
   pass "closed linked bead reconciles as done under the beads backend"
+}
+
+# Drop-recovery guard: fm-ledger.sh closes a claimed bead that went quiet WITHOUT
+# landing, so a closed bead is NOT completion evidence while a captain decision is
+# still open. The bead must not clear that decision by short-circuiting to done -
+# the existing status-log/pane logic must govern so the open needs-decision
+# survives for the supervisor to see.
+test_beads_closed_bead_open_decision_not_done() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+open-decision skipped without jq"; return; }
+  reset_fakes
+  local d; d=$(new_case beads-closed-decision)
+  make_repo_on_branch "$d/wt" fm/feat-beaddec
+  land_repo "$d/wt"   # landed, so the OPEN DECISION is the sole reason done is withheld
+  make_fakebin "$d" >/dev/null
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beaddec.meta" "window=fm:fm-feat-beaddec" "worktree=$d/wt" \
+    "kind=ship" "harness=claude" "beads_id=task-zz04"
+  arm_idle_record "$d/state" feat-beaddec
+  printf 'working: started\nneeds-decision: pick A or B\n' > "$d/state/feat-beaddec.status"
+  FM_FAKE_BEAD_STATUS=closed
+  local out; out=$(run_crew_state "$d" feat-beaddec)
+  assert_not_contains "$out" "source: bead" "a closed bead must not override an open decision"
+  assert_not_contains "$out" "state: done" "an open decision must not read as done from the bead"
+  assert_contains "$out" "state: parked" "the open needs-decision still governs (parked)"
+  pass "closed bead does not clear an open decision (drop-recovery guard)"
+}
+
+# Drop-recovery guard, unlanded branch: a closed bead over a worktree that still
+# holds unpushed commits is not landed work, so it must not short-circuit to done;
+# the existing status-log/pane logic governs instead.
+test_beads_closed_bead_unlanded_not_done() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+unlanded skipped without jq"; return; }
+  reset_fakes
+  local d; d=$(new_case beads-closed-unlanded)
+  make_repo_on_branch "$d/wt" fm/feat-beadunl   # no remote -> HEAD is unpushed (unlanded)
+  make_fakebin "$d" >/dev/null
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadunl.meta" "window=fm:fm-feat-beadunl" "worktree=$d/wt" \
+    "kind=ship" "harness=claude" "beads_id=task-zz05"
+  arm_idle_record "$d/state" feat-beadunl
+  printf 'working: still grinding\n' > "$d/state/feat-beadunl.status"
+  FM_FAKE_BEAD_STATUS=closed
+  local out; out=$(run_crew_state "$d" feat-beadunl)
+  assert_not_contains "$out" "source: bead" "a closed bead over unlanded work must not report done"
+  assert_not_contains "$out" "state: done" "unlanded work must not read as done from the bead"
+  assert_contains "$out" "source: status-log" "unlanded work falls through to existing logic"
+  pass "closed bead over unlanded work does not report done (drop-recovery guard)"
 }
 
 # A still-open bead with a live (busy) endpoint must be completely unaffected -
@@ -1405,6 +1470,8 @@ test_beads_backend_guard_tasks_axi_ignores_closed_bead() {
 
 test_active_run_is_authoritative
 test_beads_closed_bead_reconciles_done
+test_beads_closed_bead_open_decision_not_done
+test_beads_closed_bead_unlanded_not_done
 test_beads_open_bead_live_pane_unaffected
 test_beads_backend_guard_tasks_axi_ignores_closed_bead
 test_stale_needs_decision_superseded

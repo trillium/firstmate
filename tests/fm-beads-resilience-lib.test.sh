@@ -19,6 +19,12 @@ mkdir -p "$FM_HOME/state"
 export FM_HOME
 unset FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_ROOT STATE 2>/dev/null || true
 
+# fm_beads_close_already_applied reads status through fm_beads_status, which
+# lives in fm-tasks-axi-lib.sh (the one owner of the `task show --json` array
+# unwrap). The runtime callers (bin/fm-bootstrap.sh, bin/fm-session-start.sh)
+# source both libs together, so this test does too.
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$ROOT/bin/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-beads-resilience-lib.sh
 . "$ROOT/bin/fm-beads-resilience-lib.sh"
 
@@ -109,7 +115,7 @@ case "$*" in
     [ "$mode" = up ] && exit 0
     exit 1
     ;;
-  'show bd-1 --json') printf '%s\n' '{"id":"bd-1","status":"open"}'; exit 0 ;;
+  'show bd-1 --json') printf '%s\n' '[{"id":"bd-1","status":"open"}]'; exit 0 ;;
   'assign bd-2 crewmate-x') exit 0 ;;
 esac
 exit 1
@@ -168,11 +174,11 @@ set -u
 case "$*" in
   'list --limit 1') exit 0 ;;
   'close bd-closed --reason done') exit 1 ;;
-  'show bd-closed --json') printf '%s\n' '{"id":"bd-closed","status":"closed"}'; exit 0 ;;
+  'show bd-closed --json') printf '%s\n' '[{"id":"bd-closed","status":"closed"}]'; exit 0 ;;
   'close bd-gone --reason done') exit 1 ;;
   'show bd-gone --json') exit 1 ;;
   'close bd-open --reason done') exit 1 ;;
-  'show bd-open --json') printf '%s\n' '{"id":"bd-open","status":"open"}'; exit 0 ;;
+  'show bd-open --json') printf '%s\n' '[{"id":"bd-open","status":"open"}]'; exit 0 ;;
 esac
 exit 1
 SH

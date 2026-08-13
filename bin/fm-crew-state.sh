@@ -128,10 +128,27 @@ fi
 # done prematurely. Config-gated to the beads backend (fm_backlog_backend_value);
 # tasks-axi/manual backends never consult a bead here. fm_beads_is_closed fails
 # open (missing tool or store error -> not closed -> existing logic governs).
+#
+# But a closed bead is NOT unconditionally done: fm-ledger.sh's drop-recovery
+# closes a claimed bead that went quiet WITHOUT landing, so a close can outrun the
+# actual work. The bead is authoritative only when the task also has no open
+# decision and no unlanded work; if a decision is still open, or the worktree has
+# uncommitted or unpushed commits, the close is not completion evidence, so we
+# fall through to the run-step/pane/status sources rather than reporting done.
+# Read-only, mirroring the uncommitted/unpushed probe fm-teardown.sh uses for its
+# staleness summary; work_is_landed itself lives in that mutating script this
+# side-effect-free reader must not source.
+bead_task_has_unlanded_work() {
+  [ -n "$(git -C "$WT" status --porcelain 2>/dev/null)" ] && return 0
+  [ -n "$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null)" ] && return 0
+  return 1
+}
 BEADS_ID=$(meta_value beads_id)
 if [ -n "$BEADS_ID" ] \
   && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ] \
-  && fm_beads_is_closed "$BEADS_ID"; then
+  && fm_beads_is_closed "$BEADS_ID" \
+  && [ -z "$(status_open_decisions "$LOG")" ] \
+  && ! bead_task_has_unlanded_work; then
   emit "done" bead "linked bead $BEADS_ID closed: task complete"
 fi
 
