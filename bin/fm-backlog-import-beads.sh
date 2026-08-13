@@ -31,10 +31,9 @@
 #     -> the bead's description, so nothing is dropped.
 #
 # Every created bead carries the firstmate-fleet label (fm_beads_fleet_label)
-# so `task list --label <fleet>` scopes to firstmate's fleet, plus the
-# `task:<id>` and home (fm_beads_home_label) labels that together form the
-# idempotency identity fm_beads_resolve_or_create already uses, so re-running
-# the importer resolves the existing bead instead of duplicating it.
+# so `task list --label <fleet>` scopes to firstmate's fleet, and the
+# `task:<id>` idempotency label that fm_beads_resolve_or_create already uses, so
+# re-running the importer resolves the existing bead instead of duplicating it.
 # Captain holds are idempotent through fm-decision-hold.sh's own `hold:<id>`
 # anchor lookup.
 #
@@ -140,14 +139,14 @@ extract_title() {
     }'
 }
 
-# resolve_existing_bead <task-id> - echo this home's bead for that task, or
-# nothing. Read-only. Delegates to the same owner fm_beads_resolve_or_create
-# resolves through, because this report also drives the imported/skipped counts
-# and the blocked-by dependency edges: a lookup that disagreed with the one that
-# mints would annotate "(exists)" for a bead the apply path then duplicates, and
-# wire dependencies to the bead it did not pick.
+# resolve_existing_bead <task-id> - echo the bead id already carrying the
+# task:<id> idempotency label, or nothing. Read-only. Matches
+# fm_beads_resolve_or_create's own lookup so this report's "(exists)" annotation
+# and the blocked-by dependency edges name the bead the apply path resolves to.
 resolve_existing_bead() {
-  fm_beads_resolve_existing "$1"
+  local existing
+  existing=$(task list --label "task:$1" --limit 1 --json 2>/dev/null) || existing=
+  printf '%s' "$existing" | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null || true
 }
 
 # resolve_existing_hold_anchor <hold-id> - echo the anchor bead id already

@@ -146,83 +146,40 @@ fm_beads_fleet_label() {
   printf '%s\n' "${FM_BEADS_FLEET_LABEL:-fleet:firstmate}"
 }
 
-# fm_beads_home_label [home] - the home half of a task bead's idempotency
-# identity, derived from the resolved path of $FM_HOME (or the given home).
-# "task:<id>" alone is not an identity: task ids are short home-local slugs, the
-# beads store is federated and machine-wide, and several firstmate homes (the
-# main home plus every local secondmate) share it. Two homes that each run a
-# task named "fix-ci" would otherwise link both to one bead, and closing either
-# one marks the other's live work complete through bin/fm-crew-state.sh. Pairing
-# the slug with the home makes the label namespace as wide as the id namespace.
-# FM_BEADS_HOME_LABEL is an override for test fixtures, matching
-# FM_BEADS_FLEET_LABEL; production code should call this function.
-fm_beads_home_label() {
-  local home=${1:-${FM_HOME:-}} real digest
-  if [ -n "${FM_BEADS_HOME_LABEL:-}" ]; then
-    printf '%s\n' "$FM_BEADS_HOME_LABEL"
-    return 0
-  fi
-  [ -n "$home" ] || return 1
-  real=$(cd "$home" 2>/dev/null && pwd -P) || return 1
-  if command -v shasum >/dev/null 2>&1; then
-    digest=$(printf '%s' "$real" | shasum -a 256 2>/dev/null | awk '{print $1}')
-  elif command -v sha256sum >/dev/null 2>&1; then
-    digest=$(printf '%s' "$real" | sha256sum 2>/dev/null | awk '{print $1}')
-  else
-    return 1
-  fi
-  [ -n "$digest" ] || return 1
-  printf 'fm-home:%s\n' "${digest:0:12}"
-}
-
-# fm_beads_resolve_existing <task_id> [home] - the single owner of "which bead
-# is this home's task already linked to". Echoes that bead id, or nothing when
-# the task has no live bead. Read-only, and fails open (prints nothing) on any
-# missing tool or store failure.
-#
-# Only a LIVE bead answers. Task ids are reusable slugs and fm-teardown.sh
-# closes a task's bead without stripping its labels, so a finished task's record
-# outlives it in the store forever. Adopting one would link brand-new work to an
-# already-closed bead - and under this backend a closed bead is the
-# authoritative "task complete" signal bin/fm-crew-state.sh reads, so the fresh
-# crew would reconcile as done before its worker made a single commit. The
-# non-closed statuses are enumerated explicitly rather than left to the store's
-# default filter, and the labels are ANDed server side, so exactly one candidate
-# row comes back and no client-side ordering or truncation can decide the match.
-fm_beads_resolve_existing() {
-  local task_id=$1 home=${2:-} home_label existing
-  command -v task >/dev/null 2>&1 || return 0
-  command -v jq >/dev/null 2>&1 || return 0
-  home_label=$(fm_beads_home_label "$home") || return 0
-  existing=$(task list --label "task:$task_id,$home_label" \
-    --status open,in_progress,blocked,deferred --limit 1 --json 2>/dev/null) || existing=
-  printf '%s' "$existing" \
-    | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null || true
-}
-
 # fm_beads_resolve_or_create <task_id> [title] - beads-authority migration
 # Stage 3 (see data/beads-authority-migration-scout/report.md section "Stage
 # 3"): under config/backlog-backend=beads, every firstmate task must have a
-# linked bead without requiring an explicit --beads flag. Resolves this home's
-# live bead for the task first (fm_beads_resolve_existing, so fm-brief.sh and
-# fm-spawn.sh converge on the same bead regardless of call order) and mints one
-# carrying the fleet label (fm_beads_fleet_label), the "task:<task_id>"
-# idempotency label, and this home's label (fm_beads_home_label) only if none is
-# found. Echoes the resolved bead id on success. Fails open like the rest of the
-# beads integration: prints nothing and returns 1 on any missing tool or
-# failure, never blocking dispatch.
+# linked bead without requiring an explicit --beads flag. Looks up an
+# existing OPEN bead carrying the idempotency label "task:<task_id>" first (so
+# fm-brief.sh and fm-spawn.sh converge on the same bead regardless of call
+# order) and mints one with that label plus the fleet label
+# (fm_beads_fleet_label) only if none is found. Echoes the resolved bead id on
+# success. Fails open like the rest of the beads integration: prints nothing
+# and returns 1 on any missing tool or failure, never blocking dispatch.
+#
+# A CLOSED bead is never adopted. Task ids are reusable slugs, and
+# fm-teardown.sh closes a task's bead without stripping its "task:<id>" label,
+# so that record outlives the task in the federated store forever. Adopting it
+# would link brand-new work to a bead that was already closed before the task
+# existed - and a closed bead is the authoritative "task complete" signal
+# bin/fm-crew-state.sh reads under this backend, so the fresh crew would
+# reconcile as done before its worker made a single commit. Omitting --all
+# leaves the store's own default filter in place, so closed predecessors are
+# excluded server side and no client-side ordering or page depth can decide
+# the match.
 fm_beads_resolve_or_create() {
-  local task_id=$1 title=${2:-"firstmate: $1"} home_label id
+  local task_id=$1 title=${2:-"firstmate: $1"} task_label existing id
   command -v task >/dev/null 2>&1 || return 1
   command -v jq >/dev/null 2>&1 || return 1
-  home_label=$(fm_beads_home_label) || return 1
-  id=$(fm_beads_resolve_existing "$task_id")
+  task_label="task:$task_id"
+  existing=$(task list --label "$task_label" --limit 1 --json 2>/dev/null) || existing=
+  id=$(printf '%s' "$existing" \
+    | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
   if [ -n "$id" ]; then
     printf '%s\n' "$id"
     return 0
   fi
-  id=$(task create --title "$title" \
-    --labels "$(fm_beads_fleet_label),task:$task_id,$home_label" --silent 2>/dev/null) || return 1
+  id=$(task create --title "$title" --labels "$(fm_beads_fleet_label),$task_label" --silent 2>/dev/null) || return 1
   [ -n "$id" ] || return 1
   printf '%s\n' "$id"
 }

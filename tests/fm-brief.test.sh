@@ -902,7 +902,7 @@ test_beads_backend_mints_bead_at_intake() {
   brief="$home/data/beads-auto-ship/brief.md"
   assert_present "$brief" "ship brief was not scaffolded under the beads backend"
   # The intake bead is opened via the idempotent task:<id> lookup-then-mint.
-  assert_grep "list --label task:beads-auto-ship,fm-home:" "$calls_log" \
+  assert_grep "list --label task:beads-auto-ship --limit 1 --json" "$calls_log" \
     "ship brief did not resolve the intake bead via its task:<id> label under the beads backend"
   assert_grep "create --title" "$calls_log" \
     "ship brief did not mint an intake bead under the beads backend"
@@ -917,7 +917,7 @@ test_beads_backend_mints_bead_at_intake() {
   PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-scout no-registry-proj --scout >/dev/null 2>&1
   brief="$home/data/beads-auto-scout/brief.md"
   assert_present "$brief" "scout brief was not scaffolded under the beads backend"
-  assert_grep "list --label task:beads-auto-scout,fm-home:" "$calls_log" \
+  assert_grep "list --label task:beads-auto-scout --limit 1 --json" "$calls_log" \
     "scout brief did not open its intake bead under the beads backend"
   assert_no_grep "# Bead Receipt" "$brief" \
     "scout brief wrongly rendered a Bead Receipt section at scaffold time under the beads backend"
