@@ -667,6 +667,12 @@ test_beads_sync_separates_an_unreadable_remote_list_from_an_empty_one() {
 test_beads_sync_reports_a_missing_jq_rather_than_assuming_no_remote() {
   local fakebin control out
   read -r fakebin control <<< "$(beads_sync_fixture sync-no-jq)"
+  # On Linux, jq and date share the same directory (/usr/bin).  fm_path_without
+  # jq removes every directory that has jq, so date disappears too, and
+  # fm_beads_sync_once then fails at the deadline computation (date +%s) before
+  # it ever reaches the jq check.  Symlink the real date into fakebin so it
+  # survives the PATH excision while jq itself remains absent.
+  ln -sf "$(command -v date)" "$fakebin/date"
 
   if out=$(PATH="$fakebin:$(fm_path_without jq)" fm_beads_sync_once 2>&1); then
     fail "sync with no jq was reported as a clean no-op, got: $out"
