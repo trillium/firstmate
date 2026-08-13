@@ -150,8 +150,20 @@ fm_beads_backend_available() {
 
 # fm_beads_store_reachable - true when the beads store answers a cheap read.
 # This, not the presence of a .beads/ directory, is the store-usable test.
-fm_beads_store_reachable() {
+#
+# The optional bound is for callers running under a deadline. A Dolt sql-server
+# that accepts the connection and then never answers makes this read hang, so a
+# caller whose whole budget this probe precedes must pass a bound or the budget
+# is not the bound it claims to be. A store that does not answer within it is a
+# store that does not answer, which is exactly what an unbounded false means.
+# shellcheck disable=SC2120 # The bound comes from callers outside this library.
+fm_beads_store_reachable() { # [bound seconds]
   command -v task >/dev/null 2>&1 || return 1
+  if [ -n "${1:-}" ]; then
+    fm_beads_require_timeout_lib
+    fm_run_timed "$1" task list --limit 1 >/dev/null 2>&1
+    return
+  fi
   task list --limit 1 >/dev/null 2>&1
 }
 
@@ -189,14 +201,30 @@ fm_beads_bootstrap_store() {
 # would turn a home that silently stopped syncing into a line the diagnostics
 # skill documents as expected. Every unreadable case therefore keeps its own
 # reason, and no caller ever guesses a destination from it.
-fm_beads_sync_remote_state() {
-  local out count
+#
+# The optional bound exists for the same reason fm_beads_store_reachable's does:
+# this listing is the sync sweep's first command, so leaving it unbounded lets a
+# stalled Dolt server spend more wall clock than the whole sweep budget before a
+# single bounded step runs. A listing that does not answer in time is one more
+# unreadable case, never a home that has no remote.
+fm_beads_sync_remote_state() { # [bound seconds]
+  local out count rc=0 bound=${1:-}
   command -v task >/dev/null 2>&1 || { printf 'unreadable: task CLI not found\n'; return 0; }
   command -v jq >/dev/null 2>&1 || { printf 'unreadable: jq is not on PATH\n'; return 0; }
-  out=$(task dolt remote list --json 2>&1) || {
+  if [ -n "$bound" ]; then
+    fm_beads_require_timeout_lib
+    out=$(fm_run_timed "$bound" task dolt remote list --json 2>&1) || rc=$?
+  else
+    out=$(task dolt remote list --json 2>&1) || rc=$?
+  fi
+  if [ "$rc" -eq 124 ] && [ -n "$bound" ]; then
+    printf "unreadable: 'task dolt remote list --json' timed out after %ss\n" "$bound"
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
     printf "unreadable: 'task dolt remote list --json' failed: %s\n" "$(fm_beads_diag_line "$out")"
     return 0
-  }
+  fi
   count=$(printf '%s' "$out" | jq -r 'if type=="array" then length else "" end' 2>/dev/null) || count=
   case "$count" in
     '' | *[!0-9]*) printf 'unreadable: the Dolt remote listing was not a JSON array\n' ;;
@@ -269,13 +297,24 @@ fm_beads_require_timeout_lib() {
 # working set and a push without it would publish nothing. Push precedes pull
 # because durability - getting this home's own commits off this machine - is
 # the gap being closed, and a pull failure must not prevent that.
-fm_beads_sync_once() {
+#
+# The deadline is established before the FIRST command runs, and the caller may
+# supply one it has already been spending against, so every probe and every step
+# the sweep runs is inside one budget rather than the budget covering only the
+# three steps it happens to name.
+fm_beads_sync_once() { # [deadline epoch]
   local rc=0 step_rc remote_state commit_out deadline bound
   command -v task >/dev/null 2>&1 || {
     echo "BEADS_SYNC: skipped: task CLI not found"
     return 1
   }
-  remote_state=$(fm_beads_sync_remote_state)
+  fm_beads_require_timeout_lib
+  deadline=${1:-$(( $(date +%s) + FM_BEADS_SYNC_BUDGET ))}
+  if ! bound=$(fm_beads_sync_step_bound "$deadline"); then
+    echo "BEADS_SYNC: skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent before the Dolt remote list could be read"
+    return 1
+  fi
+  remote_state=$(fm_beads_sync_remote_state "$bound")
   case "$remote_state" in
     configured) ;;
     none)
@@ -289,8 +328,6 @@ fm_beads_sync_once() {
       return 1
       ;;
   esac
-  fm_beads_require_timeout_lib
-  deadline=$(( $(date +%s) + FM_BEADS_SYNC_BUDGET ))
 
   # Each step captures its status with `|| step_rc=$?` rather than a bare call
   # followed by `$?`, so a failing step is exempt from `set -e` no matter which

@@ -288,28 +288,33 @@ beads_sync_due() {
 }
 
 beads_sync_sweep() {
-  local stage_budget=${FM_STARTUP_NETWORK_TIMEOUT:-120}
+  local stage_budget=${FM_STARTUP_NETWORK_TIMEOUT:-120} deadline bound
   command -v task >/dev/null 2>&1 || return 0
   if ! beads_sync_due; then
     return 0
   fi
+  # The whole sweep gets a third of the deferred network stage's budget, which
+  # bounds every sweep sharing it. Without a sweep-wide bound the three
+  # per-step bounds could sum past that budget on a blackholed remote and cut
+  # off the secondmate, handoff, and clone-refresh sweeps that follow. The
+  # deadline is set here, before the first probe, and handed to the sync so the
+  # reachability read below is inside the same budget as the steps it precedes.
+  case "$stage_budget" in '' | *[!0-9]* | 0) stage_budget=120 ;; esac
+  local FM_BEADS_SYNC_BUDGET=$((stage_budget / 3))
+  [ "$FM_BEADS_SYNC_BUDGET" -gt 0 ] || FM_BEADS_SYNC_BUDGET=1
+  deadline=$(( $(date +%s) + FM_BEADS_SYNC_BUDGET ))
+  bound=$(fm_beads_sync_step_bound "$deadline") || return 0
   # A store that does not answer already has an owner: the local phase reports
   # it as MISSING or DEGRADED with the mirror it fell back to. Syncing against
   # it can accomplish nothing and would only re-report the same outage in a
   # second, more alarming vocabulary pointed at the wrong cause. The cadence
   # stamp is deliberately not touched here either, so sync resumes on the first
-  # session after the store recovers instead of waiting out the interval.
-  fm_beads_store_reachable || return 0
+  # session after the store recovers instead of waiting out the interval. A
+  # store that hangs past the bound is one that does not answer.
+  fm_beads_store_reachable "$bound" || return 0
   mkdir -p "$STATE" 2>/dev/null || true
   : > "$STATE/.beads-sync-last" 2>/dev/null || true
-  # The whole sweep gets a third of the deferred network stage's budget, which
-  # bounds every sweep sharing it. Without a sweep-wide bound the three
-  # per-step bounds could sum past that budget on a blackholed remote and cut
-  # off the secondmate, handoff, and clone-refresh sweeps that follow.
-  case "$stage_budget" in '' | *[!0-9]* | 0) stage_budget=120 ;; esac
-  local FM_BEADS_SYNC_BUDGET=$((stage_budget / 3))
-  [ "$FM_BEADS_SYNC_BUDGET" -gt 0 ] || FM_BEADS_SYNC_BUDGET=1
-  fm_beads_sync_once || true
+  fm_beads_sync_once "$deadline" || true
 }
 
 fleet_sync() {

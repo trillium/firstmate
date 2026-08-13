@@ -87,7 +87,8 @@ Provisioning uses `bd bootstrap`, the non-destructive verb, and never `bd init -
 
 Routine sync is a mutating sweep in bootstrap's deferred network phase (beads backend only, real runs only), so it never sits on the blocking path of session start and a slow remote cannot delay a session.
 It runs `task dolt commit`, then `task dolt push`, then `task dolt pull`, in that order: commit first because bd's `--dolt-auto-commit` policy defaults to `off` and leaves writes in the Dolt working set, and push before pull because getting this home's own commits off the machine is the gap being closed.
-Each step is bounded by `FM_BEADS_SYNC_TIMEOUT` (default 45 seconds) and the three together by `FM_BEADS_SYNC_BUDGET`, which the sweep sets to a third of the network stage's own `FM_STARTUP_NETWORK_TIMEOUT`; a step with no budget left is reported skipped rather than started.
+Each step is bounded by `FM_BEADS_SYNC_TIMEOUT` (default 45 seconds) and the whole sweep by `FM_BEADS_SYNC_BUDGET`, which the sweep sets to a third of the network stage's own `FM_STARTUP_NETWORK_TIMEOUT`; a step with no budget left is reported skipped rather than started.
+That budget starts before the sweep's first command, and the store-reachability read and the Dolt remote listing that precede the three steps run under it too, so a Dolt server that accepts a connection and never answers cannot spend more than the budget without a single bounded step having run.
 That sweep-wide bound is why the per-step bounds cannot sum past the stage budget and starve the other network sweeps, and it is also why beads sync runs last among them.
 The sweep runs at most once per `FM_BEADS_SYNC_MIN_INTERVAL` (default 900 seconds), stamped at `state/.beads-sync-last` when the sweep is attempted rather than when it succeeds, so a broken remote backs off instead of being retried by every session that starts.
 A store that does not answer skips the sweep entirely without stamping, because that outage is already reported by the local phase and syncing against it can accomplish nothing; sync then resumes on the first session after the store recovers.
@@ -623,6 +624,7 @@ FM_BOOTSTRAP_NETWORK=all   # internal session-start phase split: all, skip (loca
 FM_STARTUP_NETWORK_TIMEOUT=120   # seconds bounding the whole deferred network stage; hitting it prints an actionable NETWORK_CHECKS line
 FM_TASKS_AXI_COMPATIBLE=   # internal one-hop handoff of an already-computed tasks-axi compatibility verdict (0 or 1); consumed when bin/fm-tasks-axi-lib.sh is sourced
 FM_BEADS_SYNC_TIMEOUT=45   # beads backend only: seconds bounding each Dolt sync step, so an unreachable remote cannot stall the sweep
+FM_BEADS_SYNC_BUDGET=40   # beads backend only: seconds bounding the WHOLE sync sweep, probes included, so the per-step bounds cannot sum past the caller's own budget; the bootstrap sweep overrides it to a third of FM_STARTUP_NETWORK_TIMEOUT
 FM_BEADS_SYNC_MIN_INTERVAL=900   # beads backend only: seconds between store sync sweeps, stamped at state/.beads-sync-last on attempt
 FM_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; fm-send.sh overrides it to name the requested message specifically

@@ -801,7 +801,13 @@ assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
   "a read-only run could not see a healthy store through ~/.local/bin"
 pass "the beads store resolves through ~/.local/bin even when the invoking PATH omits it"
 
-# --- an operator-owned task wrapper is never overwritten --------------------
+# --- an operator-owned task wrapper is never overwritten, and never repairable
+#
+# The repair refuses this wrapper by policy, so calling the gap repairable would
+# make the readiness gate pay a repair pass and a re-check on every seed, launch,
+# and liveness relaunch for a condition that can never converge. It is therefore
+# classified informational: still reported, still non-gating, still never
+# overwritten, but never advertised to the gate as something a repair can close.
 
 new_case Darwin with-herdr gui
 mkdir -p "$CASE_PROJECT_HOME/config" "$CASE_HOME/.local/bin"
@@ -811,14 +817,27 @@ BD_LOG="$CASE_STATE/bd.log"
 add_beads_bd "$CASE_BIN" "$BD_LOG"
 printf '#!/usr/bin/env bash\n# operator wrapper\nexit 1\n' > "$CASE_HOME/.local/bin/task"
 chmod +x "$CASE_HOME/.local/bin/task"
+
 doctor --fix
-assert_contains "$DOCTOR_OUT" 'fix beads-store=failed:' \
-  "--fix did not report refusing an operator-owned task wrapper"
+assert_not_contains "$DOCTOR_OUT" 'fix beads-store=' \
+  "--fix attempted a repair it is forbidden to complete"
 assert_contains "$(cat "$CASE_HOME/.local/bin/task")" 'operator wrapper' \
   "--fix overwrote a task wrapper it did not create"
 assert_not_contains "$(cat "$BD_LOG")" bootstrap \
   "--fix bootstrapped a store behind an operator-owned wrapper it could not verify"
-pass "--fix refuses an operator-owned task wrapper instead of overwriting it"
+
+doctor
+expect_code 0 "$DOCTOR_RC" \
+  "an operator-owned task wrapper withheld the verdict on an otherwise ready host"
+assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
+  "a store gap the repair refuses by policy was not reported informational"
+assert_not_contains "$DOCTOR_OUT" 'check beads-store=fixable:' \
+  "a gap fix_beads_store always refuses was still advertised as fixable"
+assert_not_contains "$DOCTOR_OUT" 'repairable-advisory: beads-store' \
+  "an unrepairable wrapper still asked the readiness gate to run a repair pass"
+assert_contains "$DOCTOR_OUT" 'action: beads-store:' \
+  "the informational wrapper gap came with no operator action"
+pass "an operator-owned task wrapper is informational and never overwritten, repaired, or re-tried"
 
 # --- the readiness gate repairs a non-gating gap it does not gate on ---------
 #

@@ -643,6 +643,44 @@ SH
   pass "the beads sync sweep runs last and bounds itself to a slice of the network stage budget"
 }
 
+# Test: the sweep's budget starts before its FIRST command, not before the three
+# steps it names. The store-reachability read runs ahead of every bounded step,
+# so a Dolt server that accepts the connection and then never answers would hold
+# the whole deferred network stage on a probe nobody bounded - starving the
+# secondmate, handoff, and clone-refresh sweeps that share that stage's budget.
+test_beads_sync_sweep_bounds_its_reachability_probe() {
+  local home fakebin log out started elapsed
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-probe)"
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+case "$*" in
+  'list --limit 1') sleep 30; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  printf '%s\n' 424242 > "$home/state/.lock"
+
+  started=$(date +%s)
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_STARTUP_NETWORK_TIMEOUT=3 \
+    FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  elapsed=$(( $(date +%s) - started ))
+  [ "$elapsed" -lt 15 ] \
+    || fail "the sweep hung ${elapsed}s on its reachability probe against a 3s stage budget"
+  assert_grep 'list --limit 1' "$log" \
+    "the sweep never ran the reachability probe this case exists to bound"
+  assert_no_grep "dolt" "$log" "the sweep synced against a store that never answered its probe"
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a store that never answered was reported as a sync outcome"
+  assert_absent "$home/state/.beads-sync-last" \
+    "a store that never answered burned the cadence window, delaying sync past the recovery"
+  pass "the beads sync sweep bounds the reachability probe that precedes its steps"
+}
+
 test_no_mistakes_min_version() {
   local label version mode case_dir fakebin out missing n
   missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
@@ -1494,6 +1532,7 @@ test_beads_sync_sweep_stays_off_the_blocking_local_phase
 test_beads_sync_sweep_failure_is_reported_not_fatal
 test_beads_sync_sweep_skips_an_unreachable_store
 test_beads_sync_sweep_runs_last_and_within_a_slice_of_the_stage_budget
+test_beads_sync_sweep_bounds_its_reachability_probe
 test_no_mistakes_min_version
 test_gh_axi_min_version
 test_lavish_axi_min_version

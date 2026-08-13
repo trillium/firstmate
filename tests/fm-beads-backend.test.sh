@@ -416,8 +416,8 @@ SH
 #                 subcommand or an unreachable store would)
 #   commit.out    what `task dolt commit` prints  (default nothing)
 #   commit.rc / push.rc / pull.rc   exit status per dolt subcommand (default 0)
-#   commit.sleep / push.sleep   seconds that dolt subcommand hangs before
-#                 answering (default 0)
+#   commit.sleep / push.sleep / remote.sleep / list.sleep   seconds that
+#                 subcommand hangs before answering (default 0)
 #   bootstrap.rc  exit status for `task bootstrap` (default 0)
 #   bootstrap.leaves_broken   when present, bootstrap "succeeds" without making
 #                             the store answer a read
@@ -433,6 +433,8 @@ read_control() { # <file> <default>
 }
 case "\${1:-} \${2:-}" in
   'dolt remote')
+    hang=\$(read_control remote.sleep 0)
+    [ "\$hang" = 0 ] || sleep "\$hang"
     remote_rc=\$(read_control remote.rc 0)
     if [ "\$remote_rc" != 0 ]; then
       printf 'unknown command "remote" for "bd dolt"\n' >&2
@@ -456,7 +458,11 @@ case "\${1:-} \${2:-}" in
   'dolt pull') exit "\$(read_control pull.rc 0)" ;;
 esac
 case "\${1:-}" in
-  list) exit "\$(read_control list.rc 0)" ;;
+  list)
+    hang=\$(read_control list.sleep 0)
+    [ "\$hang" = 0 ] || sleep "\$hang"
+    exit "\$(read_control list.rc 0)"
+    ;;
   bootstrap)
     [ -f "\$control/bootstrap.leaves_broken" ] || printf '0' > "\$control/list.rc"
     exit "\$(read_control bootstrap.rc 0)"
@@ -798,6 +804,40 @@ test_beads_sync_bounds_the_whole_sweep_not_each_step() {
   pass "fm_beads_sync_once bounds the whole sweep, not merely each step within it"
 }
 
+# Test: the budget covers the sweep's FIRST command, not merely the three steps
+# it names. A Dolt server that accepts the connection and then never answers
+# hangs the remote listing, which runs before any step does, so leaving that
+# probe outside the budget lets the sweep spend unbounded wall clock without a
+# single bounded step running and without any diagnostic at all - the budget
+# would be a claim rather than a bound.
+test_beads_sync_bounds_the_probe_that_precedes_its_steps() {
+  local fakebin control out started elapsed
+  read -r fakebin control <<< "$(beads_sync_fixture sync-probe-hangs)"
+  printf '%s' '[{"name":"origin"}]' > "$control/remotes.json"
+  printf '30' > "$control/remote.sleep"
+
+  started=$(date +%s)
+  if out=$(PATH="$fakebin:$PATH" FM_BEADS_SYNC_TIMEOUT=45 FM_BEADS_SYNC_BUDGET=2 \
+    fm_beads_sync_once 2>&1); then
+    fail "a sweep whose remote listing never answered must be reported as a failure, got: $out"
+  fi
+  elapsed=$(( $(date +%s) - started ))
+  [ "$elapsed" -lt 15 ] ||
+    fail "the sweep hung ${elapsed}s on its remote listing against a 2s budget"
+  case "$out" in
+    *'could not read the Dolt remote list'*) ;;
+    *) fail "a listing that never answered was not reported as unreadable, got: $out" ;;
+  esac
+  case "$out" in
+    *'no Dolt remote configured'*)
+      fail "a listing that never answered was reported as a home that has no remote: $out" ;;
+  esac
+  if grep -q 'dolt commit' "$control/calls.log"; then
+    fail "sync started its steps after a remote listing it never got an answer from"
+  fi
+  pass "fm_beads_sync_once bounds the probe that precedes its steps, not only the steps"
+}
+
 # Run all tests
 test_beads_backend_value
 test_beads_backend_available
@@ -828,5 +868,6 @@ test_beads_sync_commits_pushes_then_pulls
 test_beads_sync_failure_degrades_best_effort
 test_beads_sync_bounds_a_hanging_remote
 test_beads_sync_bounds_the_whole_sweep_not_each_step
+test_beads_sync_bounds_the_probe_that_precedes_its_steps
 
 echo "ok - all beads backend tests passed"

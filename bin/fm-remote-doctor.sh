@@ -697,6 +697,17 @@ check_beads_store() {
       "install beads on that account with 'go install github.com/steveyegge/beads/cmd/bd@latest', then rerun this command with --fix to add the task wrapper and provision the store"
     return 0
   fi
+  # Only a gap --fix can actually close may be reported fixable, because a
+  # fixable non-gating gap is what makes the readiness gate spend a repair pass
+  # and a re-check on every seed, launch, and liveness relaunch. fix_beads_store
+  # refuses an operator-owned wrapper by design, so that gap would never
+  # converge and must be classified as the informational gap it is.
+  if { [ -e "$BEADS_TASK_WRAPPER" ] || [ -L "$BEADS_TASK_WRAPPER" ]; } &&
+    ! wrapper_is_firstmate_owned "$BEADS_TASK_WRAPPER"; then
+    record beads-store "info: bd resolves at $bd_bin but $BEADS_TASK_WRAPPER is not Firstmate-owned, so no repair here can replace it" \
+      "on that account, either make $BEADS_TASK_WRAPPER export BEADS_DIR=$BEADS_STORE_DIR before exec'ing $bd_bin, or remove it and rerun this command with --fix"
+    return 0
+  fi
   record beads-store "fixable: bd resolves at $bd_bin but the task CLI does not answer a read" \
     "rerun this command with --fix to add the BEADS_DIR-pinning task wrapper and run the non-destructive 'task bootstrap'"
 }
