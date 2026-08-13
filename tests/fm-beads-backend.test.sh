@@ -416,7 +416,8 @@ SH
 #                 subcommand or an unreachable store would)
 #   commit.out    what `task dolt commit` prints  (default nothing)
 #   commit.rc / push.rc / pull.rc   exit status per dolt subcommand (default 0)
-#   push.sleep    seconds `task dolt push` hangs before answering (default 0)
+#   commit.sleep / push.sleep   seconds that dolt subcommand hangs before
+#                 answering (default 0)
 #   bootstrap.rc  exit status for `task bootstrap` (default 0)
 #   bootstrap.leaves_broken   when present, bootstrap "succeeds" without making
 #                             the store answer a read
@@ -442,6 +443,8 @@ case "\${1:-} \${2:-}" in
     exit 0
     ;;
   'dolt commit')
+    hang=\$(read_control commit.sleep 0)
+    [ "\$hang" = 0 ] || sleep "\$hang"
     read_control commit.out ''
     exit "\$(read_control commit.rc 0)"
     ;;
@@ -649,26 +652,49 @@ test_beads_sync_reports_a_genuine_commit_failure() {
   pass "fm_beads_sync_once reports a genuine commit failure instead of calling the sweep a success"
 }
 
-# Test: the other side of that separation. A clean working set legitimately
-# exits non-zero with nothing to do, and must stay silent so the routine sweep
-# does not cry wolf on every session that wrote nothing.
+# Test: the other side of that separation. A clean working set is a success:
+# `task dolt commit` prints that it found nothing and exits 0, so the routine
+# sweep must stay silent rather than crying wolf on every session that wrote
+# nothing. The fixture, not this test's prose, is what fixes that contract.
 test_beads_sync_treats_a_clean_working_set_as_nothing_to_do() {
   local fakebin control out
   read -r fakebin control <<< "$(beads_sync_fixture sync-commit-clean)"
   printf '%s' '[{"name":"origin"}]' > "$control/remotes.json"
-  printf '1' > "$control/commit.rc"
-  printf 'nothing to commit, working set clean\n' > "$control/commit.out"
+  printf '0' > "$control/commit.rc"
+  printf 'Nothing to commit.\n' > "$control/commit.out"
 
   out=$(PATH="$fakebin:$PATH" fm_beads_sync_once 2>&1) ||
     fail "a clean working set was reported as a sync failure, got: $out"
   case "$out" in
-    *'commit failed'*) fail "a clean working set was reported as a commit failure, got: $out" ;;
+    *'BEADS_SYNC: commit'*) fail "a clean working set was reported at all, got: $out" ;;
   esac
   case "$out" in
     *'pushed local commits'*) ;;
     *) fail "sync stopped short of the push after a clean working set, got: $out" ;;
   esac
   pass "fm_beads_sync_once treats a clean working set as nothing to do, not as a failure"
+}
+
+# Test: the exit status alone decides, and the CLI's wording never does. A
+# commit that fails while printing the clean-working-set sentence is still a
+# failure, because the writes it did not commit are still stranded in the Dolt
+# working set. Matching on that wording is how a real durability gap would be
+# swallowed as routine quiet, and it is the exact bug this asserts against.
+test_beads_sync_classifies_the_commit_on_exit_status_not_wording() {
+  local fakebin control out
+  read -r fakebin control <<< "$(beads_sync_fixture sync-commit-liar)"
+  printf '%s' '[{"name":"origin"}]' > "$control/remotes.json"
+  printf '1' > "$control/commit.rc"
+  printf 'Nothing to commit.\n' > "$control/commit.out"
+
+  if out=$(PATH="$fakebin:$PATH" fm_beads_sync_once 2>&1); then
+    fail "a non-zero commit was excused by its wording, got success: $out"
+  fi
+  case "$out" in
+    *'commit failed'*) ;;
+    *) fail "sync excused a failing commit because of what it printed, got: $out" ;;
+  esac
+  pass "fm_beads_sync_once classifies the commit on its exit status, never on its wording"
 }
 
 # Test: the happy path commits, pushes, then pulls, in that order. Commit comes
@@ -739,6 +765,39 @@ test_beads_sync_bounds_a_hanging_remote() {
   pass "fm_beads_sync_once bounds a hanging remote so it cannot wedge the sweep that calls it"
 }
 
+# Test: the bound that matters to the caller is the one on the WHOLE sweep. Three
+# per-step bounds can sum to three times the caller's own budget, so a blackholed
+# remote could starve every other sweep sharing it. Here the per-step bound is
+# generous and the sweep budget is small: the first slow step consumes it, and
+# the remaining steps must be reported skipped rather than started.
+test_beads_sync_bounds_the_whole_sweep_not_each_step() {
+  local fakebin control out started elapsed
+  read -r fakebin control <<< "$(beads_sync_fixture sync-budget)"
+  printf '%s' '[{"name":"origin"}]' > "$control/remotes.json"
+  printf '30' > "$control/commit.sleep"
+
+  started=$(date +%s)
+  if out=$(PATH="$fakebin:$PATH" FM_BEADS_SYNC_TIMEOUT=45 FM_BEADS_SYNC_BUDGET=2 \
+    fm_beads_sync_once 2>&1); then
+    fail "a sweep that spent its whole budget must be reported as a failure, got: $out"
+  fi
+  elapsed=$(( $(date +%s) - started ))
+  [ "$elapsed" -lt 15 ] ||
+    fail "the sweep ran ${elapsed}s against a 2s budget, so only the per-step bound applied"
+  case "$out" in
+    *'push skipped: the 2s sync budget was spent'*) ;;
+    *) fail "sync did not report the push skipped for a spent sweep budget, got: $out" ;;
+  esac
+  case "$out" in
+    *'pull skipped: the 2s sync budget was spent'*) ;;
+    *) fail "sync did not report the pull skipped for a spent sweep budget, got: $out" ;;
+  esac
+  if grep -q 'dolt push' "$control/calls.log"; then
+    fail "sync started a push it had no budget left to run"
+  fi
+  pass "fm_beads_sync_once bounds the whole sweep, not merely each step within it"
+}
+
 # Run all tests
 test_beads_backend_value
 test_beads_backend_available
@@ -764,8 +823,10 @@ test_beads_sync_separates_an_unreadable_remote_list_from_an_empty_one
 test_beads_sync_reports_a_missing_jq_rather_than_assuming_no_remote
 test_beads_sync_reports_a_genuine_commit_failure
 test_beads_sync_treats_a_clean_working_set_as_nothing_to_do
+test_beads_sync_classifies_the_commit_on_exit_status_not_wording
 test_beads_sync_commits_pushes_then_pulls
 test_beads_sync_failure_degrades_best_effort
 test_beads_sync_bounds_a_hanging_remote
+test_beads_sync_bounds_the_whole_sweep_not_each_step
 
 echo "ok - all beads backend tests passed"

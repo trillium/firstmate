@@ -570,6 +570,79 @@ test_beads_sync_sweep_failure_is_reported_not_fatal() {
   pass "a failing beads sync is a reported diagnostic that never wedges or fails bootstrap"
 }
 
+# Test: a store that does not answer already has an owner - the local phase
+# reports it as MISSING or DEGRADED against the mirror it fell back to. Syncing
+# against it can accomplish nothing and would only re-report the same outage in
+# a second, more alarming vocabulary pointed at the wrong cause. The cadence
+# stamp must stay unwritten too, so sync resumes on the first session after the
+# store recovers instead of waiting out the whole interval.
+test_beads_sync_sweep_skips_an_unreachable_store() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-unreachable)"
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+exit 1
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a known store outage was re-reported a second time as a sync diagnostic"
+  assert_no_grep "dolt" "$log" "the sweep reached for the Dolt remote over a store that does not answer"
+  assert_absent "$home/state/.beads-sync-last" \
+    "an unreachable store burned the cadence window, delaying sync past the recovery"
+  pass "the beads sync sweep skips a store outage that the local phase already owns"
+}
+
+# Test: sync runs LAST among the deferred network sweeps and takes only a slice
+# of their shared budget. It is the one sweep whose remote nobody has confirmed
+# is reachable, so running it first, or letting its three steps each take the
+# per-step bound, would let a blackholed remote starve the sweeps that keep the
+# fleet running.
+test_beads_sync_sweep_runs_last_and_within_a_slice_of_the_stage_budget() {
+  local home fakebin log out timing started elapsed
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-budget)"
+  timing="$home/timing.log"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_TIMING_LOG="$timing" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BEADS_SYNC: pushed local commits" "the sweep did not run at all"
+  [ "$(grep -c 'phase' "$timing")" -gt 1 ] || fail "bootstrap recorded no phase timings to order"
+  [ "$(grep -n 'beads-sync' "$timing" | cut -d: -f1)" \
+    -gt "$(grep -n 'fleet-sync' "$timing" | cut -d: -f1)" ] \
+    || fail "the beads sync ran before the project clone refresh it must not starve"
+
+  # A hanging push proves the sweep's own budget comes from the stage budget: a
+  # third of 3s is 1s, well under the 45s per-step bound left at its default.
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+case "$*" in
+  'list --limit 1') exit 0 ;;
+  'dolt remote list --json') printf '%s\n' '[{"name":"origin"}]'; exit 0 ;;
+  'dolt commit') exit 0 ;;
+  'dolt push') sleep 30; exit 0 ;;
+  'dolt pull') exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  started=$(date +%s)
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_BEADS_SYNC_MIN_INTERVAL=0 FM_STARTUP_NETWORK_TIMEOUT=3 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  elapsed=$(( $(date +%s) - started ))
+  assert_contains "$out" "BEADS_SYNC: push failed: timed out after 1s" \
+    "the sweep did not take its bound from the network stage's own budget"
+  [ "$elapsed" -lt 15 ] \
+    || fail "the sweep held the network stage for ${elapsed}s against a 3s stage budget"
+  pass "the beads sync sweep runs last and bounds itself to a slice of the network stage budget"
+}
+
 test_no_mistakes_min_version() {
   local label version mode case_dir fakebin out missing n
   missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
@@ -1419,6 +1492,8 @@ test_beads_sync_sweep_runs_and_rate_limits
 test_beads_sync_sweep_is_gated_on_the_beads_backend
 test_beads_sync_sweep_stays_off_the_blocking_local_phase
 test_beads_sync_sweep_failure_is_reported_not_fatal
+test_beads_sync_sweep_skips_an_unreachable_store
+test_beads_sync_sweep_runs_last_and_within_a_slice_of_the_stage_budget
 test_no_mistakes_min_version
 test_gh_axi_min_version
 test_lavish_axi_min_version

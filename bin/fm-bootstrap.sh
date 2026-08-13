@@ -256,9 +256,11 @@ fleet_sync_relay_all_output() {
 # This runs as an ordinary network-phase mutating sweep beside fleet_sync
 # rather than as new machinery: the deferred network stage already bounds and
 # reports this class of work, so beads sync inherits its "never on the
-# session-start critical path" property instead of re-deriving one. Every step
-# inside fm_beads_sync_once is separately hard-bounded, so a wedged remote
-# costs a printed line and nothing else, and dispatch is never gated on it.
+# session-start critical path" property instead of re-deriving one. It runs
+# LAST among those sweeps and under a slice of the stage budget, so a wedged
+# remote costs a printed line and nothing else - never the secondmate,
+# handoff, or clone-refresh sweeps' share of the budget - and dispatch is never
+# gated on it.
 #
 # The cadence stamp keeps a fleet that opens many sessions from syncing on
 # every one. It is touched whenever a sync is attempted, not only when one
@@ -286,12 +288,27 @@ beads_sync_due() {
 }
 
 beads_sync_sweep() {
+  local stage_budget=${FM_STARTUP_NETWORK_TIMEOUT:-120}
   command -v task >/dev/null 2>&1 || return 0
   if ! beads_sync_due; then
     return 0
   fi
+  # A store that does not answer already has an owner: the local phase reports
+  # it as MISSING or DEGRADED with the mirror it fell back to. Syncing against
+  # it can accomplish nothing and would only re-report the same outage in a
+  # second, more alarming vocabulary pointed at the wrong cause. The cadence
+  # stamp is deliberately not touched here either, so sync resumes on the first
+  # session after the store recovers instead of waiting out the interval.
+  fm_beads_store_reachable || return 0
   mkdir -p "$STATE" 2>/dev/null || true
   : > "$STATE/.beads-sync-last" 2>/dev/null || true
+  # The whole sweep gets a third of the deferred network stage's budget, which
+  # bounds every sweep sharing it. Without a sweep-wide bound the three
+  # per-step bounds could sum past that budget on a blackholed remote and cut
+  # off the secondmate, handoff, and clone-refresh sweeps that follow.
+  case "$stage_budget" in '' | *[!0-9]* | 0) stage_budget=120 ;; esac
+  local FM_BEADS_SYNC_BUDGET=$((stage_budget / 3))
+  [ "$FM_BEADS_SYNC_BUDGET" -gt 0 ] || FM_BEADS_SYNC_BUDGET=1
   fm_beads_sync_once || true
 }
 
@@ -1300,15 +1317,12 @@ if local_phase; then
 fi
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   if [ "$backlog_backend" = beads ]; then
+    # The write-queue reconcile is local: it replays against this home's own
+    # store. Sync is a network step and runs last among the deferred network
+    # sweeps below, because it is the one sweep whose remote nobody has
+    # confirmed is reachable and it must not spend the shared stage budget
+    # ahead of the sweeps that keep the fleet running.
     fm_beads_write_queue_reconcile
-    # Sync is a network step, so it runs in the network phase where the
-    # deferred stage already bounds it; the write-queue reconcile above stays
-    # local because it replays against this home's own store.
-    if network_phase && network_sweep_authorized 'beads store sync'; then
-      __fm_timing_stamp=$(fm_timing_now_ms)
-      beads_sync_sweep
-      fm_timing_record phase beads-sync "$__fm_timing_stamp"
-    fi
   fi
   # secondmate_sync consumes SECONDMATE_RESPAWNED_IDS from the liveness sweep, so
   # those two always run together in the same phase. Each mutating network sweep
@@ -1336,6 +1350,11 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     __fm_timing_stamp=$(fm_timing_now_ms)
     fleet_sync
     fm_timing_record phase fleet-sync "$__fm_timing_stamp"
+  fi
+  if [ "$backlog_backend" = beads ] && network_phase && network_sweep_authorized 'beads store sync'; then
+    __fm_timing_stamp=$(fm_timing_now_ms)
+    beads_sync_sweep
+    fm_timing_record phase beads-sync "$__fm_timing_stamp"
   fi
 fi
 local_phase && secondmate_handoff_detect

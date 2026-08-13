@@ -205,16 +205,6 @@ fm_beads_sync_remote_state() {
   esac
 }
 
-# fm_beads_sync_configured - true only when the listing was readable AND names
-# at least one remote, which is the only condition under which firstmate syncs
-# at all. Firstmate never adds a remote: choosing a destination publishes the
-# captain's task store to that destination, so it is a captain decision, and
-# until one is made every sync path below is a reported no-op rather than a
-# guess.
-fm_beads_sync_configured() {
-  [ "$(fm_beads_sync_remote_state)" = configured ]
-}
-
 # fm_beads_diag_line - collapse captured command output into one bounded line,
 # so a multi-line CLI error still fits the single-line BEADS_SYNC: diagnostic
 # vocabulary the bootstrap-diagnostics skill parses.
@@ -224,23 +214,29 @@ fm_beads_diag_line() { # <captured output>
   printf '%s' "${line:-no output}"
 }
 
-# fm_beads_commit_found_nothing - true when a non-zero `task dolt commit` only
-# found a clean working set.
-#
-# The default `--dolt-auto-commit` policy is `off`, so a home that has written
-# nothing since the last sweep legitimately exits non-zero here with nothing to
-# do. Every OTHER non-zero status is a real failure - a Dolt error, schema
-# skew, a permission problem - that leaves this home's writes sitting
-# uncommitted in the working set. Treating those two the same is what would let
-# the push line report success over a durability gap, so the two are separated
-# on the commit's own output rather than assumed equivalent.
-fm_beads_commit_found_nothing() { # <captured commit output>
-  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | grep -Eq \
-    'nothing to commit|no changes to commit|no changes|no uncommitted changes|working set is clean|clean working set|working tree clean|up to date'
-}
-
 FM_BEADS_SYNC_TIMEOUT=${FM_BEADS_SYNC_TIMEOUT:-45}
 case "$FM_BEADS_SYNC_TIMEOUT" in '' | *[!0-9]* | 0) FM_BEADS_SYNC_TIMEOUT=45 ;; esac
+
+# FM_BEADS_SYNC_BUDGET bounds the WHOLE sweep, not each step. Per-step bounds
+# alone let the three steps sum past whatever budget the caller is itself
+# running under, so a blackholed remote could starve every other sweep sharing
+# that budget. The caller that has a stage budget sets this from it; the
+# default is deliberately smaller than 3 x FM_BEADS_SYNC_TIMEOUT so the sum can
+# never be the thing that decides.
+FM_BEADS_SYNC_BUDGET=${FM_BEADS_SYNC_BUDGET:-40}
+case "$FM_BEADS_SYNC_BUDGET" in '' | *[!0-9]* | 0) FM_BEADS_SYNC_BUDGET=40 ;; esac
+
+# fm_beads_sync_step_bound - seconds the next step may take: whatever remains of
+# the sweep budget, capped at the per-step bound. Non-zero when the budget is
+# spent, so a caller reports the skipped step rather than starting one it has
+# no time for.
+fm_beads_sync_step_bound() { # <deadline epoch>
+  local remaining
+  remaining=$(( $1 - $(date +%s) ))
+  [ "$remaining" -gt 0 ] || return 1
+  [ "$remaining" -le "$FM_BEADS_SYNC_TIMEOUT" ] || remaining=$FM_BEADS_SYNC_TIMEOUT
+  printf '%s' "$remaining"
+}
 
 # fm-timeout-lib.sh is loaded lazily by the sync path alone. Every other
 # consumer of this library (bootstrap's detect-only pass, teardown, the
@@ -261,9 +257,10 @@ fm_beads_require_timeout_lib() {
 # configured Dolt remote, printing one BEADS_SYNC: line per outcome.
 #
 # BEST-EFFORT IS THE CONTRACT, NOT A WEAKNESS. Every step is hard-bounded by
-# fm_run_timed (exit 124 means the bound was hit) and every failure is a
-# reported diagnostic, so an unreachable remote, a stalled network, or a broken
-# Dolt server degrades to a printed line and never wedges the caller. The
+# fm_run_timed (exit 124 means the bound was hit), the three steps together are
+# bounded by FM_BEADS_SYNC_BUDGET, and every failure is a reported diagnostic,
+# so an unreachable remote, a stalled network, or a broken Dolt server degrades
+# to a printed line and never wedges the caller or eats a budget it shares. The
 # function returns non-zero only to tell the caller a step failed; the caller's
 # own work continues either way.
 #
@@ -273,7 +270,7 @@ fm_beads_require_timeout_lib() {
 # because durability - getting this home's own commits off this machine - is
 # the gap being closed, and a pull failure must not prevent that.
 fm_beads_sync_once() {
-  local rc=0 step_rc remote_state commit_out
+  local rc=0 step_rc remote_state commit_out deadline bound
   command -v task >/dev/null 2>&1 || {
     echo "BEADS_SYNC: skipped: task CLI not found"
     return 1
@@ -293,47 +290,66 @@ fm_beads_sync_once() {
       ;;
   esac
   fm_beads_require_timeout_lib
+  deadline=$(( $(date +%s) + FM_BEADS_SYNC_BUDGET ))
 
   # Each step captures its status with `|| step_rc=$?` rather than a bare call
   # followed by `$?`, so a failing step is exempt from `set -e` no matter which
   # caller sourced this library. Best-effort must not depend on the caller
   # happening to invoke this function inside an `if` or a `|| true`.
-  step_rc=0
-  commit_out=$(fm_run_timed "$FM_BEADS_SYNC_TIMEOUT" task dolt commit 2>&1) || step_rc=$?
-  # A clean working set makes `dolt commit` non-zero with nothing to do, which
-  # is not a failure. Anything else non-zero is, and it is reported here rather
-  # than swallowed, because leaving it silent is what would let the push line
-  # below announce success while this home's writes were never committed. Push
-  # still runs either way, since previously committed work may still be unpushed.
-  if [ "$step_rc" -eq 124 ]; then
-    echo "BEADS_SYNC: commit failed: timed out after ${FM_BEADS_SYNC_TIMEOUT}s"
-    rc=1
-  elif [ "$step_rc" -ne 0 ] && ! fm_beads_commit_found_nothing "$commit_out"; then
-    echo "BEADS_SYNC: commit failed: 'task dolt commit' exited $step_rc: $(fm_beads_diag_line "$commit_out")"
+  #
+  # `task dolt commit` exits 0 whether it committed or found a clean working
+  # set, so the exit status alone separates success from failure and no vendor
+  # wording is parsed to decide it. A non-zero status means this home's writes
+  # are still sitting uncommitted in the Dolt working set, which is reported
+  # rather than swallowed: leaving it silent is what would let the push line
+  # below announce success over exactly that durability gap. Push still runs
+  # either way, since previously committed work may still be unpushed.
+  if bound=$(fm_beads_sync_step_bound "$deadline"); then
+    step_rc=0
+    commit_out=$(fm_run_timed "$bound" task dolt commit 2>&1) || step_rc=$?
+    if [ "$step_rc" -eq 124 ]; then
+      echo "BEADS_SYNC: commit failed: timed out after ${bound}s"
+      rc=1
+    elif [ "$step_rc" -ne 0 ]; then
+      echo "BEADS_SYNC: commit failed: 'task dolt commit' exited $step_rc: $(fm_beads_diag_line "$commit_out")"
+      rc=1
+    fi
+  else
+    echo "BEADS_SYNC: commit skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent"
     rc=1
   fi
 
-  step_rc=0
-  fm_run_timed "$FM_BEADS_SYNC_TIMEOUT" task dolt push >/dev/null 2>&1 || step_rc=$?
-  if [ "$step_rc" -eq 0 ]; then
-    echo "BEADS_SYNC: pushed local commits to the configured Dolt remote"
-  elif [ "$step_rc" -eq 124 ]; then
-    echo "BEADS_SYNC: push failed: timed out after ${FM_BEADS_SYNC_TIMEOUT}s"
-    rc=1
+  if bound=$(fm_beads_sync_step_bound "$deadline"); then
+    step_rc=0
+    fm_run_timed "$bound" task dolt push >/dev/null 2>&1 || step_rc=$?
+    if [ "$step_rc" -eq 0 ]; then
+      echo "BEADS_SYNC: pushed local commits to the configured Dolt remote"
+    elif [ "$step_rc" -eq 124 ]; then
+      echo "BEADS_SYNC: push failed: timed out after ${bound}s"
+      rc=1
+    else
+      echo "BEADS_SYNC: push failed: 'task dolt push' exited $step_rc"
+      rc=1
+    fi
   else
-    echo "BEADS_SYNC: push failed: 'task dolt push' exited $step_rc"
+    echo "BEADS_SYNC: push skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent"
     rc=1
   fi
 
-  step_rc=0
-  fm_run_timed "$FM_BEADS_SYNC_TIMEOUT" task dolt pull >/dev/null 2>&1 || step_rc=$?
-  if [ "$step_rc" -eq 0 ]; then
-    echo "BEADS_SYNC: pulled remote commits into the local store"
-  elif [ "$step_rc" -eq 124 ]; then
-    echo "BEADS_SYNC: pull failed: timed out after ${FM_BEADS_SYNC_TIMEOUT}s"
-    rc=1
+  if bound=$(fm_beads_sync_step_bound "$deadline"); then
+    step_rc=0
+    fm_run_timed "$bound" task dolt pull >/dev/null 2>&1 || step_rc=$?
+    if [ "$step_rc" -eq 0 ]; then
+      echo "BEADS_SYNC: pulled remote commits into the local store"
+    elif [ "$step_rc" -eq 124 ]; then
+      echo "BEADS_SYNC: pull failed: timed out after ${bound}s"
+      rc=1
+    else
+      echo "BEADS_SYNC: pull failed: 'task dolt pull' exited $step_rc"
+      rc=1
+    fi
   else
-    echo "BEADS_SYNC: pull failed: 'task dolt pull' exited $step_rc"
+    echo "BEADS_SYNC: pull skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent"
     rc=1
   fi
 

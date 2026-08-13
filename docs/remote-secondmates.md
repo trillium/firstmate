@@ -123,9 +123,10 @@ An existing `~/.local/bin/task` that Firstmate does not own is reported and neve
 A host with no `bd` binary at all is reported `info:`, since the doctor never installs packages; install beads on that account, then rerun with `--fix`.
 The check looks for `bd` on `PATH` first, then at `~/go/bin/bd` and `~/.local/bin/bd`, and it resolves the `task` wrapper through `~/.local/bin` as well, because a non-interactive SSH `PATH` routinely omits both.
 
-`beads-store` is the doctor's only advisory check: it reports and repairs like any other, but no state of it ever makes the doctor exit non-zero.
+`beads-store` is the doctor's only non-gating check: it is checked, reported, and repaired like any other, but no state of it ever makes the doctor exit non-zero.
 Readiness means this host can start and supervise an agent, and the task store is a separate concern the parent home's inherited backlog backend drags onto a host whose route already works, so a store gap must never refuse a seed, a launch, or a liveness relaunch.
-The practical consequence is that a host with no other gap does not get its store provisioned by the readiness gate's automatic repair pass; run `--fix` explicitly for that.
+Not gating is not the same as not repairing, though: when the read-only run leaves a non-gating gap that `--fix` can close, the doctor also prints `repairable-advisory: beads-store`, and the readiness gate runs its repair pass on that line even though the read-only run exited 0.
+So a host whose only gap is the missing wrapper still ends a seed, a launch, or a liveness relaunch with a working queue, while a host with no `bd` at all stays informational, blocks nothing, and has no repair attempted for it.
 
 A machine provisioned this way holds its own store until a Dolt remote destination is approved, so it starts empty rather than inheriting the fleet's history; see [`beads-sync-topology.md`](beads-sync-topology.md).
 

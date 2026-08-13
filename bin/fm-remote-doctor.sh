@@ -30,16 +30,19 @@
 #   check <check>=skip: <why this host is exempt>
 #   check <check>=fixable: <gap --fix can close>
 #   check <check>=human: <gap only a person at that machine can close>
-#   check <check>=info: <advisory-only gap this command cannot close>
+#   check <check>=info: <gap no repair here can close>
 #   action: <check>: <the exact step to take>
+#   repairable-advisory: <check>   (a non-gating gap --fix can still close)
 # Every check line is authoritative for the moment it printed: under --fix it is
 # the state after the repair attempt, so a human gap is never presented as
-# fixed. Any remaining fixable or human gap on a READINESS check, and any
-# missing required tool, exits non-zero.
+# fixed. Any remaining fixable or human gap on a GATING check, and any missing
+# required tool, exits non-zero.
 #
-# ADVISORY checks (see ADVISORY_CHECKS below) are the exception: they print
-# their state and their operator action like every other check, and --fix still
-# repairs a fixable one, but no value of theirs ever makes this command exit
+# NON-GATING checks (see NON_GATING_CHECKS below) are the exception, and they
+# are exempt from the VERDICT only: they print their state and their operator
+# action like every other check, --fix still repairs a fixable one, and an open
+# repairable one still prints repairable-advisory so the readiness gate runs
+# its repair pass. What no value of theirs ever does is make this command exit
 # non-zero, because they do not describe whether an agent can run on this host.
 #
 # --fix is idempotent and closes only automatable gaps: it writes and reloads
@@ -59,7 +62,8 @@
 # binary already present on the host, then provisions a store with the
 # non-destructive `bd bootstrap` only when none answers; a host with no bd
 # binary stays a reported gap, because --fix installs no packages. It is also
-# the one ADVISORY check, so none of its states gates readiness.
+# the one NON-GATING check, so none of its states withholds the readiness
+# verdict, while a repairable one still asks the readiness gate to repair it.
 set -eu
 
 # Resolve this script's directory with builtins only: a host missing a required
@@ -132,9 +136,11 @@ check_is_ok() { # <name>
   return 1
 }
 
-# Advisory checks report and repair like any other check but never contribute
-# to the readiness verdict, so an open one is printed with its operator action
-# and still exits 0.
+# A non-gating check suppresses exactly one thing: the readiness VERDICT. It is
+# still checked, still printed with its operator action, still repaired by
+# --fix, and an open repairable one still publishes the repairable-advisory
+# line below so the readiness gate knows to run its repair pass. Nothing about
+# this list means "ignore".
 #
 # beads-store is the only one, and deliberately so. "Ready for a remote second
 # mate" means that host can start and supervise an agent; the task store is a
@@ -143,10 +149,10 @@ check_is_ok() { # <name>
 # launch, and liveness relaunch through bin/fm-remote-readiness-lib.sh over a
 # gap unrelated to the agent runtime - and in the no-bd case, over one --fix
 # cannot close at all, because this command installs no packages.
-ADVISORY_CHECKS="beads-store"
+NON_GATING_CHECKS="beads-store"
 
-check_is_advisory() { # <name>
-  case " $ADVISORY_CHECKS " in *" $1 "*) return 0 ;; esac
+check_is_non_gating() { # <name>
+  case " $NON_GATING_CHECKS " in *" $1 "*) return 0 ;; esac
   return 1
 }
 
@@ -955,7 +961,7 @@ ADVISORIES=()
 i=0
 while [ "$i" -lt "${#CHECK_NAMES[@]}" ]; do
   printf 'check %s=%s\n' "${CHECK_NAMES[$i]}" "${CHECK_VALUES[$i]}"
-  if check_is_advisory "${CHECK_NAMES[$i]}"; then
+  if check_is_non_gating "${CHECK_NAMES[$i]}"; then
     case "${CHECK_VALUES[$i]}" in
       fixable:*|human:*|info:*) ADVISORIES+=("$i") ;;
     esac
@@ -968,6 +974,16 @@ while [ "$i" -lt "${#CHECK_NAMES[@]}" ]; do
 done
 for i in ${GAPS[@]+"${GAPS[@]}"} ${ADVISORIES[@]+"${ADVISORIES[@]}"}; do
   [ -z "${CHECK_ACTIONS[$i]}" ] || printf 'action: %s: %s\n' "${CHECK_NAMES[$i]}" "${CHECK_ACTIONS[$i]}"
+done
+# A non-gating check that --fix CAN close still needs the readiness gate to run
+# its repair pass, which it only does when the read-only run reports something.
+# Withholding the verdict is what must not happen; withholding the repair would
+# leave a host provisioned exactly as badly as before this check existed. This
+# line is that signal, and bin/fm-remote-readiness-lib.sh is its only consumer.
+for i in ${ADVISORIES[@]+"${ADVISORIES[@]}"}; do
+  case "${CHECK_VALUES[$i]}" in
+    fixable:*) printf 'repairable-advisory: %s\n' "${CHECK_NAMES[$i]}" ;;
+  esac
 done
 
 if [ "${#MISSING[@]}" -gt 0 ]; then

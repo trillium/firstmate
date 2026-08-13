@@ -699,6 +699,8 @@ assert_contains "$DOCTOR_OUT" 'ok: remote second-mate readiness confirmed on thi
   "the readiness verdict was withheld over a task-store gap"
 assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
   "the still-open store gap stopped being reported once it was advisory"
+assert_not_contains "$DOCTOR_OUT" 'repairable-advisory: beads-store' \
+  "a gap no repair can close still asked the readiness gate to run a repair pass"
 pass "a host with no bd binary is an advisory gap that neither --fix nor readiness pretends to close"
 
 # --- bd present but unpinned is fixable, and --fix provisions the store ------
@@ -745,12 +747,16 @@ assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
   || fail "--fix bootstrapped again over a store that already answers"
 pass "a repeat --fix leaves a working store alone and never bootstraps over it"
 
-# --- a repairable store gap is advisory too, on an otherwise-ready host ------
+# --- a repairable store gap is non-gating, but still asks to be repaired -----
 #
 # Continues the fixture above, which --fix has just left fully ready: dropping
 # the wrapper reopens the store gap and nothing else, so the readiness verdict
 # must still be ready. Otherwise every seed, launch, and liveness relaunch on a
 # working route would refuse over a task store the agent runtime never touches.
+# Not gating is not the same as not repairing, though, so this run must also
+# publish the line the readiness gate repairs on: a host whose only gap is the
+# one --fix can close would otherwise keep that gap for as long as it stays
+# healthy in every other way.
 
 rm -f "$CASE_HOME/.local/bin/task"
 doctor
@@ -759,7 +765,9 @@ assert_contains "$DOCTOR_OUT" 'check beads-store=fixable:' \
   "the reopened store gap was not reported at all"
 assert_contains "$DOCTOR_OUT" 'ok: remote second-mate readiness confirmed on this host' \
   "the readiness verdict was withheld over a repairable task-store gap"
-pass "a repairable store gap is reported without withholding the readiness verdict"
+assert_contains "$DOCTOR_OUT" 'repairable-advisory: beads-store' \
+  "a non-gating gap --fix can close never asked the readiness gate to repair it"
+pass "a repairable store gap is reported and asks for repair without withholding readiness"
 
 # --- the store resolves through ~/.local/bin even when PATH omits it ---------
 #
@@ -811,3 +819,80 @@ assert_contains "$(cat "$CASE_HOME/.local/bin/task")" 'operator wrapper' \
 assert_not_contains "$(cat "$BD_LOG")" bootstrap \
   "--fix bootstrapped a store behind an operator-owned wrapper it could not verify"
 pass "--fix refuses an operator-owned task wrapper instead of overwriting it"
+
+# --- the readiness gate repairs a non-gating gap it does not gate on ---------
+#
+# The doctor deliberately exits 0 over a store gap, and the gate used to run its
+# --fix pass only on a non-zero read-only run. Together that made the automatic
+# provisioning path reachable solely on hosts broken in some OTHER way: a host
+# whose only gap was the one --fix closes would keep it forever. The gate now
+# repairs on the doctor's `repairable-advisory:` line as well, which is what
+# these three cases fix in place. bin/fm-remote-doctor.sh above is the real
+# publisher of that line; the stub here only replays it so the gate's own
+# sequencing is what gets exercised.
+
+# shellcheck source=bin/fm-remote-readiness-lib.sh
+. "$ROOT/bin/fm-remote-readiness-lib.sh"
+
+RG_BIN="$TMP_ROOT/readiness/bin"
+export FM_RG_STATE="$TMP_ROOT/readiness/state"
+export FM_RG_LOG="$FM_RG_STATE/fm-on.log"
+mkdir -p "$RG_BIN" "$FM_RG_STATE"
+cat > "$RG_BIN/fm-on.sh" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_RG_LOG"
+case " $* " in
+  *' --fix '*)
+    [ -f "$FM_RG_STATE/fix-fails" ] || touch "$FM_RG_STATE/repaired"
+    printf 'fix beads-store=applied: wrote the task wrapper\n'
+    exit 0
+    ;;
+esac
+if [ ! -f "$FM_RG_STATE/advisory" ] || [ -f "$FM_RG_STATE/repaired" ]; then
+  printf 'check beads-store=ok: the task CLI answers a read\n'
+  printf 'ok: remote second-mate readiness confirmed on this host\n'
+  exit 0
+fi
+printf 'check beads-store=fixable: bd resolves but the task CLI does not answer\n'
+printf 'action: beads-store: rerun with --fix\n'
+printf 'repairable-advisory: beads-store\n'
+printf 'ok: remote second-mate readiness confirmed on this host\n'
+exit 0
+SH
+chmod +x "$RG_BIN/fm-on.sh"
+
+# rg_reset [advisory] [fix-fails]: start a fresh readiness fixture.
+rg_reset() {
+  rm -f "$FM_RG_STATE"/*
+  : > "$FM_RG_LOG"
+  for marker in "$@"; do touch "$FM_RG_STATE/$marker"; done
+}
+
+rg_reset advisory
+RG_RC=0
+fm_remote_readiness_ensure "$RG_BIN" sm-advisory || RG_RC=$?
+expect_code 0 "$RG_RC" "a host whose only gap does not gate readiness was reported unready"
+[ "$(wc -l < "$FM_RG_LOG" | tr -d ' ')" = 3 ] \
+  || fail "the gate did not run check, repair, re-check over a repairable advisory: $(cat "$FM_RG_LOG")"
+assert_contains "$(sed -n 2p "$FM_RG_LOG")" '--fix' \
+  "the gate skipped its repair pass because the read-only run had already exited 0"
+assert_not_contains "$FM_REMOTE_READINESS_OUT" 'repairable-advisory:' \
+  "the gate reported a verdict that still carried the gap its repair pass closed"
+pass "the readiness gate repairs a non-gating gap the doctor exits 0 over"
+
+rg_reset
+RG_RC=0
+fm_remote_readiness_ensure "$RG_BIN" sm-clean || RG_RC=$?
+expect_code 0 "$RG_RC" "a fully healthy host was reported unready"
+[ "$(wc -l < "$FM_RG_LOG" | tr -d ' ')" = 1 ] \
+  || fail "the gate ran a repair pass on a host with nothing to repair: $(cat "$FM_RG_LOG")"
+pass "the readiness gate still runs no repair pass on a host with nothing to repair"
+
+rg_reset advisory fix-fails
+RG_RC=0
+fm_remote_readiness_ensure "$RG_BIN" sm-unrepaired || RG_RC=$?
+expect_code 0 "$RG_RC" "a failed repair of a non-gating gap withheld the readiness verdict"
+assert_contains "$FM_REMOTE_READINESS_OUT" 'repairable-advisory: beads-store' \
+  "the still-open gap stopped being reported once the repair failed"
+pass "a non-gating gap that repair could not close still never withholds readiness"
