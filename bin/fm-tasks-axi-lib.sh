@@ -151,17 +151,27 @@ fm_beads_backend_available() {
 # fm_beads_store_reachable - true when the beads store answers a cheap read.
 # This, not the presence of a .beads/ directory, is the store-usable test.
 #
-# The optional bound is for callers running under a deadline. A Dolt sql-server
-# that accepts the connection and then never answers makes this read hang, so a
-# caller whose whole budget this probe precedes must pass a bound or the budget
-# is not the bound it claims to be. A store that does not answer within it is a
-# store that does not answer, which is exactly what an unbounded false means.
+# The read is ALWAYS bounded. A Dolt sql-server that accepts the connection and
+# then never answers makes it hang, so an unbounded probe would let a wedged
+# store stall whatever budget it precedes. A store that does not answer within
+# the bound is a store that does not answer, which is exactly what false means.
+#
+# The explicit bound is for callers already running under a deadline: the sweep
+# in bin/fm-bootstrap.sh sizes this probe from the wall-clock it has left, so
+# the argument must reach fm_run_timed rather than being replaced by the
+# library's own default. Callers with no deadline of their own omit it and get
+# FM_BEADS_STATUS_TIMEOUT, the same bound fm_beads_status and the write-queue
+# replay gate on, so every caller is bounded whether or not it says so.
 # shellcheck disable=SC2120 # The bound comes from callers outside this library.
 fm_beads_store_reachable() { # [bound seconds]
+  local bound=${1:-${FM_BEADS_STATUS_TIMEOUT:-}}
   command -v task >/dev/null 2>&1 || return 1
-  if [ -n "${1:-}" ]; then
+  if [ -n "$bound" ]; then
     fm_beads_require_timeout_lib
-    fm_run_timed "$1" task list --limit 1 >/dev/null 2>&1
+    # Fail closed rather than silently falling back to an unbounded read: an
+    # unbounded read is the one outcome this probe exists to prevent.
+    declare -f fm_run_timed >/dev/null 2>&1 || return 1
+    fm_run_timed "$bound" task list --limit 1 >/dev/null 2>&1
     return
   fi
   task list --limit 1 >/dev/null 2>&1
@@ -494,14 +504,9 @@ esac
 FM_BEADS_STATUS_RC_ABSENT=1
 FM_BEADS_STATUS_RC_UNREADABLE=2
 
-# fm_beads_store_reachable - bounded liveness probe for the beads store, the same
-# `task list --limit 1` predicate fm_beads_write_queue_reconcile gates its whole
-# replay on. True only when the store actually answered.
-fm_beads_store_reachable() {
-  command -v task >/dev/null 2>&1 || return 1
-  declare -f fm_run_timed >/dev/null 2>&1 || return 1
-  fm_run_timed "$FM_BEADS_STATUS_TIMEOUT" task list --limit 1 >/dev/null 2>&1
-}
+# The bounded liveness probe fm_beads_status and fm_beads_write_queue_reconcile
+# gate on is fm_beads_store_reachable, defined once above. Both call it with no
+# argument and so get FM_BEADS_STATUS_TIMEOUT, the bound declared just above.
 
 fm_beads_status() { # <bead-id> - print the bead's status token, empty if unreadable
   local id=${1:-} out rc status
