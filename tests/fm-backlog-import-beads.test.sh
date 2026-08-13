@@ -45,6 +45,36 @@ exit 1
 SH
 chmod +x "$BADBIN/task"
 
+# A fakebin whose `task create` is refused by the store while every other
+# subcommand still works, to drive the abort path for a rejected bead create.
+NOCREATEBIN="$TMP_ROOT/nocreatebin"
+mkdir -p "$NOCREATEBIN"
+cat > "$NOCREATEBIN/task" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = create ]; then
+  echo "beads: create refused by store validation" >&2
+  exit 1
+fi
+exec beads -C "$STORE" "\$@"
+SH
+chmod +x "$NOCREATEBIN/task"
+
+# A fakebin whose `task create` really creates but returns no id on stdout, the
+# other way fm_beads_resolve_or_create's fail-open contract yields a bare
+# failure: the write landed, so the importer must say so rather than blame the
+# item's fields.
+SILENTBIN="$TMP_ROOT/silentbin"
+mkdir -p "$SILENTBIN"
+cat > "$SILENTBIN/task" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = create ]; then
+  beads -C "$STORE" "\$@" >/dev/null 2>&1
+  exit 0
+fi
+exec beads -C "$STORE" "\$@"
+SH
+chmod +x "$SILENTBIN/task"
+
 make_home() {  # <name> -> home dir
   local home="$TMP_ROOT/$1"
   mkdir -p "$home/data" "$home/state" "$home/config"
@@ -79,6 +109,14 @@ run_import() {  # <home> <args...>
 run_import_badstore() {  # <home> <args...>
   local home=$1; shift
   PATH="$BADBIN:$PATH" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_BEADS_FLEET_LABEL="$FLEET" \
+    "$IMPORT" "$@"
+}
+
+run_import_with_bin() {  # <fakebin-dir> <home> <args...>
+  local bin=$1 home=$2; shift 2
+  PATH="$bin:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_BEADS_FLEET_LABEL="$FLEET" \
     "$IMPORT" "$@"
@@ -126,6 +164,21 @@ has_blocks_edge() {  # <blocked-bead> <blocker-bead> -> count of blocks edges fr
 anchor_for_hold() {  # <hold-id> -> anchor bead carrying hold:<id>, or empty
   beads -C "$STORE" list --label "hold:$1" --all --json 2>/dev/null \
     | jq -r 'if type=="array" and length>0 then .[0].id else empty end'
+}
+
+title_lines() {  # <bead-id> -> how many lines the stored title occupies
+  bead_field "$1" .title | wc -l | tr -d ' '
+}
+
+assert_title() {  # <case> <task-id> <expected title>
+  local case=$1 id=$2 want=$3 bead got
+  bead=$(bead_for "$id")
+  [ -n "$bead" ] || fail "$case: no bead created for $id"
+  [ "$(title_lines "$bead")" = 1 ] \
+    || fail "$case: $id got a multi-line title: $(bead_field "$bead" .title)"
+  got=$(bead_field "$bead" .title)
+  [ "$got" = "$want" ] \
+    || fail "$case: $id title is '$got', expected '$want'"
 }
 
 test_inflight_and_queued_status_and_priority() {
@@ -218,6 +271,28 @@ test_captain_decision_hold_becomes_anchor_and_gate() {
     | jq -e '.[0].labels | index("captain-hold") and index("human")' >/dev/null \
     || fail "cap-decision: anchor is missing the captain-hold/human labels"
   pass "a captain decision-hold identity migrates to a labeled anchor plus a human gate"
+}
+
+test_captain_decision_hold_key_containing_decision() {
+  local home anchor
+  home=$(make_home cap-decision-key)
+  # The origin is `spike`; the decision KEY itself contains "decision-" (a hold
+  # about decision-hold design). fm-decision-hold.sh composes the identity as
+  # <origin>-decision-<key>, so the importer must split on the FIRST
+  # "-decision-". Splitting on the last one yields origin `spike-decision`,
+  # which this home does not own, and the item fails closed instead of migrating.
+  add_origin "$home" spike
+  write_backlog "$home" \
+    '## Queued' \
+    '- [ ] spike-decision-decision-hold-representation - Validate the decision-hold shape (repo: alpha) (kind: ship) (hold: needs captain sign-off) (hold-kind: captain)'
+  run_import "$home" --apply >/dev/null
+
+  anchor=$(anchor_for_hold spike-decision-decision-hold-representation)
+  [ -n "$anchor" ] \
+    || fail "cap-decision-key: no anchor for a decision key that itself contains 'decision-'"
+  [ "$(open_human_gates "$anchor")" = 1 ] \
+    || fail "cap-decision-key: the anchor is not blocked by an open human gate"
+  pass "a decision key containing 'decision-' still resolves to its real origin and migrates"
 }
 
 test_captain_gated_work_item_gets_human_gate() {
@@ -350,14 +425,125 @@ test_resolved_gate_not_resurrected() {
   pass "a re-run does not resurrect a human gate the captain has already resolved"
 }
 
+test_multiline_body_yields_single_line_title() {
+  local home bead
+  home=$(make_home multiline-title)
+  # Backlog item bodies are multi-line: a title line plus indented continuation
+  # lines. A bead title is single-line, so the whole body must collapse to the
+  # first line's cut text - no continuation line may leak into the title field,
+  # whether or not it carries markers of its own.
+  write_backlog "$home" \
+    '## In flight' \
+    '- [ ] multi-body - Make remote panes typeable (repo: alpha) (kind: ship) (priority: 1)' \
+    '  Federation input relay. PR #7 open on trillium/herdr.' \
+    '  Next: confirm the relay handshake survives reconnect.' \
+    '' \
+    '## Queued' \
+    '- [ ] multi-plainfirst - Plain first line with no markers' \
+    '  Follow-up detail (repo: beta) (priority: 3)'
+  run_import "$home" --apply >/dev/null
+
+  assert_title multiline-title multi-body 'Make remote panes typeable'
+  # A continuation line's own markers must not cut the title either: the title
+  # comes from line 1 only, so a marker-free first line survives whole.
+  assert_title multiline-title multi-plainfirst 'Plain first line with no markers'
+
+  # The full multi-line body still has to survive as the bead description.
+  bead=$(bead_for multi-body)
+  printf '%s' "$(bead_field "$bead" .description)" | grep -Fq 'survives reconnect' \
+    || fail "multiline-title: continuation lines were dropped from the description"
+  printf '%s' "$(bead_field "$bead" .description)" | grep -Fq '(repo: alpha)' \
+    || fail "multiline-title: the title line's markers were dropped from the description"
+  pass "a multi-line item body yields a single-line title while the full body stays the description"
+}
+
+test_single_line_marker_cuts_unchanged() {
+  local home
+  home=$(make_home marker-cuts)
+  # One item per trailing marker, each as the first marker on a single-line body,
+  # plus the no-marker, earliest-wins, and trailing-space cases.
+  write_backlog "$home" \
+    '## Queued' \
+    '- [ ] mark-repo - Repo scoped work (repo: alpha)' \
+    '- [ ] mark-kind - Ship this thing (kind: ship)' \
+    '- [ ] mark-priority - Priority scoped work (priority: 2)' \
+    '- [ ] mark-since - Held until later (since 2099-01-01)' \
+    '- [ ] mark-hold - Waiting on something (hold: pending review)' \
+    '- [ ] mark-holdkind - Agent held item (hold-kind: agent)' \
+    '- [ ] mark-blockedby - Waits on another item blocked-by: mark-blocker' \
+    '- [ ] mark-blocker - The blocker for marker cuts (repo: alpha)' \
+    '- [ ] mark-http - See the upstream issue https://example.com/issues/1' \
+    '- [ ] mark-none - A plain title with no markers at all' \
+    '- [ ] mark-earliest - Earliest marker wins (priority: 1) (repo: alpha)' \
+    '- [ ] mark-space - Trimmed title   (repo: alpha)'
+  run_import "$home" --apply >/dev/null
+
+  assert_title marker-cuts mark-repo 'Repo scoped work'
+  assert_title marker-cuts mark-kind 'Ship this thing'
+  assert_title marker-cuts mark-priority 'Priority scoped work'
+  assert_title marker-cuts mark-since 'Held until later'
+  assert_title marker-cuts mark-hold 'Waiting on something'
+  assert_title marker-cuts mark-holdkind 'Agent held item'
+  assert_title marker-cuts mark-blockedby 'Waits on another item'
+  assert_title marker-cuts mark-http 'See the upstream issue'
+  assert_title marker-cuts mark-none 'A plain title with no markers at all'
+  assert_title marker-cuts mark-earliest 'Earliest marker wins'
+  assert_title marker-cuts mark-space 'Trimmed title'
+  pass "every trailing-marker cut, the no-marker case, earliest-wins, and trailing-space trimming are unchanged"
+}
+
+test_rejected_create_reports_why() {
+  local home rc err
+  home=$(make_home reject-create)
+  write_backlog "$home" \
+    '## In flight' \
+    '- [ ] diag-item - Diagnosable work (repo: alpha) (kind: ship)'
+  set +e
+  err=$(run_import_with_bin "$NOCREATEBIN" "$home" --apply 2>&1 >/dev/null)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "reject-create: importer should abort when a bead create is refused"
+  assert_contains "$err" "rejected the bead create for diag-item" \
+    "reject-create: abort message does not name the rejected create or the item"
+  assert_contains "$err" "'task create' itself refused this title" \
+    "reject-create: abort message does not distinguish a refused create from an unreachable store"
+  assert_contains "$err" "(1 line(s)" \
+    "reject-create: abort message does not report the rejected title's shape"
+  assert_contains "$err" "Diagnosable work" \
+    "reject-create: abort message does not include the rejected title itself"
+  [ "$(bead_count_for diag-item)" = 0 ] \
+    || fail "reject-create: a bead was created despite the refused create"
+
+  # The other fail-open shape: the create really lands but returns no id. That is
+  # the opposite response (re-run converges), so the message must say so instead
+  # of blaming the item's fields.
+  write_backlog "$home" \
+    '## In flight' \
+    '- [ ] diag-landed - Landed but silent (repo: alpha) (kind: ship)'
+  set +e
+  err=$(run_import_with_bin "$SILENTBIN" "$home" --apply 2>&1 >/dev/null)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "reject-create: importer should abort when no bead id came back"
+  assert_contains "$err" "the create landed without returning its id" \
+    "reject-create: abort message does not recognise a create that actually landed"
+  assert_contains "$err" "re-run --apply to converge" \
+    "reject-create: abort message does not name the recovery for a landed create"
+  pass "a refused bead create aborts with an actionable reason, distinguished from a create that landed silently"
+}
+
 test_inflight_and_queued_status_and_priority
 test_dry_run_writes_nothing
 test_idempotent_no_duplicates
 test_captain_decision_hold_becomes_anchor_and_gate
+test_captain_decision_hold_key_containing_decision
 test_captain_gated_work_item_gets_human_gate
 test_unreachable_store_fails_closed
 test_blocked_by_becomes_real_dependency_edge
 test_dated_gate_defers_bead
 test_resolved_gate_not_resurrected
+test_multiline_body_yields_single_line_title
+test_single_line_marker_cuts_unchanged
+test_rejected_create_reports_why
 
 echo "# all fm-backlog-import-beads tests passed"
