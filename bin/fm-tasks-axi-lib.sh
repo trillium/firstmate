@@ -187,7 +187,15 @@ fm_beads_resolve_or_create() {
 #                                (empty when the record carries none)
 #   FM_BEADS_STATUS_RC_ABSENT    the read completed and the bead is not there
 #   FM_BEADS_STATUS_RC_UNREADABLE  no answer: timeout, missing tool, missing
-#                                bound, or unparseable output
+#                                bound, unparseable output, or a store that could
+#                                not be reached to confirm the bead is gone
+#
+# `task show` exits non-zero for a missing bead AND for a store that is down,
+# locked, or unauthenticated, so a failed read alone cannot distinguish them. Only
+# a reachable store turns a failed read into ABSENT: fm_beads_store_reachable
+# re-probes with the same `task list --limit 1` liveness predicate the write-queue
+# reconcile uses, and an unreachable store keeps the outcome UNREADABLE. The probe
+# is paid only on the failure path, never on a successful read.
 # Stdout still fails open in every non-zero case (nothing printed), so a caller
 # that only reads stdout sees "not closed" / "no evidence" rather than a
 # completion; a caller deciding whether a write is already applied must check the
@@ -209,6 +217,15 @@ case "$FM_BEADS_STATUS_TIMEOUT" in ''|*[!0-9]*) FM_BEADS_STATUS_TIMEOUT=4 ;; esa
 FM_BEADS_STATUS_RC_ABSENT=1
 FM_BEADS_STATUS_RC_UNREADABLE=2
 
+# fm_beads_store_reachable - bounded liveness probe for the beads store, the same
+# `task list --limit 1` predicate fm_beads_write_queue_reconcile gates its whole
+# replay on. True only when the store actually answered.
+fm_beads_store_reachable() {
+  command -v task >/dev/null 2>&1 || return 1
+  declare -f fm_run_timed >/dev/null 2>&1 || return 1
+  fm_run_timed "$FM_BEADS_STATUS_TIMEOUT" task list --limit 1 >/dev/null 2>&1
+}
+
 fm_beads_status() { # <bead-id> - print the bead's status token, empty if unreadable
   local id=${1:-} out rc status
   [ -n "$id" ] || return "$FM_BEADS_STATUS_RC_UNREADABLE"
@@ -218,7 +235,10 @@ fm_beads_status() { # <bead-id> - print the bead's status token, empty if unread
   out=$(fm_run_timed "$FM_BEADS_STATUS_TIMEOUT" task show "$id" --json 2>/dev/null)
   rc=$?
   [ "$rc" -ne 124 ] || return "$FM_BEADS_STATUS_RC_UNREADABLE"
-  { [ "$rc" -eq 0 ] && [ -n "$out" ]; } || return "$FM_BEADS_STATUS_RC_ABSENT"
+  if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
+    fm_beads_store_reachable || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+    return "$FM_BEADS_STATUS_RC_ABSENT"
+  fi
   status=$(printf '%s' "$out" | jq -r '.[0].status // empty' 2>/dev/null) \
     || return "$FM_BEADS_STATUS_RC_UNREADABLE"
   printf '%s\n' "$status"

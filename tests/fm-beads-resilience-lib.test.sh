@@ -252,4 +252,42 @@ printf '%s\n' "$OUT" | grep -Fq "bead already closed" \
   || fail "a queued close whose status read never answered must remain queued"
 pass "fm_beads_write_queue_reconcile keeps a queued close when the bounded status read never answers"
 
+# The store can pass the reconcile's own reachability gate and then drop again
+# mid-replay. `task show` exits non-zero for a missing bead and for a store that
+# is down alike, so a failed read there is not evidence the bead was closed by
+# someone else - dropping the queued close would lose the pending write while the
+# bead is still open. The fake answers the gate probe exactly once, then fails
+# everything, modelling that flap.
+FM_BEADS_WRITE_QUEUE="$TMP_ROOT/close-flap-queue"
+FM_BEADS_WRITE_QUEUE_LOCK="$TMP_ROOT/close-flap-queue.lock"
+FAKEBIN_FLAP="$TMP_ROOT/fakebin-close-flap"
+mkdir -p "$FAKEBIN_FLAP"
+cat > "$FAKEBIN_FLAP/task" <<SH
+#!/usr/bin/env bash
+set -u
+GATE_CONSUMED="$TMP_ROOT/flap-gate-consumed"
+case "\$*" in
+  'list --limit 1')
+    [ -e "\$GATE_CONSUMED" ] && exit 1
+    : > "\$GATE_CONSUMED"
+    exit 0
+    ;;
+esac
+exit 1
+SH
+chmod +x "$FAKEBIN_FLAP/task"
+
+fm_beads_write_enqueue bd-flap "close bd-flap" close bd-flap --reason "done" \
+  || fail "enqueue for the store-flap scenario failed"
+OUT=$(PATH="$FAKEBIN_FLAP:$BASE_PATH" fm_beads_write_queue_reconcile 2>&1)
+RC=$?
+[ "$RC" -ne 0 ] || fail "reconcile must report failure when the store dropped mid-replay: $OUT"
+printf '%s\n' "$OUT" | grep -Fq "replay failed for bd-flap" \
+  || fail "reconcile did not report bd-flap's replay as failed: $OUT"
+printf '%s\n' "$OUT" | grep -Fq "bead already closed" \
+  && fail "a failed read against a dropped store must not be reported as an absent/closed bead: $OUT"
+[ "$(fm_beads_write_queue_count)" = 1 ] \
+  || fail "a queued close must stay queued when the store dropped before its status could be read"
+pass "fm_beads_write_queue_reconcile keeps a queued close when the store drops mid-replay"
+
 echo "# fm-beads-resilience-lib.test.sh: all assertions passed"

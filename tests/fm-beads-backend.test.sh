@@ -197,6 +197,7 @@ test_beads_status_read_outcomes() {
 #!/usr/bin/env bash
 set -u
 case "$*" in
+  'list --limit 1') exit 0 ;;
   'show bd-open --json') printf '%s\n' '[{"id":"bd-open","status":"open"}]'; exit 0 ;;
   'show bd-closed --json') printf '%s\n' '[{"id":"bd-closed","status":"closed"}]'; exit 0 ;;
   'show bd-slow --json') sleep 5; printf '%s\n' '[{"id":"bd-slow","status":"open"}]'; exit 0 ;;
@@ -230,6 +231,32 @@ SH
   pass "fm_beads_status separates a completed read, an absent bead, and an unanswered read"
 }
 
+# Test: a failed read against a store that is DOWN is not evidence the bead is
+# gone. `task show` exits non-zero for a missing bead and for an unreachable,
+# locked, or unauthenticated store alike, so the classification must rest on
+# whether the store itself answered - a down store is unreadable, not absent.
+test_beads_status_down_store_is_not_absent() {
+  local dir fakebin out rc
+  command -v jq >/dev/null 2>&1 || { pass "fm_beads_status down-store skipped without jq"; return; }
+  dir="$TMP_ROOT/beads-status-down"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+exit 1
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$PATH" fm_beads_status bd-any) && rc=0 || rc=$?
+  [ "$rc" -eq "$FM_BEADS_STATUS_RC_UNREADABLE" ] \
+    || fail "a failed read against an unreachable store must be UNREADABLE, not absent (got $rc)"
+  [ -z "$out" ] || fail "a failed read against an unreachable store must print nothing, got: $out"
+  PATH="$fakebin:$PATH" fm_beads_is_closed bd-any \
+    && fail "fm_beads_is_closed must fail open (not closed) when the store is unreachable"
+  pass "fm_beads_status reports an unreachable store as unreadable rather than an absent bead"
+}
+
 # Run all tests
 test_beads_backend_value
 test_beads_backend_available
@@ -240,5 +267,6 @@ test_beads_resolve_or_create_mints_when_absent
 test_beads_resolve_or_create_reuses_existing
 test_lib_sources_without_its_siblings
 test_beads_status_read_outcomes
+test_beads_status_down_store_is_not_absent
 
 echo "ok - all beads backend tests passed"
