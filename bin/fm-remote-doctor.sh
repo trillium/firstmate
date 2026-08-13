@@ -673,11 +673,13 @@ beads_bd_binary() {
 # run in a subshell so the augmented PATH never leaks into the `path=` line this
 # command reports or into any other check.
 beads_store_reachable_here() (
+  # shellcheck disable=SC2030,SC2031 # The subshell-local PATH is the point: it must not escape.
   PATH="${HOME:-}/.local/bin:${PATH:-}"
   fm_beads_store_reachable
 )
 
 beads_bootstrap_store_here() (
+  # shellcheck disable=SC2030,SC2031 # The subshell-local PATH is the point: it must not escape.
   PATH="${HOME:-}/.local/bin:${PATH:-}"
   fm_beads_bootstrap_store
 )
@@ -937,7 +939,12 @@ if [ "$MODE" = worker-tool-probe ]; then
 fi
 
 printf 'mode=%s\n' "$MODE"
+# This is the launch PATH, deliberately unaffected by the beads helpers' own
+# subshell-local augmentation above; reporting that augmented PATH here is the
+# bug those subshells exist to prevent.
+# shellcheck disable=SC2031
 printf 'path=%s\n' "${PATH:-}"
+# shellcheck disable=SC2031
 if [ -n "${FM_ROOT_OVERRIDE:-}" ] && [ "${PATH%%:*}" = "$FM_ROOT_OVERRIDE/bin" ]; then
   printf 'entrypoint=yes\n'
 else

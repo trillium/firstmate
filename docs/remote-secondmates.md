@@ -84,8 +84,8 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh
 
 That run is read-only.
 It prints the exact `PATH` its own entrypoint launch produced, executes its required-tool probe through the installed worker when one is available, reports where each required and optional tool resolved, then reports one line per readiness check.
-Each gap is tagged `fixable:` when `--fix` can close it or `human:` when only a person at that machine can, and every gap is followed by an `action:` line naming the exact step.
-Any remaining gap exits non-zero.
+Each gap is tagged `fixable:` when `--fix` can close it, `human:` when only a person at that machine can, or `info:` when no repair here can close it, and every gap is followed by an `action:` line naming the exact step.
+Any remaining gap on a gating check exits non-zero; the non-gating checks below never withhold the verdict.
 The script's own header owns the full line protocol.
 
 `--fix` repairs only the automatable gaps and is safe to rerun:

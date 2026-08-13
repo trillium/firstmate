@@ -120,6 +120,7 @@ state/               volatile runtime signals; gitignored
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .beads-mirror-<view>.json  generated read-side mirror of the beads task store, refreshed opportunistically by ordinary reads (session start, fleet snapshot); never a second authority (`docs/configuration.md` "Backlog backend"; `bin/fm-beads-resilience-lib.sh`)
   .beads-write-queue .beads-write-queue.lock  durable pending-writes log and its lock for a beads write attempted during a store outage, replayed by bootstrap once the store recovers; never touch by hand
+  .beads-sync-last  cadence stamp for the routine beads store sync, touched when a sweep is attempted rather than when it succeeds so a broken remote backs off (`docs/configuration.md` "Beads store provisioning and sync"); safe to delete (forces one sweep)
   .<id>.open-decisions-cursor  per-task byte cursor and folded open-decision set bounding the OPEN DECISIONS scan's cost to new status-log appends; written only by fm-classify-lib.sh's status_open_decisions_incremental, removed by teardown, safe to delete (forces one full re-fold)
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
@@ -156,7 +157,7 @@ If the session lock cannot be acquired and verified, report its exact diagnostic
 A lock-refused session must not spawn, steer, merge, drain the wake queue, repair supervision, repair a checkout, or perform any other fleet mutation.
 
 The digest itself makes no external-network call and never waits for one.
-Every network check a session start owes - GitHub auth, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, and project clone refresh - runs concurrently in a bounded worker owned by `bin/fm-startup-network.sh` and is reported in the digest's own `NETWORK CHECKS` section.
+Every network check a session start owes - GitHub auth, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, project clone refresh, and the routine beads store sync when the beads backlog backend is selected - runs concurrently in a bounded worker owned by `bin/fm-startup-network.sh` and is reported in the digest's own `NETWORK CHECKS` section.
 When that section reports its checks still in progress it names exactly what is unconfirmed; treat none of those as passed until the result lands, either from `bin/fm-startup-network.sh report` or as a `check: startup-network` wake.
 
 1. **Lock** - acquires the per-home session lock first, before anything mutates shared state, then starts the deferred network stage above.
