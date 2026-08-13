@@ -321,7 +321,7 @@ fm_beads_sync_once() { # [deadline epoch]
     echo "BEADS_SYNC: skipped: task CLI not found"
     return 1
   }
-  fm_beads_require_timeout_lib
+  fm_beads_require_timeout_lib || { echo "BEADS_SYNC: skipped: timeout library unavailable"; return 1; }
   deadline=${1:-$(( $(date +%s) + FM_BEADS_SYNC_BUDGET ))}
   if ! bound=$(fm_beads_sync_step_bound "$deadline"); then
     echo "BEADS_SYNC: skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent before the Dolt remote list could be read"

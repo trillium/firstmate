@@ -932,6 +932,45 @@ SH
   pass "fm_beads_sync_remote_state with an absent timeout library reports unreadable, not empty"
 }
 
+# Test: fm_beads_sync_once must emit a BEADS_SYNC: skipped diagnostic and return
+# non-zero when the timeout library is absent, even under set -e. An unguarded
+# bare call at the top of the function silently aborts under set -e, producing
+# no output while the caller's || true swallows the failure — indistinguishable
+# from a clean run with no Dolt remote configured.
+test_beads_sync_once_timeout_lib_absent_emits_diagnostic() {
+  local dir fakebin out rc
+  command -v jq >/dev/null 2>&1 || { pass "fm_beads_sync_once timeout-lib skipped without jq"; return; }
+  dir="$TMP_ROOT/sync-once-no-timeoutlib"
+  mkdir -p "$dir/bin"
+  cp "$ROOT/bin/fm-tasks-axi-lib.sh" "$dir/bin/"
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'list --limit 1') exit 0 ;;
+  'dolt remote list --json') printf '%s\n' '[{"name":"origin"}]'; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  cat > "$dir/consumer.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+. "$(dirname "$0")/bin/fm-tasks-axi-lib.sh"
+fm_beads_sync_once
+SH
+  chmod +x "$dir/consumer.sh"
+  out=$(PATH="$fakebin:$PATH" "$dir/consumer.sh" 2>&1) && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] || fail "fm_beads_sync_once with absent timeout lib must return non-zero, got 0"
+  [ -n "$out" ] || fail "fm_beads_sync_once with absent timeout lib produced no output (silent abort)"
+  case "$out" in
+    *'BEADS_SYNC: skipped:'*) ;;
+    *) fail "expected a 'BEADS_SYNC: skipped:' line, got: $out" ;;
+  esac
+  pass "fm_beads_sync_once with an absent timeout library emits a BEADS_SYNC: diagnostic and returns non-zero"
+}
+
 # Run all tests
 test_beads_backend_value
 test_beads_backend_available
@@ -966,5 +1005,6 @@ test_beads_sync_bounds_a_hanging_remote
 test_beads_sync_bounds_the_whole_sweep_not_each_step
 test_beads_sync_bounds_the_probe_that_precedes_its_steps
 test_beads_sync_remote_state_timeout_lib_absent_is_unreadable
+test_beads_sync_once_timeout_lib_absent_emits_diagnostic
 
 echo "ok - all beads backend tests passed"
