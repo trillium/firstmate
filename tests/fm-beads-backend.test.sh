@@ -119,6 +119,23 @@ SH
   chmod +x "$fakebin_dir/task"
 }
 
+# add_beads_task_mock_resolve_json <fakebin_dir> <calls_log> <list_json> <minted_id>:
+# the same fake `task` CLI, but `list` replays a caller-supplied JSON array so a
+# test can describe the exact set of beads already carrying the task:<id> label.
+add_beads_task_mock_resolve_json() {
+  local fakebin_dir=$1 calls_log=$2 list_json=$3 minted_id=$4
+  cat > "$fakebin_dir/task" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$calls_log"
+case "\$1" in
+  list) printf '%s\n' '$list_json' ;;
+  create) printf '%s\n' "$minted_id" ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin_dir/task"
+}
+
 # Test: fm_beads_resolve_or_create() mints a new bead labeled task:<id> when no
 # bead already carries that label (beads-authority migration Stage 3).
 test_beads_resolve_or_create_mints_when_absent() {
@@ -131,7 +148,7 @@ test_beads_resolve_or_create_mints_when_absent() {
 
   id=$(PATH="$fakebin:$PATH" fm_beads_resolve_or_create "task-abc")
   [ "$id" = "bead-99" ] || fail "expected minted bead id bead-99, got: $id"
-  assert_grep "list --label task:task-abc --all --limit 1 --json" "$calls_log" \
+  assert_grep "list --label task:task-abc --all --limit 20 --json" "$calls_log" \
     "resolve did not look up an existing bead by its task: label"
   assert_grep "create --title" "$calls_log" \
     "resolve did not mint a new bead when none existed"
@@ -157,6 +174,53 @@ test_beads_resolve_or_create_reuses_existing() {
   assert_no_grep "create --title" "$calls_log" \
     "resolve minted a duplicate bead despite an existing task:<id> label match"
   pass "fm_beads_resolve_or_create reuses an existing task:<id>-labeled bead instead of minting a duplicate"
+}
+
+# Test: a CLOSED bead carrying the task:<id> label is never adopted. Task ids are
+# reusable slugs and fm-teardown.sh closes a bead without stripping that label, so
+# the record of a long-finished task survives in the store. Adopting it would link
+# a brand-new task to an already-closed bead - and under the beads backend a closed
+# bead is the authoritative task-complete signal bin/fm-crew-state.sh reads, so the
+# fresh crew would reconcile as done before its worker committed anything.
+test_beads_resolve_or_create_skips_closed_bead() {
+  local dir fakebin calls_log id
+  command -v jq >/dev/null 2>&1 || { pass "resolve closed-bead skip skipped without jq"; return; }
+  dir="$TMP_ROOT/resolve-closed"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_resolve_json "$fakebin" "$calls_log" \
+    '[{"id":"bead-old","status":"closed"}]' "bead-fresh"
+
+  id=$(PATH="$fakebin:$PATH" fm_beads_resolve_or_create "fix-ci")
+  [ "$id" != "bead-old" ] \
+    || fail "resolve adopted the closed bead of a previous task that reused this id"
+  [ "$id" = "bead-fresh" ] || fail "expected a freshly minted bead, got: $id"
+  assert_grep "create --title" "$calls_log" \
+    "resolve did not mint a fresh bead when the only labeled bead was closed"
+  pass "fm_beads_resolve_or_create mints a fresh bead instead of adopting a closed one"
+}
+
+# Test: the closed-bead exclusion must not cost idempotency. When a task id has a
+# closed predecessor AND the live bead for the current task, resolve still returns
+# the live one rather than minting a duplicate - the label matches both records and
+# their order in the store is not specified.
+test_beads_resolve_or_create_prefers_live_bead_over_closed() {
+  local dir fakebin calls_log id
+  command -v jq >/dev/null 2>&1 || { pass "resolve live-over-closed skipped without jq"; return; }
+  dir="$TMP_ROOT/resolve-mixed"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_resolve_json "$fakebin" "$calls_log" \
+    '[{"id":"bead-old","status":"closed"},{"id":"bead-live","status":"in_progress"}]' \
+    "bead-should-not-be-created"
+
+  id=$(PATH="$fakebin:$PATH" fm_beads_resolve_or_create "fix-ci")
+  [ "$id" = "bead-live" ] || fail "expected the still-live bead bead-live, got: $id"
+  assert_no_grep "create --title" "$calls_log" \
+    "resolve minted a duplicate despite a live task:<id>-labeled bead existing"
+  pass "fm_beads_resolve_or_create returns the live bead when a closed predecessor shares the label"
 }
 
 # Test: the library stays sourceable on its own. It is copied WITHOUT its
@@ -309,6 +373,8 @@ test_backend_value_whitespace
 test_beads_fleet_label
 test_beads_resolve_or_create_mints_when_absent
 test_beads_resolve_or_create_reuses_existing
+test_beads_resolve_or_create_skips_closed_bead
+test_beads_resolve_or_create_prefers_live_bead_over_closed
 test_lib_sources_without_its_siblings
 test_beads_status_read_outcomes
 test_beads_status_down_store_is_not_absent

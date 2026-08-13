@@ -150,19 +150,30 @@ fm_beads_fleet_label() {
 # Stage 3 (see data/beads-authority-migration-scout/report.md section "Stage
 # 3"): under config/backlog-backend=beads, every firstmate task must have a
 # linked bead without requiring an explicit --beads flag. Looks up an
-# existing bead carrying the idempotency label "task:<task_id>" first (so
+# existing OPEN bead carrying the idempotency label "task:<task_id>" first (so
 # fm-brief.sh and fm-spawn.sh converge on the same bead regardless of call
 # order) and mints one with that label plus the fleet label
 # (fm_beads_fleet_label) only if none is found. Echoes the resolved bead id on
 # success. Fails open like the rest of the beads integration: prints nothing
 # and returns 1 on any missing tool or failure, never blocking dispatch.
+#
+# A CLOSED bead is never adopted. Task ids are reusable slugs, and
+# fm-teardown.sh closes a task's bead without stripping its "task:<id>" label,
+# so that record outlives the task in the federated store forever. Adopting it
+# would link brand-new work to a bead that was already closed before the task
+# existed - and a closed bead is the authoritative "task complete" signal
+# bin/fm-crew-state.sh reads under this backend, so the fresh crew would
+# reconcile as done before its worker made a single commit. The lookup reads a
+# small page rather than one row because the label matches the closed
+# predecessors too, and their order is not specified.
 fm_beads_resolve_or_create() {
   local task_id=$1 title=${2:-"firstmate: $1"} task_label existing id
   command -v task >/dev/null 2>&1 || return 1
   command -v jq >/dev/null 2>&1 || return 1
   task_label="task:$task_id"
-  existing=$(task list --label "$task_label" --all --limit 1 --json 2>/dev/null) || existing=
-  id=$(printf '%s' "$existing" | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
+  existing=$(task list --label "$task_label" --all --limit 20 --json 2>/dev/null) || existing=
+  id=$(printf '%s' "$existing" \
+    | jq -r 'if type=="array" then (map(select(.status != "closed")) | .[0].id // empty) else empty end' 2>/dev/null) || id=
   if [ -n "$id" ]; then
     printf '%s\n' "$id"
     return 0
