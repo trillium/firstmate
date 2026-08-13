@@ -693,6 +693,84 @@ test_beads_sync_reports_a_missing_jq_rather_than_assuming_no_remote() {
   pass "fm_beads_sync_once names a missing jq instead of assuming no remote is configured"
 }
 
+# Test: an unreadable clock must never be disguised as an exhausted budget.
+#
+# CI caught this the hard way. On Linux jq and date share /usr/bin, so the
+# fm_path_without jq excision above took date with it, `$(date +%s)` expanded to
+# nothing, and `$(( + FM_BEADS_SYNC_BUDGET ))` collapsed to the budget alone - a
+# 1970 deadline that made every bounded step report the budget as already spent.
+# On a host where date sits in its own directory the excision leaves it in
+# place, which is exactly why this passed locally and failed only in CI.
+#
+# A stub is used rather than a PATH excision on purpose: removing the directory
+# that holds date would take jq and the rest of coreutils with it on Linux and
+# prove nothing about the clock.
+#
+# The invariant asserted here holds on every shell - a clock the sweep cannot
+# read is either transparently survived (EPOCHSECONDS needs no PATH at all) or
+# reported on its own line, but never rendered as a spent budget and never
+# leaked as a raw shell error. Asserting the invariant instead of one branch
+# keeps this honest on a shell too old to export EPOCHSECONDS.
+test_beads_sync_never_reports_an_unreadable_clock_as_a_spent_budget() {
+  local fakebin control out rc=0
+  read -r fakebin control <<< "$(beads_sync_fixture sync-no-clock)"
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/date"
+  chmod +x "$fakebin/date"
+
+  out=$(PATH="$fakebin:$PATH" fm_beads_sync_once 2>&1) || rc=$?
+
+  case "$out" in
+    *'budget was spent'*)
+      fail "an unreadable clock was misreported as an exhausted budget, got: $out"
+      ;;
+  esac
+  case "$out" in
+    *'command not found'*)
+      fail "an unreadable clock leaked a raw shell error into the diagnostics, got: $out"
+      ;;
+  esac
+  case "$out" in
+    *'no Dolt remote configured'*)
+      [ "$rc" -eq 0 ] ||
+        fail "an ordinary sweep reported failure, rc=$rc, got: $out"
+      ;;
+    *'clock is unreadable'*)
+      [ "$rc" -ne 0 ] ||
+        fail "a named clock failure was reported as success, got: $out"
+      ;;
+    *)
+      fail "expected either an ordinary sweep or an explicit clock line, got: $out"
+      ;;
+  esac
+  pass "an unreadable clock is survived or named, never disguised as a spent budget"
+}
+
+# Test: with EPOCHSECONDS unavailable too, the clock failure gets its own
+# diagnostic rather than a number. That is the branch a shell without
+# EPOCHSECONDS takes, forced here so the guard is exercised on every host
+# instead of only where the fallback happens to be reached.
+test_beads_sync_names_a_clock_it_cannot_read() {
+  local fakebin control out rc=0
+  read -r fakebin control <<< "$(beads_sync_fixture sync-clock-named)"
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/date"
+  chmod +x "$fakebin/date"
+
+  out=$(unset EPOCHSECONDS; PATH="$fakebin:$PATH" fm_beads_sync_once 2>&1) || rc=$?
+
+  [ "$rc" -ne 0 ] ||
+    fail "an unreadable clock must not be reported as a successful sweep, got: $out"
+  case "$out" in
+    *'clock is unreadable'*) ;;
+    *) fail "sync did not name the unreadable clock, got: $out" ;;
+  esac
+  case "$out" in
+    *'budget was spent'*)
+      fail "the clock failure was reported as a spent budget, got: $out"
+      ;;
+  esac
+  pass "fm_beads_sync_once names a clock it cannot read instead of bounding against it"
+}
+
 # Test: a genuine commit failure is reported. The default auto-commit policy is
 # off, so a failed commit leaves this home's writes in the Dolt working set;
 # swallowing it would let the push line announce success over exactly the
@@ -1012,5 +1090,7 @@ test_beads_sync_bounds_the_whole_sweep_not_each_step
 test_beads_sync_bounds_the_probe_that_precedes_its_steps
 test_beads_sync_remote_state_timeout_lib_absent_is_unreadable
 test_beads_sync_once_timeout_lib_absent_emits_diagnostic
+test_beads_sync_never_reports_an_unreadable_clock_as_a_spent_budget
+test_beads_sync_names_a_clock_it_cannot_read
 
 echo "ok - all beads backend tests passed"

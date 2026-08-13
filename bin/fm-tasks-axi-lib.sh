@@ -257,13 +257,43 @@ case "$FM_BEADS_SYNC_TIMEOUT" in '' | *[!0-9]* | 0) FM_BEADS_SYNC_TIMEOUT=45 ;; 
 FM_BEADS_SYNC_BUDGET=${FM_BEADS_SYNC_BUDGET:-40}
 case "$FM_BEADS_SYNC_BUDGET" in '' | *[!0-9]* | 0) FM_BEADS_SYNC_BUDGET=40 ;; esac
 
+# fm_beads_now - epoch seconds without depending on `date` being on PATH.
+#
+# The sync path runs under callers that restrict PATH, and its own tests strip
+# whole PATH directories to simulate one missing dependency. On a host where
+# `date` shares a directory with the stripped command - jq and date are both in
+# /usr/bin on Linux - it disappears too. A bare `$(date +%s)` then expands to
+# nothing, so `$(( + FM_BEADS_SYNC_BUDGET ))` silently evaluates to the budget
+# alone: a 1970 deadline that makes every bounded step report the budget as
+# already spent. That is an unreadable clock masquerading as an exhausted
+# budget, exactly the collapse of two distinct causes that
+# fm_beads_sync_remote_state's header forbids for the remote listing.
+#
+# EPOCHSECONDS is a shell variable and needs no PATH at all; `date` remains the
+# fallback for a shell that does not export it. A clock that cannot be read is
+# reported as a failure and never rendered as a number, because a wrong number
+# here is indistinguishable downstream from a legitimately spent budget.
+fm_beads_now() {
+  local now
+  if [ -n "${EPOCHSECONDS:-}" ]; then
+    printf '%s' "$EPOCHSECONDS"
+    return 0
+  fi
+  now=$(date +%s 2>/dev/null) || return 1
+  case "$now" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  printf '%s' "$now"
+}
+
 # fm_beads_sync_step_bound - seconds the next step may take: whatever remains of
 # the sweep budget, capped at the per-step bound. Non-zero when the budget is
 # spent, so a caller reports the skipped step rather than starting one it has
 # no time for.
 fm_beads_sync_step_bound() { # <deadline epoch>
-  local remaining
-  remaining=$(( $1 - $(date +%s) ))
+  local remaining now
+  now=$(fm_beads_now) || return 1
+  remaining=$(( $1 - now ))
   [ "$remaining" -gt 0 ] || return 1
   [ "$remaining" -le "$FM_BEADS_SYNC_TIMEOUT" ] || remaining=$FM_BEADS_SYNC_TIMEOUT
   printf '%s' "$remaining"
@@ -316,13 +346,25 @@ fm_beads_require_timeout_lib() {
 # the sweep runs is inside one budget rather than the budget covering only the
 # three steps it happens to name.
 fm_beads_sync_once() { # [deadline epoch]
-  local rc=0 step_rc remote_state commit_out deadline bound
+  local rc=0 step_rc remote_state commit_out deadline bound now
   command -v task >/dev/null 2>&1 || {
     echo "BEADS_SYNC: skipped: task CLI not found"
     return 1
   }
   fm_beads_require_timeout_lib || { echo "BEADS_SYNC: skipped: timeout library unavailable"; return 1; }
-  deadline=${1:-$(( $(date +%s) + FM_BEADS_SYNC_BUDGET ))}
+  # The clock is read once, up front, and its own failure gets its own line. A
+  # caller-supplied deadline skips the read entirely, so this is also the only
+  # place the default path can discover an unreadable clock before
+  # fm_beads_sync_step_bound would report it as a spent budget instead.
+  deadline=${1:-}
+  if [ -z "$deadline" ]; then
+    if now=$(fm_beads_now); then
+      deadline=$(( now + FM_BEADS_SYNC_BUDGET ))
+    else
+      echo "BEADS_SYNC: skipped: the clock is unreadable, so the ${FM_BEADS_SYNC_BUDGET}s sync budget cannot be bounded"
+      return 1
+    fi
+  fi
   if ! bound=$(fm_beads_sync_step_bound "$deadline"); then
     echo "BEADS_SYNC: skipped: the ${FM_BEADS_SYNC_BUDGET}s sync budget was spent before the Dolt remote list could be read"
     return 1
