@@ -23,9 +23,13 @@
 #   1b. Under config/backlog-backend=beads only: a CLOSED linked bead (beads_id=
 #      in meta) is an authoritative lifecycle "done" - the worker closes it as
 #      its terminal step and teardown/ledger close it on landing, so a closed
-#      bead means complete regardless of a stale status-event tail. Fires only
-#      when closed; an open bead falls through untouched, so live work is never
-#      marked done prematurely. Other backends never consult a bead here.
+#      bead means complete regardless of a stale status-event tail. An OPEN bead
+#      falls through untouched, so live work is never marked done prematurely.
+#      A close alone is still not enough: fm-ledger.sh's drop-recovery can close
+#      a bead that never landed, so this reports done only when the task ALSO
+#      has no open decision and no unlanded (uncommitted or unpushed) work, with
+#      any probe that fails to answer counting as unlanded. Other backends never
+#      consult a bead here; the block below owns the exact gate.
 #   2. Matching no-mistakes run for this crew's branch AND current code identity,
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
