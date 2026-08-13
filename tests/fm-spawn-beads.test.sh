@@ -165,7 +165,7 @@ test_spawn_under_beads_backend_auto_links_without_flag() {
     "spawn under the beads backend did not auto-record beads_id= without --beads"
 
   for _ in $(seq 1 30); do grep -q 'set-state bead-auto-9 lifecycle=sent' "$calls_log" 2>/dev/null && break; sleep 0.1; done
-  assert_grep "list --label task:$id --all --limit 1 --json" "$calls_log" \
+  assert_grep "list --label task:$id --limit 1 --json" "$calls_log" \
     "spawn did not resolve the bead via its task:<id> label under the beads backend"
   assert_grep "set-state bead-auto-9 dispatch=sent" "$calls_log" \
     "fm-bead-stamp.sh did not stamp dispatch=sent on the auto-linked bead"

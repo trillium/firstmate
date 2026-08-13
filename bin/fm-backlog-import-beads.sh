@@ -140,10 +140,12 @@ extract_title() {
 }
 
 # resolve_existing_bead <task-id> - echo the bead id already carrying the
-# task:<id> idempotency label, or nothing. Read-only.
+# task:<id> idempotency label, or nothing. Read-only. Matches
+# fm_beads_resolve_or_create's own lookup so this report's "(exists)" annotation
+# and the blocked-by dependency edges name the bead the apply path resolves to.
 resolve_existing_bead() {
   local existing
-  existing=$(task list --label "task:$1" --all --limit 1 --json 2>/dev/null) || existing=
+  existing=$(task list --label "task:$1" --limit 1 --json 2>/dev/null) || existing=
   printf '%s' "$existing" | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null || true
 }
 

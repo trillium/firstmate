@@ -150,19 +150,31 @@ fm_beads_fleet_label() {
 # Stage 3 (see data/beads-authority-migration-scout/report.md section "Stage
 # 3"): under config/backlog-backend=beads, every firstmate task must have a
 # linked bead without requiring an explicit --beads flag. Looks up an
-# existing bead carrying the idempotency label "task:<task_id>" first (so
+# existing OPEN bead carrying the idempotency label "task:<task_id>" first (so
 # fm-brief.sh and fm-spawn.sh converge on the same bead regardless of call
 # order) and mints one with that label plus the fleet label
 # (fm_beads_fleet_label) only if none is found. Echoes the resolved bead id on
 # success. Fails open like the rest of the beads integration: prints nothing
 # and returns 1 on any missing tool or failure, never blocking dispatch.
+#
+# A CLOSED bead is never adopted. Task ids are reusable slugs, and
+# fm-teardown.sh closes a task's bead without stripping its "task:<id>" label,
+# so that record outlives the task in the federated store forever. Adopting it
+# would link brand-new work to a bead that was already closed before the task
+# existed - and a closed bead is the authoritative "task complete" signal
+# bin/fm-crew-state.sh reads under this backend, so the fresh crew would
+# reconcile as done before its worker made a single commit. Omitting --all
+# leaves the store's own default filter in place, so closed predecessors are
+# excluded server side and no client-side ordering or page depth can decide
+# the match.
 fm_beads_resolve_or_create() {
   local task_id=$1 title=${2:-"firstmate: $1"} task_label existing id
   command -v task >/dev/null 2>&1 || return 1
   command -v jq >/dev/null 2>&1 || return 1
   task_label="task:$task_id"
-  existing=$(task list --label "$task_label" --all --limit 1 --json 2>/dev/null) || existing=
-  id=$(printf '%s' "$existing" | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
+  existing=$(task list --label "$task_label" --limit 1 --json 2>/dev/null) || existing=
+  id=$(printf '%s' "$existing" \
+    | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
   if [ -n "$id" ]; then
     printf '%s\n' "$id"
     return 0
@@ -170,4 +182,99 @@ fm_beads_resolve_or_create() {
   id=$(task create --title "$title" --labels "$(fm_beads_fleet_label),$task_label" --silent 2>/dev/null) || return 1
   [ -n "$id" ] || return 1
   printf '%s\n' "$id"
+}
+
+# fm_beads_status <bead-id> - the single owner of reading one bead's status.
+# `task show <id> --json` returns a JSON ARRAY ([{...}]), so the status lives at
+# .[0].status; every other bin/ reader of a single bead unwraps it the same way
+# (fm-decision-hold.sh, fm-backlog-import-beads.sh). Prints the status token to
+# stdout, or nothing when the bead is absent, unreadable, or the tools are
+# missing. The read is bounded by FM_BEADS_STATUS_TIMEOUT so a wedged Dolt store
+# can never stall a caller on the fleet-snapshot/heartbeat path - the same
+# bounded-read discipline as FM_CREW_STATE_NM_TIMEOUT / FM_SNAPSHOT_BEADS_TIMEOUT.
+#
+# The EXIT STATUS distinguishes the three outcomes a caller must not conflate,
+# because "the bead is gone" and "the read never completed" are opposite evidence:
+#   0                            the read completed; stdout is the status token
+#                                (empty when the record carries none)
+#   FM_BEADS_STATUS_RC_ABSENT    the read completed and the bead is not there
+#   FM_BEADS_STATUS_RC_UNREADABLE  no answer: timeout, missing tool, missing
+#                                bound, unparseable output, or a store that could
+#                                not be reached to confirm the bead is gone
+#
+# `task show` exits non-zero for a missing bead AND for a store that is down,
+# locked, or unauthenticated, so a failed read alone cannot distinguish them. Only
+# a reachable store turns a failed read into ABSENT: fm_beads_store_reachable
+# re-probes with the same `task list --limit 1` liveness predicate the write-queue
+# reconcile uses, and an unreachable store keeps the outcome UNREADABLE. The probe
+# is paid only on the failure path, never on a successful read.
+# Stdout still fails open in every non-zero case (nothing printed), so a caller
+# that only reads stdout sees "not closed" / "no evidence" rather than a
+# completion; a caller deciding whether a write is already applied must check the
+# status too.
+#
+# The bound comes from fm-timeout-lib.sh, sourced only when it is co-located:
+# this library is copied on its own into partially-synced remote code roots
+# (bin/fm-remote-doctor.sh, bin/fm-backlog-receive.sh both run there under
+# `set -eu`), and an unguarded source would abort those scripts at load time
+# instead of letting them reach the report that names what is missing. Without
+# the bound, fm_beads_status refuses the read rather than running it unbounded.
+_FM_TASKS_AXI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! declare -f fm_run_timed >/dev/null 2>&1 && [ -f "$_FM_TASKS_AXI_LIB_DIR/fm-timeout-lib.sh" ]; then
+  # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
+  . "$_FM_TASKS_AXI_LIB_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
+fi
+FM_BEADS_STATUS_TIMEOUT=${FM_BEADS_STATUS_TIMEOUT:-4}
+case "$FM_BEADS_STATUS_TIMEOUT" in
+  ''|*[!0-9]*) FM_BEADS_STATUS_TIMEOUT=4 ;;
+  *) [ "$FM_BEADS_STATUS_TIMEOUT" -gt 0 ] 2>/dev/null || FM_BEADS_STATUS_TIMEOUT=4 ;;
+esac
+FM_BEADS_STATUS_RC_ABSENT=1
+FM_BEADS_STATUS_RC_UNREADABLE=2
+
+# fm_beads_store_reachable - bounded liveness probe for the beads store, the same
+# `task list --limit 1` predicate fm_beads_write_queue_reconcile gates its whole
+# replay on. True only when the store actually answered.
+fm_beads_store_reachable() {
+  command -v task >/dev/null 2>&1 || return 1
+  declare -f fm_run_timed >/dev/null 2>&1 || return 1
+  fm_run_timed "$FM_BEADS_STATUS_TIMEOUT" task list --limit 1 >/dev/null 2>&1
+}
+
+fm_beads_status() { # <bead-id> - print the bead's status token, empty if unreadable
+  local id=${1:-} out rc status
+  [ -n "$id" ] || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+  command -v task >/dev/null 2>&1 || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+  command -v jq >/dev/null 2>&1 || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+  declare -f fm_run_timed >/dev/null 2>&1 || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+  out=$(fm_run_timed "$FM_BEADS_STATUS_TIMEOUT" task show "$id" --json 2>/dev/null)
+  rc=$?
+  [ "$rc" -ne 124 ] || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+  if [ "$rc" -ne 0 ] || [ -z "$out" ]; then
+    fm_beads_store_reachable || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+    return "$FM_BEADS_STATUS_RC_ABSENT"
+  fi
+  status=$(printf '%s' "$out" | jq -r '.[0].status // empty' 2>/dev/null) \
+    || return "$FM_BEADS_STATUS_RC_UNREADABLE"
+  printf '%s\n' "$status"
+}
+
+# fm_beads_is_closed <bead-id> - true ONLY when the bead exists and its status is
+# closed. This is the authoritative task-completion signal read by
+# bin/fm-crew-state.sh under config/backlog-backend=beads: the worker closes its
+# linked bead as the terminal lifecycle step before reporting done, and
+# fm-teardown.sh/fm-ledger.sh close it on confirmed landing or drop-recovery, so a
+# closed bead means the task is complete regardless of a stale status-event tail.
+# Distinct from fm-beads-resilience-lib.sh's fm_beads_close_already_applied, which
+# treats an ABSENT bead as "already applied" for idempotent write-queue replay:
+# here an absent, open, or unreadable bead is NOT closed, so reconciliation falls
+# through to the existing pane/run-step logic rather than inventing a completion.
+# Reads status through fm_beads_status (the one array-unwrap owner) and treats
+# every non-zero read - absent bead as much as an unanswered one - as "not
+# closed", so it fails open the same way and never marks live work done.
+fm_beads_is_closed() { # <bead-id>
+  local id=${1:-} status
+  [ -n "$id" ] || return 1
+  status=$(fm_beads_status "$id") || return 1
+  [ "$status" = closed ]
 }

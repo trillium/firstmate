@@ -19,6 +19,12 @@ mkdir -p "$FM_HOME/state"
 export FM_HOME
 unset FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_ROOT STATE 2>/dev/null || true
 
+# fm_beads_close_already_applied reads status through fm_beads_status, which
+# lives in fm-tasks-axi-lib.sh (the one owner of the `task show --json` array
+# unwrap). The runtime callers (bin/fm-bootstrap.sh, bin/fm-session-start.sh)
+# source both libs together, so this test does too.
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$ROOT/bin/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-beads-resilience-lib.sh
 . "$ROOT/bin/fm-beads-resilience-lib.sh"
 
@@ -109,7 +115,7 @@ case "$*" in
     [ "$mode" = up ] && exit 0
     exit 1
     ;;
-  'show bd-1 --json') printf '%s\n' '{"id":"bd-1","status":"open"}'; exit 0 ;;
+  'show bd-1 --json') printf '%s\n' '[{"id":"bd-1","status":"open"}]'; exit 0 ;;
   'assign bd-2 crewmate-x') exit 0 ;;
 esac
 exit 1
@@ -168,11 +174,11 @@ set -u
 case "$*" in
   'list --limit 1') exit 0 ;;
   'close bd-closed --reason done') exit 1 ;;
-  'show bd-closed --json') printf '%s\n' '{"id":"bd-closed","status":"closed"}'; exit 0 ;;
+  'show bd-closed --json') printf '%s\n' '[{"id":"bd-closed","status":"closed"}]'; exit 0 ;;
   'close bd-gone --reason done') exit 1 ;;
   'show bd-gone --json') exit 1 ;;
   'close bd-open --reason done') exit 1 ;;
-  'show bd-open --json') printf '%s\n' '{"id":"bd-open","status":"open"}'; exit 0 ;;
+  'show bd-open --json') printf '%s\n' '[{"id":"bd-open","status":"open"}]'; exit 0 ;;
 esac
 exit 1
 SH
@@ -212,5 +218,76 @@ printf '%s\n' "$OUT" | grep -Fq "replay failed for bd-open" \
 [ "$(fm_beads_write_queue_count)" = 1 ] \
   || fail "a queued close whose bead is still open must remain queued as a genuine conflict"
 pass "fm_beads_write_queue_reconcile re-queues a queued close whose bead is still open on the live store, a genuine conflict"
+
+# A slow-but-reachable store (the reconcile path already proved it reachable with
+# `task list --limit 1`) can blow the bounded status read. That is no answer, not
+# evidence the bead is gone: dropping the queued close there would lose a pending
+# write permanently while the bead is still open, so it must stay queued.
+FM_BEADS_WRITE_QUEUE="$TMP_ROOT/close-slow-queue"
+FM_BEADS_WRITE_QUEUE_LOCK="$TMP_ROOT/close-slow-queue.lock"
+FAKEBIN_SLOW="$TMP_ROOT/fakebin-close-slow"
+mkdir -p "$FAKEBIN_SLOW"
+cat > "$FAKEBIN_SLOW/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'list --limit 1') exit 0 ;;
+  'close bd-slow --reason done') exit 1 ;;
+  'show bd-slow --json') sleep 5; printf '%s\n' '[{"id":"bd-slow","status":"open"}]'; exit 0 ;;
+esac
+exit 1
+SH
+chmod +x "$FAKEBIN_SLOW/task"
+
+fm_beads_write_enqueue bd-slow "close bd-slow" close bd-slow --reason "done" \
+  || fail "enqueue for the slow-store scenario failed"
+OUT=$(PATH="$FAKEBIN_SLOW:$BASE_PATH" FM_BEADS_STATUS_TIMEOUT=1 fm_beads_write_queue_reconcile 2>&1)
+RC=$?
+[ "$RC" -ne 0 ] || fail "reconcile must report failure when the status read never answered: $OUT"
+printf '%s\n' "$OUT" | grep -Fq "replay failed for bd-slow" \
+  || fail "reconcile did not report bd-slow's replay as failed: $OUT"
+printf '%s\n' "$OUT" | grep -Fq "bead already closed" \
+  && fail "an unanswered status read must not be reported as an already-closed bead: $OUT"
+[ "$(fm_beads_write_queue_count)" = 1 ] \
+  || fail "a queued close whose status read never answered must remain queued"
+pass "fm_beads_write_queue_reconcile keeps a queued close when the bounded status read never answers"
+
+# The store can pass the reconcile's own reachability gate and then drop again
+# mid-replay. `task show` exits non-zero for a missing bead and for a store that
+# is down alike, so a failed read there is not evidence the bead was closed by
+# someone else - dropping the queued close would lose the pending write while the
+# bead is still open. The fake answers the gate probe exactly once, then fails
+# everything, modelling that flap.
+FM_BEADS_WRITE_QUEUE="$TMP_ROOT/close-flap-queue"
+FM_BEADS_WRITE_QUEUE_LOCK="$TMP_ROOT/close-flap-queue.lock"
+FAKEBIN_FLAP="$TMP_ROOT/fakebin-close-flap"
+mkdir -p "$FAKEBIN_FLAP"
+cat > "$FAKEBIN_FLAP/task" <<SH
+#!/usr/bin/env bash
+set -u
+GATE_CONSUMED="$TMP_ROOT/flap-gate-consumed"
+case "\$*" in
+  'list --limit 1')
+    [ -e "\$GATE_CONSUMED" ] && exit 1
+    : > "\$GATE_CONSUMED"
+    exit 0
+    ;;
+esac
+exit 1
+SH
+chmod +x "$FAKEBIN_FLAP/task"
+
+fm_beads_write_enqueue bd-flap "close bd-flap" close bd-flap --reason "done" \
+  || fail "enqueue for the store-flap scenario failed"
+OUT=$(PATH="$FAKEBIN_FLAP:$BASE_PATH" fm_beads_write_queue_reconcile 2>&1)
+RC=$?
+[ "$RC" -ne 0 ] || fail "reconcile must report failure when the store dropped mid-replay: $OUT"
+printf '%s\n' "$OUT" | grep -Fq "replay failed for bd-flap" \
+  || fail "reconcile did not report bd-flap's replay as failed: $OUT"
+printf '%s\n' "$OUT" | grep -Fq "bead already closed" \
+  && fail "a failed read against a dropped store must not be reported as an absent/closed bead: $OUT"
+[ "$(fm_beads_write_queue_count)" = 1 ] \
+  || fail "a queued close must stay queued when the store dropped before its status could be read"
+pass "fm_beads_write_queue_reconcile keeps a queued close when the store drops mid-replay"
 
 echo "# fm-beads-resilience-lib.test.sh: all assertions passed"
