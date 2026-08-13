@@ -557,11 +557,14 @@ test_beads_sync_sweep_failure_is_reported_not_fatal() {
   local home fakebin log out rc
   read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-fails 1)"
 
-  set +e
+  # This file runs under `set -u` alone, never errexit, so the status is captured
+  # with `|| rc=$?` rather than by toggling `set -e` around the call. Toggling it
+  # ON here would leave errexit enabled for every test defined after this one,
+  # and the first later command that legitimately exits non-zero would kill the
+  # run mid-file with no failure message.
+  rc=0
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  rc=$?
-  set -e
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh") || rc=$?
   expect_code 0 "$rc" "a failing beads sync failed the whole bootstrap run"
   assert_contains "$out" "BEADS_SYNC: push failed" \
     "a failing sync was swallowed instead of reported as a diagnostic"
