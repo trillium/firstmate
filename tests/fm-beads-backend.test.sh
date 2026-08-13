@@ -894,6 +894,44 @@ test_beads_sync_bounds_the_probe_that_precedes_its_steps() {
   pass "fm_beads_sync_once bounds the probe that precedes its steps, not only the steps"
 }
 
+# Test: fm_beads_sync_remote_state with a bound must print an 'unreadable:' line
+# and exit 0 when the timeout library is absent, rather than producing empty
+# output. An absent library must not collapse into the 'none' response.
+test_beads_sync_remote_state_timeout_lib_absent_is_unreadable() {
+  local dir fakebin out rc
+  command -v jq >/dev/null 2>&1 || { pass "fm_beads_sync_remote_state timeout-lib skipped without jq"; return; }
+  dir="$TMP_ROOT/sync-remote-no-timeoutlib"
+  mkdir -p "$dir/bin"
+  cp "$ROOT/bin/fm-tasks-axi-lib.sh" "$dir/bin/"
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'dolt remote list --json') printf '%s\n' '[{"name":"origin"}]'; exit 0 ;;
+  'list --limit 1') exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  cat > "$dir/consumer.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+. "$(dirname "$0")/bin/fm-tasks-axi-lib.sh"
+fm_beads_sync_remote_state "$1"
+SH
+  chmod +x "$dir/consumer.sh"
+  out=$(PATH="$fakebin:$PATH" "$dir/consumer.sh" 5 2>&1) && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm_beads_sync_remote_state with absent timeout lib must exit 0, got $rc"
+  case "$out" in
+    unreadable:*) ;;
+    '') fail "absent timeout library produced empty output; must produce an 'unreadable:' line" ;;
+    none) fail "absent timeout library collapsed into 'none' (no remote configured)" ;;
+    *) fail "expected an 'unreadable:' line, got: $out" ;;
+  esac
+  pass "fm_beads_sync_remote_state with an absent timeout library reports unreadable, not empty"
+}
+
 # Run all tests
 test_beads_backend_value
 test_beads_backend_available
@@ -927,5 +965,6 @@ test_beads_sync_failure_degrades_best_effort
 test_beads_sync_bounds_a_hanging_remote
 test_beads_sync_bounds_the_whole_sweep_not_each_step
 test_beads_sync_bounds_the_probe_that_precedes_its_steps
+test_beads_sync_remote_state_timeout_lib_absent_is_unreadable
 
 echo "ok - all beads backend tests passed"

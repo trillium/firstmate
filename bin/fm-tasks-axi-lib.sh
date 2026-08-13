@@ -215,7 +215,7 @@ fm_beads_sync_remote_state() { # [bound seconds]
   command -v task >/dev/null 2>&1 || { printf 'unreadable: task CLI not found\n'; return 0; }
   command -v jq >/dev/null 2>&1 || { printf 'unreadable: jq is not on PATH\n'; return 0; }
   if [ -n "$bound" ]; then
-    fm_beads_require_timeout_lib
+    fm_beads_require_timeout_lib || { printf 'unreadable: timeout library unavailable\n'; return 0; }
     out=$(fm_run_timed "$bound" task dolt remote list --json 2>&1) || rc=$?
   else
     out=$(task dolt remote list --json 2>&1) || rc=$?
