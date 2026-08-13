@@ -27,6 +27,9 @@
 #     date (`task update --defer`), so the bead stays hidden from `task ready`
 #     until then. beads' own semantics handle either meaning: a past date leaves
 #     the bead ready now (age marker), a future date withholds it (time gate).
+#   - the item's FIRST line, cut at its first trailing metadata marker, inline
+#     note, or URL -> the bead's single-line title; an indented continuation line
+#     never reaches the title field (extract_title below owns the exact cut).
 #   - the full item text (title-line metadata plus indented continuation lines)
 #     -> the bead's description, so nothing is dropped.
 #
