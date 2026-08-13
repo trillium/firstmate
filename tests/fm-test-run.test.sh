@@ -439,6 +439,69 @@ test_exclude_family() {
   pass "exclude-family drops the named primary family after selection"
 }
 
+# --only-from is the intersection point for pull-request test selection. It must
+# be a pure filter: lane and shard membership stay owned by this runner, so a
+# name the selector emits that this lane does not own can never join the run.
+test_only_from_is_a_filter_that_only_shrinks() {
+  local tmp lane first filtered status out json
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-onlyfrom.XXXXXX")
+
+  lane=$("$RUNNER" --list --lane portable-parallel-1)
+  first=$(printf '%s\n' "$lane" | head -1)
+  [ -n "$first" ] || { rm -rf "$tmp"; fail "portable-parallel-1 lane is empty"; }
+
+  # One lane member plus a real test the lane does not own, plus a comment and a
+  # blank line. Only the lane member may survive.
+  {
+    printf '# selected by the pull request\n\n'
+    printf '%s\n' "$first"
+    printf '%s\n' "$(printf '%s\n' "$("$RUNNER" --list --lane portable-parallel-2)" | head -1)"
+  } >"$tmp/allow"
+
+  filtered=$("$RUNNER" --list --lane portable-parallel-1 --only-from "$tmp/allow")
+  [ "$filtered" = "$first" ] \
+    || { rm -rf "$tmp"; fail "--only-from must intersect, got: $filtered"; }
+
+  # A name that is in the allow list but in no lane cannot be added to any lane.
+  printf 'tests/fm-not-a-real-test.test.sh\n' >"$tmp/absent"
+  filtered=$("$RUNNER" --list --lane portable-parallel-1 --only-from "$tmp/absent")
+  [ -z "$filtered" ] \
+    || { rm -rf "$tmp"; fail "--only-from must never add a script, got: $filtered"; }
+
+  # An empty intersection is a successful empty run, not a failure, and still
+  # writes the JSON artifact the timing aggregate expects.
+  set +e
+  out=$("$RUNNER" --lane portable-parallel-1 --only-from "$tmp/absent" \
+    --json "$tmp/timing.json" 2>"$tmp/err")
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] \
+    || { rm -rf "$tmp"; fail "empty --only-from intersection must exit 0, got $status"; }
+  [ "$out" = "FM_TEST_SUMMARY total=0 failed=0 skipped_gate=0 duration_ms=0" ] \
+    || { rm -rf "$tmp"; fail "empty --only-from run summary is wrong: $out"; }
+  json="$tmp/timing.json"
+  [ -f "$json" ] || { rm -rf "$tmp"; fail "empty --only-from run must still write JSON"; }
+  python3 -c '
+import json, sys
+doc = json.load(open(sys.argv[1]))
+assert doc["scripts"] == [], doc["scripts"]
+assert doc["summary"]["total"] == 0, doc["summary"]
+' "$json" || { rm -rf "$tmp"; fail "empty --only-from JSON artifact is wrong"; }
+
+  # A missing allow file is a usage error, never a silently unfiltered run.
+  set +e
+  "$RUNNER" --list --lane portable-parallel-1 --only-from "$tmp/nope" >"$tmp/out" 2>"$tmp/err"
+  status=$?
+  set -e
+  [ "$status" -eq 2 ] \
+    || { rm -rf "$tmp"; fail "missing --only-from file must exit 2, got $status"; }
+  grep -Fq 'not found' "$tmp/err" \
+    || { rm -rf "$tmp"; fail "missing --only-from file must say so"; }
+
+  rm -rf "$tmp"
+  pass "--only-from intersects a lane and can never widen or silently pass"
+}
+
 test_portable_shard_union_and_coverage_guard() {
   local s1 s2 proven serial herdr all_count union_count overlap out first
   s1=$("$RUNNER" --list --lane portable-parallel-1)
@@ -770,6 +833,7 @@ test_aggregate_exit_behavior
 test_gate_skip_accounting
 test_fail_on_gate_skip_token
 test_exclude_family
+test_only_from_is_a_filter_that_only_shrinks
 test_portable_shard_union_and_coverage_guard
 test_portable_serial_shards_partition_the_serial_lane
 test_portable_serial_shard_lane_refusals

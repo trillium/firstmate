@@ -32,6 +32,13 @@
 #                   drop scripts whose primary family matches <name> after selection
 #                   (repeatable; portable CI lanes exclude real-herdr-gated so the
 #                   dedicated required Herdr lane owns that coverage)
+#   --only-from <file>
+#                   intersect the selection with the test paths listed in <file>,
+#                   one per line (blank and #-comment lines ignored). A pure
+#                   filter: it can only shrink a selection, never add to it, so
+#                   this script stays the single owner of lane composition while
+#                   bin/fm-test-affected.sh supplies a pull request's impacted
+#                   set. An empty intersection is a successful empty run.
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
@@ -85,6 +92,7 @@ BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
 EXCLUDE_FAMILIES=()
+ONLY_FROM=
 FAIL_ON_GATE_SKIP=
 JOBS=1
 JOBS_MAX=8
@@ -850,7 +858,7 @@ families_for_changed_path() {
       # resolution in the caller; emit a marker family of __script__
       printf '%s\n' "__script__:$(basename "$path")"
       ;;
-    bin/fm-test-run.sh|bin/fm-test-isolation-proof.sh)
+    bin/fm-test-run.sh|bin/fm-test-isolation-proof.sh|bin/fm-test-affected.sh)
       printf '%s\n' pure-contract-unit
       ;;
     bin/backends/herdr*|bin/fm-herdr-lab.sh|tests/herdr-test-safety.sh)
@@ -1118,6 +1126,36 @@ apply_exclude_families() {
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
 
+# Intersect the selection with an explicit allow list. Filter only: a path in
+# the file that this run did not already select stays unselected, so a caller
+# can never use it to reach into another lane.
+apply_only_from() {
+  local s line p keep
+  local -a kept=()
+  local -a allow=()
+  [ -n "$ONLY_FROM" ] || return 0
+  [ -f "$ONLY_FROM" ] || die "--only-from file not found: $ONLY_FROM"
+  while IFS= read -r line; do
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    allow+=("$(normalize_script_path "$line")")
+  done <"$ONLY_FROM"
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    keep=0
+    for p in "${allow[@]+"${allow[@]}"}"; do
+      if [ "$p" = "$s" ]; then
+        keep=1
+        break
+      fi
+    done
+    if [ "$keep" -eq 1 ]; then
+      kept+=("$s")
+    fi
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
 write_json_artifact() {
   local out=$1
   local started=$2
@@ -1293,6 +1331,15 @@ while [ "$#" -gt 0 ]; do
       EXCLUDE_FAMILIES+=("${1#--exclude-family=}")
       shift
       ;;
+    --only-from)
+      [ "$#" -gt 1 ] || die "--only-from requires a file of test paths"
+      ONLY_FROM=$2
+      shift 2
+      ;;
+    --only-from=*)
+      ONLY_FROM=${1#--only-from=}
+      shift
+      ;;
     --fail-on-gate-skip)
       [ "$#" -gt 1 ] || die "--fail-on-gate-skip requires a token (e.g. 'herdr not found')"
       FAIL_ON_GATE_SKIP=$2
@@ -1399,6 +1446,10 @@ esac
 apply_exclude_families
 if [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ]; then
   SELECTION_DESC="${SELECTION_DESC};exclude-family=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")"
+fi
+apply_only_from
+if [ -n "$ONLY_FROM" ]; then
+  SELECTION_DESC="${SELECTION_DESC};only-from=$ONLY_FROM"
 fi
 if [ -n "$FAIL_ON_GATE_SKIP" ]; then
   SELECTION_DESC="${SELECTION_DESC};fail-on-gate-skip=$FAIL_ON_GATE_SKIP"

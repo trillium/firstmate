@@ -92,6 +92,19 @@ bin/fm-test-run.sh --check-coverage
 It also verifies that the parallel lanes, portable serial lane, and real-Herdr family are disjoint and cover every `tests/*.test.sh` script.
 It separately verifies that the portable serial CI shards are non-empty, disjoint, and together equal the portable serial lane.
 
+## Pull-request selection
+
+On a pull request, CI narrows each lane to the tests the changed paths could affect.
+`bin/fm-test-affected.sh` computes that set from a static scan and owns the selection rules; its header is the single owner of those mechanics.
+
+Selection never participates in lane composition.
+The selector emits test paths only, and `bin/fm-test-run.sh --only-from <file>` intersects them with the lane it already computed, so a name outside the lane can never join the run and shard membership stays owned here.
+The coverage guard therefore still proves the full partition on every pull request, independently of which subset that pull request runs.
+
+Selection applies to pull requests only.
+Pushes to `main` run the complete suite unchanged, which is what makes an occasionally wrong selector survivable.
+Both `.github/workflows/ci.yml` and the selector itself enforce that gate, so neither one alone is load-bearing.
+
 ## Timing artifacts
 
 Portable shards, each portable serial shard, and the Herdr lane upload runner-generated timing JSON.
