@@ -76,6 +76,24 @@ The `fm-crew-state.sh` header owns the exact rule and `fm_beads_is_closed` in `b
 The structured fleet snapshot (`bin/fm-fleet-snapshot.sh --json`), Bearings (`bin/fm-bearings-snapshot.sh`), and session-start's compact digest above all read this fleet's in-flight/queued beads, scoped by that label, when the beads backend is selected; with any other backend their output is unchanged.
 That beads-sourced view covers only status open/in_progress/blocked beads mapped to `records[]` state `queued`/`in_flight`; per-bead dependency graphs and correlation with local `state/*.meta` remain unwired, so `blocked_by_ids` is always empty and `requires_child_metadata` is always false for a beads-sourced record. A record carrying the `captain-hold` label is the exception: its `hold_kind`, `hold_reason`, `current_role`, and `captain_actionable` are populated from the anchor's own labels and `metadata.hold_reason` (see [`decision-hold-lifecycle.md`](decision-hold-lifecycle.md)); every other beads-sourced record leaves those fields null/false.
 
+### Beads store provisioning and sync (state/.beads-sync-last)
+
+Store resolution is the `task` CLI's job, not firstmate's: the federation wrapper pins `BEADS_DIR` before executing `bd`, so every home on one machine shares one store and a home with no local `.beads/` directory is not evidence of a missing store.
+Provisioning is therefore per-machine, and local secondmate homes need none of it.
+The gap is a machine that has never run beads, typically a remote secondmate host, where the wrapper or the store itself is absent and every read fails with "no beads database found"; [`docs/remote-secondmates.md`](remote-secondmates.md) owns that operator sequence and [`bin/fm-remote-doctor.sh`](../bin/fm-remote-doctor.sh)'s `beads-store` check owns the repair.
+
+Provisioning uses `bd bootstrap`, the non-destructive verb, and never `bd init --force`.
+`bin/fm-tasks-axi-lib.sh`'s `fm_beads_bootstrap_store` additionally refuses to bootstrap whenever the store already answers a read, because bootstrap's own detection inspects the `.beads/` directory and reports a healthy Dolt server-mode store as absent, which would otherwise create a fresh empty database beside the live one.
+
+Routine sync is a mutating sweep in bootstrap's deferred network phase (beads backend only, real runs only), so it never sits on the blocking path of session start and a slow remote cannot delay a session.
+It runs `task dolt commit`, then `task dolt push`, then `task dolt pull`, in that order: commit first because bd's `--dolt-auto-commit` policy defaults to `off` and leaves writes in the Dolt working set, and push before pull because getting this home's own commits off the machine is the gap being closed.
+Each step is bounded by `FM_BEADS_SYNC_TIMEOUT` (default 45 seconds), and the sweep runs at most once per `FM_BEADS_SYNC_MIN_INTERVAL` (default 900 seconds), stamped at `state/.beads-sync-last`.
+The stamp is written when the sweep is attempted, not when it succeeds, so a broken remote backs off instead of being retried by every session that starts.
+Sync is best-effort throughout: a failing step is reported as a `BEADS_SYNC:` line, the remaining steps still run, and bootstrap itself still succeeds, because an unreachable remote must never block dispatch.
+
+Firstmate configures no Dolt remote, because adding one publishes the fleet's task store to that destination and the destination is the captain's decision; with none configured the sweep reports that the store is single-machine only and does nothing else.
+[`docs/beads-sync-topology.md`](beads-sync-topology.md) is the owner of that recommendation, its trade-offs, and the one question the captain answers to enable off-machine durability.
+
 ### Beads resilience layer (state/.beads-mirror-*.json, state/.beads-write-queue)
 
 `bin/fm-beads-resilience-lib.sh` keeps the beads backend from wedging firstmate during a Dolt/beads-store outage (beads-authority-migration Stage 5); its header comment is the single owner of the exact function contracts summarized here.
@@ -600,6 +618,8 @@ FM_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip boots
 FM_BOOTSTRAP_NETWORK=all   # internal session-start phase split: all, skip (local steps only), or only (network steps only); see bin/fm-bootstrap.sh
 FM_STARTUP_NETWORK_TIMEOUT=120   # seconds bounding the whole deferred network stage; hitting it prints an actionable NETWORK_CHECKS line
 FM_TASKS_AXI_COMPATIBLE=   # internal one-hop handoff of an already-computed tasks-axi compatibility verdict (0 or 1); consumed when bin/fm-tasks-axi-lib.sh is sourced
+FM_BEADS_SYNC_TIMEOUT=45   # beads backend only: seconds bounding each Dolt sync step, so an unreachable remote cannot stall the sweep
+FM_BEADS_SYNC_MIN_INTERVAL=900   # beads backend only: seconds between store sync sweeps, stamped at state/.beads-sync-last on attempt
 FM_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; fm-send.sh overrides it to name the requested message specifically
 FM_POLL=15              # seconds between watcher poll cycles

@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, DEGRADED, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, BEADS_WRITE_QUEUE, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, DEGRADED, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, BEADS_WRITE_QUEUE, BEADS_SYNC, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
   A silent bootstrap section, or a BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -24,6 +24,8 @@ When any diagnostic needs captain attention, report the plain consequence and re
   For `task` (the beads CLI), this reports the missing tool only when `config/backlog-backend=beads` is set.
   For `quota-axi`, bootstrap requires it because firstmate reads its current output directly before resolving every crew-dispatch profile array; without it, report the missing requirement and do not choose around an unexamined candidate.
   For the beads task store (`config/backlog-backend=beads`), a missing `task` CLI or an unreachable/broken store only reaches `MISSING:` when no fresh local mirror exists (see `DEGRADED:` below); do not offer the install command as the only option without checking whether the mirror already covers it.
+  The unreachable-store line names `task bootstrap --yes` because that is the non-destructive provisioning verb; never reach for `bd init --force`, and never run bootstrap against a store that answers a read, since its own detection cannot see a Dolt server-mode store and would create an empty database beside the live one.
+  On a remote host the usual cause is a missing `task` wrapper rather than a missing store, which `bin/fm-remote-doctor.sh --fix` repairs; see [`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md) "The beads store on a remote host".
 - `DEGRADED: task CLI not found (beads store; install: <command>); using local mirror from <ts> until it is` / `DEGRADED: task store is unreachable or broken (beads backend configured, cannot run 'task list'); using local mirror from <ts> until it is` - the beads task store (`config/backlog-backend=beads`) is down, but a local mirror fresh enough to use exists (`docs/configuration.md` owns the mirror age threshold and files).
   Do not block dispatch on this alone: relay it as a plain-English notice that fleet status is running on a recent cached snapshot rather than live data, and any beads write attempted meanwhile is queued for automatic replay once the store recovers, not lost.
   Investigate the underlying store outage if it persists across multiple bootstraps rather than treating a one-off as actionable.
@@ -71,3 +73,8 @@ When any diagnostic needs captain attention, report the plain consequence and re
 - `BEADS_WRITE_QUEUE: task CLI not found, N write(s) remain queued` / `BEADS_WRITE_QUEUE: store still unreachable, N write(s) remain queued` - the beads store outage is still ongoing; treat the same as an unresolved `DEGRADED:`/`MISSING:` beads line above rather than a new problem, and expect the queue to keep draining on later bootstraps once the store recovers.
 - `BEADS_WRITE_QUEUE: replay failed for <id> (<description>); re-queued` - a queued write hit a genuine replay failure (not just an unreachable store) and was left queued for the next attempt.
   Investigate if the same id keeps failing to replay across multiple bootstraps rather than treating a one-off as actionable.
+- `BEADS_SYNC: pushed local commits to the configured Dolt remote` / `BEADS_SYNC: pulled remote commits into the local store` - the routine store sync ran; no action needed, it is reported only so the sync is visible.
+- `BEADS_SYNC: skipped: no Dolt remote configured, so this store is single-machine only` - expected on every home today, because firstmate configures no Dolt remote: adding one publishes the task store to that destination and the destination is the captain's decision ([`docs/beads-sync-topology.md`](../../../docs/beads-sync-topology.md) owns the recommendation and the one question to ask).
+  Do not configure a remote to clear this line; surface the durability gap to the captain only if they ask about off-machine backup, and never treat it as a failure.
+- `BEADS_SYNC: push failed: <reason>` / `BEADS_SYNC: pull failed: <reason>` / `BEADS_SYNC: commit failed: timed out after <n>s` - the store is fine locally and only the remote leg failed, so nothing is lost and dispatch is unaffected.
+  The sweep is best-effort and already backed off, so treat a one-off as informational and investigate the named remote only if the same step keeps failing across multiple sessions.

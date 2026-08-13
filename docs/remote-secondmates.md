@@ -111,6 +111,20 @@ These steps are never automated and are always reported rather than silently att
 Firstmate never writes an auto-login password, never changes FileVault, and never stores an account password.
 A file at `~/.local/bin/fm-remote-entrypoint.sh` that is not Firstmate's own symlink is reported for the operator to inspect and is never overwritten.
 
+### The beads store on a remote host
+
+The doctor's `beads-store` check runs only when the home it is pointed at selects `config/backlog-backend=beads`, and reports `skip:` otherwise.
+It tests the one thing that matters, whether the `task` CLI answers a read, and never looks for a `.beads/` directory: the `task` wrapper pins `BEADS_DIR` for the whole federation, so a host with no local `.beads/` can be healthy and a host with one can still be broken.
+
+The usual remote failure is a host that has `bd` installed but no wrapper in front of it, because a bare `bd` auto-discovers from the working directory, finds nothing, and fails with "no beads database found".
+That is tagged `fixable:`, and `--fix` writes the Firstmate-owned `~/.local/bin/task` wrapper pinning `BEADS_DIR`, then provisions a store with the non-destructive `task bootstrap` only when one still does not answer.
+An existing `~/.local/bin/task` that Firstmate does not own is reported and never overwritten, the same rule as every other reserved wrapper path.
+
+A host with no `bd` binary at all is a `human:` gap, since the doctor never installs packages; install beads on that account, then rerun with `--fix`.
+The check looks for `bd` on `PATH` first, then at `~/go/bin/bd` and `~/.local/bin/bd`, which a non-interactive SSH `PATH` routinely omits.
+
+A machine provisioned this way holds its own store until a Dolt remote destination is approved, so it starts empty rather than inheriting the fleet's history; see [`beads-sync-topology.md`](beads-sync-topology.md).
+
 ## Provision a route
 
 Create and fill the normal secondmate charter first, then run:

@@ -623,3 +623,124 @@ assert_contains "$DOCTOR_OUT" 'check entrypoint-link=human:' "an operator-owned 
   || fail "--fix overwrote a file it did not create"
 unset FM_ROOT_OVERRIDE
 pass "the entrypoint symlink is recreated when absent and never overwritten when operator-owned"
+
+# --- the beads store check is gated on the home's own backlog backend --------
+#
+# add_beads_bd <dir> <log>: a fake `bd` that refuses to answer unless something
+# pinned BEADS_DIR for it, which is exactly how the real bd behaves when the
+# `task` wrapper is missing - it auto-discovers from the working directory,
+# finds nothing, and fails. `bootstrap` provisions the pinned store.
+add_beads_bd() {
+  local dir=$1 log=$2
+  cat > "$dir/bd" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$log"
+store=\${BEADS_DIR:-}
+[ -n "\$store" ] || exit 3
+case "\${1:-}" in
+  list)
+    [ -f "\$store/provisioned" ] || exit 1
+    printf '[]\n'
+    ;;
+  bootstrap)
+    mkdir -p "\$store"
+    : > "\$store/provisioned"
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/bd"
+}
+
+new_case Darwin with-herdr gui
+doctor
+assert_contains "$DOCTOR_OUT" 'check beads-store=skip:' \
+  "a home that does not select the beads backend was still checked for a store"
+doctor --fix
+assert_absent "$CASE_HOME/.local/bin/task" \
+  "--fix provisioned a task wrapper for a home that does not use the beads backend"
+pass "the beads store check skips a home whose backlog backend is not beads"
+
+# --- beads selected with no bd binary on the host is a human gap -------------
+
+new_case Darwin with-herdr gui
+mkdir -p "$CASE_PROJECT_HOME/config"
+printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
+doctor
+expect_code 1 "$DOCTOR_RC" "a host with no beads store was reported ready"
+assert_contains "$DOCTOR_OUT" 'check beads-store=human:' \
+  "a host with no bd binary was not tagged as a human gap"
+assert_contains "$DOCTOR_OUT" 'action: beads-store:' \
+  "the missing bd binary came with no operator action"
+doctor --fix
+assert_contains "$DOCTOR_OUT" 'check beads-store=human:' \
+  "--fix stopped reporting the missing bd binary"
+assert_not_contains "$DOCTOR_OUT" 'fix beads-store=applied' \
+  "--fix claimed to have installed beads"
+assert_absent "$CASE_HOME/.local/bin/task" \
+  "--fix wrote a task wrapper with no bd binary to point it at"
+pass "a host with no bd binary is a human gap that --fix never claims to close"
+
+# --- bd present but unpinned is fixable, and --fix provisions the store ------
+
+new_case Darwin with-herdr gui
+mkdir -p "$CASE_PROJECT_HOME/config"
+printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
+BD_LOG="$CASE_STATE/bd.log"
+: > "$BD_LOG"
+add_beads_bd "$CASE_BIN" "$BD_LOG"
+doctor
+expect_code 1 "$DOCTOR_RC" "a host whose beads store does not answer was reported ready"
+assert_contains "$DOCTOR_OUT" 'check beads-store=fixable:' \
+  "a resolvable bd with no working task CLI was not tagged fixable"
+assert_absent "$CASE_HOME/.local/bin/task" \
+  "a read-only doctor run wrote a task wrapper"
+assert_absent "$CASE_HOME/data/tasks/.beads/provisioned" \
+  "a read-only doctor run provisioned a store"
+assert_not_contains "$(cat "$BD_LOG")" bootstrap \
+  "a read-only doctor run bootstrapped a store"
+
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix left a provisionable host unready"
+assert_contains "$DOCTOR_OUT" 'fix beads-store=applied:' \
+  "--fix did not report provisioning the store"
+assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
+  "--fix did not re-check the provisioned store"
+assert_present "$CASE_HOME/.local/bin/task" "--fix did not write the task wrapper"
+assert_contains "$(cat "$CASE_HOME/.local/bin/task")" 'BEADS_DIR' \
+  "the task wrapper does not pin BEADS_DIR"
+assert_contains "$(cat "$BD_LOG")" bootstrap \
+  "--fix did not provision the store with the bootstrap verb"
+assert_not_contains "$(cat "$BD_LOG")" 'init' \
+  "--fix reached for a destructive init instead of bootstrap"
+assert_no_dangerous_calls "the doctor reached for auto-login, FileVault, or the keychain"
+pass "an unpinned bd is a fixable gap and --fix wraps it and provisions the store non-destructively"
+
+# --- a second --fix is a no-op that never bootstraps over the live store -----
+
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "a second --fix reported a healthy host as unready"
+assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
+  "the already-provisioned store was not reported healthy"
+[ "$(grep -c bootstrap "$BD_LOG")" = 1 ] \
+  || fail "--fix bootstrapped again over a store that already answers"
+pass "a repeat --fix leaves a working store alone and never bootstraps over it"
+
+# --- an operator-owned task wrapper is never overwritten --------------------
+
+new_case Darwin with-herdr gui
+mkdir -p "$CASE_PROJECT_HOME/config" "$CASE_HOME/.local/bin"
+printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
+BD_LOG="$CASE_STATE/bd.log"
+: > "$BD_LOG"
+add_beads_bd "$CASE_BIN" "$BD_LOG"
+printf '#!/usr/bin/env bash\n# operator wrapper\nexit 1\n' > "$CASE_HOME/.local/bin/task"
+chmod +x "$CASE_HOME/.local/bin/task"
+doctor --fix
+assert_contains "$DOCTOR_OUT" 'fix beads-store=failed:' \
+  "--fix did not report refusing an operator-owned task wrapper"
+assert_contains "$(cat "$CASE_HOME/.local/bin/task")" 'operator wrapper' \
+  "--fix overwrote a task wrapper it did not create"
+assert_not_contains "$(cat "$BD_LOG")" bootstrap \
+  "--fix bootstrapped a store behind an operator-owned wrapper it could not verify"
+pass "--fix refuses an operator-owned task wrapper instead of overwriting it"

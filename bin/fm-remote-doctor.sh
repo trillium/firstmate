@@ -43,6 +43,16 @@
 # installs packages, creates a login session, writes an auto-login password,
 # changes FileVault, stores an account password, or replaces a non-Firstmate
 # wrapper; those remain reported gaps.
+#
+# The beads-store check is the one backend-gated check here: it runs only when
+# the home this command was pointed at selects config/backlog-backend=beads,
+# and is skipped entirely otherwise, so the tasks-axi and manual backends see
+# no change. It exists because a remote home inherits that backend setting from
+# its parent while nothing provisions the beads CLI or store on that host. Its
+# repair publishes an owned BEADS_DIR-pinning `task` wrapper in front of a bd
+# binary already present on the host, then provisions a store with the
+# non-destructive `bd bootstrap` only when none answers; a host with no bd
+# binary stays a reported human gap, because --fix installs no packages.
 set -eu
 
 # Resolve this script's directory with builtins only: a host missing a required
@@ -574,10 +584,133 @@ check_entrypoint_link() {
     "rerun this command with --fix to create it"
 }
 
+# --- beads store readiness (config/backlog-backend=beads only) --------------
+#
+# A remote home inherits config/backlog-backend from its parent, but nothing
+# ever provisioned the beads CLI or store on that host, so the home comes up
+# with the backend selected and the task queue dead. This check closes exactly
+# that gap and is scoped to remote hosts by construction: it runs only inside
+# this remote readiness command, and only when the home it was pointed at
+# actually selects the beads backend.
+#
+# It deliberately does NOT test for a .beads/ directory in the home. The `task`
+# wrapper pins BEADS_DIR for the whole federation, so a home with no local
+# .beads/ can be perfectly healthy while a host with one can still be broken;
+# the only meaningful test is whether the CLI answers a read.
+beads_home_config_dir() {
+  local home=${FM_HOME:-}
+  [ -n "$home" ] || return 1
+  printf '%s/config\n' "$home"
+}
+
+beads_backend_selected() {
+  local config_dir
+  config_dir=$(beads_home_config_dir) || return 1
+  [ -d "$config_dir" ] || return 1
+  [ "$(fm_backlog_backend_value "$config_dir")" = beads ]
+}
+
+# The wrapper this host needs is the same shape as the parent's `task`: a
+# BEADS_DIR-pinning shim in front of the bd binary. Without it a bare `bd`
+# auto-discovers from the working directory, finds nothing, and fails with "no
+# beads database found" even when a perfectly good store exists on the host -
+# the exact failure a remote home reports today.
+BEADS_TASK_WRAPPER="${HOME:-}/.local/bin/task"
+BEADS_STORE_DIR="${HOME:-}/data/tasks/.beads"
+
+# Probes PATH first, then the two account-local install locations a
+# non-interactive ssh PATH routinely omits - `go install` writes ~/go/bin and
+# beads' own installer writes ~/.local/bin, and neither is on the stripped PATH
+# a remote command inherits. Every candidate stays inside PATH or HOME so this
+# check reports on the account it was pointed at and never on the host running it.
+beads_bd_binary() {
+  local resolved
+  resolved=$(command -v bd 2>/dev/null || true)
+  if [ -n "$resolved" ] && [ -x "$resolved" ]; then printf '%s\n' "$resolved"; return 0; fi
+  for resolved in "${HOME:-}/go/bin/bd" "${HOME:-}/.local/bin/bd"; do
+    [ -x "$resolved" ] && { printf '%s\n' "$resolved"; return 0; }
+  done
+  return 1
+}
+
+check_beads_store() {
+  local bd_bin
+  if ! beads_backend_selected; then
+    record beads-store "skip: this home does not select the beads backlog backend"
+    return 0
+  fi
+  if fm_beads_store_reachable; then
+    record beads-store "ok: the task CLI resolves and the beads store answers a read"
+    return 0
+  fi
+  if ! bd_bin=$(beads_bd_binary); then
+    record beads-store "human: this home selects the beads backend but no bd binary exists on this host" \
+      "install beads on that account with 'go install github.com/steveyegge/beads/cmd/bd@latest', then rerun this command with --fix to add the task wrapper and provision the store"
+    return 0
+  fi
+  record beads-store "fixable: bd resolves at $bd_bin but the task CLI does not answer a read" \
+    "rerun this command with --fix to add the BEADS_DIR-pinning task wrapper and run the non-destructive 'task bootstrap'"
+}
+
+# Repair is two steps, in order: publish the wrapper so `task` exists and is
+# pinned, then bootstrap a store only if one still does not answer.
+#
+# `bd bootstrap` is the only provisioning verb used here because it is the
+# documented non-destructive one; `bd init --force` is never run. The
+# reachability guard inside fm_beads_bootstrap_store is what makes that safe in
+# practice, because bootstrap's own detection reads the .beads/ directory and
+# reports a healthy Dolt server-mode store as absent.
+fix_beads_store() {
+  local bd_bin tmp
+  if ! bd_bin=$(beads_bd_binary); then
+    fix_report beads-store failed "no bd binary on this host to point a wrapper at"
+    return 1
+  fi
+  if [ -e "$BEADS_TASK_WRAPPER" ] || [ -L "$BEADS_TASK_WRAPPER" ]; then
+    if ! wrapper_is_firstmate_owned "$BEADS_TASK_WRAPPER"; then
+      fix_report beads-store failed "$BEADS_TASK_WRAPPER exists and is not Firstmate-owned"
+      return 1
+    fi
+  elif ! mkdir -p "${HOME:-}/.local/bin" 2>/dev/null || [ -L "${HOME:-}/.local/bin" ]; then
+    fix_report beads-store failed "cannot create ${HOME:-}/.local/bin"
+    return 1
+  fi
+  tmp="${HOME:-}/.local/bin/.task.tmp.$$"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' '# Firstmate remote tool wrapper v1'
+    printf 'export BEADS_DIR=%q\n' "$BEADS_STORE_DIR"
+    printf '%s\n' 'export BD_NAME=task'
+    printf 'exec %q "$@"\n' "$bd_bin"
+  } > "$tmp" || { rm -f -- "$tmp"; fix_report beads-store failed "cannot write $BEADS_TASK_WRAPPER"; return 1; }
+  if ! chmod 0700 "$tmp" || ! mv -f -- "$tmp" "$BEADS_TASK_WRAPPER"; then
+    rm -f -- "$tmp"
+    fix_report beads-store failed "cannot publish $BEADS_TASK_WRAPPER"
+    return 1
+  fi
+  fix_report beads-store applied "wrote $BEADS_TASK_WRAPPER pinning BEADS_DIR=$BEADS_STORE_DIR in front of $bd_bin"
+
+  if fm_beads_store_reachable; then
+    fix_report beads-store applied "the beads store answers a read through the new wrapper; no bootstrap needed"
+    return 0
+  fi
+  if ! mkdir -p "$BEADS_STORE_DIR" 2>/dev/null; then
+    fix_report beads-store failed "cannot create $BEADS_STORE_DIR"
+    return 1
+  fi
+  if fm_beads_bootstrap_store >/dev/null 2>&1; then
+    fix_report beads-store applied "provisioned the store with the non-destructive 'task bootstrap'"
+    return 0
+  fi
+  fix_report beads-store failed "'task bootstrap' did not leave a store that answers a read"
+  return 1
+}
+
 run_checks() {
   CHECK_NAMES=()
   CHECK_VALUES=()
   CHECK_ACTIONS=()
+  check_beads_store
   check_herdr
   check_gui_session
   check_remote_job_worker
@@ -695,6 +828,9 @@ apply_fixes() {
     i=$((i + 1))
     case "$value" in fixable:*) ;; *) continue ;; esac
     case "$name" in
+      beads-store)
+        fix_beads_store || true
+        ;;
       remote-job-worker|remote-job-worker-loaded|remote-job-probe)
         [ "$remote_job_fixed" -eq 0 ] || continue
         remote_job_fixed=1
