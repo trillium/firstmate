@@ -180,6 +180,24 @@ new_case() {  # <name> -> echoes case dir with an empty state/
   printf '%s\n' "$d"
 }
 
+# A fake `git` that refuses exactly the unlanded-work probe (`status --porcelain`)
+# the way a dubious-ownership refusal or a corrupt index does - non-zero exit,
+# nothing on stdout - and delegates every other invocation to the real git, so the
+# rest of the read (branch attribution, run head binding) behaves normally.
+add_refusing_git() {  # <fakebin> <real-git-path>
+  local fb=$1 real=$2
+  cat > "$fb/git" <<SH
+#!/usr/bin/env bash
+set -u
+for arg in "\$@"; do
+  [ "\$arg" = --porcelain ] || continue
+  exit 128
+done
+exec "$real" "\$@"
+SH
+  chmod +x "$fb/git"
+}
+
 arm_idle_record() {  # <state-dir> <id>
   local state=$1 id=$2 gen
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" "$id")
@@ -1417,6 +1435,32 @@ test_beads_closed_bead_unlanded_not_done() {
   pass "closed bead over unlanded work does not report done (drop-recovery guard)"
 }
 
+# Drop-recovery guard, unreadable worktree: a git that REFUSES the unlanded-work
+# probe prints nothing, exactly like a clean tree does. Reading that silence as
+# "nothing unlanded" would report done over a worktree whose state was never
+# actually read, so a probe that cannot answer counts as unlanded and the read
+# falls through to the existing logic.
+test_beads_closed_bead_probe_failure_not_done() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+probe-failure skipped without jq"; return; }
+  reset_fakes
+  local d fb; d=$(new_case beads-closed-probe-fail)
+  make_repo_on_branch "$d/wt" fm/feat-beadprobe
+  land_repo "$d/wt"   # landed, so the refused probe is the sole reason done is withheld
+  fb=$(make_fakebin "$d")
+  add_refusing_git "$fb" "$(command -v git)"
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadprobe.meta" "window=fm:fm-feat-beadprobe" "worktree=$d/wt" \
+    "kind=ship" "harness=claude" "beads_id=task-zz06"
+  arm_idle_record "$d/state" feat-beadprobe
+  printf 'working: still grinding\n' > "$d/state/feat-beadprobe.status"
+  FM_FAKE_BEAD_STATUS=closed
+  local out; out=$(run_crew_state "$d" feat-beadprobe)
+  assert_not_contains "$out" "source: bead" "a refused unlanded-work probe must not report a bead-sourced done"
+  assert_not_contains "$out" "state: done" "an unreadable worktree must not read as done from the bead"
+  assert_contains "$out" "source: status-log" "an unreadable worktree falls through to existing logic"
+  pass "closed bead over an unreadable worktree does not report done (probe failure counts as unlanded)"
+}
+
 # A still-open bead with a live (busy) endpoint must be completely unaffected -
 # the bead-closed signal ADDS a completion truth, it must never mark live work
 # done prematurely.
@@ -1472,6 +1516,7 @@ test_active_run_is_authoritative
 test_beads_closed_bead_reconciles_done
 test_beads_closed_bead_open_decision_not_done
 test_beads_closed_bead_unlanded_not_done
+test_beads_closed_bead_probe_failure_not_done
 test_beads_open_bead_live_pane_unaffected
 test_beads_backend_guard_tasks_axi_ignores_closed_bead
 test_stale_needs_decision_superseded

@@ -219,4 +219,37 @@ printf '%s\n' "$OUT" | grep -Fq "replay failed for bd-open" \
   || fail "a queued close whose bead is still open must remain queued as a genuine conflict"
 pass "fm_beads_write_queue_reconcile re-queues a queued close whose bead is still open on the live store, a genuine conflict"
 
+# A slow-but-reachable store (the reconcile path already proved it reachable with
+# `task list --limit 1`) can blow the bounded status read. That is no answer, not
+# evidence the bead is gone: dropping the queued close there would lose a pending
+# write permanently while the bead is still open, so it must stay queued.
+FM_BEADS_WRITE_QUEUE="$TMP_ROOT/close-slow-queue"
+FM_BEADS_WRITE_QUEUE_LOCK="$TMP_ROOT/close-slow-queue.lock"
+FAKEBIN_SLOW="$TMP_ROOT/fakebin-close-slow"
+mkdir -p "$FAKEBIN_SLOW"
+cat > "$FAKEBIN_SLOW/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'list --limit 1') exit 0 ;;
+  'close bd-slow --reason done') exit 1 ;;
+  'show bd-slow --json') sleep 5; printf '%s\n' '[{"id":"bd-slow","status":"open"}]'; exit 0 ;;
+esac
+exit 1
+SH
+chmod +x "$FAKEBIN_SLOW/task"
+
+fm_beads_write_enqueue bd-slow "close bd-slow" close bd-slow --reason "done" \
+  || fail "enqueue for the slow-store scenario failed"
+OUT=$(PATH="$FAKEBIN_SLOW:$BASE_PATH" FM_BEADS_STATUS_TIMEOUT=1 fm_beads_write_queue_reconcile 2>&1)
+RC=$?
+[ "$RC" -ne 0 ] || fail "reconcile must report failure when the status read never answered: $OUT"
+printf '%s\n' "$OUT" | grep -Fq "replay failed for bd-slow" \
+  || fail "reconcile did not report bd-slow's replay as failed: $OUT"
+printf '%s\n' "$OUT" | grep -Fq "bead already closed" \
+  && fail "an unanswered status read must not be reported as an already-closed bead: $OUT"
+[ "$(fm_beads_write_queue_count)" = 1 ] \
+  || fail "a queued close whose status read never answered must remain queued"
+pass "fm_beads_write_queue_reconcile keeps a queued close when the bounded status read never answers"
+
 echo "# fm-beads-resilience-lib.test.sh: all assertions passed"

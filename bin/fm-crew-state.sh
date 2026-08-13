@@ -138,9 +138,19 @@ fi
 # Read-only, mirroring the uncommitted/unpushed probe fm-teardown.sh uses for its
 # staleness summary; work_is_landed itself lives in that mutating script this
 # side-effect-free reader must not source.
+#
+# Each probe's EXIT STATUS is checked, not just its output: a git that refused the
+# read (dubious ownership, a corrupt index, git missing) also prints nothing, and
+# reading that silence as "nothing unlanded" would let a closed bead report done
+# over a worktree whose state was never actually read. Any probe that fails to
+# answer counts as unlanded, the same fail-closed direction fm-teardown.sh's
+# validate_worktree_teardown_safety takes on the identical two commands.
 bead_task_has_unlanded_work() {
-  [ -n "$(git -C "$WT" status --porcelain 2>/dev/null)" ] && return 0
-  [ -n "$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null)" ] && return 0
+  local out
+  out=$(git -C "$WT" status --porcelain 2>/dev/null) || return 0
+  [ -z "$out" ] || return 0
+  out=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null) || return 0
+  [ -z "$out" ] || return 0
   return 1
 }
 BEADS_ID=$(meta_value beads_id)

@@ -193,15 +193,27 @@ fm_beads_write_queue_count() {
 # fm_beads_close_already_applied <task-id> - true if the bead is absent or already
 # closed, so a queued close whose replay failed is treated as idempotently done.
 # Reads status through fm_beads_status (bin/fm-tasks-axi-lib.sh), the one owner of
-# the `task show --json` array unwrap; empty (absent/unreadable) counts as already
-# applied here, unlike fm_beads_is_closed which reads empty as "not closed". The
-# sole caller (fm_beads_write_queue_reconcile) has already proven the store
-# reachable, and both callers of this file (bin/fm-bootstrap.sh, bin/fm-session-start.sh)
-# source fm-tasks-axi-lib.sh before this file, so fm_beads_status is in scope.
+# the `task show --json` array unwrap, and requires that read to have COMPLETED:
+# an absent bead is already applied, but an unanswered read (bounded-read timeout
+# against a slow store, missing tool, unparseable output) is not evidence of
+# anything and must leave the close queued - dropping it there would lose a
+# pending write permanently while the bead is still open. Unlike fm_beads_is_closed,
+# which reads every non-zero the same way ("not closed"), this caller must tell
+# "gone" from "no answer". The sole caller (fm_beads_write_queue_reconcile) has
+# already proven the store reachable, and both callers of this file
+# (bin/fm-bootstrap.sh, bin/fm-session-start.sh) source fm-tasks-axi-lib.sh before
+# this file, so fm_beads_status is in scope.
 fm_beads_close_already_applied() { # <task-id> - true if the bead is absent or already closed
-  local id=${1:-} status
+  local id=${1:-} status rc
   status=$(fm_beads_status "$id")
-  [ -z "$status" ] || [ "$status" = closed ]
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    [ "$status" = closed ]
+  elif [ "$rc" -eq "${FM_BEADS_STATUS_RC_ABSENT:-1}" ]; then
+    return 0
+  else
+    return 1
+  fi
 }
 
 fm_beads_write_queue_reconcile() {

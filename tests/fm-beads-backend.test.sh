@@ -159,6 +159,77 @@ test_beads_resolve_or_create_reuses_existing() {
   pass "fm_beads_resolve_or_create reuses an existing task:<id>-labeled bead instead of minting a duplicate"
 }
 
+# Test: the library stays sourceable on its own. It is copied WITHOUT its
+# siblings into partially-synced remote code roots (tests/fm-on.test.sh,
+# tests/fm-remote-backlog-handoff.test.sh build exactly that fixture), where the
+# scripts that source it run under `set -eu` and must still reach the report that
+# names what the host is missing. An unguarded source of fm-timeout-lib.sh aborts
+# them at load time instead.
+test_lib_sources_without_its_siblings() {
+  local dir="$TMP_ROOT/lonely-lib" out rc
+  mkdir -p "$dir/bin"
+  cp "$ROOT/bin/fm-tasks-axi-lib.sh" "$dir/bin/"
+  cat > "$dir/consumer.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+. "$(dirname "$0")/bin/fm-tasks-axi-lib.sh"
+printf 'reached-the-end\n'
+SH
+  chmod +x "$dir/consumer.sh"
+  out=$("$dir/consumer.sh" 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "sourcing fm-tasks-axi-lib.sh alone under set -eu exited $rc: $out"
+  [ "$out" = "reached-the-end" ] \
+    || fail "sourcing fm-tasks-axi-lib.sh alone did not reach the next statement: $out"
+  pass "fm-tasks-axi-lib.sh stays sourceable under set -eu when no sibling libs are co-located"
+}
+
+# Test: fm_beads_status distinguishes a completed read, an absent bead, and a read
+# that never answered. Conflating the last two loses a queued write: an unanswered
+# read is not evidence the bead is gone.
+test_beads_status_read_outcomes() {
+  local dir fakebin out rc
+  command -v jq >/dev/null 2>&1 || { pass "fm_beads_status outcomes skipped without jq"; return; }
+  dir="$TMP_ROOT/beads-status"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "$*" in
+  'show bd-open --json') printf '%s\n' '[{"id":"bd-open","status":"open"}]'; exit 0 ;;
+  'show bd-closed --json') printf '%s\n' '[{"id":"bd-closed","status":"closed"}]'; exit 0 ;;
+  'show bd-slow --json') sleep 5; printf '%s\n' '[{"id":"bd-slow","status":"open"}]'; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$PATH" fm_beads_status bd-open) && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] || fail "a completed read of an existing bead must return 0, got $rc"
+  [ "$out" = open ] || fail "expected status 'open' for bd-open, got: $out"
+
+  out=$(PATH="$fakebin:$PATH" fm_beads_status bd-gone) && rc=0 || rc=$?
+  [ "$rc" -eq "$FM_BEADS_STATUS_RC_ABSENT" ] \
+    || fail "an absent bead must return FM_BEADS_STATUS_RC_ABSENT, got $rc"
+  [ -z "$out" ] || fail "an absent bead must print nothing, got: $out"
+
+  out=$(PATH="$fakebin:$PATH" FM_BEADS_STATUS_TIMEOUT=1 fm_beads_status bd-slow) && rc=0 || rc=$?
+  [ "$rc" -eq "$FM_BEADS_STATUS_RC_UNREADABLE" ] \
+    || fail "a read that hit its bound must return FM_BEADS_STATUS_RC_UNREADABLE, got $rc"
+  [ -z "$out" ] || fail "a read that hit its bound must print nothing, got: $out"
+
+  PATH="$fakebin:$PATH" fm_beads_is_closed bd-closed \
+    || fail "fm_beads_is_closed must be true for a bead the store reports closed"
+  PATH="$fakebin:$PATH" fm_beads_is_closed bd-open \
+    && fail "fm_beads_is_closed must be false for an open bead"
+  PATH="$fakebin:$PATH" fm_beads_is_closed bd-gone \
+    && fail "fm_beads_is_closed must be false for an absent bead"
+  PATH="$fakebin:$PATH" FM_BEADS_STATUS_TIMEOUT=1 fm_beads_is_closed bd-slow \
+    && fail "fm_beads_is_closed must fail open (not closed) when the read never answered"
+  pass "fm_beads_status separates a completed read, an absent bead, and an unanswered read"
+}
+
 # Run all tests
 test_beads_backend_value
 test_beads_backend_available
@@ -167,5 +238,7 @@ test_backend_value_whitespace
 test_beads_fleet_label
 test_beads_resolve_or_create_mints_when_absent
 test_beads_resolve_or_create_reuses_existing
+test_lib_sources_without_its_siblings
+test_beads_status_read_outcomes
 
 echo "ok - all beads backend tests passed"
