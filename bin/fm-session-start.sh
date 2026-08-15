@@ -243,7 +243,7 @@ done
 # The ordered stage list is the contract behind the truncation banner: the child
 # names the stage it is entering, and the parent reports every stage at or after
 # that one as never emitted. Keep it in the exact order the digest prints.
-SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions read-once fleet-state network-checks persona context next-step'
+SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions read-once fleet-state network-checks persona context parlay next-step'
 
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${FM_SESSION_START_STAGE_FILE:-}" ] || return 0
@@ -623,6 +623,35 @@ print_status_tail() {
   done < <(tail -n "$STATUS_TAIL" "$status")
 }
 
+# print_parlay_section: surface parlay agents held for captain action.
+# Skips silently when the parlay binary is absent.
+# Surfaces only HOLD lines with state=needs-decision, blocked, or failed;
+# ignores done, unknown, no-launch-spec, and would-close lines.
+print_parlay_section() {
+  local sweep held count line
+  command -v parlay >/dev/null 2>&1 || return 0
+  section "PARLAY"
+  sweep=$(parlay sweep 2>/dev/null) || sweep=
+  held=$(printf '%s\n' "$sweep" | grep -E '^HOLD[[:space:]].*state=(needs-decision|blocked|failed)' || true)
+  count=0
+  [ -n "$held" ] && count=$(printf '%s\n' "$held" | grep -c .)
+  if [ "$count" -eq 0 ]; then
+    printf 'parlay: none held for captain action\n'
+    return
+  fi
+  printf 'parlay: %s agent(s) held for captain action\n' "$count"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if [ "${#line}" -gt 80 ]; then
+      printf '%s\n' "${line:0:80}"
+    else
+      printf '%s\n' "$line"
+    fi
+  done <<EOF
+$held
+EOF
+}
+
 hash_file() {
   local file=$1
   [ -f "$file" ] || return 1
@@ -922,6 +951,12 @@ print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
 print_file_or_absent "$DATA/captain.md" "data/captain.md"
 print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
 print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
+
+# --- 9a. parlay sweep --------------------------------------------------
+# Read-only parlay sweep surfacing captain-parked agents. Skips silently
+# when the parlay binary is absent.
+stage parlay
+print_parlay_section
 
 # --- 10. closing reminder -----------------------------------------------
 stage next-step
