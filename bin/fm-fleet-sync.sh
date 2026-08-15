@@ -37,6 +37,9 @@ PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-project-dir-lib.sh
 . "$SCRIPT_DIR/fm-project-dir-lib.sh"
+# Inert unless FM_TIMING_LOG names a file; only the deferred network stage sets it.
+# shellcheck source=bin/fm-timing-lib.sh
+. "$SCRIPT_DIR/fm-timing-lib.sh"
 FM_LOCK_LOG_PREFIX=fleet-sync
 "$FM_ROOT/bin/fm-guard.sh" || true
 
@@ -401,5 +404,10 @@ fi
 for proj in "$PROJECTS"/*; do
   [ -e "$proj" ] || continue
   [ -d "$proj" ] || continue
+  # Per-clone elapsed, so a fleet refresh that runs long names WHICH clone cost
+  # the time instead of only its total. Recording is a no-op unless the deferred
+  # network stage asked for it.
+  __fm_timing_stamp=$(fm_timing_now_ms)
   sync_project "$proj"
+  fm_timing_record clone sync "$__fm_timing_stamp" "$(basename "$proj")"
 done

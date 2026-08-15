@@ -39,10 +39,6 @@
       "target": "docs/documentation-audiences.md"
     },
     {
-      "source": ".no-mistakes.yaml",
-      "target": "docs/documentation-audiences.md"
-    },
-    {
       "source": "CONTRIBUTING.md",
       "target": "docs/documentation-audiences.md"
     },
@@ -217,12 +213,24 @@
       "audience": "public-product"
     },
     {
+      "path": "VISION.md",
+      "audience": "public-product"
+    },
+    {
+      "path": "docs/agent-control.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/architecture.md",
       "audience": "maintainer-architecture"
     },
     {
       "path": "docs/arm-pretool-check.md",
       "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/beads-sync-topology.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/calm-mode-feasibility.md",

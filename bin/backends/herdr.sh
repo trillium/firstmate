@@ -3160,6 +3160,47 @@ fm_backend_herdr_busy_state() {  # <target>
     "$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")"
 }
 
+# fm_backend_herdr_pane_focus_state: read-only current human-focus of <target>'s
+# pane. Herdr exposes focus as a per-pane boolean (`.result.pane.focused`) in its
+# socket API; there is no queryable last-focus timestamp, so callers that need a
+# recency window reconstruct one themselves from repeated reads of this signal.
+# The live herdr 0.8.0 `pane get <pane_id>` reply carries `.result.pane` as an
+# object with `focused` (bool) alongside pane_id/tab_id/workspace_id/agent_status.
+# Returns FOUR distinguishable outcomes so the caller can tell a build that
+# structurally cannot report pane focus from one whose focus query merely failed:
+#   focused     - `.result.pane.focused` == true (a human is watching)
+#   unfocused   - `.result.pane.focused` == false
+#   unsupported - `.result.pane` parses as an object but has no `focused` key
+#                 (a herdr build that never exposes pane focus); the caller treats
+#                 this like a focus-unaware backend and does NOT err toward safety,
+#                 so a focus-less build can never permanently wedge the reap
+#   unknown     - any transient/unreadable failure (CLI error, malformed JSON,
+#                 absent `.result.pane`, non-bool `focused`); the caller errs
+#                 toward NOT reaping a possibly-watched, focus-capable pane
+# `has("focused")` (not `// empty`) distinguishes a structurally absent key from a
+# literal `false`, which `//` would collapse into the unknown branch. Uses
+# `parse_target` (not `target_ready`) deliberately: this must never start a server
+# or otherwise mutate herdr state - a missing server is just an unreadable focus
+# (`unknown`), never something to spin up.
+fm_backend_herdr_pane_focus_state() {  # <target> -> focused|unfocused|unsupported|unknown
+  local out focused
+  fm_backend_herdr_parse_target "$1" || { printf 'unknown'; return 0; }
+  out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane get "$FM_BACKEND_HERDR_PANE" 2>/dev/null) \
+    || { printf 'unknown'; return 0; }
+  focused=$(printf '%s' "$out" | jq -r '
+    if (.result.pane | type) == "object" then
+      if (.result.pane | has("focused")) then (.result.pane.focused | tostring)
+      else "unsupported" end
+    else "unknown" end
+  ' 2>/dev/null) || { printf 'unknown'; return 0; }
+  case "$focused" in
+    true)        printf 'focused' ;;
+    false)       printf 'unfocused' ;;
+    unsupported) printf 'unsupported' ;;
+    *)           printf 'unknown' ;;
+  esac
+}
+
 # fm_backend_herdr_wait_for_working: poll <session>:<pane_id>'s NATIVE
 # agent-state (agent get) up to <polls> times spread evenly across
 # <budget-seconds>, returning on stdout the STRONGEST signal observed:

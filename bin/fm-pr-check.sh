@@ -26,6 +26,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -57,6 +59,16 @@ fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || 
   echo "error: pending PR poll retirement could not be validated" >&2
   exit 1
 }
+
+# Advisory: warn when a GitHub PR is not in the captain's fork namespace.
+# Scoped to GitHub because a GitLab merge-request project path never contains
+# "trillium/", so an unscoped check would false-warn on every GitLab MR.
+if [ "$PROVIDER" = github ]; then
+  case "$PROJECT_PATH" in
+    trillium/*) ;;
+    *) echo "WARNING: PR URL does not appear to be in the captain's fork (trillium/); escalate before merging" >&2 ;;
+  esac
+fi
 
 # Refuse to arm a GitLab watch with no glab on PATH. The poll is silent on
 # every error by design, so a missing CLI would be indistinguishable from a
@@ -93,9 +105,15 @@ if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/d
 fi
 
 META_TMP=
+META_LOCK=
+META_LOCK_HELD=0
 pr_check_cleanup() {
   fm_pr_poll_cleanup
   [ -z "$META_TMP" ] || rm -f -- "$META_TMP"
+  if [ "$META_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$META_LOCK" || true
+    META_LOCK_HELD=0
+  fi
 }
 trap pr_check_cleanup EXIT
 trap 'exit 1' HUP INT TERM
@@ -104,6 +122,11 @@ if [ "$POLL_ARMING_BLOCKED" -eq 0 ]; then
     || { echo "error: could not prepare PR poll" >&2; exit 1; }
 fi
 
+META_LOCK=$(fm_meta_lock_path "$META") || exit 1
+fm_lock_acquire_wait "$META_LOCK"
+META_LOCK_HELD=1
+[ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
+  || { echo "error: task metadata is unavailable" >&2; exit 1; }
 META_DEVICE=$(fm_pr_file_device "$META") || exit 1
 STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
 [ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
@@ -130,6 +153,8 @@ fm_pr_metadata_identity_parse "$META" || exit 1
 [ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
   && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
   && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
+fm_lock_release "$META_LOCK"
+META_LOCK_HELD=0
 
 if [ "$POLL_ARMING_BLOCKED" -ne 0 ]; then
   echo "error: merge poll NOT armed for $ID: the PR check migration is blocked; pr= metadata was recorded, so re-arm with bin/fm-watch-arm.sh once that migration is repaired" >&2

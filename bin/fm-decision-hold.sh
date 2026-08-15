@@ -60,6 +60,19 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+
+DECISION_META_LOCK=
+DECISION_META_LOCK_HELD=0
+decision_hold_cleanup() {
+  if [ "$DECISION_META_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$DECISION_META_LOCK" || true
+    DECISION_META_LOCK_HELD=0
+  fi
+}
+trap decision_hold_cleanup EXIT
 
 beads_backend_active() {
   [ "$(fm_backlog_backend_value "$FM_HOME/config")" = beads ]
@@ -590,6 +603,8 @@ EOF
     if [ "$(meta_value "$meta" decisions_reviewed)" != 1 ] || [ "$previous" != "$keys" ]; then
       printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$meta"
     fi
+    fm_lock_release "$DECISION_META_LOCK"
+    DECISION_META_LOCK_HELD=0
 
     # Transfer any still-open status decision to its durable backlog owner so the
     # live status fold does not duplicate the same Captain's Call item.

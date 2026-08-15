@@ -32,6 +32,8 @@ test_buried_decision_still_surfaces() {
   grep -F 'OPEN DECISIONS' "$out" >/dev/null || fail "buried decision produced no OPEN DECISIONS section"
   grep -F 'task1' "$out" | grep -F '[key=api-shape]' | grep -F 'pick REST or RPC' >/dev/null \
     || fail "buried needs-decision was not surfaced with its task, key, and note"
+  grep -F "close one by answering it: bin/fm-send.sh <task> --resolve-key <key>" "$out" >/dev/null \
+    || fail "open section is missing the answerer-closes hint"
   pass "a needs-decision buried under later routine/other-key lines still reports as open"
 }
 
@@ -220,13 +222,52 @@ test_status_symlink_is_not_followed() {
   pass "the fleet-wide decision scan does not follow status symlinks"
 }
 
+# The per-item cut now comes from bin/fm-line-cap-lib.sh, shared with the
+# session-start digest's status tails so one truncation marker means the same
+# thing wherever an agent meets it. This pins the drain's own end of that
+# contract: the lede survives, the marker appears, and the item still fits the
+# section's per-item budget including the newline it is charged for.
+test_over_long_decision_note_is_capped_with_a_marker() {
+  local dir state out line longest
+  dir=$(make_case long-note)
+  state="$dir/state"
+  out="$dir/drain.out"
+  {
+    printf 'needs-decision [key=api-shape]: pick REST or RPC'
+    awk 'BEGIN { while (i++ < 200) printf " and-then-some" }'
+    printf '\n'
+  } > "$state/task-long.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on an over-long decision note"
+
+  line=$(grep -F 'task-long' "$out")
+  case "$line" in
+    'task-long [key=api-shape] needs-decision: pick REST or RPC'*' [truncated]') : ;;
+    *) fail "an over-long decision note was not capped with its lede intact: $line" ;;
+  esac
+  longest=${#line}
+  [ "$longest" -le 219 ] || fail "a capped decision item ran $longest characters past its per-item budget"
+
+  printf 'needs-decision [key=short]: brief enough to keep whole\n' > "$state/task-short.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain failed on a short decision note"
+  grep -F 'task-short [key=short] needs-decision: brief enough to keep whole' "$out" >/dev/null \
+    || fail "a decision note already under the cap was altered"
+  if grep -F 'brief enough to keep whole [truncated]' "$out" >/dev/null; then
+    fail "a decision note already under the cap was marked truncated"
+  fi
+
+  pass "an over-long open decision is cut to its per-item budget with the shared truncation marker"
+}
+
 test_buried_decision_still_surfaces
+test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
 test_correlated_resolution_closes_it
 test_correlated_resolution_closes_it_in_either_token_order
 test_correlated_needs_decision_still_opens
 test_correlated_resolution_without_a_key_closes_default
 test_later_unrelated_terminal_line_does_not_close_it
+test_reserved_key_namespace_is_owned_by_its_library
 test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake
 test_buried_decision_surfaces_on_the_empty_queue_fast_path

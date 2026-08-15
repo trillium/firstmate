@@ -28,6 +28,7 @@ The producing PR and Relay helpers own the fields they append, `bin/fm-classify-
 Wake, watcher, away-mode, and Relay-specific state mechanics remain with their named scripts and reference sections rather than being duplicated into one exhaustive state tree here.
 
 `bin/fm-session-start.sh`'s header is the single owner of session-start ordering, composed commands, digest contents, and the digest's startup mechanism.
+`bin/fm-startup-network.sh`'s header owns the deferred network stage that keeps every external-network call off that digest's blocking path, including its state files and the safety argument for running them later.
 `docs/sessionstart-nudge.md` owns the native session-open adapter tiers that run or nudge the digest command, and the source routing between them.
 `AGENTS.md` retains the run-once and read-once operator rules, lock-refusal safety, installation consent, and direct-report recovery boundaries because those facts apply at every session start.
 Ordinary dead-direct-report recovery is owned by `stuck-crewmate-recovery`, while persistent-secondmate recovery is owned by `secondmate-provisioning`.
@@ -47,12 +48,13 @@ When the default backend is selected and compatible `tasks-axi` is on `PATH`, fi
 Secondmate handoffs are separate and unconditional for the tasks-axi backend: `fm-backlog-handoff.sh` keeps only its own fleet-level validation and always delegates the item move to `tasks-axi mv`, the single owner of the backlog format for tasks-axi.
 It moves in-scope `## Queued` items only and refuses `## In flight` and historical `## Done` records, which stay with their home for pruning or archiving.
 Handoff item bodies must use at least two leading spaces, and the helper refuses a selected item with a single-space or tab-indented continuation rather than risk orphaning it.
-Handoff with the beads backend is not yet supported and requires a different mechanism; secondmates using the beads backend remain without handoff support until that mechanism is implemented.
+Automated cross-home handoff into a beads-backed secondmate is deliberately deferred (beads-authority migration Stage 7), not merely unimplemented: a home's beads are scoped by the shared `fleet:firstmate` label, which is identical across every home, so no per-home owning key exists to re-own a moved bead without a cross-cutting change to the Stage 1/2 listing queries.
+This does not restrict running the main home on beads: main-home-on-beads with secondmates on tasks-axi or manual is fully supported, and only the automated cross-home backlog transfer is unavailable when a beads home is the handoff destination; route such work directly instead.
 Because bootstrap requires `tasks-axi` on `PATH` on every profile, that delegation works fleet-wide, and the `config/backlog-backend=manual` knob governs firstmate's own hand-editing of its backlog, not this validated helper.
 Compatible means the installed build passes the shared version and feature probe owned by [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh), including the atomic multi-ID move required by handoff delegation.
 Bootstrap requires compatible `tasks-axi` on every profile; see "Toolchain" below for missing-tool reporting and silent default-backend behavior.
 Set the local, gitignored `config/backlog-backend` file to `beads` to use the beads federated `task` store as the queue source instead of `data/backlog.md`.
-Session-start's digest mirrors `data/backlog.md`'s `## In flight`/`## Queued` split with two beads-sourced sections, both scoped by the firstmate-fleet label below: **In flight** is `task list --label <label> --status in_progress,blocked`, and **Queued** is `task list --label <label> --ready` (bd's dependency-derived readiness with no manual tagging).
+Session-start's digest mirrors `data/backlog.md`'s `## In flight`/`## Queued` split with two beads-sourced sections, both scoped by the firstmate-fleet label below: **In flight** is `task list --label <label> --status in_progress,blocked`, and **Queued** is `task ready --label <label>` (bd's dependency-derived, blocker-aware readiness with no manual tagging, priority-ordered by `bd ready`'s default `--sort priority` so the highest-priority claimable work leads).
 If either read fails, the whole listing falls back to the title-line rendering of `data/backlog.md` rather than printing a partial digest.
 Beads requires the `task` CLI on `PATH` and access to the active beads store.
 Bootstrap validates the beads backend and reports a `MISSING:` line if the CLI is absent or the store is unreachable and no fresh local mirror covers the gap, or a `DEGRADED:` line naming the mirror's timestamp when one does; see "Beads resilience layer" below.
@@ -60,11 +62,42 @@ Set the local, gitignored `config/backlog-backend` file to `manual` to force man
 Absent or `tasks-axi` selects the default tasks-axi backend.
 The file format is unchanged in tasks-axi and manual modes; both produce the same `## In flight`, `## Queued`, and `## Done` sections in `data/backlog.md`.
 The beads backend does not use `data/backlog.md`; all backlog state lives in the beads store and is queried dynamically at session start.
+A home with an existing `data/backlog.md` queue migrates it once with [`bin/fm-backlog-import-beads.sh`](../bin/fm-backlog-import-beads.sh) (beads-authority migration Stage 6) before flipping the backend, so the live queue is not lost; that script's `--help` is the single owner of its mapping and flags.
+The operator sequence is: (1) run `bin/fm-backlog-import-beads.sh` for a dry-run preview; (2) run `bin/fm-backlog-import-beads.sh --apply` to create one bead per `## In flight` (status `in_progress`) and `## Queued` (status `open`) item, carrying titles, full bodies, and priorities, mapping captain-held threads to beads-native human gates, and skipping `## Done`; then (3) set `config/backlog-backend` to `beads`.
+The importer is idempotent and fails closed if the store is unreachable, so a re-run after a partial failure converges without duplicates; it never flips the backend for you.
 Under the beads backend, firstmate's own dispatched-work beads carry a firstmate-fleet label, `fleet:firstmate` by default (overridable only for test fixtures via `FM_BEADS_FLEET_LABEL`), so a `task list --label <that label>` call scopes to firstmate's fleet instead of surfacing the shared federated store's full cross-project set; `bin/fm-decision-hold.sh`'s beads-native captain-hold anchor (see [`decision-hold-lifecycle.md`](decision-hold-lifecycle.md)) also creates a bead with that label, alongside `captain-hold`, `human`, and its `hold:<id>` identity labels.
 `bin/fm-tasks-axi-lib.sh`'s `fm_beads_fleet_label` is the single owner of that label; read it from there rather than hardcoding it.
 As of Stage 3 (beads-authority migration), `fm-spawn.sh` mints or resolves that labeled bead for every non-secondmate spawn via `fm_beads_fleet_label`'s sibling helper `fm_beads_resolve_or_create`, so bead-linking under this backend is automatic rather than requiring an explicit `--beads` flag; see AGENTS.md section 7.
+Bead capture now happens at intake rather than only at dispatch: `fm-brief.sh` opens that same labeled bead (via the same idempotent helper) the moment a task's brief is scaffolded, so a task known but not yet spawned already has an open bead, and the spawn-time resolve above returns it rather than minting a second one.
+On the completion side, under the beads backend a task whose linked bead is closed is reconciled as complete by `bin/fm-crew-state.sh` (and therefore by the heartbeat/fleet review that reads it), authoritative over a stale status-event tail, while a still-open bead with a live endpoint stays governed by the existing pane/run-step logic so live work is never marked done prematurely.
+Because `fm-ledger.sh`'s drop-recovery can close a claimed bead that went quiet WITHOUT landing, a closed bead is treated as completion only when the task also has no open decision and no unlanded (uncommitted or unpushed) work; otherwise the read falls through to the existing logic rather than reporting done.
+That unlanded probe is push-based and fails closed, so the signal is inert wherever landing is not a push - a `local-only` task worktree has no remote and always reads as unlanded - and inert again whenever git itself refuses the probe; in each of those cases the task simply keeps its prior pane/run-step reading.
+The `fm-crew-state.sh` header owns the exact rule and `fm_beads_is_closed` in `bin/fm-tasks-axi-lib.sh` owns the closed-status check.
 The structured fleet snapshot (`bin/fm-fleet-snapshot.sh --json`), Bearings (`bin/fm-bearings-snapshot.sh`), and session-start's compact digest above all read this fleet's in-flight/queued beads, scoped by that label, when the beads backend is selected; with any other backend their output is unchanged.
 That beads-sourced view covers only status open/in_progress/blocked beads mapped to `records[]` state `queued`/`in_flight`; per-bead dependency graphs and correlation with local `state/*.meta` remain unwired, so `blocked_by_ids` is always empty and `requires_child_metadata` is always false for a beads-sourced record. A record carrying the `captain-hold` label is the exception: its `hold_kind`, `hold_reason`, `current_role`, and `captain_actionable` are populated from the anchor's own labels and `metadata.hold_reason` (see [`decision-hold-lifecycle.md`](decision-hold-lifecycle.md)); every other beads-sourced record leaves those fields null/false.
+
+### Beads store provisioning and sync (state/.beads-sync-last)
+
+Store resolution is the `task` CLI's job, not firstmate's: the federation wrapper pins `BEADS_DIR` before executing `bd`, so every home on one machine shares one store and a home with no local `.beads/` directory is not evidence of a missing store.
+Provisioning is therefore per-machine, and local secondmate homes need none of it.
+The gap is a machine that has never run beads, typically a remote secondmate host, where the wrapper or the store itself is absent and every read fails with "no beads database found"; [`docs/remote-secondmates.md`](remote-secondmates.md) owns that operator sequence and [`bin/fm-remote-doctor.sh`](../bin/fm-remote-doctor.sh)'s `beads-store` check owns the repair.
+
+Provisioning uses `bd bootstrap`, the non-destructive verb, and never `bd init --force`.
+`bin/fm-tasks-axi-lib.sh`'s `fm_beads_bootstrap_store` additionally refuses to bootstrap whenever the store already answers a read, because bootstrap's own detection inspects the `.beads/` directory and reports a healthy Dolt server-mode store as absent, which would otherwise create a fresh empty database beside the live one.
+
+Routine sync is a mutating sweep in bootstrap's deferred network phase (beads backend only, real runs only), so it never sits on the blocking path of session start and a slow remote cannot delay a session.
+It runs `task dolt commit`, then `task dolt push`, then `task dolt pull`, in that order: commit first because bd's `--dolt-auto-commit` policy defaults to `off` and leaves writes in the Dolt working set, and push before pull because getting this home's own commits off the machine is the gap being closed.
+Each step is bounded by `FM_BEADS_SYNC_TIMEOUT` (default 45 seconds) and the whole sweep by `FM_BEADS_SYNC_BUDGET`, which the sweep sets to a third of the network stage's own `FM_STARTUP_NETWORK_TIMEOUT`; a step with no budget left is reported skipped rather than started.
+That budget starts before the sweep's first command, and the store-reachability read and the Dolt remote listing that precede the three steps run under it too, so a Dolt server that accepts a connection and never answers cannot spend more than the budget without a single bounded step having run.
+That sweep-wide bound is why the per-step bounds cannot sum past the stage budget and starve the other network sweeps, and it is also why beads sync runs last among them.
+The sweep runs at most once per `FM_BEADS_SYNC_MIN_INTERVAL` (default 900 seconds), stamped at `state/.beads-sync-last` when the sweep is attempted rather than when it succeeds, so a broken remote backs off instead of being retried by every session that starts.
+A store that does not answer skips the sweep entirely without stamping, because that outage is already reported by the local phase and syncing against it can accomplish nothing; sync then resumes on the first session after the store recovers.
+Sync is best-effort throughout: a failing step is reported as a `BEADS_SYNC:` line, the remaining steps still run, and bootstrap itself still succeeds, because an unreachable remote must never block dispatch.
+Best-effort never means silent, though. `task dolt commit` exits 0 whether it committed or found a clean working set, so any non-zero exit is reported as a commit failure on the exit status alone rather than on parsed vendor wording, and a push line can never announce success over writes that are still stranded uncommitted.
+Likewise, a remote listing that cannot be read at all is reported as its own distinct skip rather than as the no-remote line below, since a home that is silently not syncing to a configured remote is the opposite of a home that has none.
+
+Firstmate configures no Dolt remote, because adding one publishes the fleet's task store to that destination and the destination is the captain's decision; with none configured the sweep reports that the store is single-machine only and does nothing else.
+[`docs/beads-sync-topology.md`](beads-sync-topology.md) is the owner of that recommendation, its trade-offs, and the one question the captain answers to enable off-machine durability.
 
 ### Beads resilience layer (state/.beads-mirror-*.json, state/.beads-write-queue)
 
@@ -72,7 +105,8 @@ That beads-sourced view covers only status open/in_progress/blocked beads mapped
 On the read side, a successful beads read that firstmate already performs for another reason - session-start's compact listing, `bin/fm-fleet-snapshot.sh` - opportunistically writes its raw output to a local mirror file (`state/.beads-mirror-<view>.json`, one per read shape) with a timestamp; no code path polls beads solely to refresh a mirror, the same discipline as `state/.last-watcher-beat`.
 When a beads read then fails, the caller falls back to the mirror only if it is fresh (`FM_BEADS_MIRROR_MAX_AGE`, default 900 seconds / 15 minutes) and labels every line sourced from it as a stale mirror, naming the store-unreachable-since timestamp; stale mirror data is never presented as current.
 Bootstrap applies the same freshness check across every known view (`fm_beads_mirror_freshest_iso`) to decide its own diagnostic: `DEGRADED:` when a fresh mirror exists, escalating to `MISSING:` only when both the live store and every mirror are unusable (`bootstrap-diagnostics` owns the captain-facing handling of both lines).
-On the write side, a beads write that already tolerated failure by warning and continuing (`fm-bead-stamp.sh`'s dispatch stamp, `fm-teardown.sh`'s `close_linked_bead`) instead enqueues the failed write to a durable FIFO log (`state/.beads-write-queue`, lock-protected) on any write failure, not just an unreachable store; the queue is availability, not a second write authority, and replays each queued write strictly in order, reporting whatever `task` itself returns, with one narrow exception: a queued `close` whose replay fails is checked against the live store (`task show <id> --json`), and a bead already reported absent or closed is reconciled instead of re-queued forever.
+On the write side, a beads write that already tolerated failure by warning and continuing (`fm-bead-stamp.sh`'s dispatch stamp, `fm-teardown.sh`'s `close_linked_bead`) instead enqueues the failed write to a durable FIFO log (`state/.beads-write-queue`, lock-protected) on any write failure, not just an unreachable store; the queue is availability, not a second write authority, and replays each queued write strictly in order, reporting whatever `task` itself returns, with one narrow exception: a queued `close` whose replay fails is checked against the live store through `fm_beads_status` (`bin/fm-tasks-axi-lib.sh`, the single owner of that bounded single-bead status read), and a bead the store answered as already closed, or confirmed absent against a reachable store, is reconciled instead of re-queued forever.
+Only a read that actually completed reconciles: a timeout, a missing tool, or a store that could not be reached to confirm the bead is gone leaves the close queued rather than dropping a pending write on no evidence.
 Bootstrap's mutating sweep (beads backend only, real runs only) replays the queue on every session-start bootstrap, so an outage recovers without a new polling loop.
 
 ## Runtime backend (config/backend / FM_BACKEND)
@@ -157,25 +191,17 @@ A Secondmate on a remote route is covered the same way: the primary resolves and
 The presence flag is session-scoped enablement, so it transfers at launch and is left unchanged by live convergence into a running home.
 See [`trace-context.md`](trace-context.md) for carrier semantics, supported routes, the manual fleet-restart requirement, the session boundary, and safety limits; `bin/fm-trace-context-lib.sh`'s header owns the exact mechanics, and [`verification/trace-context.md`](verification/trace-context.md) records repeatable evidence.
 
-## Gate defaults (.no-mistakes.yaml)
-
-The tracked `.no-mistakes.yaml` keeps test evidence outside the repo and pins `commands.lint` to `bin/fm-lint.sh` so local lint matches CI.
-That evidence policy is specific to the firstmate repo: target projects may legitimately commit `.no-mistakes/evidence/` from their own no-mistakes pipeline, but firstmate keeps `.no-mistakes/` local and CI rejects tracked entries under that path.
-It does not set `commands.test` to a complete `tests/*.test.sh` walk.
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for the firstmate-specific local test policy and entry points.
-Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](fm-test-portable-shards.md); [herdr-backend.md](herdr-backend.md#destructive-lab-safety) owns the real-Herdr lane's isolation boundary, and [runtime-backends.md](verification/runtime-backends.md#herdr) owns active evidence.
-
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 
 Domain-local preferences for one captain's fleet live locally in each home's `data/captain.md`; it is gitignored and printed in the session-start context digest after `data/projects.md` and optional `data/secondmates.md`.
-Before changing it, inspect the current file and rewrite or prune the matching bullet in place; add a new bullet only for a genuinely new durable preference.
+Before changing it, inspect the current file and curate the matching bullet in place under the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) tiering and archive contract; add a new bullet only for a genuinely new durable preference.
 Shared captain preferences that apply across secondmate domains live only in the primary home's optional `data/captain-shared.md`.
 `secondmate-provisioning` owns its propagation contract, including the required header, read-only secondmate copies, quarantine diagnostics, and the rollout rule that existing homes trim `data/captain.md` by hand after first propagation rather than deleting private content automatically.
 
 ## Operational learnings (data/learnings.md)
 
 Fleet-local operational facts and gotchas live locally in `data/learnings.md`; it is gitignored and printed after the captain-preference files in the session-start context digest.
-The file is created lazily on first learning and follows the same dated, evidence-backed, curated style as `data/captain.md`: inspect the current file first, then rewrite or prune stale entries instead of appending forever.
+The file is created lazily on first learning and follows the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) aging-tier and cold-archive contract: inspect the current file first and curate it instead of appending forever.
 There is no shared learnings file by captain decision.
 
 ## Startup memory budget (config/startup-memory-budget)
@@ -189,7 +215,7 @@ Malformed, multi-line, symlinked, hardlinked, special, or otherwise unsafe value
 Use `bin/fm-startup-memory-budget.sh read` to validate and print the effective value, or `bin/fm-startup-memory-budget.sh report` to account for the three files.
 The stable local estimate is `ceil(UTF-8 bytes / 3)` per file, a conservative portable approximation rather than a provider-exact tokenizer.
 An inherited `data/captain-shared.md` counts in a secondmate's total but remains primary-owned and read-only there.
-The internal `/stow` skill curates only the editable local files in that case and reports the primary-owned shared file as a concrete exception if it alone exceeds the budget.
+The internal [`/stow` skill](../.agents/skills/stow/SKILL.md) owns curation and its automatic secondmate cascade, which accounts every home against this same per-home allowance separately rather than against a fleet total.
 The helper's header owns exact parsing, publication, and report output mechanics.
 
 ## Secondmate routes (data/secondmates.md)
@@ -201,7 +227,7 @@ A remote route adds `host:` and `root:` before the existing fields and places th
 Use `fm-home-seed.sh validate` to check the complete operational registry contract documented by the command itself.
 The main first mate routes by reading those scopes with judgment; the project list is provisioning data, not exclusive ownership.
 Use `fm-home-seed.sh <id> - {<project>...|--no-projects}` to lease a fresh local firstmate worktree for the secondmate home.
-Use `fm-remote-home-seed.sh <id> <ssh-alias> <remote-root> <remote-home> {<project>...|--no-projects}` to provision a whole home on an SSH-reachable host.
+For remote provisioning, including supplied project origins, follow [Remote second mates](remote-secondmates.md#provision-a-route).
 Use the deliberate `--no-projects` signal only for a firstmate-repo domain that needs no separate project clones.
 It cannot be combined with a project list, and omitting both still fails loudly.
 A project-less seed requires no existing project clones or `data/projects.md` entries in the home, so it refuses a populated-home conversion without changing that home.
@@ -252,8 +278,10 @@ claude, codex, opencode, pi, pi-signed, grok, and kimi are empirically verified 
 muse is verified for crewmate and scout launches ONLY, and `fm-spawn.sh` refuses it for a secondmate, because muse ships no usable hook surface for a primary session's turn-end supervision; [`docs/verification/muse.md`](verification/muse.md) owns that evidence.
 muse also needs a worker-reachable credential before spawning, and the portable fleet path is the `<config>/muse/auth.json` credential stored by `muse login`, because a caller-only `META_API_KEY` does not cross a long-lived backend daemon.
 New harnesses get verified through a supervised trial task before joining the set.
-The verified adapter knowledge - each harness's busy-state source, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
+The verified adapter evidence - each harness's busy-state source, interrupt and exit behavior, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
+The executable interrupt and exit mechanics live in [`bin/fm-control-lib.sh`](../bin/fm-control-lib.sh), and [`docs/agent-control.md`](agent-control.md) owns their lifecycle-control architecture.
 Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
+Pi and pi-signed crew launches explicitly pass `--tui-mode regular` so fullscreen mode cannot rewrite scrollback and bury steers.
 Enabled primary-session turn-end guard integrations are tracked as repo-level hook files and documented in [`docs/turnend-guard.md`](turnend-guard.md).
 Kimi remains outside the primary turn-end guard integrations; [`docs/turnend-guard.md`](turnend-guard.md#compatibility-limits) owns its separate captain-approved crew wake hook.
 Primary-session watcher wake protocols are rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/`](supervision-protocols/).
@@ -267,6 +295,7 @@ The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort
 A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
+Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; for a local route, an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
 Remote secondmate routes accept verified harness adapters only and reject raw launch commands.
@@ -370,14 +399,14 @@ An absent or incompatible `lavish-axi` reports `MISSING: lavish-axi (install: np
 An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a profile array without a compatible binary.
 Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
 In a read-only session that did not get the fleet lock, the same line is advisory and omits the checkout command.
-The locked session-start bootstrap step also runs a best-effort project clone refresh through `fm-fleet-sync.sh`.
+The locked session-start deferred network stage runs bootstrap's best-effort project clone refresh through `fm-fleet-sync.sh`.
 It emits `FLEET_SYNC:` for skipped refreshes that may matter, recovered self-heals, and `STUCK:` alarms.
 Normal completed runs keep local-only and no-origin skips silent.
 If bootstrap kills a timed-out refresh, it replays any completed `fm-fleet-sync.sh` output before the aggregate timeout skip so no finished result is lost.
 A killed refresh (or a teardown process kill) can leave an orphaned `.git/packed-refs.lock` in a clone, which makes the next refresh's fetch fail with Git's `Unable to create '...packed-refs.lock': File exists`.
 On that signature only, `fm-fleet-sync.sh` retries the fetch with a bounded wait for the lock to self-clear, then removes the lock and retries once more only when it can prove the lock stale, exactly like the `fm-teardown.sh` `index.lock` recovery.
 It never removes a live lock, leaves any other failure shape untouched, and prints every wait, retry, and removal to stderr plus a one-line `recovered:` summary to stdout on success so that this session-start relay still surfaces the recovery.
-The locked session-start bootstrap step also runs the guarded secondmate sync for recorded live homes, then propagates declared inherited local material into each validated live home.
+The same deferred network stage runs bootstrap's guarded secondmate sync for recorded live homes, then propagates declared inherited local material into each validated live home.
 Local routes use direct guarded filesystem operations, while remote routes delegate sync and allowlisted transfer through their configured SSH host without probing any unconfigured fleet.
 It emits `SECONDMATE_SYNC:` only when a home was skipped for an actionable sync reason, inheritance failed, or a divergent shared captain-preference copy was quarantined.
 When a running home advances and its loaded instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) changed, bootstrap sends the re-read nudge itself through the stable `fm-<id>` selector and reports the exact completed send as `BOOTSTRAP_INFO:`.
@@ -515,10 +544,16 @@ Each registered source has its own child process blocking on that source, and th
 In supported steady state, a home with no registered source runs nothing, generates no state, and keeps its ordinary cadence.
 
 Whether a captured result ends its source is adapter knowledge, never the runner's.
-After publishing a result the runner calls `bin/fm-procevent-<adapter>.sh terminal <result-file>` and retires the registration on exit 0 alone, dropping only the exact registration generation captured by its claim and releasing that claim only after removal succeeds under one source boundary; a missing command, an error, or any other exit keeps the source armed, so an adapter with no notion of ending needs no change.
+After attempting publication the runner calls `bin/fm-procevent-<adapter>.sh terminal <result-file>` and retires the registration on exit 0 alone, dropping only the exact registration generation captured by its claim and releasing that claim only after removal succeeds under one source boundary; a missing command, an error, or any other exit keeps the source armed, so an adapter with no notion of ending needs no change.
 A failed terminal removal stays durably terminal and is completed by ordinary reconciliation without restarting its poll, while a concurrently replaced registration survives and becomes independently runnable after the old claim releases.
 A source that has ended therefore captures at most one terminal result, is never restarted, and leaves no recurring poll work, while explicit `retire` stays the supported and idempotent path afterwards.
 For Lavish that verdict covers an ended session, a missing session, and the final feedback of a `Send & End` review, which the published poll marks with `session_ended` before it returns only empty ended sessions.
+
+Applying a captured result is adapter knowledge too, and some results carry no judgement at all: they must simply be applied idempotently to this home's own durable state.
+Leaving that to a handler means it can silently not happen, so immediately after the terminal check above the runner calls `bin/fm-procevent-<adapter>.sh autohandle <source-id> <sequence> <result-file>` only when this capture's own wake was successfully appended to the durable queue, then lets the adapter apply and acknowledge its own result.
+That call runs strictly after terminal retirement, because a handling adapter re-arms its own next source and retiring afterwards would drop that fresh registration and leave the source silently dead.
+Failed publication skips the call, and exit 0 means the adapter fully applied and acknowledged the result; failed publication, a missing command, an error, or any other exit is not a capture failure but leaves the result unacknowledged and therefore still eligible for re-announcement, so a handler receives it exactly as before and an adapter with no such command needs no change.
+The remote-secondmate reply adapter implements it, so a captured reply reaches its local status mirror and settles its correlated pending-reply expectation without any handler step; the published wake still reaches firstmate, and handling that wake through the adapter again is idempotent.
 
 Ownership is machine-wide per canonical source, because separate homes can share one underlying source store.
 Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `FM_PROCEVENT_CLAIM_ROOT`).
@@ -585,6 +620,12 @@ FM_REMOTE_LAUNCH_CLONE_TIMEOUT=90   # fm-remote-launch.sh-only: seconds allowed 
 FM_REMOTE_LAUNCH_FRAME_DELAY=2   # fm-remote-launch.sh-only: seconds between fire-and-forget input frames sent to start the agent and type its prompt
 FM_SESSION_START_STATUS_TAIL=5   # state/*.status lines printed per task in the session-start digest
 FM_BOOTSTRAP_DETECT_ONLY=0   # internal/read-only session-start mode: skip bootstrap's mutating sweeps and print advisory TANGLE wording
+FM_BOOTSTRAP_NETWORK=all   # internal session-start phase split: all, skip (local steps only), or only (network steps only); see bin/fm-bootstrap.sh
+FM_STARTUP_NETWORK_TIMEOUT=120   # seconds bounding the whole deferred network stage; hitting it prints an actionable NETWORK_CHECKS line
+FM_TASKS_AXI_COMPATIBLE=   # internal one-hop handoff of an already-computed tasks-axi compatibility verdict (0 or 1); consumed when bin/fm-tasks-axi-lib.sh is sourced
+FM_BEADS_SYNC_TIMEOUT=45   # beads backend only: seconds bounding each Dolt sync step, so an unreachable remote cannot stall the sweep
+FM_BEADS_SYNC_BUDGET=40   # beads backend only: seconds bounding the WHOLE sync sweep, probes included, so the per-step bounds cannot sum past the caller's own budget; the bootstrap sweep overrides it to a third of FM_STARTUP_NETWORK_TIMEOUT
+FM_BEADS_SYNC_MIN_INTERVAL=900   # beads backend only: seconds between store sync sweeps, stamped at state/.beads-sync-last on attempt
 FM_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; fm-send.sh overrides it to name the requested message specifically
 FM_POLL=15              # seconds between watcher poll cycles
@@ -597,6 +638,7 @@ FM_PROCEVENT_MAX_OUTPUT_BYTES=1048576   # bound on one captured process-to-event
 FM_PROCEVENT_CLAIM_ROOT=                # machine-wide source claim root; default $XDG_STATE_HOME/firstmate/procevent-claims
 FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh
+FM_BEADS_STATUS_TIMEOUT=4     # seconds allowed per single-bead status read (fm_beads_status) so a wedged store cannot stall the heartbeat; a non-numeric or non-positive value falls back to the default
 FM_TEARDOWN_NM_TIMEOUT=10    # seconds allowed per no-mistakes query or abort inside fm-teardown.sh
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi status cannot be attributed to the current code
 FM_CREW_STATE_BIN=bin/fm-crew-state.sh   # test override for the current-state reader used by working/paused watcher triage
@@ -642,6 +684,7 @@ FM_STALENESS_AUTOCLOSE_SECS=7200          # idle seconds before the watcher recl
 FM_STALENESS_AUTOCLOSE_MAX_RETRIES=5      # consecutive failed reclaim attempts allowed for one stale pane hash before the watcher gives up until the hash next changes
 FM_STALENESS_AUTOCLOSE_RETRY_BASE_SECS=300   # seconds before the first retry after a failed reclaim; doubles per additional failure
 FM_STALENESS_AUTOCLOSE_RETRY_MAX_SECS=3600   # cap on the doubling reclaim-retry backoff
+FM_STALENESS_FOCUS_GRACE_SECS=300        # herdr only: seconds a reap-candidate pane stays protected from the staleness auto-close reclaim after a human last focused it; a currently- or recently-focused pane blocks the reclaim without consuming the retry budget, and an unreadable focus also blocks but only until FM_STALENESS_AUTOCLOSE_MAX_RETRIES consecutive unreadable polls (any readable poll resets the count), after which the unreadable pane is held to the same within-grace recency check as an unfocused one so a dead pane with no fresh focus marker falls through to reap while a pane focused within this window stays blocked even at the bound
 FM_BUSY_TURN_MAX_SECS=3600         # maximum age of a busy pane's latest state/<id>.turn-ended marker, or its state/<id>.meta spawn record before any turn completes, before the same wedge escalation used for a provably-working non-busy stale takes over; inspection-only, never an automatic interrupt or restart
 FM_PAUSE_RESURFACE_SECS=3600       # seconds before an idle declared external wait re-surfaces for a recheck in the watcher or away-mode daemon
 FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added

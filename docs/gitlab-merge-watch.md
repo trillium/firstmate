@@ -159,7 +159,7 @@ $ echo $?
 A GitHub task is unaffected by a missing `glab`:
 
 ```
-$ PATH="$noglab" fm-pr-check.sh e6 https://github.com/kunchenguid/firstmate/pull/750
+$ PATH="$noglab" fm-pr-check.sh e6 https://github.com/trillium/firstmate/pull/750
 armed: state/e6.check.sh
 ```
 

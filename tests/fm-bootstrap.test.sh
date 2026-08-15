@@ -17,6 +17,10 @@
 # Dedicated fleet-sync cases pin the computed bootstrap timeout, explicit
 # override, blank-env defaulting, partial-output relay, and pre-launch timeout
 # scan.
+# Dedicated network-phase cases pin FM_BOOTSTRAP_NETWORK as a true partition of
+# one run into its local and network halves, and the one-hop tasks-axi
+# compatibility handoff that keeps a session start from paying for that verdict
+# twice.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -41,7 +45,7 @@ make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
   fm_fake_exit0 "$fakebin" tmux node chrome-devtools-axi
-  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.45
+  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.46
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
@@ -438,6 +442,248 @@ SH
   pass "bootstrap reconciles the durable beads write queue against a recovered store, with no separate polling loop"
 }
 
+# make_beads_sync_home <case-name> [push_rc] [backend]: build a home on the
+# beads backend plus a fake `task` whose store answers, reports one configured
+# Dolt remote, and logs every call it is given. Prints "<home> <fakebin> <log>".
+make_beads_sync_home() {
+  local case_name=$1 push_rc=${2:-0} backend=${3:-beads} case_dir home fakebin log
+  case_dir="$TMP_ROOT/$case_name"
+  home="$case_dir/home"
+  log="$case_dir/task.log"
+  mkdir -p "$home/config" "$home/state"
+  printf '%s\n' "$backend" > "$home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_real_jq "$fakebin"
+  cat > "$fakebin/task" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$log"
+case "\$*" in
+  'list --limit 1') exit 0 ;;
+  'dolt remote list --json') printf '%s\n' '[{"name":"origin"}]'; exit 0 ;;
+  'dolt commit') exit 0 ;;
+  'dolt push') exit $push_rc ;;
+  'dolt pull') exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  : > "$log"
+  printf '%s %s %s\n' "$home" "$fakebin" "$log"
+}
+
+# count_task_calls <log> <pattern>: how many times the fake task CLI saw a call.
+count_task_calls() {
+  grep -c -F -- "$2" "$1" 2>/dev/null || true
+}
+
+# Test: under the beads backend, the store sync is a routine network-phase sweep
+# that pushes this home's commits off the machine, and its own minimum interval
+# keeps it from running on every single session start.
+test_beads_sync_sweep_runs_and_rate_limits() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-runs)"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BEADS_SYNC: pushed local commits" \
+    "bootstrap did not sync the beads store to its configured remote"
+  assert_grep "dolt push" "$log" "the sync sweep never reached the Dolt remote"
+  assert_present "$home/state/.beads-sync-last" \
+    "the sync sweep left no stamp, so it would run again on the very next session"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$(count_task_calls "$log" 'dolt push')" = 1 ] \
+    || fail "the sync sweep ignored its own minimum interval and synced twice in a row"
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a rate-limited sweep still reported a sync it did not run"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_BEADS_SYNC_MIN_INTERVAL=0 FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$(count_task_calls "$log" 'dolt push')" = 2 ] \
+    || fail "the sync sweep did not run again once its interval had elapsed"
+  pass "bootstrap syncs the beads store on a bounded routine interval, not on every session start"
+}
+
+# Test: the sweep is config-gated. A home on the tasks-axi backend must be
+# byte-for-byte unaffected, even with a task CLI sitting right there on PATH.
+test_beads_sync_sweep_is_gated_on_the_beads_backend() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-gated 0 tasks-axi)"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a tasks-axi home reported a beads sync it should never run"
+  assert_no_grep "dolt" "$log" "a tasks-axi home reached for the Dolt remote"
+  assert_absent "$home/state/.beads-sync-last" \
+    "a tasks-axi home was left beads sync state it does not own"
+  pass "the beads store sync never runs on a home that did not select the beads backend"
+}
+
+# Test: sync is a network sweep, so the local half of bootstrap - the half
+# session start blocks on - never waits for a remote. This is what keeps a slow
+# or unreachable remote off the critical path of every session.
+test_beads_sync_sweep_stays_off_the_blocking_local_phase() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-phase)"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_BOOTSTRAP_NETWORK=skip FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "BEADS_SYNC:" "the blocking local phase ran a network sync"
+  assert_no_grep "dolt" "$log" "the blocking local phase reached for the Dolt remote"
+
+  printf '%s\n' 424242 > "$home/state/.lock"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BEADS_SYNC: pushed local commits" \
+    "the deferred network phase did not run the store sync"
+
+  printf '%s\n' 999999 > "$home/state/.lock"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_BEADS_SYNC_MIN_INTERVAL=0 FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "changed before beads store sync" \
+    "a stale worker synced the store after the fleet lock had changed hands"
+  pass "the beads store sync runs in the deferred network phase, never on session start's blocking path"
+}
+
+# Test: a failing remote is a reported diagnostic, never a stall. Bootstrap still
+# succeeds, and the attempt is stamped so a broken remote backs off instead of
+# being retried by every session that starts.
+test_beads_sync_sweep_failure_is_reported_not_fatal() {
+  local home fakebin log out rc
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-fails 1)"
+
+  # This file runs under `set -u` alone, never errexit, so the status is captured
+  # with `|| rc=$?` rather than by toggling `set -e` around the call. Toggling it
+  # ON here would leave errexit enabled for every test defined after this one,
+  # and the first later command that legitimately exits non-zero would kill the
+  # run mid-file with no failure message.
+  rc=0
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh") || rc=$?
+  expect_code 0 "$rc" "a failing beads sync failed the whole bootstrap run"
+  assert_contains "$out" "BEADS_SYNC: push failed" \
+    "a failing sync was swallowed instead of reported as a diagnostic"
+  assert_present "$home/state/.beads-sync-last" \
+    "a failing sync left no stamp, so every session would retry the broken remote"
+  pass "a failing beads sync is a reported diagnostic that never wedges or fails bootstrap"
+}
+
+# Test: a store that does not answer already has an owner - the local phase
+# reports it as MISSING or DEGRADED against the mirror it fell back to. Syncing
+# against it can accomplish nothing and would only re-report the same outage in
+# a second, more alarming vocabulary pointed at the wrong cause. The cadence
+# stamp must stay unwritten too, so sync resumes on the first session after the
+# store recovers instead of waiting out the whole interval.
+test_beads_sync_sweep_skips_an_unreachable_store() {
+  local home fakebin log out
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-unreachable)"
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+exit 1
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a known store outage was re-reported a second time as a sync diagnostic"
+  assert_no_grep "dolt" "$log" "the sweep reached for the Dolt remote over a store that does not answer"
+  assert_absent "$home/state/.beads-sync-last" \
+    "an unreachable store burned the cadence window, delaying sync past the recovery"
+  pass "the beads sync sweep skips a store outage that the local phase already owns"
+}
+
+# Test: sync runs LAST among the deferred network sweeps and takes only a slice
+# of their shared budget. It is the one sweep whose remote nobody has confirmed
+# is reachable, so running it first, or letting its three steps each take the
+# per-step bound, would let a blackholed remote starve the sweeps that keep the
+# fleet running.
+test_beads_sync_sweep_runs_last_and_within_a_slice_of_the_stage_budget() {
+  local home fakebin log out timing started elapsed
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-budget)"
+  timing="$home/timing.log"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_TIMING_LOG="$timing" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BEADS_SYNC: pushed local commits" "the sweep did not run at all"
+  [ "$(grep -c 'phase' "$timing")" -gt 1 ] || fail "bootstrap recorded no phase timings to order"
+  [ "$(grep -n 'beads-sync' "$timing" | cut -d: -f1)" \
+    -gt "$(grep -n 'fleet-sync' "$timing" | cut -d: -f1)" ] \
+    || fail "the beads sync ran before the project clone refresh it must not starve"
+
+  # A hanging push proves the sweep's own budget comes from the stage budget: a
+  # third of 3s is 1s, well under the 45s per-step bound left at its default.
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+case "$*" in
+  'list --limit 1') exit 0 ;;
+  'dolt remote list --json') printf '%s\n' '[{"name":"origin"}]'; exit 0 ;;
+  'dolt commit') exit 0 ;;
+  'dolt push') sleep 30; exit 0 ;;
+  'dolt pull') exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  started=$(date +%s)
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_BEADS_SYNC_MIN_INTERVAL=0 FM_STARTUP_NETWORK_TIMEOUT=3 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  elapsed=$(( $(date +%s) - started ))
+  assert_contains "$out" "BEADS_SYNC: push failed: timed out after 1s" \
+    "the sweep did not take its bound from the network stage's own budget"
+  [ "$elapsed" -lt 15 ] \
+    || fail "the sweep held the network stage for ${elapsed}s against a 3s stage budget"
+  pass "the beads sync sweep runs last and bounds itself to a slice of the network stage budget"
+}
+
+# Test: the sweep's budget starts before its FIRST command, not before the three
+# steps it names. The store-reachability read runs ahead of every bounded step,
+# so a Dolt server that accepts the connection and then never answers would hold
+# the whole deferred network stage on a probe nobody bounded - starving the
+# secondmate, handoff, and clone-refresh sweeps that share that stage's budget.
+test_beads_sync_sweep_bounds_its_reachability_probe() {
+  local home fakebin log out started elapsed
+  read -r home fakebin log <<< "$(make_beads_sync_home beads-sync-probe)"
+  cat > "$fakebin/task" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "$FM_FAKE_TASK_LOG"
+case "$*" in
+  'list --limit 1') sleep 30; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/task"
+  printf '%s\n' 424242 > "$home/state/.lock"
+
+  started=$(date +%s)
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
+    FM_FAKE_TASK_LOG="$log" FM_STARTUP_NETWORK_TIMEOUT=3 \
+    FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  elapsed=$(( $(date +%s) - started ))
+  [ "$elapsed" -lt 15 ] \
+    || fail "the sweep hung ${elapsed}s on its reachability probe against a 3s stage budget"
+  assert_grep 'list --limit 1' "$log" \
+    "the sweep never ran the reachability probe this case exists to bound"
+  assert_no_grep "dolt" "$log" "the sweep synced against a store that never answered its probe"
+  assert_not_contains "$out" "BEADS_SYNC:" \
+    "a store that never answered was reported as a sync outcome"
+  assert_absent "$home/state/.beads-sync-last" \
+    "a store that never answered burned the cadence window, delaying sync past the recovery"
+  pass "the beads sync sweep bounds the reachability probe that precedes its steps"
+}
+
 test_no_mistakes_min_version() {
   local label version mode case_dir fakebin out missing n
   missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
@@ -519,11 +765,11 @@ test_lavish_axi_min_version() {
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
     esac
   done <<'ROWS'
-minimum lavish-axi version is accepted^0.1.45^empty
-newer lavish-axi patch is accepted^0.1.46^empty
+minimum lavish-axi version is accepted^0.1.46^empty
+newer lavish-axi patch is accepted^0.1.47^empty
 newer lavish-axi minor is accepted^0.2.0^empty
 newer lavish-axi major is accepted^1.0.0^empty
-the patch just below the floor reports an upgrade^0.1.44^missing
+the patch just below the floor reports an upgrade^0.1.45^missing
 much older lavish-axi minor reports an upgrade^0.0.9^missing
 unparseable lavish-axi version reports an upgrade^lavish-axi development build^missing
 ROWS
@@ -1008,6 +1254,204 @@ test_routine_bootstrap_contract_runs_under_system_bash() {
   pass "bootstrap routine contract runs under system /bin/bash"
 }
 
+# FM_BOOTSTRAP_NETWORK splits one bootstrap run into its local and network
+# halves so a session start can compose its digest from the local half alone and
+# run the network half concurrently. The property that has to hold is that the
+# split is a PARTITION: `skip` plus `only` together do exactly what `all` does,
+# with no step dropped and no step run twice.
+test_network_phase_partitions_the_run() {
+  local case_dir fakebin all_out skip_out only_out combined
+  case_dir="$TMP_ROOT/network-phase"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  # Break the two diagnostics that stand for the two halves: a local tool floor
+  # and the network GitHub-auth probe.
+  rm -f "$fakebin/node"
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/gh"
+
+  all_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$all_out" "MISSING: node (install:" "the unsplit run lost its local diagnostic"
+  assert_contains "$all_out" "NEEDS_GH_AUTH" "the unsplit run lost its network diagnostic"
+
+  skip_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=skip "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$skip_out" "MISSING: node (install:" "the local half lost its own diagnostic"
+  assert_not_contains "$skip_out" "NEEDS_GH_AUTH" "the local half still made a network call"
+
+  # The deferred network-only worker is always spawned with the lock PID it
+  # started under (bin/fm-startup-network.sh) so its mutating sweeps can confirm
+  # they still own the fleet lock before touching shared state; model that here
+  # so the sweeps run rather than skipping loudly as an unauthorized stale worker.
+  mkdir -p "$case_dir/home/state"
+  printf '%s\n' 424242 > "$case_dir/home/state/.lock"
+  only_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$only_out" "NEEDS_GH_AUTH" "the network half lost its own diagnostic"
+  assert_not_contains "$only_out" "MISSING: node" "the network half repeated the local half's work"
+
+  combined=$(printf '%s\n%s\n' "$skip_out" "$only_out" | LC_ALL=C sort)
+  [ "$combined" = "$(printf '%s\n' "$all_out" | LC_ALL=C sort)" ] \
+    || fail "skip + only is not the same set of findings as an unsplit run"$'\n'"all:      $all_out"$'\n'"skip:     $skip_out"$'\n'"only:     $only_out"
+
+  # A typo must never silently drop a safety sweep, so anything unrecognized
+  # resolves to the complete run.
+  [ "$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=sikp "$ROOT/bin/fm-bootstrap.sh")" = "$all_out" ] \
+    || fail "an unrecognized FM_BOOTSTRAP_NETWORK value did not fall back to the complete run"
+  pass "bootstrap: FM_BOOTSTRAP_NETWORK partitions one run into local and network halves"
+}
+
+test_network_sweeps_recheck_lock_ownership() {
+  local case_dir fakebin fake_root marker out
+  case_dir="$TMP_ROOT/network-lock-handoff"
+  mkdir -p "$case_dir/home/config" "$case_dir/home/projects" "$case_dir/home/state"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '222222\n' > "$case_dir/home/state/.lock"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  fake_root="$case_dir/root"
+  marker="$case_dir/fleet-sync.started"
+  mkdir -p "$fake_root/bin"
+  cat > "$fake_root/bin/fm-fleet-sync.sh" <<'SH'
+#!/usr/bin/env bash
+: > "${FM_FAKE_FLEET_SYNC_STARTED_MARKER:?}"
+SH
+  chmod +x "$fake_root/bin/fm-fleet-sync.sh"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$fake_root" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only \
+    FM_BOOTSTRAP_NETWORK_LOCK_PID=111111 FM_FAKE_FLEET_SYNC_STARTED_MARKER="$marker" \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_absent "$marker" "a stale worker refreshed project clones after lock handoff"
+  assert_contains "$out" "changed before dead-secondmate relaunch" \
+    "the stale worker did not report the refused liveness sweep"
+  assert_contains "$out" "changed before secondmate convergence" \
+    "the stale worker did not report the refused convergence sweep"
+  assert_contains "$out" "changed before pending handoff delivery" \
+    "the stale worker did not report the refused handoff sweep"
+  assert_contains "$out" "changed before project clone refresh" \
+    "the stale worker did not report the refused clone refresh"
+  pass "bootstrap: every deferred mutating sweep rechecks fleet-lock ownership"
+}
+
+# The verdict costs three subprocesses, so a caller that already has it can hand
+# it over - but only one hop, and never onward into a spawned agent's
+# environment, where it could outlive a tasks-axi upgrade.
+# assert_timing_record <log> <scope> <name> <detail> <msg>: one bin/fm-timing-lib.sh
+# record with exactly these fields must exist. Field-exact rather than a substring
+# match, so a detail that landed in the wrong column cannot pass.
+assert_timing_record() {
+  local log=$1 scope=$2 name=$3 detail=$4 msg=$5
+  awk -F'\t' -v s="$scope" -v n="$name" -v d="$detail" '
+    $1 == "v1" && $2 == s && $3 == n && $6 == d { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$log" || fail "$msg"$'\n'"$(cat "$log")"
+}
+
+# The deferred network stage publishes ONE started/finished pair, so a slow run
+# used to be unattributable without re-running it by hand. These are the records
+# that make it attributable, and they must come from the real sweeps rather than
+# a stand-in: what is being pinned is that each network owner is actually wrapped.
+# bin/fm-timing-lib.sh stays inert unless FM_TIMING_LOG names a file, so an
+# ordinary bootstrap run is unaffected either way, which is asserted here too.
+test_network_phases_record_per_step_elapsed_times() {
+  local case_dir fakebin log fields
+  case_dir="$TMP_ROOT/network-timings"
+  mkdir -p "$case_dir/home/config" "$case_dir/home/state" "$case_dir/home/data" "$case_dir/home/projects"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' $$ > "$case_dir/home/state/.lock"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  # A real clone with a real origin, so fm-fleet-sync.sh genuinely iterates it.
+  fm_git_init_commit "$case_dir/home/projects/alpha"
+  fm_git_add_origin "$case_dir/home/projects/alpha" "$case_dir/alpha-origin"
+  # A secondmate the liveness sweep must account for. Whatever verdict it reaches
+  # is owned elsewhere; what matters here is that the step is measured.
+  fm_write_secondmate_meta "$case_dir/home/state/mate-a.meta" "$case_dir/home"
+
+  log="$case_dir/timings.tsv"
+  PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only \
+    FM_BOOTSTRAP_NETWORK_LOCK_PID=$$ FM_TIMING_LOG="$log" FM_TIMING_EPOCH_MS=0 \
+    "$ROOT/bin/fm-bootstrap.sh" >/dev/null 2>&1
+
+  assert_present "$log" "the network phase recorded no elapsed times at all"
+  assert_timing_record "$log" phase gh-auth '' "the GitHub auth probe was not timed"
+  assert_timing_record "$log" phase secondmate-liveness '' "the dead-secondmate relaunch sweep was not timed"
+  assert_timing_record "$log" phase secondmate-sync '' "the secondmate convergence sweep was not timed"
+  assert_timing_record "$log" phase handoff-delivery '' "the pending handoff sweep was not timed"
+  assert_timing_record "$log" phase fleet-sync '' "the project clone refresh was not timed"
+  assert_timing_record "$log" secondmate liveness mate-a \
+    "the liveness sweep was not attributed to the individual secondmate it checked"
+  assert_timing_record "$log" clone sync alpha \
+    "the clone refresh was not attributed to the individual clone it refreshed"
+
+  # Every record carries a start offset and an elapsed time, both numeric, so the
+  # artifact can be read as a timeline rather than a bag of durations.
+  fields=$(awk -F'\t' '$4 ~ /^[0-9]+$/ && $5 ~ /^[0-9]+$/ { n++ } END { print n+0 }' "$log")
+  [ "$fields" = "$(grep -c . "$log")" ] \
+    || fail "some records lack a numeric start offset and elapsed time: $(cat "$log")"
+
+  # And an ordinary run - the local half, or any caller that never asked for
+  # timings - writes nothing anywhere.
+  rm -f "$log"
+  PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only \
+    FM_BOOTSTRAP_NETWORK_LOCK_PID=$$ \
+    "$ROOT/bin/fm-bootstrap.sh" >/dev/null 2>&1
+  assert_absent "$log" "a run that never asked for timings recorded them anyway"
+  pass "bootstrap: each deferred network phase, secondmate, and clone records its own elapsed time"
+}
+
+test_tasks_axi_verdict_handoff_is_consumed_once() {
+  local case_dir fakebin log out
+  case_dir="$TMP_ROOT/tasks-axi-handoff"
+  mkdir -p "$case_dir/home/config"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  log="$case_dir/tasks-axi.log"
+  cat > "$fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FM_FAKE_TASKS_AXI_LOG:?}"
+printf '0.0.1\n'
+exit 0
+SH
+  chmod +x "$fakebin/tasks-axi"
+
+  # Without the handoff, the incompatible stub is probed and reported.
+  : > "$log"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "MISSING: tasks-axi (install:" "the unaided run did not probe tasks-axi"
+  assert_grep '--version' "$log" "the unaided run never ran the probe"
+
+  # With it, the probe is skipped entirely and the handed-in verdict is used.
+  : > "$log"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_TASKS_AXI_COMPATIBLE=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "MISSING: tasks-axi" "the handed-in verdict was ignored"
+  [ ! -s "$log" ] || fail "the handed-in verdict did not save the probe: $(cat "$log")"
+
+  # A malformed value is not a verdict.
+  : > "$log"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_TASKS_AXI_COMPATIBLE=yes "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "MISSING: tasks-axi (install:" "a malformed handoff value was trusted"
+
+  # And the handoff never reaches a grandchild: bootstrap spawns agents, and a
+  # verdict cached into an agent's environment would outlive the tool it describes.
+  out=$(FM_TASKS_AXI_COMPATIBLE=1 bash -c '. "$1"; printf "%s\n" "${FM_TASKS_AXI_COMPATIBLE-unset}"' \
+    _ "$ROOT/bin/fm-tasks-axi-lib.sh")
+  [ "$out" = unset ] || fail "sourcing the library left the handoff in the environment: $out"
+  pass "bootstrap: the tasks-axi compatibility verdict travels exactly one process hop"
+}
+
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   local case_dir fakebin out expect
   case_dir="$TMP_ROOT/dispatch-active"
@@ -1085,6 +1529,13 @@ ROWS
 test_bootstrap_reporting
 test_beads_backend_missing_vs_degraded
 test_beads_write_queue_reconciled_on_bootstrap
+test_beads_sync_sweep_runs_and_rate_limits
+test_beads_sync_sweep_is_gated_on_the_beads_backend
+test_beads_sync_sweep_stays_off_the_blocking_local_phase
+test_beads_sync_sweep_failure_is_reported_not_fatal
+test_beads_sync_sweep_skips_an_unreachable_store
+test_beads_sync_sweep_runs_last_and_within_a_slice_of_the_stage_budget
+test_beads_sync_sweep_bounds_its_reachability_probe
 test_no_mistakes_min_version
 test_gh_axi_min_version
 test_lavish_axi_min_version
@@ -1106,5 +1557,9 @@ test_fleet_sync_timeout_empty_override_uses_default
 test_fleet_sync_timeout_is_computed_before_launch
 test_routine_bootstrap_confirmations_are_silent
 test_routine_bootstrap_contract_runs_under_system_bash
+test_network_phase_partitions_the_run
+test_network_sweeps_recheck_lock_ownership
+test_network_phases_record_per_step_elapsed_times
+test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_validation

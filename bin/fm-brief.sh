@@ -52,12 +52,17 @@
 # stdout is prepended to the generated brief. The beads hook (fm-brief-hooks.d/beads.sh)
 # is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt and
 # Bead Closure sections that ask the worker to confirm dispatch/lifecycle state changes
-# and close the bead on completion. FM_HOOK_BEADS_ID is never auto-populated here: bead
-# minting/resolution is deliberately deferred to fm-spawn.sh (beads-authority migration
-# Stage 3), which is the point where a task is actually dispatched, so a brief that is
-# scaffolded but never spawned never leaves an orphaned bead in the shared store. This
-# section only renders when a caller sets FM_HOOK_BEADS_ID explicitly before scaffolding
-# (the pre-existing --beads opt-in path); secondmate charters are exempt.
+# and close the bead on completion. FM_HOOK_BEADS_ID is never auto-populated here: those
+# worker-facing sections are always added at dispatch by fm-spawn.sh, since a
+# not-yet-spawned task has no worker to act on them, which keeps section injection
+# single-sourced there. Under config/backlog-backend=beads, however, this script does
+# mint or resolve the task's bead at intake (via fm_beads_resolve_or_create) the moment
+# the brief is scaffolded, so a task firstmate is aware of but has not yet spawned is
+# represented by an open bead immediately rather than only at dispatch (AGENTS.md
+# sections 7 and 10); the shared task:<id> idempotency label means fm-spawn.sh's later
+# resolve returns that same bead. The Bead Receipt/Closure section only renders when a
+# caller sets FM_HOOK_BEADS_ID explicitly before scaffolding (the pre-existing --beads
+# opt-in path); secondmate charters are exempt.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -157,6 +162,13 @@ if [ -n "${FM_STATE_OVERRIDE:-}" ]; then
 else
   STATE="$FM_HOME/state"
 fi
+# CONFIG may be absent (absent = defaults); fm_backlog_backend_value handles a
+# missing backlog-backend file, so this is a plain path, never resolve_directory_input.
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# For intake-time bead capture under config/backlog-backend=beads (see the
+# FM_HOOK_BEADS_ID note in this file's header and the minting block below).
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -385,7 +397,8 @@ Never append \`working:\` merely to acknowledge receipt or announce that a marke
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>]: {why it is no longer active}\`.
-When a decision you escalated is answered or a blocker clears and your domain resumes, append \`resolved: {how it was decided or unblocked}\` (keyed with \`[key=<slug>]\` if you opened it with one) so it is durably closed instead of resurfacing behind later unrelated events.
+\`resolved\` separately closes an escalated decision or blocker, and only a \`resolved\` line carrying that decision's exact key closes it: a later \`done\` or \`working\` event never does, even when the answer is what started that work.
+The main firstmate's answer normally writes that closing line at answer time; when a blocker or wait clears WITHOUT an answer from the main firstmate, append \`resolved: {how it cleared}\` yourself (keyed with \`[key=<slug>]\` if you opened it with one) as your domain resumes.
 Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home and must not touch that status file.
 
 # Definition of done
@@ -405,14 +418,25 @@ fi
 
 REPO=${POS[1]}
 
-# beads-authority migration Stage 3 (data/beads-authority-migration-scout/report.md
-# "Stage 3"): bead minting/resolution under config/backlog-backend=beads happens only
-# in fm-spawn.sh, at actual dispatch time, not here. Minting here at scaffold time
-# would create a bead the moment a brief is written, before the task is ever spawned;
-# if the captain declines after review or spawn fails, that bead would be permanently
-# orphaned in the shared store since no state/<id>.meta ever records its beads_id= for
-# fm-teardown.sh to close. FM_HOOK_BEADS_ID is therefore left exactly as the caller set
-# it (unset unless an explicit --beads workflow pre-populated it).
+# Intake-time bead capture (AGENTS.md sections 7 and 10). Under
+# config/backlog-backend=beads, open this task's bead the moment its brief is
+# scaffolded, so a task firstmate is aware of but has not yet spawned (queued,
+# blocked, awaiting a captain go-ahead) is already represented by an open bead
+# rather than only appearing at dispatch. fm_beads_resolve_or_create is
+# idempotent on the task:<id> label, so fm-spawn.sh's later resolve returns THIS
+# same bead (never a duplicate) and records it as beads_id= for fm-teardown.sh /
+# fm-ledger.sh to close. FM_HOOK_BEADS_ID is deliberately left unset here: the
+# worker-facing Bead Receipt/Closure sections are added at dispatch by
+# fm-spawn.sh (a not-yet-spawned task has no worker to act on them), which keeps
+# section injection single-sourced there. An explicit opt-in that already owns
+# the bead link and its sections is exempt, in either shape: the --beads flag
+# (BEADS_ID set) or a caller-preset FM_HOOK_BEADS_ID env var. Fails open like the
+# rest of the beads integration: a resolve failure (task/jq missing, store
+# unreachable) is swallowed and scaffolding proceeds unchanged.
+if [ -z "$BEADS_ID" ] && [ -z "${FM_HOOK_BEADS_ID:-}" ] &&
+  [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
+  fm_beads_resolve_or_create "$ID" >/dev/null 2>&1 || true
+fi
 
 # Hook system (see header comment above): scripts in fm-brief-hooks.d/ are sourced
 # in a subshell, and any stdout they produce is collected into HOOK_SECTION and
@@ -420,7 +444,7 @@ REPO=${POS[1]}
 # below exits with no output when FM_HOOK_BEADS_ID is unset), so HOOK_SECTION stays
 # empty and briefs are unchanged when no hook has anything to add.
 # An explicit --beads workflow pre-populates FM_HOOK_BEADS_ID here; otherwise it is
-# left exactly as the caller already set it (see the Stage 3 comment above).
+# left exactly as the caller already set it (see the intake-capture comment above).
 [ -z "$BEADS_ID" ] || export FM_HOOK_BEADS_ID="$BEADS_ID"
 export FM_HOOK_TASK_ID="$ID"
 HOOK_SECTION=""
@@ -523,7 +547,8 @@ The report is the only thing that survives, so anything worth keeping must be in
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
-   When firstmate replies or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (add the same \`[key=<slug>]\` if you opened it with one) so the decision or blocker is durably closed and does not keep resurfacing.
+   A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
@@ -637,7 +662,7 @@ $FORK_HEADLINE
 $FORK_TARGET_RULE
 If the fork does not exist yet, create it with \`gh-axi\` before pushing.
 Push your branch to the fork - \`git push git@github.com:trillium/$FORK_REPO.git fm/$ID:fm/$ID\` if \`origin\` here is still upstream, or plain \`git push origin fm/$ID\` once \`origin\` is the fork.
-Open the PR with an explicit repo override so it can never default to upstream: \`gh pr create --repo trillium/$FORK_REPO --base <fork-default-branch> --head fm/$ID\`.
+Open the PR with an explicit repo override so it can never default to upstream: \`gh pr create --repo trillium/$FORK_REPO --base <fork-default-branch> --head fm/$ID\` (or \`gh-axi pr create --repo trillium/$FORK_REPO\`).
 Never omit that \`--repo trillium/$FORK_REPO\` override, and never stop to ask fork-vs-local: always target the fork.
 **CRITICAL:** a PR opened against the upstream repo must NEVER happen automatically. If targeting the fork is not possible, stop and get direct captain confirmation before any upstream PR attempt.
 EOF
@@ -649,6 +674,7 @@ $FORK_TARGET_RULE
 \`origin\` here is already the \`trillium/$FORK_REPO\` fork, with \`upstream\` as a separate remote, so no-mistakes's normal PR-open behavior already targets the fork - do not change that.
 Never run \`no-mistakes init --fork-url\` or any similar remote reconfiguration on this project: that flag pushes to the named fork while still opening the PR against \`origin\`, which is the exact wrong direction here.
 Never stop to ask fork-vs-local: always target the fork.
+Before invoking no-mistakes, verify \`git remote get-url origin\` returns the \`trillium/$FORK_REPO\` fork URL; if it shows upstream instead, stop and escalate.
 **CRITICAL:** if no-mistakes ever proposes or opens a PR against anything other than \`trillium/$FORK_REPO\`, stop and escalate immediately rather than letting it proceed.
 EOF
     else
@@ -704,7 +730,8 @@ $RULE1
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
-   When firstmate replies or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (add the same \`[key=<slug>]\` if you opened it with one) so the decision or blocker is durably closed and does not keep resurfacing.
+   A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
+   Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
