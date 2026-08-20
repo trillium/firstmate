@@ -1979,6 +1979,23 @@ test_herdr_projection_teardown_retains_journal_when_close_unconfirmed() {
   pass "herdr projection teardown retains every record when post-close presence is unknown"
 }
 
+# deregister_parlay_agent sends SIGTERM and returns without waiting, so an
+# immediate `kill -0` can still observe the fixture's `sleep` before the signal
+# is delivered and reaped - a false failure that says the pid was never killed.
+# Poll on a bounded budget instead: a correct teardown clears well inside it,
+# and a teardown that genuinely leaves the listener alive still fails, just
+# after the timeout rather than in a race.
+assert_pid_reaped() {
+  local pid=$1 msg=$2 i=0
+  while [ "$i" -lt 50 ]; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill "$pid" 2>/dev/null || true
+  fail "$msg"
+}
+
 test_teardown_deregisters_parlay_when_present() {
   local case_dir calls_log pid
   case_dir=$(make_case parlay-present)
@@ -2004,8 +2021,7 @@ SH
   FM_SPAWN_SKIP_PARLAY='' run_teardown "$case_dir" >/dev/null 2>&1 \
     || fail "parlay-present: teardown should succeed"
 
-  ! kill -0 "$pid" 2>/dev/null \
-    || { kill "$pid" 2>/dev/null || true; fail "parlay-present: recorded parlay-listen pid was not killed"; }
+  assert_pid_reaped "$pid" "parlay-present: recorded parlay-listen pid was not killed"
   assert_grep "agent-down task-x1" "$calls_log" \
     "parlay-present: parlay was not invoked as 'agent-down task-x1'"
   assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
@@ -2038,8 +2054,8 @@ test_teardown_kills_pid_even_when_parlay_absent() {
   set -e
 
   expect_code 0 "$rc" "parlay-absent: teardown should still succeed without parlay on PATH"
-  ! kill -0 "$pid" 2>/dev/null \
-    || { kill "$pid" 2>/dev/null || true; fail "parlay-absent: recorded parlay-listen pid was not killed without parlay on PATH"; }
+  assert_pid_reaped "$pid" \
+    "parlay-absent: recorded parlay-listen pid was not killed without parlay on PATH"
   assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
     "parlay-absent: teardown did not remove the parlay-listen-pid file"
   pass "a clean teardown still kills the recorded parlay-listen pid even when parlay is absent from PATH"
@@ -2080,8 +2096,7 @@ SH
 
   # Local pid cleanup is unconditional: the recorded listener is still killed and
   # its pid file removed even when the relay call is skipped.
-  ! kill -0 "$pid" 2>/dev/null \
-    || { kill "$pid" 2>/dev/null || true; fail "parlay-skip: recorded parlay-listen pid was not killed"; }
+  assert_pid_reaped "$pid" "parlay-skip: recorded parlay-listen pid was not killed"
   assert_absent "$case_dir/state/task-x1.parlay-listen-pid" \
     "parlay-skip: teardown did not remove the parlay-listen-pid file"
 
