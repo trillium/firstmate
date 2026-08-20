@@ -19,8 +19,15 @@ The watcher's PR poll already wakes firstmate on a new bot review comment (see `
 
 ## Policy
 
-A green CodeRabbit check is necessary but not sufficient.
-CodeRabbit can pass a PR while still leaving actionable suggestion comments (bugs, security notes, missed edge cases) that a bare status check does not surface.
+A green CodeRabbit check is not evidence of a review at all, let alone a clean one.
+CodeRabbit reports its status context as `pass` when it is rate limited, with the description `Review rate limited`, while submitting no review and no review comments — the green check is byte-for-byte indistinguishable from a genuine clean review (observed on `trillium/firstmate#67`, `robots-6bsj`).
+It can also pass a PR while leaving actionable suggestion comments (bugs, security notes, missed edge cases) that a bare status check does not surface.
+Never read the check conclusion as review state; ask the reviews API.
+
+`bin/fm-coderabbit-review-state.sh <owner> <repo> <pr-number>` is the one place that decision lives.
+It prints `reviewed`, `rate-limited`, `pending`, or `absent`, and exits `3` when the forge could not be read — an unknown state, never a verdict.
+`bin/fm-pr-merge.sh` gates every merge on it and refuses on anything but `reviewed` or `absent`; `FM_CODERABBIT_GATE=skip` is the deliberate, typed waiver for a stalled review the captain has decided to merge past.
+
 Before treating a PR as merge-ready on a CodeRabbit-enabled repo:
 
 1. Read CodeRabbit's review comments on the PR (via `gh-axi`), not just its check conclusion.
@@ -36,8 +43,10 @@ A rate-limited or not-yet-reviewed state is not a failure and not silence to rou
 
 - Treat a CodeRabbit rate-limit or pending-review response as a `paused:`-class external wait (`AGENTS.md` section 8's distinction between `paused:` and `blocked:`), not a `blocked:` or `failed:` one.
 - Re-check on a bounded backoff rather than polling tightly or repeatedly re-requesting a review, which extends the rate limit; let the watcher's own wake cadence carry the recheck instead of arming a dedicated poll loop for it.
+- Detect the rate limit from `bin/fm-coderabbit-review-state.sh`, not from the check: a rate-limited PR shows a green CodeRabbit check, so treating the check as the signal reads the wait as a completed review.
 - If CodeRabbit still has not produced a review after a reasonable number of backoff cycles, do not block merge readiness on it indefinitely.
   Report the stalled review to the captain as evidence rather than silently merging without it or silently waiting forever.
+  Merging past it is a captain or `yolo`-authorized decision recorded as `FM_CODERABBIT_GATE=skip` on the merge, not an assumption.
 - Never spam re-requests at CodeRabbit to work around a rate limit; that worsens the limit for every repo sharing the account.
 
 ## Scope
