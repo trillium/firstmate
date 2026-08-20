@@ -454,3 +454,19 @@ jobs:
             printf '%s\n' "$tracked"
             exit 1
           fi
+      - name: Spawning tests must carry the Parlay enrollment bypass
+        run: |
+          set -eu
+          # fm-spawn.sh enrollment must never reach the live Parlay relay from a test, and a test
+          # file that drives fm-spawn.sh without the flag reintroduces the leak (robots-8ce5).
+          uncovered=""
+          for f in tests/*.test.sh; do
+            grep -q 'fm-spawn\.sh' "$f" || continue
+            grep -qE '^\. "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/(lib|[a-z-]+-helpers)\.sh"' "$f" && continue
+            grep -q 'FM_SPAWN_SKIP_PARLAY' "$f" && continue
+            uncovered="$uncovered $(basename "$f")"
+          done
+          if [ -n "$uncovered" ]; then
+            echo "::error::These tests drive fm-spawn.sh without the Parlay enrollment bypass:$uncovered"
+            exit 1
+          fi
