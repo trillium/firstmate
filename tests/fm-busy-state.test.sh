@@ -356,12 +356,82 @@ test_boolean_view_never_promotes_unknown() {
   pass "the boolean view reports busy only on an exact busy verdict"
 }
 
+# --- writer: the stale-lock reap must survive a GNU `stat` on any kernel ------
+
+# Shadow `stat` with a binary that speaks GNU coreutils' dialect, which is what a
+# nix-darwin or Homebrew-coreutils Mac actually resolves even though `uname` says
+# Darwin. The fake reproduces the one shape that matters: GNU's `-f` is
+# --file-system, not "format", so it stats the FILESYSTEM, writes a multi-line
+# dump to STDOUT, and only then exits non-zero. A BSD-first `stat -f ... ||
+# stat -c ...` chain therefore appends the real answer to that dump inside one
+# command substitution and succeeds at rc=0, so no `||` fallback ever fires and
+# the caller's arithmetic throws on the garbage.
+install_gnu_stat_shim() {  # <fakebin-dir>
+  local fakebin=$1 real host probe
+  real=$(command -v stat) || fail "no stat on PATH to delegate to"
+  probe=$("$real" -c %s / 2>/dev/null) || true
+  case "$probe" in ''|*[!0-9]*) host=bsd ;; *) host=gnu ;; esac
+  cat > "$fakebin/stat" <<SH
+#!/usr/bin/env bash
+REAL='$real'
+HOST='$host'
+SH
+  cat >> "$fakebin/stat" <<'SH'
+case "${1:-}" in
+  -c)
+    fmt=${2:-}; file=${3:-}
+    if [ "$HOST" = gnu ]; then exec "$REAL" -c "$fmt" "$file"; fi
+    case "$fmt" in
+      %Y) exec "$REAL" -f %m "$file" ;;
+      %s) exec "$REAL" -f %z "$file" ;;
+      *)  exit 1 ;;
+    esac
+    ;;
+  -f)
+    # GNU --file-system: the format string becomes a second FILE operand.
+    printf '  File: "%s"\n  ID: 0 Namelen: 255 Type: fake\n' "${3:-${2:-}}"
+    printf '  Block size: 4096  Blocks: Total: 1 Free: 1 Available: 1\n'
+    exit 1
+    ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/stat"
+}
+
+test_stale_writer_lock_reclaimed_under_gnu_stat() {
+  local state fakebin lock out rc
+  state=$(new_state_dir gnu-stat-stale-lock)
+  fakebin=$(fm_fakebin "$TMP_ROOT/gnu-stat-stale-lock")
+  install_gnu_stat_shim "$fakebin"
+
+  "$EV" arm "$state" t1 >/dev/null || fail "arm failed"
+
+  # A holder that died mid-write leaves the lock dir behind. Age it past the
+  # staleness bound so the reap is the only way out of lock_acquire.
+  lock="$state/t1.busy-state.lock"
+  mkdir "$lock" || fail "could not stage the abandoned lock"
+  touch -t 200001010000 "$lock" || fail "could not age the abandoned lock"
+
+  out=$(PATH="$fakebin:$PATH" FM_BUSY_LOCK_STALE_SECS=1 \
+    "$EV" apply "$state" t1 idle --current-gen --source test --event stale-lock 2>&1) && rc=0 || rc=$?
+
+  [ "$rc" -eq 0 ] || fail "stale writer lock was not reclaimed under a GNU stat (rc=$rc): $out"
+  case "$out" in
+    *"busy-state lock timeout"*) fail "lock_acquire timed out instead of reaping the stale lock: $out" ;;
+    *"syntax error"*|*"File:"*) fail "stat dialect garbage reached the caller: $out" ;;
+  esac
+  [ ! -d "$lock" ] || fail "the reclaimed lock was never released"
+  pass "a stale writer lock is reclaimed even when stat speaks GNU on a Darwin kernel"
+}
+
 test_arm_seeds_busy_spawn
 test_apply_advances_seq_and_source
 test_apply_current_gen_reset
 test_apply_unarmed_refused
 test_retire_serializes_and_rejects_stale_gen
 test_retire_missing_sidecar_is_idempotent
+test_stale_writer_lock_reclaimed_under_gnu_stat
 test_stale_gen_event_rejected
 test_stale_gen_record_unknown
 test_missing_record_unknown_not_idle
