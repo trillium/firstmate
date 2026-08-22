@@ -362,10 +362,15 @@ test_boolean_view_never_promotes_unknown() {
 # nix-darwin or Homebrew-coreutils Mac actually resolves even though `uname` says
 # Darwin. The fake reproduces the one shape that matters: GNU's `-f` is
 # --file-system, not "format", so it stats the FILESYSTEM, writes a multi-line
-# dump to STDOUT, and only then exits non-zero. A BSD-first `stat -f ... ||
-# stat -c ...` chain therefore appends the real answer to that dump inside one
-# command substitution and succeeds at rc=0, so no `||` fallback ever fires and
-# the caller's arithmetic throws on the garbage.
+# dump to STDOUT, and only THEN exits non-zero. The `||` in a BSD-first
+# `stat -f ... || stat -c ...` chain therefore does fire - and its correct
+# integer is appended to the dump already sitting in the same command
+# substitution, which returns rc=0 holding a multi-line non-integer. The caller
+# sees success and its arithmetic throws on the garbage.
+#
+# `uname` is deliberately NOT shimmed: the code under test dispatches on the
+# binary, never on the kernel, so forcing the GNU dialect is the whole of what
+# this guards. It would not catch a regression back to `uname`-keyed dispatch.
 install_gnu_stat_shim() {  # <fakebin-dir>
   local fakebin=$1 real host probe
   real=$(command -v stat) || fail "no stat on PATH to delegate to"

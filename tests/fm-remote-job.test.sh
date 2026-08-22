@@ -125,8 +125,10 @@ export FM_REMOTE_JOB_TIMEOUT=5
 # The mtime reader must detect stat's own dialect rather than infer it from the
 # kernel. A nix-darwin or Homebrew-coreutils Mac puts GNU coreutils ahead of
 # /usr/bin on the restricted child PATH, and GNU `stat -f` is *filesystem* status:
-# it exits 0 printing an apfs dump, which fails every numeric check downstream and
-# leaves the remote-job readiness probe permanently red on a fully healthy host.
+# it prints an apfs dump to stdout and only THEN exits 1, so a `-f || -c` chain
+# hands the caller that dump with the fallback's integer appended to it, at an
+# overall rc=0. Every numeric check downstream fails and the remote-job readiness
+# probe stays permanently red on a fully healthy host.
 STAT_DIALECT_DIR="$TMP_ROOT/stat-dialect"
 mkdir -p "$STAT_DIALECT_DIR/gnu" "$STAT_DIALECT_DIR/bsd"
 : > "$STAT_DIALECT_DIR/probe"
@@ -136,8 +138,12 @@ cat > "$STAT_DIALECT_DIR/gnu/stat" <<'SH'
 case "${1:-}" in
   -c) [ -e "${3:-}" ] || { printf "stat: cannot stat '%s'\n" "${3:-}" >&2; exit 1; }
       printf '1700000000\n' ;;
+  # Real GNU takes the format string as an extra operand, fails on it, and exits
+  # 1 - but only AFTER the dump is already on stdout. Exiting 0 here would make
+  # the fixture disagree with the binary it stands in for.
   -f) [ -e "${3:-}" ] || { printf "stat: cannot stat '%s'\n" "${3:-}" >&2; exit 1; }
-      printf '  File: "%s"\n    ID: 0 Namelen: 255 Type: apfs\nBlock size: 4096\n' "$3" ;;
+      printf '  File: "%s"\n    ID: 0 Namelen: 255 Type: apfs\nBlock size: 4096\n' "$3"
+      exit 1 ;;
   *)  printf 'stat: unsupported\n' >&2; exit 1 ;;
 esac
 SH
