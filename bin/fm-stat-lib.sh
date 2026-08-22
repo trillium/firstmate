@@ -29,16 +29,25 @@
 # `stat -f` on GNU succeeds with junk. Probing `-c` FIRST therefore cannot be
 # fooled by either flavor.
 #
-# The dialect is cached in _FM_STAT_DIALECT after the first probe. Be precise
-# about what that buys: the accessors below print their result, so a call site
-# writing `x=$(fm_stat_mtime "$p")` runs the whole thing in a command-substitution
-# subshell and the cache dies with it. The cache therefore saves nothing ACROSS
-# such call sites - it only helps a caller that sources this lib and resolves in
-# its own shell. Budget one probe plus one real `stat` per call: two forks on
-# GNU, three on BSD (where the `-c` probe is rejected first). That is one more
-# fork than the hand-rolled `stat -c ... || stat -f ...` form it replaces, which
-# is the price of not guessing, and it is why nothing here should be called from
-# a loop tighter than the existing 0.1s-0.5s polls without hoisting the value.
+# The dialect is cached in _FM_STAT_DIALECT after the first probe, and the cache
+# only travels DOWNWARD. The accessors below print their result, so a call site
+# writing `x=$(fm_stat_mtime "$p")` runs the probe inside a command-substitution
+# subshell that is discarded on exit - but a subshell INHERITS the variable, so a
+# caller that has already resolved in its own shell hands the answer down for
+# free. Unresolved, every call costs a probe plus the real `stat`: two forks on
+# GNU, three on BSD (where the `-c` probe is rejected first), against one for the
+# hand-rolled form this replaces.
+#
+# That per-call surcharge is invisible in one-shot scripts and NOT invisible in a
+# poll loop. Callers that stat on every tick therefore call fm_stat_warm once
+# before the loop, which collapses the whole loop back to one `stat` per tick.
+# Measured on a poll of 5 reads: 15 stat invocations cold, 7 warmed.
+#
+# Warming is deliberately the CALLER's job rather than something this file does
+# at source time, because several callers build a constrained PATH after sourcing
+# (see the operator-PATH tests) and a probe taken too early would cache the
+# dialect of a `stat` that the loop will never actually run. Warm where PATH is
+# settled.
 #
 # No side effects on source. set -u / set -e safe. Leaf lib: depends on nothing.
 #
@@ -73,15 +82,27 @@ _fm_stat_resolve_dialect() {
       ''|*[!0-9]*)
         probe=$(stat -f %z / 2>/dev/null)
         case "$probe" in
-          ''|*[!0-9]*) _FM_STAT_DIALECT=unknown ;;
+          # Answer nothing rather than caching a negative. A probe can fail for
+          # reasons that are not permanent - a fixture PATH with no `stat` yet, a
+          # constrained PATH still being assembled - and a cached 'unknown' would
+          # make that momentary gap permanent for the rest of the process.
+          ''|*[!0-9]*) return 1 ;;
           *) _FM_STAT_DIALECT=bsd ;;
         esac
         ;;
       *) _FM_STAT_DIALECT=gnu ;;
     esac
   fi
-  [ "$_FM_STAT_DIALECT" != unknown ] || return 1
   _FM_STAT_RESOLVED=$_FM_STAT_DIALECT
+}
+
+# fm_stat_warm: resolve the dialect into THIS shell so the accessors below stop
+# re-probing. Returns 0 even when the probe fails - warming is an optimization,
+# and a caller that cannot stat should find that out from the accessor that
+# actually needs a value, not from a hint it made on the way past.
+fm_stat_warm() {
+  _fm_stat_resolve_dialect >/dev/null 2>&1 || true
+  return 0
 }
 
 # fm_stat_dialect: prints 'gnu' or 'bsd'; non-zero when neither probe answers.

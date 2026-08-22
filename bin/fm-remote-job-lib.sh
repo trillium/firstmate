@@ -890,6 +890,13 @@ fm_remote_job_probe() { # <account-home>; a fresh worker heartbeat or active job
 
 fm_remote_job_wait_for_probe() { # <remote-root> <account-home>
   local root=$1 account_home=$2 i=0
+  # Resolve the stat dialect once, here, instead of on all 200 ticks. The
+  # readiness test is `now - mtime <= 10`, so the poll is racing a 10s window
+  # with a 20s budget; paying an extra probe fork per tick stretched the loop
+  # past the point where a freshly-written ready stamp still looked fresh by the
+  # time the identity check agreed, and CI failed with "worker did not report
+  # ready" while the worker was in fact up. PATH is settled by now.
+  fm_stat_warm
   while [ "$i" -lt 200 ]; do
     fm_remote_job_probe "$account_home" && fm_remote_job_worker_identity_matches "$root" "$account_home" && return 0
     i=$((i + 1))

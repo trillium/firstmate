@@ -677,6 +677,10 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 # swallows a signal.
 scan_signals() {
   local f sig sf
+  # One dialect probe for the whole scan rather than one per file: this fans out
+  # over every session's status and turn-ended marker, so the cost scales with
+  # fleet size on every watcher tick.
+  fm_stat_warm
   for f in "$STATE"/*.status "$STATE"/*.turn-ended; do
     [ -e "$f" ] || continue
     sig=$(stat_sig "$f") || continue
