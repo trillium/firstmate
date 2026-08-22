@@ -586,7 +586,7 @@ fm_remote_job_reap() { # <account-home> <id>; only removes an exact completed re
   rmdir "$job"
 }
 
-fm_remote_job_path_mtime() { # <path>
+fm_remote_job_path_mtime() { # <path>; prints epoch seconds, or nothing and returns 1
   # Neither the platform override nor the host kernel decides stat's syntax: the
   # `stat` BINARY does, and a Darwin kernel routinely resolves it to GNU
   # coreutils. Getting this wrong made the readiness probe fail permanently
