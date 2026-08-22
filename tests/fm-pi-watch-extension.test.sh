@@ -892,8 +892,12 @@ test_pi_session_transition_generation_owner() {
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'watcher: started pid=%s\n' "$$"
-printf '%s\n' "$$" > "${FM_CHILD_PID_FILE:?}"
+# Order matters: the arm row must be durable BEFORE the pid file names this
+# child. replaceSession waits only on the pid file and then immediately asserts
+# the live arm set, so publishing the pid first leaves a window where the
+# successor is alive but still unlogged and the assertion reads zero live arms.
 printf 'arm pid=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+printf '%s\n' "$$" > "${FM_CHILD_PID_FILE:?}"
 trap 'exit 0' TERM INT
 while :; do sleep 0.2; done
 SH
@@ -1323,9 +1327,25 @@ const hooks = await mod.FmPrimaryWatchArm({
   worktree: process.env.WORKTREE,
 });
 const event = { event: { type: "session.idle", properties: { sessionID: "session-test" } } };
+const coordinator = globalThis.__firstmateOpenCodeWatchArm;
+if (!coordinator) {
+  console.error("watch plugin did not publish its arm coordinator");
+  process.exit(1);
+}
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, "999999\n");
 await hooks.event(event);
-await new Promise((resolve) => setTimeout(resolve, 120));
+// The event hook dispatches the arm cycle without awaiting it, and ensureArm
+// coalesces a concurrent caller onto whichever launch is already in flight.
+// Join this refusal through the coordinator rather than sleeping a fixed
+// interval: the lock check walks the process ancestry with ps, so under load it
+// outlives any sleep, and the owned-lock event below would then coalesce into
+// this refusal and never arm. Assert the status so a guard that stops refusing
+// still fails here instead of being waited out.
+const refused = await coordinator.ensureArmed("session-test");
+if (refused !== "read-only") {
+  console.error(`watch arm was not refused while another pid owned the lock: ${refused}`);
+  process.exit(1);
+}
 if (existsSync(process.env.FM_ARM_LOG)) {
   console.error("watch arm ran without owning the session lock");
   process.exit(1);
