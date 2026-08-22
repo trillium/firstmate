@@ -275,8 +275,8 @@ beads_sync_stamp_mtime() { # <path>; epoch seconds, empty when unreadable
   # Via bin/fm-stat-lib.sh, which feature-detects the `stat` binary's dialect.
   # `uname` is the wrong discriminator: a Darwin kernel routinely resolves
   # `stat` to GNU coreutils, and GNU `-f` is --file-system, so the Darwin branch
-  # would print an apfs dump at exit 0 and the caller's staleness arithmetic
-  # would see a non-numeric token forever.
+  # would print an apfs dump to stdout before failing, and the caller's
+  # staleness arithmetic would see a non-numeric token forever.
   fm_stat_mtime "$1"
 }
 

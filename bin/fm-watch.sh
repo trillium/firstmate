@@ -97,9 +97,9 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
 # fm-pr-lib.sh, and again explicitly here because this file calls it directly).
 # Two traps that lib exists to close, both of which used to live here:
 #   - `stat -f <fmt> ... || stat -c <fmt> ...` is unsafe, because GNU's `-f` is
-#     --file-system: it writes a filesystem dump to stdout and the `||` never
-#     fires, so arithmetic under `set -u` aborts on a stray token and silently
-#     kills the watcher mid-cycle.
+#     --file-system: it writes a filesystem dump to stdout and only THEN fails,
+#     so the fallback's integer lands appended to that dump and arithmetic
+#     aborts on the stray tokens, silently killing the watcher mid-cycle.
 #   - `uname` is the wrong discriminator. A Darwin kernel routinely resolves
 #     `stat` to GNU coreutils (nix-darwin, or Homebrew coreutils ahead of
 #     /usr/bin on PATH), so the kernel's name does not predict the binary's
