@@ -34,7 +34,7 @@ sig    = "70eb6ba9abdc98a9"
 [[feature.anchor]]
 path   = "bin/fm-spawn.sh"
 symbol = "launch_template"
-sig    = "13fc0c1c3bc75e38"
+sig    = "06a8144e1dfc1c76"
 
 [[feature]]
 id    = "decision-hold"
@@ -71,12 +71,12 @@ symbol = "fm_remote_bridge_command"
 sig    = "1da6e1926171af7c"
 [[feature.anchor]]
 path   = "docs/remote-secondmates.md"
-sig    = "7294f8f66a9329db"
+sig    = "339b47374f57647e"
 
 [[feature]]
 id    = "tasks-toml-beads-backend"
 story = "Given a firstmate home with a .tasks.toml backlog config, when firstmate resolves which task-store backend to use, then it reads the configured value (markdown, tasks-axi, or the beads federated store) instead of assuming one, so the backlog can move to beads without touching code."
-test  = "source bin/fm-tasks-axi-lib.sh && fm_backlog_backend_value"
+test  = "source bin/fm-tasks-axi-lib.sh && mkdir -p "$FM_HOME/config" && printf 'beads' > "$FM_HOME/config/backlog-backend" && fm_backlog_backend_value "$FM_HOME/config" && fm_backlog_backend_value "$FM_HOME/no-such-config" && echo backend-resolver:ok"
 [[feature.anchor]]
 path   = ".tasks.toml"
 sig    = "31c645e8fdeca7b7"
@@ -110,7 +110,7 @@ symbol = "_fm_decision_key"
 sig    = "09e6b7d5fb8f74ff"
 [[feature.anchor]]
 path   = "bin/fm-session-start.sh"
-sig    = "a558b89650493d91"
+sig    = "220290f6df7b257c"
 
 [[feature]]
 id    = "backlog-handoff"
@@ -151,7 +151,7 @@ symbol = "fm_backend_herdr_version_at_least"
 sig    = "c180cac689124d60"
 [[feature.anchor]]
 path   = "docs/herdr-backend.md"
-sig    = "5255ffada60177eb"
+sig    = "f668601cefc936fd"
 
 [[feature]]
 id    = "staleness-autoclose-reap"

@@ -1,3 +1,5 @@
+beads
 tasks-axi
+backend-resolver:ok
 ---exit---
 0
