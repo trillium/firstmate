@@ -158,6 +158,81 @@ test_brief_still_scaffolds_with_known_flags() {
   pass "fm-brief.sh: documented flags still parse after unknown-flag rejection"
 }
 
+# Structural guard for the recurring union-merge corruption that has now hit
+# this parser three times (fm-spawn.sh, then fm-brief.sh twice: c1154f5c and
+# robots-l0ev). git-town's union merge reorders the flag `case` arms and lifts
+# the `--*)` unknown-option catch-all above the named ones. bash matches case
+# arms top-down, so every named flag below the catch-all silently becomes
+# unreachable and dies as "unknown option: --mode" at dispatch time.
+#
+# The behavior tests below only cover the flags they happen to name, so this
+# asserts the invariant itself: the catch-all must be the LAST `--`-matching arm
+# in each parser. That catches the next reorder whichever flag it buries.
+test_unknown_flag_catch_all_is_the_last_arm() {
+  local script path catch_line later
+  for script in fm-brief.sh fm-spawn.sh; do
+    path="$ROOT/bin/$script"
+    catch_line=$(grep -n '^[[:space:]]*--\*)[[:space:]]*echo "error: unknown option' "$path" | cut -d: -f1)
+    [ -n "$catch_line" ] \
+      || fail "$script has no unknown-option catch-all arm at all"
+    [ "$(printf '%s\n' "$catch_line" | wc -l)" -eq 1 ] \
+      || fail "$script has more than one unknown-option catch-all arm"
+    # Any arm below the catch-all whose PATTERN LIST mentions `--` is dead code
+    # by construction. Inspect the pattern (the text before the arm's first
+    # `)`), not the arm's body, so this also catches the forms a name-anchored
+    # match would miss: `-h|--help)`, where the `--` alternative is not first,
+    # and the bare `--)` end-of-flags arm, which `--*` would otherwise swallow.
+    later=$(awk -v start="$catch_line" '
+      NR <= start { next }
+      /^[[:space:]]*esac/ { exit }
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        if (line ~ /^#/) next
+        close_paren = index(line, ")")
+        if (close_paren == 0) next
+        if (substr(line, 1, close_paren - 1) ~ /--/) { print NR ": " $0; exit }
+      }
+    ' "$path")
+    [ -z "$later" ] \
+      || fail "$script: a flag arm sits below the --*) catch-all and is unreachable ($later)"
+  done
+  pass "fm-brief.sh/fm-spawn.sh: the --*) catch-all is the last flag arm, so no flag arm is unreachable"
+}
+
+# The other half of the same corruption: the union merge has also DUPLICATED the
+# `if [ -n "$want_value" ]` value-dispatch block and split its arms across the
+# clones. The first clone's `continue` means the second is dead, so whichever
+# flag landed there loses its value handler even when its arm is reachable.
+test_value_dispatch_block_is_not_duplicated() {
+  local script path count
+  for script in fm-brief.sh fm-spawn.sh; do
+    path="$ROOT/bin/$script"
+    # shellcheck disable=SC2016 # The literal source text "$want_value" is the pattern.
+    count=$(grep -c '^[[:space:]]*if \[ -n "\$want_value" \]; then' "$path")
+    [ "$count" -eq 1 ] \
+      || fail "$script has $count want_value dispatch blocks; all but the first are dead code"
+  done
+  pass "fm-brief.sh/fm-spawn.sh: exactly one want_value dispatch block, so no value handler is stranded"
+}
+
+# Behavioral companion to the structural guards: --mode is the flag the reorder
+# has buried every time, in both its space and its "=" form.
+test_brief_mode_flag_is_reachable() {
+  local out rc
+  out=$(FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-brief.sh" mode-reachable-a1 herdr-web --mode no-mistakes 2>&1); rc=$?
+  expect_code 0 "$rc" "fm-brief.sh rejected --mode (got: $out)"
+  assert_grep "Delivery contract: mode=no-mistakes" "$HOME_DIR/data/mode-reachable-a1/brief.md" \
+    "fm-brief.sh --mode did not reach the brief"
+  out=$(FM_HOME="$HOME_DIR" \
+    "$ROOT/bin/fm-brief.sh" mode-reachable-a2 herdr-web --mode=direct-PR 2>&1); rc=$?
+  expect_code 0 "$rc" "fm-brief.sh rejected --mode=<value> (got: $out)"
+  assert_grep "Delivery contract: mode=direct-PR" "$HOME_DIR/data/mode-reachable-a2/brief.md" \
+    "fm-brief.sh --mode=<value> did not reach the brief"
+  pass "fm-brief.sh: --mode and --mode=<value> both scaffold, never 'unknown option: --mode'"
+}
+
 test_end_of_flags_separator() {
   local out rc
   out=$(FM_HOME="$HOME_DIR" "$ROOT/bin/fm-brief.sh" -- --weird-repo-name 2>&1); rc=$?
@@ -189,5 +264,8 @@ test_spawn_rejects_an_unknown_flag
 test_brief_rejects_an_unknown_flag
 test_brief_names_a_missing_repo_argument
 test_brief_still_scaffolds_with_known_flags
+test_unknown_flag_catch_all_is_the_last_arm
+test_value_dispatch_block_is_not_duplicated
+test_brief_mode_flag_is_reachable
 test_end_of_flags_separator
 test_help_is_accepted_after_a_positional
