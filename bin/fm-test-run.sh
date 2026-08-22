@@ -1956,7 +1956,8 @@ else
     # and must stay GNU-FIRST: BSD stat rejects `-c` with a usage error on stderr
     # and writes nothing to stdout, so the fallback fires cleanly. Flipping it to
     # BSD-first would break on a GNU-coreutils-on-Darwin host, because GNU `-f`
-    # is --file-system: it exits 0 with a filesystem dump and `||` never fires.
+    # is --file-system: it writes a filesystem dump to stdout and only THEN
+    # fails, so `||` does fire and appends the real mode to that dump.
     mode=$(stat -c %a "$work" 2>/dev/null || stat -f %Lp "$work" 2>/dev/null || echo unknown)
     case "$mode" in
       700|0700) ;;
