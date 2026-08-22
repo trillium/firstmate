@@ -155,15 +155,21 @@ SH
 chmod +x "$STAT_DIALECT_DIR/gnu/stat" "$STAT_DIALECT_DIR/bsd/stat"
 STAT_DIALECT_SAVED_PATH=$PATH
 # Each probe runs in a command-substitution subshell so the shimmed PATH - and the
-# command-hash reset it forces - cannot leak into the rest of the suite.
+# command-hash reset it forces - cannot leak into the rest of the suite. Sourcing
+# fm-remote-job-lib.sh above already primed fm-stat-lib.sh's per-process dialect
+# cache against the HOST's stat (that priming is the lib's documented contract:
+# a real process never swaps stat mid-flight), so each subshell must clear the
+# inherited cache or the probe under test would never run against the shim.
 STAT_DIALECT_GNU=$(
   PATH="$STAT_DIALECT_DIR/gnu:$STAT_DIALECT_SAVED_PATH"; export PATH; hash -r 2>/dev/null || true
+  _FM_STAT_DIALECT=
   fm_remote_job_path_mtime "$STAT_DIALECT_DIR/probe"
 )
 [ "$STAT_DIALECT_GNU" = 1700000000 ] ||
   fail "a GNU stat ahead of /usr/bin broke the remote-job mtime reader (got '$STAT_DIALECT_GNU')"
 STAT_DIALECT_BSD=$(
   PATH="$STAT_DIALECT_DIR/bsd:$STAT_DIALECT_SAVED_PATH"; export PATH; hash -r 2>/dev/null || true
+  _FM_STAT_DIALECT=
   fm_remote_job_path_mtime "$STAT_DIALECT_DIR/probe"
 )
 [ "$STAT_DIALECT_BSD" = 1600000000 ] ||
