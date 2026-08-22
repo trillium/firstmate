@@ -35,6 +35,9 @@ _FM_CLASSIFY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
 # or no-mistakes install; absent, it points at the real sibling script.
 FM_CREW_STATE_BIN="${FM_CREW_STATE_BIN:-$_FM_CLASSIFY_LIB_DIR/fm-crew-state.sh}"
 
+# shellcheck source=bin/fm-stat-lib.sh
+. "$_FM_CLASSIFY_LIB_DIR/fm-stat-lib.sh"
+
 # Captain-relevant status verbs. A status line carrying any of these is work
 # firstmate must see. Lines without these verbs are no-verb signals: the watcher
 # absorbs them only with positive provably-working evidence, while the daemon uses
@@ -395,14 +398,15 @@ _fm_open_decisions_cursor_path() {  # <status-file>
 
 FM_OPEN_DECISIONS_FOLD_VERSION=2
 
-# Portable device:inode identity for the rotation/recreation check below.
+# Portable device:inode identity for the rotation/recreation check below. The
+# flavor comes from the binary's own dialect (bin/fm-stat-lib.sh), not from
+# `uname -s`: a Darwin kernel routinely resolves `stat` to GNU coreutils, and a
+# wrong flavor here makes every read look like a rotation.
+# Non-zero (with empty stdout) on I/O failure: the caller at
+# status_open_decisions_incremental keys its "trust the cursor" early return on
+# that exit status, so it must survive.
 _fm_open_decisions_file_ident() {  # <file> -> "dev:inode", empty on I/O failure
-  local f=$1
-  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
-    LC_ALL=C stat -f '%d:%i' "$f" 2>/dev/null
-  else
-    LC_ALL=C stat -c '%d:%i' "$f" 2>/dev/null
-  fi
+  fm_stat_identity "$1"
 }
 
 status_open_decisions_incremental() {  # <status-file>

@@ -257,17 +257,28 @@ test_gnu_stat_uses_file_formats_without_bsd_fallback_pollution() {
   write_domain_alpha_fixture "$home" "$mate"
   fakebin=$(make_fakebin "$home")
   stat_log="$home/stat.log"
+  # Darwin kernel, GNU `stat` binary - the exact nix-darwin / Homebrew-coreutils
+  # shape that made every `uname`-keyed branch pick the flavor the binary does
+  # not speak (robots-e8x5, robots-ldiu). The snapshot must still read GNU here,
+  # which is only possible if it probes the binary rather than the kernel.
   cat > "$fakebin/uname" <<'SH'
 #!/usr/bin/env bash
-printf 'Linux\n'
+printf 'Darwin\n'
 SH
+  # A GNU stat. `-f` is --file-system here, exactly as real GNU coreutils treats
+  # it, which is why no caller may probe with `-f` and take success as "BSD".
+  # `-c %s` must answer for a DIRECTORY too: bin/fm-stat-lib.sh identifies the
+  # dialect by asking this binary for `stat -c %s /`, and a fake that only knows
+  # how to size regular files would fail that probe and be misread as unknown.
   cat > "$fakebin/stat" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STAT_LOG"
 case "$1 $2" in
   '-c %a') printf '600\n' ;;
   '-c %Y') printf '1783792800\n' ;;
-  '-c %s') LC_ALL=C wc -c < "$3" | tr -d ' ' ;;
+  '-c %s')
+    if [ -d "$3" ]; then printf '160\n'; else LC_ALL=C wc -c < "$3" | tr -d ' '; fi
+    ;;
   -f\ *)
     printf '  File: "%s"\nBlocks: Total: 1\n' "$2"
     exit 1
@@ -288,9 +299,12 @@ SH
   assert_contains "$(cat "$stat_log")" '-c %Y' "GNU parent-event mtime must use stat -c"
   assert_contains "$(cat "$stat_log")" '-c %s' "GNU parent-event size must use stat -c"
   if grep -q '^-f ' "$stat_log"; then
-    fail "GNU snapshot invoked BSD stat -f before its GNU file reads: $(cat "$stat_log")"
+    fail "GNU snapshot invoked BSD stat -f on a GNU binary: $(cat "$stat_log")"
   fi
-  pass "GNU stat file reads select -c without BSD filesystem-report pollution"
+  if [ "$(head -n 1 "$stat_log")" != '-c %s /' ]; then
+    fail "dialect must be settled by probing -c first, not by any other call: $(cat "$stat_log")"
+  fi
+  pass "GNU stat file reads select -c on a Darwin kernel, with no BSD filesystem-report pollution"
 }
 
 test_parent_activity_evidence_is_bounded_and_disclosed() {

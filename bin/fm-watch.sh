@@ -93,20 +93,21 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-300}}
 # or starting the loop. Running it as a script executes the runtime exactly as
 # before, byte-for-byte.
 
-# Portable stat. macOS (BSD) stat uses `-f <fmt>`; Linux (GNU) stat uses `-c <fmt>`.
-# Do NOT use the `stat -f <fmt> ... || stat -c <fmt> ...` fallback form: on Linux
-# `stat -f` is *filesystem* stat and writes a partial filesystem dump ("File: ...",
-# "Blocks: ...") to stdout before failing, so the fallback's correct output gets
-# appended to that garbage. Arithmetic under `set -u` then aborts on the stray
-# token (e.g. the word "File" read as an unset variable), which silently kills the
-# watcher mid-cycle. Detect the platform once and pick the right form.
-if [ "$(uname)" = Darwin ]; then
-  stat_mtime() { stat -f %m "$1" 2>/dev/null; }        # epoch seconds of mtime
-  stat_sig()   { stat -f '%z:%Fm' "$1" 2>/dev/null; }   # size:mtime signature
-else
-  stat_mtime() { stat -c %Y "$1" 2>/dev/null; }
-  stat_sig()   { stat -c '%s:%Y' "$1" 2>/dev/null; }
-fi
+# Portable stat, via the single owner in bin/fm-stat-lib.sh (sourced above through
+# fm-pr-lib.sh, and again explicitly here because this file calls it directly).
+# Two traps that lib exists to close, both of which used to live here:
+#   - `stat -f <fmt> ... || stat -c <fmt> ...` is unsafe, because GNU's `-f` is
+#     --file-system: it writes a filesystem dump to stdout and the `||` never
+#     fires, so arithmetic under `set -u` aborts on a stray token and silently
+#     kills the watcher mid-cycle.
+#   - `uname` is the wrong discriminator. A Darwin kernel routinely resolves
+#     `stat` to GNU coreutils (nix-darwin, or Homebrew coreutils ahead of
+#     /usr/bin on PATH), so the kernel's name does not predict the binary's
+#     dialect. fm-stat-lib.sh feature-detects the binary once and caches it.
+# shellcheck source=bin/fm-stat-lib.sh
+. "$SCRIPT_DIR/fm-stat-lib.sh"
+stat_mtime() { fm_stat_mtime "$1"; }      # epoch seconds of mtime
+stat_sig()   { fm_stat_signature "$1"; }  # size:mtime signature
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
@@ -676,6 +677,10 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 # swallows a signal.
 scan_signals() {
   local f sig sf
+  # One dialect probe for the whole scan rather than one per file: this fans out
+  # over every session's status and turn-ended marker, so the cost scales with
+  # fleet size on every watcher tick.
+  fm_stat_warm
   for f in "$STATE"/*.status "$STATE"/*.turn-ended; do
     [ -e "$f" ] || continue
     sig=$(stat_sig "$f") || continue

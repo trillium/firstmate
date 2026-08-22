@@ -53,6 +53,11 @@
 #
 # shellcheck source=bin/fm-startup-memory-budget-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-startup-memory-budget-lib.sh"
+# Sourced explicitly rather than relied on transitively through the budget lib:
+# the stat helpers below are this file's own dependency, and it is a leaf with no
+# side effects on source, so sourcing it twice costs nothing.
+# shellcheck source=bin/fm-stat-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-stat-lib.sh"
 
 # The one shared data file in this inheritance contract. There is deliberately
 # no shared learnings file.
@@ -93,28 +98,21 @@ fm_config_inherit_items() {
   printf '%s\n' "$FM_SHARED_CAPTAIN_REL"
 }
 
+# The three file-identity probes below go through bin/fm-stat-lib.sh, the one
+# owner of "which dialect does this host's `stat` speak?". Asking `uname` is the
+# wrong question - a Darwin kernel routinely resolves `stat` to GNU coreutils -
+# and here a wrong answer makes the whole safe-copy precondition set unreadable,
+# so the primary silently declines to push inherited config to a secondmate.
 fm_inherit_file_mode() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f %Lp "$1" 2>/dev/null
-  else
-    stat -c %a "$1" 2>/dev/null
-  fi
+  fm_stat_mode "$1"
 }
 
 fm_inherit_file_device() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f %d "$1" 2>/dev/null
-  else
-    stat -c %d "$1" 2>/dev/null
-  fi
+  fm_stat_device "$1"
 }
 
 fm_inherit_file_link_count() {
-  if [ "$(uname)" = Darwin ]; then
-    stat -f %l "$1" 2>/dev/null
-  else
-    stat -c %h "$1" 2>/dev/null
-  fi
+  fm_stat_links "$1"
 }
 
 fm_inherit_sha256() {
