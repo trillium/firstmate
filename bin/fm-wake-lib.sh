@@ -69,8 +69,9 @@ fm_pid_identity() {
 
 # Deliberately NOT keyed on $_FM_UNAME: a Darwin kernel routinely resolves `stat`
 # to GNU coreutils, so the kernel's name does not predict the binary's dialect.
-# bin/fm-stat-lib.sh feature-detects the binary once and caches the answer, so
-# this stays fork-free per call in the confirm/attach polls.
+# bin/fm-stat-lib.sh feature-detects the binary once when it is sourced and
+# caches the answer in the sourcing shell, so the confirm/attach polls' per-call
+# command substitutions inherit the dialect instead of re-probing.
 fm_path_mtime() {
   fm_stat_mtime "$1"
 }

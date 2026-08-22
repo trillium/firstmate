@@ -35,7 +35,11 @@
 # callers like fm_path_mtime run inside 0.2s confirm and 0.5s attach polls where
 # forking a probe per call is a measurable cost.
 #
-# No side effects on source. set -u / set -e safe. Leaf lib: depends on nothing.
+# Sourcing primes the dialect cache once in the sourcing shell (failure-tolerant,
+# so an unanswerable probe never trips set -e); command-substitution subshells
+# inherit the cached value instead of re-running the probe, and the per-call
+# probe remains as the fallback when the cache is still unknown.
+# set -u / set -e safe. Leaf lib: depends on nothing.
 #
 # Tunables (env):
 #   FM_STAT_DIALECT_OVERRIDE   force 'gnu' or 'bsd' (tests); skips the probe
@@ -116,3 +120,8 @@ fm_stat_signature() { fm_stat_fmt '%s:%Y' '%z:%Fm' "$1"; }
 
 # fm_stat_fingerprint <path>: "device:inode:size:mtime:ctime".
 fm_stat_fingerprint() { fm_stat_fmt '%d:%i:%s:%Y:%Z' '%d:%i:%z:%m:%c' "$1"; }
+
+# Prime the cache in the PARENT shell at source time: helpers are almost always
+# invoked via command substitution, whose subshell would otherwise re-run the
+# probe fork on every call and then discard the cached answer.
+fm_stat_dialect >/dev/null 2>&1 || true
