@@ -29,20 +29,37 @@
 # `stat -f` on GNU succeeds with junk. Probing `-c` FIRST therefore cannot be
 # fooled by either flavor.
 #
-# The dialect is cached in _FM_STAT_DIALECT after the first probe, because
-# callers like fm_path_mtime run inside 0.2s confirm and 0.5s attach polls where
-# forking a probe per call is a measurable cost.
+# The dialect is cached in _FM_STAT_DIALECT after the first probe. Be precise
+# about what that buys: the accessors below print their result, so a call site
+# writing `x=$(fm_stat_mtime "$p")` runs the whole thing in a command-substitution
+# subshell and the cache dies with it. The cache therefore saves nothing ACROSS
+# such call sites - it only helps a caller that sources this lib and resolves in
+# its own shell. Budget one probe plus one real `stat` per call: two forks on
+# GNU, three on BSD (where the `-c` probe is rejected first). That is one more
+# fork than the hand-rolled `stat -c ... || stat -f ...` form it replaces, which
+# is the price of not guessing, and it is why nothing here should be called from
+# a loop tighter than the existing 0.1s-0.5s polls without hoisting the value.
 #
 # No side effects on source. set -u / set -e safe. Leaf lib: depends on nothing.
 #
 # Tunables (env):
 #   FM_STAT_DIALECT_OVERRIDE   force 'gnu' or 'bsd' (tests); skips the probe
 
-# fm_stat_dialect: prints 'gnu' or 'bsd'; non-zero when neither probe answers.
-fm_stat_dialect() {
+# _fm_stat_resolve_dialect: sets _FM_STAT_RESOLVED to 'gnu' or 'bsd' IN THE
+# CALLER'S SHELL; non-zero when neither probe answers.
+#
+# This exists separately from fm_stat_dialect because the cache only works if
+# the probe runs in the shell that owns _FM_STAT_DIALECT. Resolving through
+# `dialect=$(fm_stat_dialect)` puts the assignment inside a command-substitution
+# subshell, which discards it on exit - so every call re-probed and the hot
+# callers below paid three forks instead of one. That is exactly the cost the
+# cache is here to avoid.
+_fm_stat_resolve_dialect() {
   if [ -n "${FM_STAT_DIALECT_OVERRIDE:-}" ]; then
+    # The override deliberately does NOT populate the cache: a test may set it,
+    # clear it, and expect the real binary to be probed afterwards.
     case "$FM_STAT_DIALECT_OVERRIDE" in
-      gnu|bsd) printf '%s\n' "$FM_STAT_DIALECT_OVERRIDE"; return 0 ;;
+      gnu|bsd) _FM_STAT_RESOLVED=$FM_STAT_DIALECT_OVERRIDE; return 0 ;;
       *) return 1 ;;
     esac
   fi
@@ -64,16 +81,24 @@ fm_stat_dialect() {
     esac
   fi
   [ "$_FM_STAT_DIALECT" != unknown ] || return 1
-  printf '%s\n' "$_FM_STAT_DIALECT"
+  _FM_STAT_RESOLVED=$_FM_STAT_DIALECT
+}
+
+# fm_stat_dialect: prints 'gnu' or 'bsd'; non-zero when neither probe answers.
+fm_stat_dialect() {
+  _fm_stat_resolve_dialect || return 1
+  printf '%s\n' "$_FM_STAT_RESOLVED"
 }
 
 # fm_stat_fmt <gnu-fmt> <bsd-fmt> <path>: print the formatted field, else fail.
 # The two format strings are the SAME field expressed in each dialect; callers
 # below name the field so no call site has to remember the letter pairs.
 fm_stat_fmt() {
-  local gnu_fmt=$1 bsd_fmt=$2 path=$3 dialect out
-  dialect=$(fm_stat_dialect) || return 1
-  case "$dialect" in
+  local gnu_fmt=$1 bsd_fmt=$2 path=$3 out
+  # Resolve WITHOUT a command substitution so the cache survives - see
+  # _fm_stat_resolve_dialect.
+  _fm_stat_resolve_dialect || return 1
+  case "$_FM_STAT_RESOLVED" in
     gnu) out=$(LC_ALL=C stat -c "$gnu_fmt" "$path" 2>/dev/null) || return 1 ;;
     bsd) out=$(LC_ALL=C stat -f "$bsd_fmt" "$path" 2>/dev/null) || return 1 ;;
     *) return 1 ;;
