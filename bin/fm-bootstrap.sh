@@ -272,11 +272,12 @@ FM_BEADS_SYNC_MIN_INTERVAL=${FM_BEADS_SYNC_MIN_INTERVAL:-900}
 case "$FM_BEADS_SYNC_MIN_INTERVAL" in '' | *[!0-9]*) FM_BEADS_SYNC_MIN_INTERVAL=900 ;; esac
 
 beads_sync_stamp_mtime() { # <path>; epoch seconds, empty when unreadable
-  if [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then
-    stat -f %m "$1" 2>/dev/null
-  else
-    stat -c %Y "$1" 2>/dev/null
-  fi
+  # Via bin/fm-stat-lib.sh, which feature-detects the `stat` binary's dialect.
+  # `uname` is the wrong discriminator: a Darwin kernel routinely resolves
+  # `stat` to GNU coreutils, and GNU `-f` is --file-system, so the Darwin branch
+  # would print an apfs dump at exit 0 and the caller's staleness arithmetic
+  # would see a non-numeric token forever.
+  fm_stat_mtime "$1"
 }
 
 beads_sync_due() {
