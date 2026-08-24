@@ -362,15 +362,18 @@ fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 # The worker reads the claim instant with whole-second resolution, so a
 # deadline of exactly the claim second plus the timeout would silently bill the
 # job whatever fraction of that second had already passed. The claim artifact
-# is written immediately before the deadline is minted, so its mtime pins the
-# claim second exactly and the round-up can be asserted as an equality, without
-# timing the kill and without a stage-time baseline that a second boundary in
-# the staging gap can satisfy for the wrong reason.
+# is written just before the deadline is minted, so its mtime pins the claim
+# second without a stage-time baseline that a second boundary in the staging
+# gap can satisfy for the wrong reason. The mint is a few forks later, so one
+# second boundary can legitimately fall between the two stamps: the round-up is
+# asserted as the two-second bracket that gap allows, not as an equality that
+# would false-fail on that boundary.
 TIMEOUT_CLAIMED_AT=$(fm_remote_job_path_mtime "$TIMEOUT_JOB_DIR/.claim/owner") \
   || fail "the timed-out job recorded no claim instant"
 TIMEOUT_EXEC_DEADLINE=$(fm_remote_job_read_number "$TIMEOUT_JOB_DIR" deadline) \
   || fail "the timed-out job recorded no execution deadline"
-[ "$TIMEOUT_EXEC_DEADLINE" -eq "$((TIMEOUT_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+[ "$TIMEOUT_EXEC_DEADLINE" -ge "$((TIMEOUT_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+  && [ "$TIMEOUT_EXEC_DEADLINE" -le "$((TIMEOUT_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 2))" ] \
   || fail "the claimed job's deadline did not round its truncated claim second up, so it was billed the remainder of the second it was claimed in"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the timed-out job could not be reaped"
 pass "the worker enforces the job timeout and publishes its result"
@@ -436,13 +439,13 @@ else
 fi
 # Staging derives queue_deadline from one clock read, so the stage second is
 # exactly recoverable from the record, and the claim artifact's mtime pins the
-# claim second exactly. The job was held behind the first job for longer than a
-# second, so its claim second is strictly later than its stage second; an
-# execution deadline that equals the claim second plus the timeout plus the
-# rounded-up claim second therefore proves both halves of the contract -
-# claim-time minting rather than stage-time minting, and the full configured
-# window - without the wall clock and without a baseline a second boundary in
-# the staging gap can satisfy for the wrong reason.
+# claim second. The job was held behind the first job for longer than a second,
+# so its claim second is strictly later than its stage second; a deadline
+# anchored on that claim second therefore proves claim-time minting rather than
+# stage-time minting, and the rounded-up second proves the full configured
+# window - both without the wall clock. The bracket is two seconds wide because
+# one second boundary can legitimately fall in the few forks between the claim
+# write and the deadline mint.
 SECOND_QUEUE_DEADLINE=$(fm_remote_job_read_number "$SECOND_JOB_DIR" queue_deadline) \
   || fail "the queued job recorded no queue deadline"
 SECOND_EXEC_DEADLINE=$(fm_remote_job_read_number "$SECOND_JOB_DIR" deadline) \
@@ -452,7 +455,8 @@ SECOND_CLAIMED_AT=$(fm_remote_job_path_mtime "$SECOND_JOB_DIR/.claim/owner") \
 SECOND_STAGED_AT=$((SECOND_QUEUE_DEADLINE - FM_REMOTE_JOB_QUEUE_TIMEOUT))
 [ "$SECOND_CLAIMED_AT" -gt "$SECOND_STAGED_AT" ] \
   || fail "the queued job was not held past its stage second, so claim-time minting is unproven"
-[ "$SECOND_EXEC_DEADLINE" -eq "$((SECOND_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+[ "$SECOND_EXEC_DEADLINE" -ge "$((SECOND_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+  && [ "$SECOND_EXEC_DEADLINE" -le "$((SECOND_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 2))" ] \
   || fail "the queued job's execution window was not minted from its claim second with that truncated second rounded up"
 fm_remote_job_reap "$ACCOUNT_HOME" "$FIRST_JOB_ID" || fail "the first delayed job could not be reaped"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the second delayed job could not be reaped"
