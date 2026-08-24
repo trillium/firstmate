@@ -27,9 +27,11 @@
 #      falls through untouched, so live work is never marked done prematurely.
 #      A close alone is still not enough: fm-ledger.sh's drop-recovery can close
 #      a bead that never landed, so this reports done only when the task ALSO
-#      has no open decision and no unlanded (uncommitted or unpushed) work, with
-#      any probe that fails to answer counting as unlanded. Other backends never
-#      consult a bead here; the block below owns the exact gate.
+#      has no open decision and its work actually LANDED, judged by the same
+#      predicate teardown uses (bin/fm-landed-lib.sh's fm_work_is_landed: PR
+#      merged, or content already in the default branch). Any probe that fails to
+#      answer counts as unlanded. Other backends never consult a bead here; the
+#      block below owns the exact gate.
 #   2. Matching no-mistakes run for this crew's branch AND current code identity,
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
@@ -57,7 +59,10 @@
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log.
 #
-# Read-only and side-effect free. Always exits 0 on a successful read regardless
+# Read-only and side-effect free, except that the closed-bead landing predicate
+# (bin/fm-landed-lib.sh's fm_work_is_landed) fetches the default branch into the
+# worktree's remote-tracking ref before comparing content, the same read of the
+# remote teardown performs. Always exits 0 on a successful read regardless
 # of state; exit 2 only on a usage error (no id).
 set -u
 
@@ -79,6 +84,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-landed-lib.sh
+. "$SCRIPT_DIR/fm-landed-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -136,33 +143,28 @@ fi
 # But a closed bead is NOT unconditionally done: fm-ledger.sh's drop-recovery
 # closes a claimed bead that went quiet WITHOUT landing, so a close can outrun the
 # actual work. The bead is authoritative only when the task also has no open
-# decision and no unlanded work; if a decision is still open, or the worktree has
-# uncommitted or unpushed commits, the close is not completion evidence, so we
-# fall through to the run-step/pane/status sources rather than reporting done.
-# Read-only, mirroring the uncommitted/unpushed probe fm-teardown.sh uses for its
-# staleness summary; work_is_landed itself lives in that mutating script this
-# side-effect-free reader must not source.
+# decision and its work actually LANDED, judged by the same predicate teardown
+# uses (bin/fm-landed-lib.sh's fm_work_is_landed): a merged PR proves the local
+# work is contained in the PR head, or the content is already in the up-to-date
+# default branch. If a decision is still open, or the work has not landed, the
+# close is not completion evidence, so we fall through to the
+# run-step/pane/status sources rather than reporting done. A clean, fully-pushed
+# worktree whose PR is still open and whose content is not yet in the default
+# branch is NOT landed, so it must not report done here.
 #
-# Each probe's EXIT STATUS is checked, not just its output: a git that refused the
-# read (dubious ownership, a corrupt index, git missing) also prints nothing, and
-# reading that silence as "nothing unlanded" would let a closed bead report done
-# over a worktree whose state was never actually read. Any probe that fails to
-# answer counts as unlanded, the same fail-closed direction fm-teardown.sh's
-# validate_worktree_teardown_safety takes on the identical two commands.
-bead_task_has_unlanded_work() {
-  local out
-  out=$(git -C "$WT" status --porcelain 2>/dev/null) || return 0
-  [ -z "$out" ] || return 0
-  out=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null) || return 0
-  [ -z "$out" ] || return 0
-  return 1
-}
+# fm_work_is_landed fails closed: any gh/git probe that cannot answer returns
+# non-zero, which the gate below reads as unlanded rather than done - the same
+# fail-safe direction teardown's landing check takes.
+BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+PROJ=$(meta_value project)
+[ -n "$PROJ" ] || PROJ="$WT"
+PR_URL=$(meta_value pr)
 BEADS_ID=$(meta_value beads_id)
 if [ -n "$BEADS_ID" ] \
   && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ] \
   && fm_beads_is_closed "$BEADS_ID" \
   && [ -z "$(status_open_decisions "$LOG")" ] \
-  && ! bead_task_has_unlanded_work; then
+  && fm_work_is_landed "$WT" "$PROJ" "$BRANCH" "$PR_URL"; then
   emit "done" bead "linked bead $BEADS_ID closed: task complete"
 fi
 
