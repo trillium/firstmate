@@ -1332,8 +1332,12 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     # The one-shot legacy task-label migration reads that same local store, is
     # marker-guarded so it costs one label read on the first sweep and nothing
     # afterwards, and holds itself to its own budget so a store that accepts the
-    # connection and never answers cannot wedge this phase.
-    fm_beads_migrate_legacy_task_labels
+    # connection and never answers cannot wedge this phase. It is gated to the
+    # local phase because session start runs this bootstrap twice concurrently -
+    # once with the network skipped, once with only the network - and an
+    # ungated sweep runs in both, spending up to its whole budget ahead of the
+    # network sweeps that share the deferred worker's stage budget.
+    local_phase && fm_beads_migrate_legacy_task_labels
   fi
   # secondmate_sync consumes SECONDMATE_RESPAWNED_IDS from the liveness sweep, so
   # those two always run together in the same phase. Each mutating network sweep

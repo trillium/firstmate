@@ -909,9 +909,9 @@ test_beads_backend_mints_bead_at_intake() {
   brief="$home/data/beads-auto-ship/brief.md"
   assert_present "$brief" "ship brief was not scaffolded under the beads backend"
   # The intake bead is opened via the idempotent HOME-SCOPED lookup-then-mint. The
-  # scope is pinned above so this names the exact label: asserting a bare
-  # task:beads-auto-ship would also match the legacy compatibility lookup
-  # fm_beads_lookup makes second, proving nothing about scoping.
+  # scope is pinned above so this names the exact label: a bare
+  # task:beads-auto-ship assertion is a substring of the scoped label too, so it
+  # would still pass with the scope segment dropped and prove nothing about it.
   assert_grep "list --label task:brief-intake:beads-auto-ship --limit 1 --json" "$calls_log" \
     "ship brief did not resolve the intake bead via its home-scoped label under the beads backend"
   assert_grep "create --title" "$calls_log" \

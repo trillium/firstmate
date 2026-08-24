@@ -324,6 +324,28 @@ fm_beads_require_timeout_lib() {
   _FM_BEADS_TIMEOUT_LIB_LOADED=1
 }
 
+# fm-wake-lib.sh's lock primitives are loaded the same lazy way, and by the one
+# sweep that mutates the store on a schedule rather than on request. It is not
+# sourced eagerly because it unconditionally mkdir -p's $STATE, which would make
+# merely sourcing this library create a home's state directory.
+_FM_BEADS_LOCK_LIB_LOADED=0
+fm_beads_require_lock_lib() {
+  [ "$_FM_BEADS_LOCK_LIB_LOADED" = 1 ] && return 0
+  # Already provided by a consumer that sourced fm-wake-lib.sh first, so
+  # re-sourcing would be pointless work and, in a partially-synced remote code
+  # root, a failure on a file nothing needs.
+  if declare -f fm_lock_try_acquire >/dev/null 2>&1; then
+    _FM_BEADS_LOCK_LIB_LOADED=1
+    return 0
+  fi
+  local lib_dir
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$lib_dir/fm-wake-lib.sh" ] || return 1
+  # shellcheck source=bin/fm-wake-lib.sh disable=SC1091
+  . "$lib_dir/fm-wake-lib.sh"
+  _FM_BEADS_LOCK_LIB_LOADED=1
+}
+
 # fm_beads_sync_once - best-effort commit, push, then pull against the
 # configured Dolt remote, printing one BEADS_SYNC: line per outcome.
 #
@@ -645,11 +667,18 @@ fm_beads_bead_has_foreign_scope() { # <task_id> <scope> <labels_json>
 
 # fm_beads_home_task_ids - echo, one per line and deduplicated, every task id
 # this home holds a durable local record for: a dispatched task's
-# state/<id>.meta, a scaffolded task's data/<id>/brief.md, and an item id in
-# data/backlog.md (the pre-beads queue a home imported from). Those three are the
-# home's own evidence that a slug is one of ITS task ids, which is what the
+# state/<id>.meta, or a scaffolded task's data/<id>/brief.md. Those two records
+# are made by THIS home when it takes the task on, which is the evidence the
 # migration sweep needs and what the unscoped task:<id> label itself never
 # recorded.
+#
+# A data/backlog.md item id is deliberately NOT evidence. Every home that ever
+# queued a slug carries that line, including a home that never dispatched it, so
+# treating it as ownership let a home claim a bead a DIFFERENT home had already
+# minted and recorded in its own state/<id>.meta - the exact shared-bead bug the
+# home-scoped label exists to eliminate. This function enumerates candidates;
+# fm_beads_home_claims_bead decides whether a candidate's record actually names
+# the bead in hand.
 fm_beads_home_task_ids() {
   local state data entry name
   state=${STATE:-${FM_STATE_OVERRIDE:-${FM_HOME:-}/state}}
@@ -668,12 +697,37 @@ fm_beads_home_task_ids() {
         name=${entry%/brief.md}
         printf '%s\n' "${name##*/}"
       done
-      if [ -f "$data/backlog.md" ]; then
-        sed -n 's/^- \[[^]]*\][[:space:]]\{1,\}\([^[:space:]]\{1,\}\).*/\1/p' \
-          "$data/backlog.md" 2>/dev/null || true
-      fi
     fi
   } | LC_ALL=C sort -u
+}
+
+# fm_beads_home_claims_bead <task_id> <bead_id> [recorded_bead] - true when THIS
+# home's own durable records claim <bead_id> as its bead for <task_id>. The two
+# evidence classes are exhaustive and each is a record this home wrote itself:
+#
+#   1. state/<task_id>.meta records beads_id=<bead_id> exactly. The strongest
+#      evidence there is: this home dispatched the task against that bead.
+#   2. data/<task_id>/brief.md exists AND no meta names a bead at all. The task
+#      was scaffolded here and never dispatched, so the pre-migration bead the
+#      slug carries is this home's own intake bead.
+#
+# A meta naming a DIFFERENT bead is a disqualifier rather than merely absent
+# evidence: this home already has its own bead for that slug, so the unscoped one
+# is someone else's. The optional third argument passes an already-read
+# beads_id= through so a caller that needed it for its own diagnostic does not
+# pay a second read; omit it and this reads the meta itself.
+fm_beads_home_claims_bead() { # <task_id> <bead_id> [recorded_bead]
+  local task_id=$1 bead_id=$2 recorded data
+  [ -n "$task_id" ] && [ -n "$bead_id" ] || return 1
+  if [ "$#" -ge 3 ]; then
+    recorded=$3
+  else
+    recorded=$(fm_beads_home_recorded_bead "$task_id") || recorded=
+  fi
+  [ "$recorded" = "$bead_id" ] && return 0
+  [ -z "$recorded" ] || return 1
+  data=${DATA:-${FM_DATA_OVERRIDE:-${FM_HOME:-}/data}}
+  [ -f "$data/$task_id/brief.md" ]
 }
 
 # fm_beads_legacy_labelled_task_ids [bound] - echo every task id the store still
@@ -722,28 +776,44 @@ fm_beads_legacy_labelled_task_ids() { # [bound]
 #
 # WHAT IT DOES. For every unscoped task:<id> label in the store whose id this
 # home holds a durable record for (fm_beads_home_task_ids), it re-tags the OPEN
-# bead carrying that label onto this home's scoped label, and only then. It skips
-# a bead this home's own record contradicts (the meta names a different bead), a
-# bead some other home has already scoped for that id
-# (fm_beads_bead_has_foreign_scope), and a bead whose labels cannot be read at
-# all. Closed beads are excluded by the store's own default filter, so a finished
-# task's surviving label is never touched. Nothing is ever removed, closed, or
-# rewritten: the only write is adding one label to a bead this home can show is
-# its own.
+# bead carrying that label onto this home's scoped label, and only then.
+# fm_beads_home_claims_bead is the claim test: this home's own meta must name
+# that exact bead, or this home must hold the task's brief with no meta naming
+# any bead. It skips a bead this home's own record contradicts (the meta names a
+# different bead), a bead no such record claims, a bead some other home has
+# already scoped for that id (fm_beads_bead_has_foreign_scope), and a bead whose
+# labels cannot be read at all. Closed beads are excluded by the store's own
+# default filter, so a finished task's surviving label is never touched. Nothing
+# is ever removed, closed, or rewritten: the only write is adding one label to a
+# bead this home can show is its own.
+#
+# A LOOKUP THAT FAILED IS NOT A LOOKUP THAT FOUND NOTHING. The per-candidate
+# `task list` is checked for both its exit status and an array-shaped payload,
+# because collapsing a store failure into an empty result would take the benign
+# "the surviving label belongs to a closed record" path, write the permanent
+# one-shot marker, and leave that bead unmigrated forever.
 #
 # RESIDUAL AMBIGUITY, stated rather than hidden: when two homes both hold a
-# record for one slug and only one pre-migration bead exists, the label cannot
-# say which home minted it, so the first home to sweep claims it and the second
-# mints its own on its next resolve. Both homes end with exactly one bead each -
-# the property that matters, since a shared bead is what let one home's close
-# mark another's live work done - but the older bead's history may end up under
-# the other home.
+# claiming record for one slug and only one pre-migration bead exists, the label
+# cannot say which home minted it, so the first home to sweep claims it and the
+# second mints its own on its next resolve. Both homes end with exactly one bead
+# each - the property that matters, since a shared bead is what let one home's
+# close mark another's live work done - but the older bead's history may end up
+# under the other home.
 #
 # IDEMPOTENCE. A durable marker records a completed sweep, so later sessions cost
 # nothing; the marker is written only when no candidate failed, so a transient
 # store failure retries next session. The sweep is also intrinsically idempotent:
 # a bead already carrying this home's scoped label is skipped on its own evidence
 # even with the marker removed.
+#
+# SERIALIZATION. The sweep body runs under its own non-blocking lock, the same
+# way fm_beads_write_queue_reconcile guards its replay, so two processes in one
+# home can never sweep the same store at once. Bootstrap's phase gating already
+# keeps the local and network-only passes apart; the lock is what makes that
+# safe rather than merely arranged, and it holds if the gating is ever changed.
+# A held lock means another process is already doing this one-shot work, so the
+# caller returns success silently rather than waiting inside a budgeted phase.
 # The whole sweep runs under one budget, and every store call within it under
 # whatever of that budget is left, capped at the same per-read bound the
 # heartbeat status read uses. A Dolt sql-server that accepts the connection and
@@ -769,11 +839,36 @@ fm_beads_migrate_step_bound() { # <deadline epoch>
 }
 
 fm_beads_migrate_legacy_task_labels() {
-  local marker scope known legacy id payload bead labels recorded scoped_label
+  local state_dir marker lock rc
+  state_dir=${STATE:-${FM_STATE_OVERRIDE:-${FM_HOME:-}/state}}
+  marker=${FM_BEADS_LABEL_MIGRATION_MARKER:-$state_dir/.beads-label-migration-v1}
+  # The marker check is deliberately outside the lock: once the sweep is done,
+  # every later session must cost one stat and must not create a lock directory
+  # in a home that has nothing left to migrate.
+  [ ! -e "$marker" ] || return 0
+  lock=${FM_BEADS_LABEL_MIGRATION_LOCK:-$state_dir/.beads-label-migration.lock}
+  if ! fm_beads_require_lock_lib; then
+    echo "BEADS_LABEL_MIGRATION: the lock library is unavailable, so pre-migration task labels stay unmigrated"
+    return 1
+  fi
+  # Another process in this home is already sweeping. The work is one-shot and
+  # idempotent, so the right answer is to leave it to that process rather than
+  # wait for a lock inside a phase that is itself on a budget.
+  fm_lock_try_acquire "$lock" || return 0
+  fm_beads_migrate_legacy_task_labels_body "$marker"
+  rc=$?
+  fm_lock_release "$lock"
+  return "$rc"
+}
+
+# fm_beads_migrate_legacy_task_labels_body <marker path> - the sweep proper,
+# separated so every one of its exit paths releases the lock its caller holds
+# without each having to remember to.
+fm_beads_migrate_legacy_task_labels_body() { # <marker path>
+  local marker=$1
+  local scope known legacy id payload status bead labels recorded scoped_label
   local deadline bound
   local migrated=0 skipped=0 failed=0
-  marker=${FM_BEADS_LABEL_MIGRATION_MARKER:-${STATE:-${FM_STATE_OVERRIDE:-${FM_HOME:-}/state}}/.beads-label-migration-v1}
-  [ ! -e "$marker" ] || return 0
   if ! command -v task >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
     echo "BEADS_LABEL_MIGRATION: task CLI or jq not found, so pre-migration task labels stay unmigrated"
     return 1
@@ -815,9 +910,21 @@ fm_beads_migrate_legacy_task_labels() {
     fi
     scoped_label="task:$scope:$id"
     payload=$(fm_run_timed "$bound" task list --label "$(fm_beads_task_label_legacy "$id")" \
-      --limit 1 --json 2>/dev/null) || payload=
+      --limit 1 --json 2>/dev/null)
+    status=$?
+    # An unreadable lookup is counted as a failure so the marker is held back and
+    # the next session retries. Only a lookup that succeeded AND returned a real
+    # array may fall through to the benign "nothing open carries this label"
+    # case below; jq -e distinguishes a parsed array from an absent, truncated,
+    # or non-JSON payload, which a plain `.[0].id` read cannot.
+    if [ "$status" -ne 0 ] \
+      || ! printf '%s' "$payload" | jq -e 'type=="array"' >/dev/null 2>&1; then
+      failed=$((failed + 1))
+      echo "BEADS_LABEL_MIGRATION: could not look up $id's pre-migration bead, so it stays unmigrated and retries next session"
+      continue
+    fi
     bead=$(printf '%s' "$payload" \
-      | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || bead=
+      | jq -r 'if length>0 then (.[0].id // empty) else empty end' 2>/dev/null) || bead=
     # No OPEN bead carries the legacy label, so the surviving label belongs to a
     # closed record and there is nothing to migrate.
     [ -n "$bead" ] || continue
@@ -825,6 +932,11 @@ fm_beads_migrate_legacy_task_labels() {
     if [ -n "$recorded" ] && [ "$recorded" != "$bead" ]; then
       skipped=$((skipped + 1))
       echo "BEADS_LABEL_MIGRATION: left $bead alone: this home's own record for $id names $recorded"
+      continue
+    fi
+    if ! fm_beads_home_claims_bead "$id" "$bead" "$recorded"; then
+      skipped=$((skipped + 1))
+      echo "BEADS_LABEL_MIGRATION: left $bead alone: no record here claims it for $id"
       continue
     fi
     if ! bound=$(fm_beads_migrate_step_bound "$deadline") \
@@ -856,7 +968,7 @@ EOF
   fi
   : >"$marker" 2>/dev/null || true
   if [ "$migrated" -gt 0 ] || [ "$skipped" -gt 0 ]; then
-    echo "BEADS_LABEL_MIGRATION: complete: $migrated bead(s) re-tagged, $skipped left to another home"
+    echo "BEADS_LABEL_MIGRATION: complete: $migrated bead(s) re-tagged, $skipped left alone"
   fi
   return 0
 }
