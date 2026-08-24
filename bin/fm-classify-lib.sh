@@ -648,10 +648,11 @@ signal_reason_is_actionable() {  # <file> ...
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, and under
 # the beads backend remote reads (gh/git) for its closed-bead landing check, so
 # callers run it only on no-verb signal and first-sighting stale paths, never every
-# wake. Those remote reads share ONE deadline for the landing check as a whole
-# (bin/fm-landed-lib.sh's FM_LANDED_NET_TIMEOUT, 10s by default), however many legs
-# it runs, so the wake cannot stall on an unreachable remote - but none of it is
-# free.
+# wake. bin/fm-landed-lib.sh is unbounded by default, but fm-crew-state.sh opts
+# into a bound for that check and its remote legs then share ONE deadline for the
+# check as a whole (FM_CREW_STATE_LANDED_TIMEOUT, 10s by default), however many
+# legs it runs, so the wake cannot stall on an unreachable remote - but none of it
+# is free.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
   local id=$1 line state src

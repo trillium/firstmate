@@ -61,10 +61,12 @@
 #      than trusting a stale status log.
 #
 # Read-only and side-effect free, except that the closed-bead landing predicate
-# (bin/fm-landed-lib.sh's fm_work_is_landed) fetches the default branch into the
-# worktree's remote-tracking ref before comparing content, the same read of the
-# remote teardown performs. Always exits 0 on a successful read regardless
-# of state; exit 2 only on a usage error (no id).
+# (bin/fm-landed-lib.sh's fm_work_is_landed) fetches TWICE: the default branch into
+# the worktree's remote-tracking ref before comparing content, and refs/pull/<n>/head
+# when a merged PR's head commit is not present locally (the ordinary
+# squash-merge-then-delete-branch case, where this worktree never held the PR head).
+# Both are the same reads of the remote teardown performs. Always exits 0 on a
+# successful read regardless of state; exit 2 only on a usage error (no id).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,6 +97,14 @@ META="$STATE/$ID.meta"
 LOG="$STATE/$ID.status"
 NM_TIMEOUT=${FM_CREW_STATE_NM_TIMEOUT:-10}
 case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
+# The bound this reader OPTS INTO for the closed-bead landing predicate.
+# bin/fm-landed-lib.sh is unbounded by default so bin/fm-teardown.sh keeps its
+# historic wait-as-long-as-it-takes semantics at a gate it asks once; this read
+# runs on every supervision poll instead, so an unreachable remote or a blocking
+# credential helper must cost a bounded wait rather than stall the watcher. The
+# predicate spends this once in total, not once per remote leg.
+LANDED_TIMEOUT=${FM_CREW_STATE_LANDED_TIMEOUT:-$NM_TIMEOUT}
+case "$LANDED_TIMEOUT" in ''|*[!0-9]*) LANDED_TIMEOUT=10 ;; esac
 # How many of the most recent `no-mistakes runs` rows the cross-branch fallback
 # (nm_runs_status_for_branch, below) scans. Generous enough to still find a
 # branch's own run on a busy multi-crew fleet without listing the entire
@@ -171,7 +181,8 @@ CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true
 # sources rather than reporting done.
 #
 # Both dimensions fail closed. fm_work_is_landed returns non-zero for any gh/git
-# probe that cannot answer, and crew_tree_is_clean checks git's EXIT STATUS, not
+# probe that cannot answer, including a remote leg killed by the bound this reader
+# opts into (LANDED_TIMEOUT above), and crew_tree_is_clean checks git's EXIT STATUS, not
 # just its output: a git that refused the read (dubious ownership, a corrupt
 # index, git missing) also prints nothing, and reading that silence as "nothing
 # uncommitted" is precisely the bug. Any probe that cannot answer counts as
@@ -191,7 +202,8 @@ if [ -n "$BEADS_ID" ] \
   && fm_beads_is_closed "$BEADS_ID" \
   && [ -z "$(status_open_decisions "$LOG")" ] \
   && crew_tree_is_clean \
-  && fm_work_is_landed "$WT" "$PROJ" "$CREW_BRANCH" "$PR_URL"; then
+  && FM_LANDED_NET_TIMEOUT=${FM_LANDED_NET_TIMEOUT:-$LANDED_TIMEOUT} \
+     fm_work_is_landed "$WT" "$PROJ" "$CREW_BRANCH" "$PR_URL"; then
   emit "done" bead "linked bead $BEADS_ID closed: task complete"
 fi
 

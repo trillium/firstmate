@@ -1230,12 +1230,14 @@ families_for_changed_path() {
       ;;
     bin/fm-timeout-lib.sh)
       # The shared hard bound: session start's runtime bound, the fleet/bearings
-      # snapshots, the vendor auth probe, and the stow cascade's per-home step
-      # all depend on it.
+      # snapshots, the vendor auth probe, the stow cascade's per-home step, and the
+      # landing predicate's remote legs whenever a caller opts into a bound - which
+      # reaches bin/fm-teardown.sh's landing check (pr-forge) too.
       printf '%s\n' session-bootstrap
       printf '%s\n' snapshot-bearings
       printf '%s\n' pure-contract-unit
       printf '%s\n' secondmate
+      printf '%s\n' pr-forge
       ;;
     bin/fm-pr-*|bin/fm-merge-local.sh|bin/fm-teardown.sh|bin/fm-review-diff.sh|\
     bin/fm-x-*|bin/fm-check*)

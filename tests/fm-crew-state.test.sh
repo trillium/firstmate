@@ -1647,6 +1647,84 @@ test_beads_closed_bead_porcelain_refusal_not_done() {
   pass "closed bead over a refused dirty-tree probe does not report done (probe failure counts as unlanded)"
 }
 
+# The bound bin/fm-crew-state.sh OPTS INTO, proven where it matters: a `gh` that
+# never answers in time. Everything else about this fixture says done - the bead is
+# closed, the tree is clean, no decision is open, and the PR the stalling `gh`
+# would eventually report is MERGED with a head containing HEAD - so an unbounded
+# read would sit through the stall and then emit done. The reader must instead give
+# up on the remote inside its own bound and fall through, because this read runs on
+# every supervision poll. The content fallback cannot rescue it either: this
+# fixture's branch introduces content the default branch lacks.
+test_beads_closed_bead_stalled_remote_bounded() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+stalled-remote skipped without jq"; return; }
+  reset_fakes
+  local d fb head out start elapsed
+  d=$(new_case beads-closed-stalled-remote)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-beadstall
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  fb=$(make_fakebin "$d")
+  cat > "$fb/gh" <<SH
+#!/usr/bin/env bash
+sleep 60
+printf 'MERGED\t%s\n' "$head"
+SH
+  chmod +x "$fb/gh"
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadstall.meta" "window=fm:fm-feat-beadstall" "worktree=$d/wt" \
+    "project=$d/wt" "kind=ship" "harness=claude" "beads_id=task-zz11" \
+    "pr=https://github.com/o/r/pull/11"
+  arm_idle_record "$d/state" feat-beadstall
+  printf 'working: still grinding\n' > "$d/state/feat-beadstall.status"
+  FM_FAKE_BEAD_STATUS=closed
+  export FM_CREW_STATE_LANDED_TIMEOUT=2
+  start=$SECONDS
+  out=$(run_crew_state "$d" feat-beadstall)
+  elapsed=$((SECONDS - start))
+  unset FM_CREW_STATE_LANDED_TIMEOUT
+  assert_not_contains "$out" "state: done" "a remote that outlasts the reader's bound must not read as done"
+  assert_not_contains "$out" "source: bead" "a bound that fires counts as unlanded, not a bead-sourced done"
+  assert_contains "$out" "source: status-log" "a stalled remote falls through to existing logic"
+  [ "$elapsed" -lt 30 ] || fail "the closed-bead landing check was not bounded (elapsed ${elapsed}s)"
+  pass "closed bead over a stalled remote stays bounded and does not report done"
+}
+
+# The landing predicate's bound is OPT-IN, and bin/fm-teardown.sh deliberately does
+# not take it: teardown asks this question once, at a gate that refuses to remove a
+# worktree, so it must wait out a slow remote rather than refuse a teardown for work
+# that actually landed. Both halves run the real library over one fixture whose only
+# landing evidence is a `gh` that answers late, so the two answers differ purely by
+# whether a bound was requested. The unbounded half runs from a copy of the library
+# with no sibling timeout library beside it, which the bounded path requires and can
+# only satisfy from the real bin/ - so it also proves the default engages none of
+# that machinery.
+test_landed_predicate_bound_is_opt_in() {
+  reset_fakes
+  local d fb head isolated rc
+  d=$(new_case landed-bound-optin)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-boundoptin
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  fb=$(make_fakebin "$d")
+  cat > "$fb/gh" <<SH
+#!/usr/bin/env bash
+sleep 3
+printf 'MERGED\t%s\n' "$head"
+SH
+  chmod +x "$fb/gh"
+  isolated="$d/isolated-bin"
+  mkdir -p "$isolated"
+  cp "$ROOT/bin/fm-landed-lib.sh" "$isolated/fm-landed-lib.sh"
+  rc=0
+  PATH="$fb:$PATH" bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3" "$4"' \
+    _ "$isolated" "$d/wt" fm/feat-boundoptin https://github.com/o/r/pull/12 || rc=$?
+  [ "$rc" -eq 0 ] || fail "unbounded by default: a slow merged-PR lookup must be waited out, not cut off (rc=$rc)"
+  rc=0
+  PATH="$fb:$PATH" FM_LANDED_NET_TIMEOUT=1 \
+    bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3" "$4"' \
+    _ "$ROOT/bin" "$d/wt" fm/feat-boundoptin https://github.com/o/r/pull/12 || rc=$?
+  [ "$rc" -ne 0 ] || fail "an opted-in bound must cut off the same lookup and count as unlanded"
+  pass "landing predicate is unbounded by default and bounded only on opt-in"
+}
+
 # A still-open bead with a live (busy) endpoint must be completely unaffected -
 # the bead-closed signal ADDS a completion truth, it must never mark live work
 # done prematurely.
@@ -1706,6 +1784,8 @@ test_beads_closed_bead_uncommitted_not_done
 test_beads_closed_bead_merged_pr_done
 test_beads_closed_bead_probe_failure_not_done
 test_beads_closed_bead_porcelain_refusal_not_done
+test_beads_closed_bead_stalled_remote_bounded
+test_landed_predicate_bound_is_opt_in
 test_beads_open_bead_live_pane_unaffected
 test_beads_backend_guard_tasks_axi_ignores_closed_bead
 test_stale_needs_decision_superseded
