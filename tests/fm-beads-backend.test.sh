@@ -539,6 +539,140 @@ test_beads_migration_reads_labels_from_the_list_payload_when_present() {
   pass "the sweep reads a bead's labels from the list payload when the store sends them"
 }
 
+# Regression (the weak-evidence claim): a data/backlog.md item id is NOT evidence
+# that this home owns the slug. Every home that ever queued a task carries that
+# line, including one that never dispatched it, so accepting it let a home claim
+# the pre-migration bead a DIFFERENT home had already minted and recorded in its
+# own state/<id>.meta. Nothing re-resolves that meta by label afterwards, so both
+# homes then keep using one bead - exactly the sharing the scoped label exists to
+# end. A backlog line alone must not even make the slug a candidate.
+test_beads_migration_ignores_a_backlog_only_slug() {
+  local dir fakebin calls_log home id
+  command -v jq >/dev/null 2>&1 || { pass "backlog-only migration skip skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-backlog-only"
+  home="$dir/home-a"
+  mkdir -p "$home/state" "$home/data"
+  # The whole of this home's record for task-xyz: a queued backlog line. No meta,
+  # no brief - it was never dispatched or even scaffolded here.
+  printf -- '- [x] task-xyz  ship something\n' > "$home/data/backlog.md"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  # bead-b is home B's: B minted it and recorded it in B's own meta.
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-b","status":"open","labels":["task:task-xyz"]}]' \
+    "bead-a-own"
+
+  PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels >/dev/null \
+    || fail "the sweep reported failure when its only backlog line was not a candidate"
+  assert_no_grep "tag bead-b" "$calls_log" \
+    "a backlog line alone let this home claim another home's pre-migration bead"
+
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a STATE="$home/state" DATA="$home/data" \
+    fm_beads_resolve_or_create "task-xyz")
+  [ "$id" = "bead-a-own" ] \
+    || fail "a backlog-only home must mint its own bead rather than share, got: $id"
+  pass "a backlog item id alone is not ownership evidence for the migration sweep"
+}
+
+# The other half of the tightened rule: a home whose own dispatch record names
+# the pre-migration bead exactly still claims it. That is the strongest evidence
+# there is, and dropping the backlog class must not cost it.
+test_beads_migration_claims_a_bead_this_homes_meta_records() {
+  local dir fakebin calls_log home
+  command -v jq >/dev/null 2>&1 || { pass "meta-recorded migration skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-meta-records"
+  home="$dir/home-a"
+  mkdir -p "$home/state" "$home/data"
+  printf 'window=w1\nbeads_id=bead-7\n' > "$home/state/task-xyz.meta"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-7","status":"open","labels":["task:task-xyz"]}]' \
+    "bead-should-not-be-created"
+
+  PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels >/dev/null \
+    || fail "the sweep reported failure against its own dispatched task's bead"
+  assert_grep "tag bead-7 task:home-a:task-xyz" "$calls_log" \
+    "the sweep left the bead its own dispatch record names unmigrated"
+  pass "the sweep claims the pre-migration bead this home's own meta records"
+}
+
+# A meta is a candidate record, not a claim. One that names no bead at all, and
+# has no brief beside it, does not say this bead is ours, so the sweep must leave
+# it alone rather than treat the mere existence of a meta as ownership.
+test_beads_migration_leaves_a_bead_its_records_do_not_name() {
+  local dir fakebin calls_log home id
+  command -v jq >/dev/null 2>&1 || { pass "unclaimed-bead migration skip skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-unclaimed"
+  home="$dir/home-a"
+  mkdir -p "$home/state" "$home/data"
+  printf 'window=w1\n' > "$home/state/task-xyz.meta"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-other","status":"open","labels":["task:task-xyz"]}]' \
+    "bead-a-own"
+
+  PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels >/dev/null \
+    || fail "leaving an unclaimed bead alone is a skip, not a failure"
+  assert_no_grep "tag bead-other" "$calls_log" \
+    "a meta naming no bead let this home claim a pre-migration bead anyway"
+
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a STATE="$home/state" DATA="$home/data" \
+    fm_beads_resolve_or_create "task-xyz")
+  [ "$id" = "bead-a-own" ] \
+    || fail "a home holding no claiming record must mint its own bead, got: $id"
+  pass "the sweep leaves a pre-migration bead none of this home's records name"
+}
+
+# Regression (silent skip then permanent marker): a per-candidate lookup that
+# FAILS is not a lookup that found nothing. Collapsing the two took the benign
+# "the surviving label belongs to a closed record" path, wrote the permanent
+# one-shot marker, and left that bead unmigrated forever. A failed lookup must
+# count as a failure and hold the marker back so the next session retries.
+test_beads_migration_counts_a_failed_candidate_lookup_as_a_failure() {
+  local dir fakebin calls_log home out marker
+  command -v jq >/dev/null 2>&1 || { pass "failed-lookup migration skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-lookup-fails"
+  home="$dir/home-a"
+  mkdir -p "$home/state" "$home/data/task-xyz"
+  : > "$home/data/task-xyz/brief.md"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  # A store that answers the liveness probe and the whole-store label list, then
+  # fails the per-candidate lookup: the shape a store hiccup actually takes.
+  cat > "$fakebin/task" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$calls_log"
+case "\$1 \${2:-}" in
+  "label list-all") printf '%s\n' '[{"label":"task:task-xyz","count":1}]' ;;
+  *)
+    for a in "\$@"; do
+      [ "\$a" = "--label" ] && exit 1
+    done
+    printf '%s\n' '[]'
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a \
+    STATE="$home/state" DATA="$home/data" fm_beads_migrate_legacy_task_labels 2>&1) \
+    && fail "a failed per-candidate lookup was reported as a clean sweep"
+  printf '%s\n' "$out" | grep -q "could not look up task-xyz" \
+    || fail "the sweep did not report the failed lookup, so the store hiccup is invisible: $out"
+
+  marker="$home/state/.beads-label-migration-v1"
+  assert_absent "$marker" \
+    "a failed lookup still wrote the one-shot marker, so that bead never migrates"
+  pass "a failed per-candidate lookup counts as a failure and the sweep retries next session"
+}
+
 # Test: the ordinary dispatch path - taken at every brief scaffold and every
 # spawn, permanently - costs exactly one store lookup and writes nothing. A
 # second compatibility read or a migration write here would be paid forever, and
@@ -1410,6 +1544,10 @@ test_beads_migration_ignores_a_slug_this_home_has_no_record_for
 test_beads_migration_never_touches_closed_beads
 test_beads_migration_second_run_is_a_no_op
 test_beads_migration_reads_labels_from_the_list_payload_when_present
+test_beads_migration_ignores_a_backlog_only_slug
+test_beads_migration_claims_a_bead_this_homes_meta_records
+test_beads_migration_leaves_a_bead_its_records_do_not_name
+test_beads_migration_counts_a_failed_candidate_lookup_as_a_failure
 test_beads_resolve_issues_one_lookup_and_no_write_beyond_the_mint
 test_beads_home_scope_normalizes_home_path_spellings
 test_lib_sources_without_its_siblings

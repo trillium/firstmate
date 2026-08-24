@@ -61,8 +61,9 @@ EOF
 
 # The idempotency label spawn resolves is HOME-SCOPED (bin/fm-tasks-axi-lib.sh's
 # fm_beads_task_label owns its shape), so these cases pin one scope and assert the
-# exact scoped label. Asserting the bare task:<id> instead would pass on the legacy
-# compatibility lookup fm_beads_lookup makes second, proving nothing about scoping.
+# exact scoped label. A bare task:<id> assertion would be satisfied by the scoped
+# label's own substring, so it would pass even if the scope segment were dropped,
+# which is the regression these cases exist to catch.
 HOME_SCOPE="spawn-beads-suite"
 
 run_case_spawn() {
