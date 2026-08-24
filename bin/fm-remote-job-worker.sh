@@ -395,8 +395,8 @@ worker_publish_result() { # <job-dir> <exit>
   fm_remote_job_write_state "$job" 'done'
 }
 
-worker_run_with_timeout() { # <job-dir> <seconds> <command> [args...]
-  local job=$1 timeout=$2 group_file armed_file group_pid rc tmp deadline next_heartbeat attempt
+worker_run_with_timeout() { # <job-dir> <epoch-deadline> <command> [args...]
+  local job=$1 deadline=$2 group_file armed_file group_pid rc tmp soft_deadline next_heartbeat attempt
   local timed_out=0 heartbeat_failed=0
   WORKER_PREEMPTED=0
   shift 2
@@ -448,10 +448,15 @@ worker_run_with_timeout() { # <job-dir> <seconds> <command> [args...]
     WORKER_ACTIVE_JOB=
     return 125
   fi
-  deadline=$((SECONDS + timeout))
+  # SECONDS floors whole elapsed seconds, so a relative budget derived from it
+  # runs out up to a second before that much time has actually passed. Keep it
+  # as the cheap gate and let the job's own epoch deadline decide, so a command
+  # is never cut short and `date` stays off the poll path until the window is
+  # nearly spent.
+  soft_deadline=$((SECONDS + deadline - $(date +%s) - 1))
   next_heartbeat=$((SECONDS + 1))
   while worker_process_or_group_alive group "$group_pid"; do
-    if [ "$SECONDS" -ge "$deadline" ]; then
+    if [ "$SECONDS" -ge "$soft_deadline" ] && [ "$(date +%s)" -ge "$deadline" ]; then
       worker_signal_process_or_group group TERM "$group_pid"
       worker_signal_process_or_group group KILL "$group_pid"
       timed_out=1
@@ -558,7 +563,7 @@ worker_run_job() { # <account-home> <job-dir>
   remaining=$((deadline - $(date +%s)))
   [ "$remaining" -gt 0 ] || { worker_publish_result "$job" 124; return; }
   set +e
-  worker_run_with_timeout "$job" "$remaining" \
+  worker_run_with_timeout "$job" "$deadline" \
     "$git_bin" -C "$root" ls-files --error-unmatch "bin/$command" >/dev/null 2>&1
   rc=$?
   set -e
@@ -607,7 +612,7 @@ worker_run_job() { # <account-home> <job-dir>
   }
   set +e
   WORKER_PREEMPTIBLE=$preemptible
-  worker_run_with_timeout "$job" "$remaining" "${child_env[@]}" \
+  worker_run_with_timeout "$job" "$deadline" "${child_env[@]}" \
     "$command_path" "${argv[@]:1}" < "$job/stdin" > "$stdout_pipe" 2> "$stderr_pipe"
   rc=$?
   WORKER_PREEMPTIBLE=0
@@ -654,7 +659,11 @@ worker_process_once() { # <account-home>
       worker_publish_result "$job" 126 || true
       continue
     fi
-    deadline=$(( $(date +%s) + timeout ))
+    # `date +%s` truncates the claim instant to its whole second, so a job
+    # claimed part-way through a second would be billed that remainder against
+    # its own window. Round the deadline up by that whole second instead: a
+    # claimed job always receives at least its full configured timeout.
+    deadline=$(( $(date +%s) + timeout + 1 ))
     fm_remote_job_write_number "$job" deadline "$deadline" || {
       worker_publish_result "$job" 125 || true
       continue

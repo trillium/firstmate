@@ -13,7 +13,11 @@
 # .claim, establishes its execution deadline, changes state to running, writes
 # bounded stdout/stderr and exit, then publishes state=done last. Callers wait
 # for done, relay stdout and stderr separately, then reap only their completed
-# record. Input, argv, stdout, and stderr are each capped at 1048576 bytes.
+# record. The execution deadline is minted at claim time and rounded up to the
+# next whole second, so queue time is never billed against a job's own window
+# and a claimed job always gets at least its configured timeout - it is
+# terminated within about a second after that, never before.
+# Input, argv, stdout, and stderr are each capped at 1048576 bytes.
 #
 # The worker executes one job at a time, so a deliberately long-blocking poll
 # would serialize every short interactive command behind its wait window.
@@ -535,7 +539,10 @@ fm_remote_job_wait() { # <account-home> <id>
     FM_REMOTE_JOB_ERROR="remote job execution timeout is invalid"
     return 1
   }
-  wait_deadline=$((queue_deadline + execution_timeout + FM_REMOTE_JOB_WAIT_GRACE))
+  # The claim-time deadline is rounded up to the next whole second (see the
+  # header), so allow that second on top of the queue and execution bounds
+  # before a waiter may give up on a job the worker is still running.
+  wait_deadline=$((queue_deadline + execution_timeout + 1 + FM_REMOTE_JOB_WAIT_GRACE))
   while :; do
     state=$(fm_remote_job_read_state "$job" 2>/dev/null || true)
     case "$state" in
