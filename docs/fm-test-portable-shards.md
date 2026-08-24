@@ -126,4 +126,4 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 
 Timeouts are hang tripwires rather than expected healthy durations.
 Remeasure the serial lane before adding scripts to it.
-When its healthy wall approaches the cap again, shard the serial remainder across two jobs rather than raising the tripwire far enough that a real hang stops tripping it.
+When its healthy wall approaches the cap again, raise the shard count so each shard packs smaller, rather than raising the tripwire far enough that a real hang stops tripping it.
