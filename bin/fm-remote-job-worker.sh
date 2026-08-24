@@ -466,11 +466,32 @@ worker_run_with_timeout() { # <job-dir> <epoch-deadline> <command> [args...]
   soft_deadline=$((SECONDS + deadline - now - 1))
   next_heartbeat=$((SECONDS + 1))
   while worker_process_or_group_alive group "$group_pid"; do
-    if [ "$SECONDS" -ge "$soft_deadline" ] && [ "$(date +%s)" -ge "$deadline" ]; then
-      worker_signal_process_or_group group TERM "$group_pid"
-      worker_signal_process_or_group group KILL "$group_pid"
-      timed_out=1
-      break
+    if [ "$SECONDS" -ge "$soft_deadline" ]; then
+      # Validate this read before comparing it, for the same reason the gate
+      # sizing above does: an unvalidated `$(date +%s)` inlined into the test
+      # leaves an empty operand, which `-ge` rejects as a non-integer and
+      # reports as false, so a failed clock read would keep the kill from ever
+      # firing and let the command run unbounded.
+      #
+      # The gate sizing can fall back to the deadline because a later epoch
+      # check still decides the kill. This read *is* that decision, so it cannot
+      # borrow that fallback: the cheap gate opens up to two seconds early
+      # (SECONDS floors, and the deadline carries the mint's round-up), and
+      # treating a failed read as "deadline reached" would cut the job short
+      # inside that window. Fall back to SECONDS instead, which is maintained by
+      # the shell itself and so keeps advancing under exactly the repeated
+      # `date` fork failure this guards. Two further whole ticks past the gate
+      # put the real epoch past the deadline no matter where it opened, so the
+      # run stays bounded without ever ending early.
+      now=$(date +%s 2>/dev/null || true)
+      case "$now" in ''|*[!0-9]*) now= ;; esac
+      if { [ -n "$now" ] && [ "$now" -ge "$deadline" ]; } \
+        || { [ -z "$now" ] && [ "$SECONDS" -ge "$((soft_deadline + 2))" ]; }; then
+        worker_signal_process_or_group group TERM "$group_pid"
+        worker_signal_process_or_group group KILL "$group_pid"
+        timed_out=1
+        break
+      fi
     fi
     if [ "$SECONDS" -ge "$next_heartbeat" ]; then
       if ! worker_write_heartbeat; then

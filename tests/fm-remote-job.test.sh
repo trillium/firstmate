@@ -88,16 +88,37 @@ exit 127
 SH
 chmod +x "$RUNTIME_BIN/perl"
 # Inert unless the trip file exists, so every other subtest sees the real clock.
-# While it exists, the first clock read taken after a job is both armed and
-# wired for output capture fails and disarms the shim. That is exactly the one
-# read the worker uses to size its cheap poll gate: earlier reads mint the
-# deadline and later ones decide the kill, and both keep the real clock.
+# While it exists, clock reads taken after a job is both armed and wired for
+# output capture fail. The trip file's contents select which ones, in the two
+# shapes the guards need proving against:
+#
+#   empty  - fail the first such read, then disarm, so every later read is real.
+#   count N - let N through, then fail that read and every read after it.
+#
+# The reads are enumerable rather than timing-dependent, because
+# worker_run_with_timeout takes exactly two kinds while a job is armed - one
+# sizing the cheap poll gate, then one per poll deciding the kill once that gate
+# opens. So an empty trip file fails the gate sizing, and a count of 1 leaves
+# the gate correctly sized and fails every kill decision, which is what forces
+# the kill onto the forkless SECONDS fallback rather than a later real read.
+# Reads that mint the deadline come before the job is armed.
+#
+# The sticky form cannot signal that it fired by removing the trip file, so it
+# overwrites it with `tripped` instead and the subtest asserts that, keeping the
+# same non-vacuity guarantee as the one-shot form.
 cat > "$RUNTIME_BIN/date" <<'SH'
 #!/bin/sh
 if [ -n "${FM_DATE_SHIM_TRIP:-}" ] && [ -f "$FM_DATE_SHIM_TRIP" ]; then
   for job in "$FM_DATE_SHIM_JOBS"/job-*; do
     if [ -e "$job/.claim/armed" ] && [ -p "$job/.stdout.pipe" ]; then
-      rm -f "$FM_DATE_SHIM_TRIP"
+      skip=$(cat "$FM_DATE_SHIM_TRIP" 2>/dev/null || true)
+      case "$skip" in
+        '') rm -f "$FM_DATE_SHIM_TRIP" ;;
+        tripped) : ;;
+        *[!0-9]*) break ;;
+        0) printf 'tripped\n' > "$FM_DATE_SHIM_TRIP" ;;
+        *) printf '%s\n' "$((skip - 1))" > "$FM_DATE_SHIM_TRIP"; break ;;
+      esac
       exit 1
     fi
   done
@@ -336,6 +357,52 @@ BLIND_CLOCK_DEADLINE=$(fm_remote_job_read_number "$BLIND_CLOCK_JOB_DIR" deadline
   || fail "a failed clock read cut the job short of its own execution deadline"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the terminated job could not be reaped"
 pass "a failed clock read still bounds a job at its execution deadline"
+
+# The companion case: the clock read that decides the kill, rather than the one
+# that sizes the gate. A count of 1 lets the gate sizing take the real clock and
+# then fails every termination read. Unvalidated, such a read leaves an empty
+# operand, `-ge` rejects it as a non-integer and reports false, and the job runs
+# unbounded exactly as in the case above. The job again outlives its window
+# several times over, so completing it is the unbounded-run signature rather
+# than a timing coincidence.
+#
+# Failing every termination read, rather than only the first, is what makes this
+# subtest prove the guard instead of a later real read: the kill can only come
+# from the forkless SECONDS fallback. Both invariants are asserted against that
+# one path, because the fallback has to satisfy them together and an earlier
+# draft that satisfied only the first shipped a job killed short of its window:
+#
+#   bounded        - the job is terminated rather than running to completion.
+#   never cut short - it is not terminated before its own execution deadline.
+BLIND_KILL_SIDE_EFFECT="$TMP_ROOT/blind-kill-side-effect"
+FM_REMOTE_JOB_TIMEOUT=2
+printf '1\n' > "$DATE_SHIM_TRIP"
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-delay-job.sh 8 "$BLIND_KILL_SIDE_EFFECT" < /dev/null > /dev/null
+JOB_ID=$FM_REMOTE_JOB_ID
+BLIND_KILL_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
+fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+# Same non-vacuity guarantee as above in the shape the sticky form allows: it
+# stamps the trip file rather than removing it, so anything other than that stamp
+# means the reads this subtest exists to fail were never taken and everything
+# below would pass for the wrong reason.
+BLIND_KILL_TRIPPED=0
+[ "$(cat "$DATE_SHIM_TRIP" 2>/dev/null || true)" = tripped ] && BLIND_KILL_TRIPPED=1
+rm -f -- "$DATE_SHIM_TRIP"
+[ "$BLIND_KILL_TRIPPED" -eq 1 ] \
+  || fail "the worker never took the clock reads this subtest fails, so it proved nothing"
+assert_absent "$BLIND_KILL_SIDE_EFFECT" \
+  "a failed termination clock read let the job run past its execution deadline to completion"
+[ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
+  || fail "a failed termination clock read did not leave the over-time job terminated at its deadline"
+BLIND_KILL_TERMINATED_AT=$(fm_remote_job_path_mtime "$BLIND_KILL_JOB_DIR/exit") \
+  || fail "the terminated job published no result after a failed termination clock read"
+BLIND_KILL_DEADLINE=$(fm_remote_job_read_number "$BLIND_KILL_JOB_DIR" deadline) \
+  || fail "the terminated job recorded no execution deadline"
+[ "$BLIND_KILL_TERMINATED_AT" -ge "$BLIND_KILL_DEADLINE" ] \
+  || fail "a failed termination clock read cut the job short of its own execution deadline"
+fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the terminated job could not be reaped"
+pass "a failed termination clock read still bounds a job at its execution deadline"
 
 ACTIVE_SIDE_EFFECT="$TMP_ROOT/active-side-effect"
 FM_REMOTE_JOB_TIMEOUT=10
