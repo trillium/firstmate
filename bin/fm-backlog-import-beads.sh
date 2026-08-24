@@ -37,13 +37,20 @@
 # so `task list --label <fleet>` scopes to firstmate's fleet, and the
 # home-scoped task:<scope>:<id> idempotency label that fm_beads_resolve_or_create
 # already uses, so re-running the importer resolves the bead THIS home created
-# instead of duplicating it. A bead an older importer created before the label
-# was home-scoped carries the unscoped task:<id> label and is invisible to that
-# lookup until bootstrap's one-shot migration re-tags it (fm-tasks-axi-lib.sh's
-# fm_beads_migrate_legacy_task_labels, which reads this file's item ids as one of
-# its ownership signals); running that migration before re-importing is what
-# keeps a pre-scoping import from being duplicated. Captain holds are idempotent
-# through fm-decision-hold.sh's own `hold:<id>` anchor lookup.
+# instead of duplicating it. That idempotency only reaches back as far as the
+# home-scoped label: a bead an older importer created before the label was
+# home-scoped carries the unscoped task:<id> label and stays invisible to the
+# lookup. Bootstrap's one-shot migration does NOT generally rescue those.
+# fm-tasks-axi-lib.sh's fm_beads_migrate_legacy_task_labels takes its candidates
+# from this home's own dispatch records and briefs, not from the backlog file, so
+# it re-tags a pre-scoping bead only for an item this home had also dispatched or
+# briefed; an imported-but-never-dispatched item is not a candidate at all. The
+# consequence is concrete: re-importing a backlog that was first imported before
+# home scoping mints a SECOND bead for each such item rather than resolving the
+# old one. Prefer importing once, and reconcile any pre-scoping beads by hand
+# before a re-import rather than expecting the migration to adopt them. Captain
+# holds are idempotent through fm-decision-hold.sh's own `hold:<id>` anchor
+# lookup.
 #
 # Modes:
 #   (default)   Dry run. Prints what it WOULD create and whether each item
