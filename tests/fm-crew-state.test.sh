@@ -38,12 +38,21 @@ CREW_STATE="$ROOT/bin/fm-crew-state.sh"
 TMP_ROOT=$(fm_test_tmproot fm-crew-state)
 fm_git_identity fmtest fmtest@example.invalid
 
+# The default branch every fixture repo below is pinned to. The landing predicate
+# resolves a project's default branch by name (origin/HEAD, else a local
+# main/master), so the fixtures must not inherit the host's init.defaultBranch.
+DEFAULT_BRANCH=main
+
 # A real git repo checked out on <branch>, so the helper's branch attribution
 # (git symbolic-ref) resolves like it would for a live crew worktree.
 make_repo_on_branch() {  # <dir> <branch>
   local dir=$1 branch=$2
   mkdir -p "$dir"
   git -C "$dir" init -q
+  # Pin the default branch instead of inheriting the host's init.defaultBranch:
+  # land_repo pushes it, and the landing predicate resolves it by name, so a host
+  # configured with any other default (trunk, devel) would otherwise fail opaquely.
+  git -C "$dir" symbolic-ref HEAD refs/heads/main
   git -C "$dir" commit -q --allow-empty -m init
   git -C "$dir" checkout -q -b "$branch"
   # Real worktree HEAD for run head-binding (fixtures read FM_FAKE_RUN_HEAD).
@@ -58,14 +67,13 @@ make_repo_on_branch() {  # <dir> <branch>
 # path needs the default branch fetchable from origin. The bare remote lives
 # OUTSIDE the worktree (a sibling path), so it never shows up as an untracked entry.
 land_repo() {  # <dir>
-  local dir=$1 remote="$1.remote.git" default
-  git init -q --bare "$remote"
-  git -C "$dir" remote add origin "$remote"
-  git -C "$dir" push -q origin HEAD
-  default=$(git -C "$dir" for-each-ref --format='%(refname:short)' refs/heads \
-    | grep -E '^(main|master)$' | head -1)
-  [ -n "$default" ] || return 1
-  git -C "$dir" push -q origin "$default:refs/heads/$default"
+  local dir=$1 remote="$1.remote.git"
+  git init -q --bare "$remote" || return 1
+  git -C "$dir" remote add origin "$remote" || return 1
+  git -C "$dir" push -q origin HEAD || return 1
+  # The default branch is whatever make_repo_on_branch pinned, read back from the
+  # repo rather than guessed from a main|master name list.
+  git -C "$dir" push -q origin "refs/heads/$DEFAULT_BRANCH:refs/heads/$DEFAULT_BRANCH"
 }
 
 # Build a repo whose work is clean AND fully pushed (no unpushed commits, so the
@@ -78,7 +86,7 @@ make_pushed_unlanded_repo() {  # <dir> <branch>
   local dir=$1 branch=$2 remote="$1.remote.git"
   mkdir -p "$dir"
   git -C "$dir" init -q
-  git -C "$dir" symbolic-ref HEAD refs/heads/main
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$DEFAULT_BRANCH"
   printf 'base\n' > "$dir/base.txt"
   git -C "$dir" add base.txt
   git -C "$dir" -c user.email=t@t -c user.name=t commit -q -m 'base content'
@@ -89,7 +97,26 @@ make_pushed_unlanded_repo() {  # <dir> <branch>
   git init -q --bare "$remote"
   git -C "$dir" remote add origin "$remote"
   git -C "$dir" push -q origin "$branch"
-  git -C "$dir" push -q origin main
+  git -C "$dir" push -q origin "$DEFAULT_BRANCH"
+}
+
+# Build a repo whose COMMITTED work is landed but whose actual change is entirely
+# UNCOMMITTED: HEAD sits on the feature branch at the spawn base, which is the tip
+# of the pushed default branch, so fm_landed_content_in_default alone would call it
+# landed. The crew's real work is an unsaved edit in the working tree.
+make_uncommitted_work_repo() {  # <dir> <branch>
+  local dir=$1 branch=$2 remote="$1.remote.git"
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$DEFAULT_BRANCH"
+  printf 'base\n' > "$dir/base.txt"
+  git -C "$dir" add base.txt
+  git -C "$dir" -c user.email=t@t -c user.name=t commit -q -m 'base content'
+  git init -q --bare "$remote"
+  git -C "$dir" remote add origin "$remote"
+  git -C "$dir" push -q origin "$DEFAULT_BRANCH"
+  git -C "$dir" checkout -q -b "$branch"
+  printf 'work in progress\n' >> "$dir/base.txt"
 }
 
 # A fakebin with a fake `no-mistakes` (serves the env-driven run output) and a
@@ -1429,7 +1456,7 @@ test_beads_closed_bead_reconciles_done() {
   reset_fakes
   local d; d=$(new_case beads-closed)
   make_repo_on_branch "$d/wt" fm/feat-bead
-  land_repo "$d/wt"
+  land_repo "$d/wt" || fail "land_repo could not publish the fixture's default branch"
   make_fakebin "$d" >/dev/null
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
   fm_write_meta "$d/state/feat-bead.meta" "window=fm:fm-feat-bead" "worktree=$d/wt" \
@@ -1456,7 +1483,7 @@ test_beads_closed_bead_open_decision_not_done() {
   reset_fakes
   local d; d=$(new_case beads-closed-decision)
   make_repo_on_branch "$d/wt" fm/feat-beaddec
-  land_repo "$d/wt"   # landed, so the OPEN DECISION is the sole reason done is withheld
+  land_repo "$d/wt" || fail "land_repo could not publish the fixture's default branch"   # landed, so the OPEN DECISION is the sole reason done is withheld
   make_fakebin "$d" >/dev/null
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
   fm_write_meta "$d/state/feat-beaddec.meta" "window=fm:fm-feat-beaddec" "worktree=$d/wt" \
@@ -1497,6 +1524,31 @@ test_beads_closed_bead_unlanded_not_done() {
   pass "closed bead over clean, pushed, unlanded work does not report done (drop-recovery guard)"
 }
 
+# Drop-recovery guard, uncommitted dimension: fm-ledger.sh's drop-recovery closes
+# the bead of a crew that went quiet with its work entirely UNCOMMITTED. HEAD is
+# still the spawn base - an ancestor of the pushed default branch - so the
+# committed-content landing check alone reports LANDED over a worktree full of
+# unsaved work. Uncommitted work is unlanded work, so the closed bead must not
+# short-circuit to done; the status-log/pane logic governs instead.
+test_beads_closed_bead_uncommitted_not_done() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+uncommitted skipped without jq"; return; }
+  reset_fakes
+  local d; d=$(new_case beads-closed-uncommitted)
+  make_uncommitted_work_repo "$d/wt" fm/feat-beadwip
+  make_fakebin "$d" >/dev/null
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadwip.meta" "window=fm:fm-feat-beadwip" "worktree=$d/wt" \
+    "project=$d/wt" "kind=ship" "harness=claude" "beads_id=task-zz09"
+  arm_idle_record "$d/state" feat-beadwip
+  printf 'working: still grinding\n' > "$d/state/feat-beadwip.status"
+  FM_FAKE_BEAD_STATUS=closed
+  local out; out=$(run_crew_state "$d" feat-beadwip)
+  assert_not_contains "$out" "source: bead" "a closed bead over uncommitted work must not report done"
+  assert_not_contains "$out" "state: done" "uncommitted work must not read as done from the bead"
+  assert_contains "$out" "source: status-log" "uncommitted work falls through to existing logic"
+  pass "closed bead over uncommitted work does not report done (drop-recovery guard)"
+}
+
 # A closed bead over genuinely LANDED work via a MERGED PR (whose head contains the
 # local work) must report done. Covers fm_landed_pr_is_merged, the distinct path from
 # the content-in-default landing exercised by the happy-path test above.
@@ -1531,7 +1583,7 @@ test_beads_closed_bead_probe_failure_not_done() {
   reset_fakes
   local d fb; d=$(new_case beads-closed-probe-fail)
   make_repo_on_branch "$d/wt" fm/feat-beadprobe
-  land_repo "$d/wt"   # landed, so the refused probe is the sole reason done is withheld
+  land_repo "$d/wt" || fail "land_repo could not publish the fixture's default branch"   # landed, so the refused probe is the sole reason done is withheld
   fb=$(make_fakebin "$d")
   add_refusing_git "$fb" "$(command -v git)"
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
@@ -1602,6 +1654,7 @@ test_active_run_is_authoritative
 test_beads_closed_bead_reconciles_done
 test_beads_closed_bead_open_decision_not_done
 test_beads_closed_bead_unlanded_not_done
+test_beads_closed_bead_uncommitted_not_done
 test_beads_closed_bead_merged_pr_done
 test_beads_closed_bead_probe_failure_not_done
 test_beads_open_bead_live_pane_unaffected

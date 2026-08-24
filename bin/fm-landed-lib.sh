@@ -24,10 +24,18 @@
 # fetch, or git operation that cannot answer returns non-zero, which the caller
 # treats as unlanded rather than guessing.
 #
+# Every leg that talks to a REMOTE (the two git fetches, `gh pr view`, `gh-axi pr
+# list`) is hard-bounded through fm_landed_run_bounded, because a supervision
+# reader calls this predicate on every poll: an unreachable remote or a blocking
+# credential helper must cost a bounded wait, not stall the watcher. A bound that
+# fires exits non-zero, which lands in the same fail-closed direction as any other
+# probe that cannot answer.
+#
 # Functions take the worktree dir and (where needed) the project dir explicitly;
 # no function depends on ambient globals, so the same code serves teardown,
 # crew-state, and any future reader with a different variable naming scheme.
 #
+#   fm_landed_run_bounded <command...>                -> the command, hard-bounded
 #   fm_work_is_landed <wt> <proj> <branch> [pr_url]   -> 0 landed, 1 not landed
 #   fm_landed_pr_is_merged <wt> <branch> [pr_url]
 #   fm_landed_content_in_default <wt> <proj>
@@ -38,6 +46,30 @@
 #   fm_landed_patch_id_for_commit <wt> <commit>
 #   fm_landed_unpushed_patches_are_in_pr_head <wt> <pr_head>
 #   fm_landed_squash_merged_pr_contains_work <wt> <pr_head>
+
+# Run a remote-touching command under a hard bound. FM_LANDED_NET_TIMEOUT (seconds,
+# default 25) tunes it; a non-numeric or zero value falls back to the default,
+# because `timeout 0` disables the deadline rather than tightening it.
+#
+# bin/fm-timeout-lib.sh is loaded LAZILY, and only here: sourcing THIS library must
+# stay side-effect free for the readers it exists to serve, and a caller that never
+# reaches a network leg must not pay for a library it never calls. When that
+# sibling is absent the bound cannot be honoured, so this returns non-zero without
+# running the command - the same fail-closed direction every other probe takes.
+# fm_run_timed itself needs no `timeout` binary: fm-timeout-lib.sh owns the
+# coreutils/BSD/perl/bash mechanism selection.
+fm_landed_run_bounded() {  # <command...>
+  local bound=${FM_LANDED_NET_TIMEOUT:-25} lib_dir
+  case "$bound" in ''|*[!0-9]*) bound=25 ;; esac
+  [ "$bound" -gt 0 ] || bound=25
+  if ! declare -f fm_run_timed >/dev/null 2>&1; then
+    lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return 1
+    [ -f "$lib_dir/fm-timeout-lib.sh" ] || return 1
+    # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
+    . "$lib_dir/fm-timeout-lib.sh"
+  fi
+  fm_run_timed "$bound" "$@"
+}
 
 # Resolve the default branch name for a project checkout: the remote HEAD symbolic
 # ref when present, else a local main/master branch. Non-zero when neither exists.
@@ -63,7 +95,7 @@ fm_landed_default_branch() {  # <proj>
 fm_landed_pr_number_from_branch() {  # <wt> <branch>
   local wt=$1 branch=$2 out n
   [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
-  out=$( cd "$wt" && gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null ) || return 1
+  out=$( cd "$wt" && fm_landed_run_bounded gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null ) || return 1
   n=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\),.*/\1/p' | head -1)
   [ -n "$n" ] || return 1
   printf '%s' "$n"
@@ -94,7 +126,8 @@ fm_landed_ensure_commit_object() {  # <wt> <target> <commit>
   git -C "$wt" cat-file -e "$commit^{commit}" 2>/dev/null && return 0
   n=$(fm_landed_pr_number_from_target "$target") || return 1
   git -C "$wt" remote get-url origin >/dev/null 2>&1 || return 1
-  git -C "$wt" fetch --quiet origin "refs/pull/$n/head" >/dev/null 2>&1 || return 1
+  fm_landed_run_bounded env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
+    git -C "$wt" fetch --quiet origin "refs/pull/$n/head" >/dev/null 2>&1 || return 1
   git -C "$wt" cat-file -e "$commit^{commit}" 2>/dev/null
 }
 
@@ -156,7 +189,8 @@ fm_landed_pr_is_merged() {  # <wt> <branch> [pr_url]
     target=$(fm_landed_pr_number_from_branch "$wt" "$branch") || return 1
   fi
   [ -n "$target" ] || return 1
-  view=$(cd "$wt" && gh pr view "$target" --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
+  view=$(cd "$wt" && fm_landed_run_bounded gh pr view "$target" \
+    --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
   state=${view%%$'\t'*}
   head=${view#*$'\t'}
   [ "$state" != "$view" ] || return 1
@@ -183,7 +217,8 @@ fm_landed_content_in_default() {  # <wt> <proj>
   local wt=$1 proj=$2 name ref default_tree merged_tree
   name=$(fm_landed_default_branch "$proj") || return 1
   if git -C "$wt" remote get-url origin >/dev/null 2>&1; then
-    git -C "$wt" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
+    fm_landed_run_bounded env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
+      git -C "$wt" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
     ref="refs/remotes/origin/$name"
   elif git -C "$wt" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
     ref="refs/heads/$name"

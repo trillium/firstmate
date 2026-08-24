@@ -1248,6 +1248,13 @@ families_for_changed_path() {
       printf '%s\n' pure-contract-unit
       printf '%s\n' pr-forge
       ;;
+    bin/fm-landed-lib.sh)
+      # The shared "has this work LANDED" predicate, sourced by both
+      # bin/fm-crew-state.sh's closed-bead gate (pure-contract-unit) and
+      # bin/fm-teardown.sh's landing check (pr-forge).
+      printf '%s\n' pure-contract-unit
+      printf '%s\n' pr-forge
+      ;;
     bin/fm-spawn.sh|bin/fm-send.sh|bin/fm-harness.sh|\
     bin/fm-peek.sh|bin/fm-composer*)
       printf '%s\n' backend-dispatch
