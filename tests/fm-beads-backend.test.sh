@@ -837,6 +837,101 @@ SH
   pass "a failed per-candidate lookup counts as a failure and the sweep retries next session"
 }
 
+# Regression (unreadable store read as a clean one): the whole-store label list
+# is the sweep's only evidence that there is nothing left to migrate, and an
+# exit-0 answer that is not a JSON array parses to the same empty result a clean
+# store gives. Taking that as "clean" wrote the permanent one-shot marker, so
+# every pre-migration bead stayed orphaned forever with no second chance.
+test_beads_migration_reports_an_unreadable_label_list_as_unmigrated() {
+  local dir fakebin calls_log home out
+  command -v jq >/dev/null 2>&1 || { pass "unreadable-label-list migration skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-label-list-unreadable"
+  home="$dir/home-a"
+  mkdir -p "$home/state" "$home/data"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  # A store that is up and answers the liveness probe, then hands back an error
+  # object instead of a label array: the shape a store that is reachable but
+  # cannot serve this one query actually takes.
+  cat > "$fakebin/task" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$calls_log"
+case "\$1 \${2:-}" in
+  "label list-all") printf '%s\n' '{"error":"label index unavailable"}' ;;
+  *) printf '%s\n' '[]' ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a \
+    STATE="$home/state" DATA="$home/data" fm_beads_migrate_legacy_task_labels 2>&1) \
+    && fail "an unreadable label list was reported as a clean sweep"
+  printf '%s\n' "$out" | grep -q "label list could not be read" \
+    || fail "the sweep did not report the unreadable label list: $out"
+  assert_absent "$home/state/.beads-label-migration-v1" \
+    "an unreadable label list still wrote the one-shot marker, so nothing ever migrates"
+  pass "an unreadable label list is reported as unmigrated rather than as a clean store"
+}
+
+# Regression (duplicate replacement bead): on the repoint path the sweep asks
+# whether this home already minted itself a replacement before minting one. A
+# failed read there answers "no" exactly like a genuine miss, so a first pass
+# that minted a replacement and then failed its record rewrite would mint a
+# SECOND replacement on the retry and leave the first open forever. A read that
+# fails must count as a failure and mint nothing.
+test_beads_migration_counts_a_failed_replacement_lookup_as_a_failure() {
+  local dir fakebin calls_log home out mints
+  command -v jq >/dev/null 2>&1 || { pass "failed-replacement-lookup migration skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-replacement-lookup-fails"
+  home="$dir/home-b"
+  mkdir -p "$home/state" "$home/data"
+  printf 'window=w1\nbeads_id=bead-shared\n' > "$home/state/task-xyz.meta"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  # A store that serves every read the sweep needs to decide on the repoint, then
+  # fails only the scoped replacement lookup that gates the mint.
+  cat > "$fakebin/task" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$calls_log"
+case "\$1 \${2:-}" in
+  "label list-all") printf '%s\n' '[{"label":"task:task-xyz","count":1}]'; exit 0 ;;
+  "label list") printf '%s\n' '["task:task-xyz","task:home-a:task-xyz"]'; exit 0 ;;
+esac
+case "\$1" in
+  list)
+    for a in "\$@"; do
+      [ "\$a" = "task:home-b:task-xyz" ] && exit 1
+      if [ "\$a" = "task:task-xyz" ]; then
+        printf '%s\n' '[{"id":"bead-shared","status":"open"}]'
+        exit 0
+      fi
+    done
+    printf '%s\n' '[]'
+    ;;
+  *) printf '%s\n' '[]' ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels 2>&1) \
+    && fail "a failed replacement lookup was reported as a clean sweep"
+  printf '%s\n' "$out" | grep -q "could not look up task-xyz's replacement bead" \
+    || fail "the sweep did not report the failed replacement lookup: $out"
+  mints=$(grep -c '^create ' "$calls_log" || true)
+  [ "$mints" = 0 ] \
+    || fail "the sweep minted a replacement bead it could not first rule out, saw $mints"
+  assert_absent "$home/state/.beads-label-migration-v1" \
+    "a failed replacement lookup still wrote the one-shot marker, so that task stays pinned forever"
+  assert_grep "beads_id=bead-shared" "$home/state/task-xyz.meta" \
+    "the record was rewritten even though no replacement bead was resolved"
+  pass "a failed replacement lookup counts as a failure and mints no duplicate bead"
+}
+
 # Test: the ordinary dispatch path - taken at every brief scaffold and every
 # spawn, permanently - costs exactly one store lookup and writes nothing. A
 # second compatibility read or a migration write here would be paid forever, and
@@ -1716,6 +1811,8 @@ test_beads_migration_ignores_a_backlog_only_slug
 test_beads_migration_claims_a_bead_this_homes_meta_records
 test_beads_migration_leaves_a_bead_its_records_do_not_name
 test_beads_migration_counts_a_failed_candidate_lookup_as_a_failure
+test_beads_migration_reports_an_unreadable_label_list_as_unmigrated
+test_beads_migration_counts_a_failed_replacement_lookup_as_a_failure
 test_beads_resolve_issues_one_lookup_and_no_write_beyond_the_mint
 test_beads_home_scope_normalizes_home_path_spellings
 test_lib_sources_without_its_siblings

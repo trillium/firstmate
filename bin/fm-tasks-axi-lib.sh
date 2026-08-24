@@ -675,6 +675,11 @@ fm_beads_bead_labels() { # <bead_id> [list_payload] [bound]
 # fm_beads_bead_has_label <labels_json> <label> - true when the bead already
 # carries that exact label. Used to keep the migration sweep idempotent: a bead
 # already carrying this home's scoped label needs no second re-tag.
+#
+# An empty jq result here is a genuine "no" rather than a swallowed failure: the
+# labels argument is the compact array fm_beads_bead_labels already validated,
+# jq's presence is checked before the read, and the filter cannot fail against a
+# well-formed array, so there is no unreadable case left for this to conflate.
 fm_beads_bead_has_label() { # <labels_json> <label>
   local labels=$1 label=$2 hit
   [ -n "$labels" ] && [ -n "$label" ] || return 1
@@ -694,6 +699,9 @@ fm_beads_bead_has_label() { # <labels_json> <label>
 # pre-migration bead as a candidate. The first home to sweep keeps it and stamps
 # its scope on it; the second sees that foreign scope, leaves the bead alone, and
 # mints its own bead on its next resolve, so the two stop sharing.
+#
+# Its labels argument carries the same guarantee fm_beads_bead_has_label relies
+# on, so an empty jq result means the bead really carries no other home's scope.
 fm_beads_bead_has_foreign_scope() { # <task_id> <scope> <labels_json>
   local task_id=$1 scope=$2 labels=$3 foreign
   [ -n "$task_id" ] && [ -n "$scope" ] && [ -n "$labels" ] || return 1
@@ -780,9 +788,13 @@ fm_beads_home_claims_bead() { # <task_id> <bead_id> [recorded_bead]
 # (`task label list-all`) answers for the whole store, so the sweep pays a
 # per-candidate call only for the ids this home actually knows. Returns 1 when
 # the label list cannot be read, so the caller can report "unmigrated" rather
-# than mistake an unreadable store for a clean one. The optional bound carries
-# the same contract as fm_beads_bead_labels': a bounded read or none at all, and
-# a read cut off at the bound is an unreadable one.
+# than mistake an unreadable store for a clean one. An exit-0 answer that is not
+# a JSON array is an unreadable one and takes that same path, because the empty
+# result it would otherwise parse to is indistinguishable from a clean store and
+# would let the caller write its permanent one-shot marker over a migration that
+# never ran. The optional bound carries the same contract as
+# fm_beads_bead_labels': a bounded read or none at all, and a read cut off at
+# the bound is an unreadable one.
 fm_beads_legacy_labelled_task_ids() { # [bound]
   local bound=${1:-} all
   command -v task >/dev/null 2>&1 || return 1
@@ -794,6 +806,7 @@ fm_beads_legacy_labelled_task_ids() { # [bound]
     all=$(task label list-all --json 2>/dev/null) || return 1
   fi
   [ -n "$all" ] || return 1
+  printf '%s' "$all" | jq -e 'type=="array"' >/dev/null 2>&1 || return 1
   printf '%s' "$all" | jq -r '
     .[]?
     | (if type=="object" then (.label // empty) else . end)
@@ -1016,7 +1029,16 @@ fm_beads_migrate_legacy_task_labels_body() { # <marker path>
         echo "BEADS_LABEL_MIGRATION: the ${FM_BEADS_LABEL_MIGRATION_BUDGET}s budget was spent, so the rest stays unmigrated and retries next session"
         break
       fi
-      replacement=$(fm_beads_lookup "$id" "$bound") || replacement=
+      replacement=$(fm_beads_lookup "$id" "$bound")
+      case $? in
+        0) : ;;
+        1) replacement= ;;
+        *)
+          failed=$((failed + 1))
+          echo "BEADS_LABEL_MIGRATION: could not look up $id's replacement bead, so it stays pinned to $bead and retries next session"
+          continue
+          ;;
+      esac
       if [ -z "$replacement" ]; then
         if ! bound=$(fm_beads_migrate_step_bound "$deadline") \
           || ! replacement=$(fm_beads_mint_task_bead "$id" "" "$bound") \
@@ -1058,7 +1080,7 @@ EOF
 }
 
 # fm_beads_lookup <task_id> - echo the id of the OPEN bead this home resolves
-# <task_id> to, or print nothing and return 1. Read-only: it never mints and
+# <task_id> to, or print nothing and fail. Read-only: it never mints and
 # never writes, and it asks exactly one question - does an open bead carry this
 # home's scoped task:<home-scope>:<task_id> label - so the common dispatch path
 # (every brief scaffold and every spawn, permanently) is one store call with no
@@ -1074,18 +1096,28 @@ EOF
 # dispatch path passes none and reads unbounded as it always has, while a caller
 # running inside a time budget (the migration sweep) passes what is left of it
 # and gets a bounded read or a refusal rather than an unbounded one.
+#
+# EXIT STATUS, which every caller must distinguish. 0 echoes the bead id. 1 means
+# the store answered and no open bead carries this home's label. 2 means the
+# question could not be asked or its answer could not be read at all: a missing
+# tool, an underivable scope, a failed or bounded-out call, or a payload that is
+# not a JSON array. Collapsing 2 into 1 is what lets a transient read failure
+# read as "this home has no bead yet" and mint a second bead beside one that
+# already exists, so a caller that mints must treat 2 as a refusal rather than a
+# miss.
 fm_beads_lookup() { # <task_id> [bound]
   local task_id=$1 bound=${2:-} task_label existing id
-  [ -n "$task_id" ] || return 1
-  task_label=$(fm_beads_task_label "$task_id") || return 1
+  [ -n "$task_id" ] || return 2
+  task_label=$(fm_beads_task_label "$task_id") || return 2
   if [ -n "$bound" ]; then
-    declare -f fm_run_timed >/dev/null 2>&1 || return 1
-    existing=$(fm_run_timed "$bound" task list --label "$task_label" --limit 1 --json 2>/dev/null) || existing=
+    declare -f fm_run_timed >/dev/null 2>&1 || return 2
+    existing=$(fm_run_timed "$bound" task list --label "$task_label" --limit 1 --json 2>/dev/null) || return 2
   else
-    existing=$(task list --label "$task_label" --limit 1 --json 2>/dev/null) || existing=
+    existing=$(task list --label "$task_label" --limit 1 --json 2>/dev/null) || return 2
   fi
+  printf '%s' "$existing" | jq -e 'type=="array"' >/dev/null 2>&1 || return 2
   id=$(printf '%s' "$existing" \
-    | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
+    | jq -r 'if length>0 then (.[0].id // empty) else empty end' 2>/dev/null) || id=
   [ -n "$id" ] || return 1
   printf '%s\n' "$id"
 }
@@ -1114,13 +1146,20 @@ fm_beads_lookup() { # <task_id> [bound]
 # excluded server side and no client-side ordering or page depth can decide
 # the match.
 fm_beads_resolve_or_create() {
-  local task_id=$1 title=${2:-"firstmate: $1"} id
+  local task_id=$1 title=${2:-"firstmate: $1"} id status
   command -v task >/dev/null 2>&1 || return 1
   command -v jq >/dev/null 2>&1 || return 1
-  if id=$(fm_beads_lookup "$task_id") && [ -n "$id" ]; then
+  id=$(fm_beads_lookup "$task_id")
+  status=$?
+  if [ "$status" -eq 0 ] && [ -n "$id" ]; then
     printf '%s\n' "$id"
     return 0
   fi
+  # An unreadable store is not an answer, so minting here would be minting
+  # blind beside a bead that may already exist and would then stay open forever.
+  # Failing open with no bead keeps the dispatch path unblocked and leaves the
+  # next resolve free to find the real one.
+  [ "$status" -eq 2 ] && return 1
   fm_beads_mint_task_bead "$task_id" "$title"
 }
 
