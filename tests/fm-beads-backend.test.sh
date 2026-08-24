@@ -94,15 +94,22 @@ test_beads_fleet_label() {
   [ "$value" = "fleet:example" ] || fail "fleet label override should win, got: $value"
 }
 
-# add_beads_task_mock_store <fakebin_dir> <calls_log> <store_json> <minted_id>:
-# a fake `task` CLI backed by a small in-memory store. `list` applies the same
-# --label (AND), --status, --all, and --limit semantics the real CLI documents -
-# including truncating to --limit AFTER filtering - so a lookup that forgets a
-# filter sees exactly the rows it meant to exclude instead of a fixture that
-# answers correctly no matter what was asked. Rows are {id,status,labels};
-# `create` reports <minted_id>.
+# add_beads_task_mock_store <fakebin_dir> <calls_log> <store_json> <minted_id>
+# [emit_labels]: a fake `task` CLI backed by a small in-memory store. `list`
+# applies the same --label (AND), --status, --all, and --limit semantics the real
+# CLI documents - including truncating to --limit AFTER filtering - so a lookup
+# that forgets a filter sees exactly the rows it meant to exclude instead of a
+# fixture that answers correctly no matter what was asked. Rows are
+# {id,status,labels}; `create` reports <minted_id>.
+#
+# The real CLI does NOT return a labels field from `list --json` (it is served
+# separately by `label list <id> --json`, a flat array of label strings), so the
+# mock strips labels from its list rows by default and serves `label list` too,
+# and a reader of a bead's labels exercises the same two-call shape it does in
+# production. Pass <emit_labels> as "true" for the forward-compatible case where
+# the payload already carries labels and no second call is owed.
 add_beads_task_mock_store() {
-  local fakebin_dir=$1 calls_log=$2 store_json=$3 minted_id=$4
+  local fakebin_dir=$1 calls_log=$2 store_json=$3 minted_id=$4 emit_labels=${5:-false}
   cat > "$fakebin_dir/task" <<SH
 #!/usr/bin/env bash
 set -u
@@ -121,7 +128,8 @@ case "\$1" in
       esac
     done
     printf '%s' '$store_json' | jq -c \
-      --arg labels "\$labels" --arg statuses "\$statuses" --argjson limit "\$limit" '
+      --arg labels "\$labels" --arg statuses "\$statuses" --argjson limit "\$limit" \
+      --argjson emit_labels $emit_labels '
       [ .[]
         | select(\$labels == "" or ((\$labels | split(",")) - (.labels // [])) == [])
         | select(
@@ -130,7 +138,13 @@ case "\$1" in
             else (.status as \$s | \$statuses | split(",") | index(\$s)) != null
             end)
       ]
-      | if \$limit > 0 then .[0:\$limit] else . end'
+      | if \$limit > 0 then .[0:\$limit] else . end
+      | map(if \$emit_labels then . else del(.labels) end)'
+    ;;
+  label)
+    [ "\${2:-}" = list ] || exit 1
+    printf '%s' '$store_json' | jq -c --arg id "\${3:-}" \
+      '[ .[] | select(.id == \$id) | (.labels // [])[] ]'
     ;;
   create)
     printf '%s\n' "$minted_id"
@@ -159,8 +173,8 @@ test_beads_resolve_or_create_mints_when_absent() {
     "resolve did not look up an existing bead by its scoped task:<scope>:<id> label"
   assert_no_grep "list --label task:home-a:task-abc --all" "$calls_log" \
     "resolve asked for closed beads instead of letting the store exclude them"
-  assert_no_grep "list --label task:task-abc --all" "$calls_log" \
-    "resolve's legacy lookup asked for closed beads instead of letting the store exclude them"
+  assert_no_grep "list --label task:task-abc" "$calls_log" \
+    "resolve paid a legacy-label store call for a task whose own record names no bead to adopt"
   assert_grep "create --title" "$calls_log" \
     "resolve did not mint a new bead when none existed"
   assert_grep "task:home-a:task-abc" "$calls_log" \
@@ -364,6 +378,112 @@ test_beads_resolve_or_create_unowned_legacy_bead_is_not_adopted() {
   assert_grep "create --title" "$calls_log" \
     "resolve adopted another home's open legacy bead instead of minting its own"
   pass "an open legacy unscoped bead owned by another home is never adopted"
+}
+
+# Regression (the residue of the same bug): a pre-migration collision wrote ONE
+# bead id into BOTH homes' state/<id>.meta records, so the recorded id alone does
+# not prove exclusive ownership. The first home to migrate keeps that bead and
+# stamps its own scoped label on it; the second home must then see the foreign
+# scope and mint its own bead instead of re-adopting and re-tagging the shared
+# one, otherwise the two homes keep sharing a bead and one closing it still marks
+# the other's live work done.
+test_beads_resolve_or_create_legacy_bead_claimed_by_another_home_is_not_adopted() {
+  local dir fakebin calls_log id_a id_b state_a state_b
+  command -v jq >/dev/null 2>&1 || { pass "claimed legacy not-adopted skipped without jq"; return; }
+  dir="$TMP_ROOT/resolve-claimed-legacy"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  # bead-shared already carries home A's scoped label, i.e. home A migrated first.
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-shared","status":"open","labels":["task:task-xyz","task:home-a:task-xyz"]}]' \
+    "bead-b-own"
+
+  state_a="$dir/state-a"
+  state_b="$dir/state-b"
+  mkdir -p "$state_a" "$state_b"
+  # The collision: both homes' own records name the same bead.
+  printf 'beads_id=bead-shared\n' > "$state_a/task-xyz.meta"
+  printf 'beads_id=bead-shared\n' > "$state_b/task-xyz.meta"
+
+  id_a=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a STATE="$state_a" \
+    fm_beads_resolve_or_create "task-xyz")
+  [ "$id_a" = "bead-shared" ] \
+    || fail "the home that already migrated should keep bead-shared, got: $id_a"
+
+  id_b=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$state_b" \
+    fm_beads_resolve_or_create "task-xyz")
+  [ "$id_b" = "bead-b-own" ] \
+    || fail "home B must mint its own bead once another home has scoped bead-shared, got: $id_b"
+  [ "$id_a" != "$id_b" ] || fail "the two homes must stop sharing one bead"
+  assert_grep "label list bead-shared --json" "$calls_log" \
+    "resolve did not read the legacy bead's labels before deciding to adopt it"
+  assert_no_grep "tag bead-shared task:home-b:task-xyz" "$calls_log" \
+    "home B re-tagged a bead another home had already scoped instead of minting its own"
+  pass "a legacy bead another home has already scoped is not adopted; the second home mints its own"
+}
+
+# Test: when the store's list payload already carries the bead's labels, the
+# exclusivity check reads them from that payload and pays no second store call.
+# The real CLI omits labels from list rows today (hence the `label list` fallback
+# above), so this pins the behavior for a payload that does carry them.
+test_beads_resolve_or_create_reads_labels_from_the_list_payload_when_present() {
+  local dir fakebin calls_log id state_dir
+  command -v jq >/dev/null 2>&1 || { pass "payload label read skipped without jq"; return; }
+  dir="$TMP_ROOT/resolve-labels-in-payload"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-shared","status":"open","labels":["task:task-xyz","task:home-a:task-xyz"]}]' \
+    "bead-b-own" true
+
+  state_dir="$dir/state"
+  mkdir -p "$state_dir"
+  printf 'beads_id=bead-shared\n' > "$state_dir/task-xyz.meta"
+
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$state_dir" \
+    fm_beads_resolve_or_create "task-xyz")
+  [ "$id" = "bead-b-own" ] \
+    || fail "home B must mint its own bead when the payload shows a foreign scope, got: $id"
+  assert_no_grep "label list" "$calls_log" \
+    "resolve paid a second store call for labels the list payload already carried"
+  pass "the exclusivity check reads labels from the list payload when it carries them"
+}
+
+# Regression: FM_HOME reaches fm_beads_home_scope through callers that do not
+# canonicalize it, so one home spelled with a trailing slash, relatively, or
+# through a symlink must still hash to ONE scope. Two spellings hashing apart
+# would strand the intake bead fm-brief.sh minted where fm-spawn.sh cannot find
+# it, mint a duplicate, and leave the first bead open forever.
+test_beads_home_scope_normalizes_home_path_spellings() {
+  local dir home link plain slashed via_link relative absent absent_slashed
+  dir="$TMP_ROOT/home-scope-normalize"
+  home="$dir/real-home"
+  link="$dir/linked-home"
+  mkdir -p "$home"
+  ln -sfn "$home" "$link"
+
+  plain=$(FM_HOME="$home" fm_beads_home_scope) || plain=
+  [ -n "$plain" ] || fail "fm_beads_home_scope produced nothing for an existing home"
+  slashed=$(FM_HOME="$home/" fm_beads_home_scope)
+  [ "$plain" = "$slashed" ] \
+    || fail "a trailing slash must not change the scope ('$plain' vs '$slashed')"
+  via_link=$(FM_HOME="$link" fm_beads_home_scope)
+  [ "$plain" = "$via_link" ] \
+    || fail "a symlinked spelling must not change the scope ('$plain' vs '$via_link')"
+  relative=$(cd "$dir" && FM_HOME="real-home" fm_beads_home_scope)
+  [ "$plain" = "$relative" ] \
+    || fail "a relative spelling must not change the scope ('$plain' vs '$relative')"
+
+  # An unresolvable home still yields a deterministic scope rather than failing,
+  # and the trailing slash is still stripped before hashing.
+  absent=$(FM_HOME="$dir/not-created-yet" fm_beads_home_scope) || absent=
+  [ -n "$absent" ] || fail "an unresolvable home must still yield a scope"
+  absent_slashed=$(FM_HOME="$dir/not-created-yet/" fm_beads_home_scope)
+  [ "$absent" = "$absent_slashed" ] \
+    || fail "a trailing slash must not change an unresolvable home's scope"
+  pass "fm_beads_home_scope normalizes trailing-slash, relative, and symlinked spellings of one home"
 }
 
 # Test: the library stays sourceable on its own. It is copied WITHOUT its
@@ -1173,6 +1293,9 @@ test_beads_home_scope_stable_and_distinct
 test_beads_resolve_or_create_two_homes_same_slug
 test_beads_resolve_or_create_owned_legacy_bead_is_reused_and_migrated
 test_beads_resolve_or_create_unowned_legacy_bead_is_not_adopted
+test_beads_resolve_or_create_legacy_bead_claimed_by_another_home_is_not_adopted
+test_beads_resolve_or_create_reads_labels_from_the_list_payload_when_present
+test_beads_home_scope_normalizes_home_path_spellings
 test_lib_sources_without_its_siblings
 test_beads_status_read_outcomes
 test_beads_status_down_store_is_not_absent
