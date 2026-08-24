@@ -59,10 +59,10 @@
 # mint or resolve the task's bead at intake (via fm_beads_resolve_or_create) the moment
 # the brief is scaffolded, so a task firstmate is aware of but has not yet spawned is
 # represented by an open bead immediately rather than only at dispatch (AGENTS.md
-# sections 7 and 10); the shared task:<id> idempotency label means fm-spawn.sh's later
-# resolve returns that same bead. The Bead Receipt/Closure section only renders when a
-# caller sets FM_HOOK_BEADS_ID explicitly before scaffolding (the pre-existing --beads
-# opt-in path); secondmate charters are exempt.
+# sections 7 and 10); the shared home-scoped task:<scope>:<id> idempotency label means
+# fm-spawn.sh's later resolve returns that same bead. The Bead Receipt/Closure section
+# only renders when a caller sets FM_HOOK_BEADS_ID explicitly before scaffolding (the
+# pre-existing --beads opt-in path); secondmate charters are exempt.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
 # captain's standing posture as context, and this script never reads it:
@@ -423,10 +423,10 @@ REPO=${POS[1]}
 # scaffolded, so a task firstmate is aware of but has not yet spawned (queued,
 # blocked, awaiting a captain go-ahead) is already represented by an open bead
 # rather than only appearing at dispatch. fm_beads_resolve_or_create is
-# idempotent on the task:<id> label, so fm-spawn.sh's later resolve returns THIS
-# same bead (never a duplicate) and records it as beads_id= for fm-teardown.sh /
-# fm-ledger.sh to close. FM_HOOK_BEADS_ID is deliberately left unset here: the
-# worker-facing Bead Receipt/Closure sections are added at dispatch by
+# idempotent on the home-scoped task:<scope>:<id> label, so fm-spawn.sh's later
+# resolve returns this same bead (never a duplicate) and records it as beads_id=
+# for fm-teardown.sh / fm-ledger.sh to close. FM_HOOK_BEADS_ID is deliberately left
+# unset here: the worker-facing Bead Receipt/Closure sections are added at dispatch by
 # fm-spawn.sh (a not-yet-spawned task has no worker to act on them), which keeps
 # section injection single-sourced there. An explicit opt-in that already owns
 # the bead link and its sections is exempt, in either shape: the --beads flag

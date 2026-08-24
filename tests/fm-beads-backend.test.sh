@@ -141,8 +141,9 @@ SH
   chmod +x "$fakebin_dir/task"
 }
 
-# Test: fm_beads_resolve_or_create() mints a new bead labeled task:<id> when no
-# bead already carries that label (beads-authority migration Stage 3).
+# Test: fm_beads_resolve_or_create() mints a new bead labeled
+# task:<scope>:<id> when no bead already carries that scoped label
+# (beads-authority migration Stage 3).
 test_beads_resolve_or_create_mints_when_absent() {
   local dir fakebin calls_log id
   command -v jq >/dev/null 2>&1 || { pass "resolve mint skipped without jq"; return; }
@@ -152,20 +153,22 @@ test_beads_resolve_or_create_mints_when_absent() {
   calls_log="$dir/calls.log"
   add_beads_task_mock_store "$fakebin" "$calls_log" '[]' "bead-99"
 
-  id=$(PATH="$fakebin:$PATH" fm_beads_resolve_or_create "task-abc")
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a fm_beads_resolve_or_create "task-abc")
   [ "$id" = "bead-99" ] || fail "expected minted bead id bead-99, got: $id"
-  assert_grep "list --label task:task-abc --limit 1 --json" "$calls_log" \
-    "resolve did not look up an existing bead by its task:<id> label"
-  assert_no_grep "list --label task:task-abc --all" "$calls_log" \
+  assert_grep "list --label task:home-a:task-abc --limit 1 --json" "$calls_log" \
+    "resolve did not look up an existing bead by its scoped task:<scope>:<id> label"
+  assert_no_grep "list --label task:home-a:task-abc --all" "$calls_log" \
     "resolve asked for closed beads instead of letting the store exclude them"
+  assert_no_grep "list --label task:task-abc --all" "$calls_log" \
+    "resolve's legacy lookup asked for closed beads instead of letting the store exclude them"
   assert_grep "create --title" "$calls_log" \
     "resolve did not mint a new bead when none existed"
-  assert_grep "task:task-abc" "$calls_log" \
-    "minted bead did not carry the task:<id> idempotency label"
-  pass "fm_beads_resolve_or_create mints a new bead labeled task:<id> when none exists"
+  assert_grep "task:home-a:task-abc" "$calls_log" \
+    "minted bead did not carry the home-scoped idempotency label"
+  pass "fm_beads_resolve_or_create mints a new bead labeled task:<scope>:<id> when none exists"
 }
 
-# Test: fm_beads_resolve_or_create() reuses an existing task:<id>-labeled bead
+# Test: fm_beads_resolve_or_create() reuses an existing scoped-labeled bead
 # instead of minting a duplicate, so a resolution against an id that was already
 # linked (e.g. an explicit --beads spawn, or a prior successful spawn attempt)
 # never mints a second bead for the same task.
@@ -177,17 +180,19 @@ test_beads_resolve_or_create_reuses_existing() {
   fakebin=$(fm_fakebin "$dir")
   calls_log="$dir/calls.log"
   add_beads_task_mock_store "$fakebin" "$calls_log" \
-    '[{"id":"bead-7","status":"open","labels":["task:task-xyz"]}]' \
+    '[{"id":"bead-7","status":"open","labels":["task:home-a:task-xyz"]}]' \
     "bead-should-not-be-created"
 
-  id=$(PATH="$fakebin:$PATH" fm_beads_resolve_or_create "task-xyz")
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a fm_beads_resolve_or_create "task-xyz")
   [ "$id" = "bead-7" ] || fail "expected existing bead id bead-7, got: $id"
   assert_no_grep "create --title" "$calls_log" \
-    "resolve minted a duplicate bead despite an existing task:<id> label match"
-  pass "fm_beads_resolve_or_create reuses an existing task:<id>-labeled bead instead of minting a duplicate"
+    "resolve minted a duplicate bead despite an existing scoped label match"
+  assert_no_grep "^tag " "$calls_log" \
+    "resolve rewrote a bead that already carried the scoped label"
+  pass "fm_beads_resolve_or_create reuses an existing task:<scope>:<id>-labeled bead instead of minting a duplicate"
 }
 
-# Test: a CLOSED bead carrying the task:<id> label is never adopted. Task ids are
+# Test: a CLOSED bead carrying the scoped label is never adopted. Task ids are
 # reusable slugs and fm-teardown.sh closes a bead without stripping that label, so
 # the record of a long-finished task survives in the store. Adopting it would link
 # a brand-new task to an already-closed bead - and under the beads backend a closed
@@ -201,10 +206,10 @@ test_beads_resolve_or_create_skips_closed_bead() {
   fakebin=$(fm_fakebin "$dir")
   calls_log="$dir/calls.log"
   add_beads_task_mock_store "$fakebin" "$calls_log" \
-    '[{"id":"bead-old","status":"closed","labels":["task:fix-ci"]}]' \
+    '[{"id":"bead-old","status":"closed","labels":["task:home-a:fix-ci"]}]' \
     "bead-fresh"
 
-  id=$(PATH="$fakebin:$PATH" fm_beads_resolve_or_create "fix-ci")
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a fm_beads_resolve_or_create "fix-ci")
   [ "$id" != "bead-old" ] \
     || fail "resolve adopted the closed bead of a previous task that reused this id"
   [ "$id" = "bead-fresh" ] || fail "expected a freshly minted bead, got: $id"
@@ -225,13 +230,13 @@ test_beads_resolve_or_create_prefers_live_bead_over_closed() {
   fakebin=$(fm_fakebin "$dir")
   calls_log="$dir/calls.log"
   add_beads_task_mock_store "$fakebin" "$calls_log" \
-    '[{"id":"bead-old","status":"closed","labels":["task:fix-ci"]},{"id":"bead-live","status":"in_progress","labels":["task:fix-ci"]}]' \
+    '[{"id":"bead-old","status":"closed","labels":["task:home-a:fix-ci"]},{"id":"bead-live","status":"in_progress","labels":["task:home-a:fix-ci"]}]' \
     "bead-should-not-be-created"
 
-  id=$(PATH="$fakebin:$PATH" fm_beads_resolve_or_create "fix-ci")
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a fm_beads_resolve_or_create "fix-ci")
   [ "$id" = "bead-live" ] || fail "expected the still-live bead bead-live, got: $id"
   assert_no_grep "create --title" "$calls_log" \
-    "resolve minted a duplicate despite a live task:<id>-labeled bead existing"
+    "resolve minted a duplicate despite a live task:<scope>:<id>-labeled bead existing"
   pass "fm_beads_resolve_or_create returns the live bead when a closed predecessor shares the label"
 }
 
@@ -250,17 +255,115 @@ test_beads_resolve_or_create_ignores_predecessor_backlog_depth() {
   calls_log="$dir/calls.log"
   store='['
   for i in $(seq 1 40); do
-    store="$store{\"id\":\"bead-old-$i\",\"status\":\"closed\",\"labels\":[\"task:fix-ci\"]},"
+    store="$store{\"id\":\"bead-old-$i\",\"status\":\"closed\",\"labels\":[\"task:home-a:fix-ci\"]},"
   done
-  store="$store{\"id\":\"bead-live\",\"status\":\"open\",\"labels\":[\"task:fix-ci\"]}]"
+  store="$store{\"id\":\"bead-live\",\"status\":\"open\",\"labels\":[\"task:home-a:fix-ci\"]}]"
   add_beads_task_mock_store "$fakebin" "$calls_log" "$store" "bead-should-not-be-created"
 
-  id=$(PATH="$fakebin:$PATH" fm_beads_resolve_or_create "fix-ci")
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a fm_beads_resolve_or_create "fix-ci")
   [ "$id" = "bead-live" ] \
     || fail "expected the live bead behind 40 closed predecessors, got: $id"
   assert_no_grep "create --title" "$calls_log" \
     "resolve minted a duplicate because the closed predecessors filled its page"
   pass "fm_beads_resolve_or_create finds the live bead however many closed predecessors share the label"
+}
+
+# Test: fm_beads_home_scope is a 16-hex string, stable across calls, distinct
+# across homes, and honors the FM_BEADS_HOME_SCOPE test override. Fails (returns
+# 1) when neither a home path nor the override is supplied.
+test_beads_home_scope_stable_and_distinct() {
+  local a1 a2 b
+  a1=$(FM_HOME=/tmp/home-a fm_beads_home_scope) || a1=
+  [ -n "$a1" ] || fail "fm_beads_home_scope produced nothing for a real home path"
+  [ "${#a1}" -eq 16 ] || fail "scope should be 16 chars, got '$a1'"
+  a2=$(FM_HOME=/tmp/home-a fm_beads_home_scope)
+  [ "$a1" = "$a2" ] || fail "scope must be stable across calls for one home"
+  b=$(FM_HOME=/tmp/home-b fm_beads_home_scope)
+  [ "$a1" != "$b" ] || fail "two distinct homes must yield distinct scopes"
+  [ "$(FM_BEADS_HOME_SCOPE=home-a fm_beads_home_scope)" = "home-a" ] \
+    || fail "the FM_BEADS_HOME_SCOPE override must win"
+  if FM_HOME='' fm_beads_home_scope >/dev/null 2>&1; then
+    fail "fm_beads_home_scope must fail when no home and no override are supplied"
+  fi
+  pass "fm_beads_home_scope is 16-hex, stable, and distinct per home; the override wins"
+}
+
+# Regression: two different home scopes with the same task slug resolve to
+# different beads. Home A reuses its own scoped bead while home B, which shares
+# the store but a different scope, mints its own bead - the exact cross-home
+# adoption the home-scoped label exists to prevent.
+test_beads_resolve_or_create_two_homes_same_slug() {
+  local dir fakebin calls_log id_a id_b
+  command -v jq >/dev/null 2>&1 || { pass "two-homes same-slug skipped without jq"; return; }
+  dir="$TMP_ROOT/resolve-two-homes"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-A","status":"open","labels":["task:home-a:task-xyz"]}]' \
+    "bead-B"
+
+  id_a=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a fm_beads_resolve_or_create "task-xyz")
+  [ "$id_a" = "bead-A" ] || fail "home A should resolve to its own bead-A, got: $id_a"
+  id_b=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b fm_beads_resolve_or_create "task-xyz")
+  [ "$id_b" = "bead-B" ] || fail "home B must mint its own bead-B, got: $id_b"
+  [ "$id_a" != "$id_b" ] \
+    || fail "two home scopes must resolve the same slug to different beads"
+  assert_grep "list --label task:home-b:task-xyz" "$calls_log" \
+    "home B's resolve did not look up its own scoped label"
+  pass "two home scopes with the same slug resolve to different beads"
+}
+
+# Regression: a pre-existing OPEN bead carrying the legacy unscoped task:<id>
+# label is still found by its own home (the home that owns it via its recorded
+# beads_id=), and is migrated onto the scoped label rather than re-minted, so an
+# in-flight pre-migration bead is not orphaned into a duplicate.
+test_beads_resolve_or_create_owned_legacy_bead_is_reused_and_migrated() {
+  local dir fakebin calls_log id state_dir
+  command -v jq >/dev/null 2>&1 || { pass "owned legacy reuse skipped without jq"; return; }
+  dir="$TMP_ROOT/resolve-owned-legacy"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-7","status":"open","labels":["task:task-xyz"]}]' \
+    "bead-should-not-be-created"
+
+  state_dir="$dir/state"
+  mkdir -p "$state_dir"
+  printf 'beads_id=bead-7\n' > "$state_dir/task-xyz.meta"
+
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-a STATE="$state_dir" \
+    fm_beads_resolve_or_create "task-xyz")
+  [ "$id" = "bead-7" ] || fail "the owning home should reuse its legacy bead bead-7, got: $id"
+  assert_no_grep "create --title" "$calls_log" \
+    "resolve re-minted a duplicate instead of reusing the home's owned legacy bead"
+  assert_grep "tag bead-7 task:home-a:task-xyz" "$calls_log" \
+    "resolve did not migrate the owned legacy bead onto the scoped label"
+  pass "a pre-existing open unscoped bead is found by its own home and migrated, not re-minted"
+}
+
+# Regression (the bug): a pre-existing OPEN bead carrying the legacy unscoped
+# task:<id> label is NOT adopted by a home that does not own it (no recorded
+# beads_id= for that bead). That home mints its own bead, so one home closing its
+# bead can never mark another home's live work done.
+test_beads_resolve_or_create_unowned_legacy_bead_is_not_adopted() {
+  local dir fakebin calls_log id
+  command -v jq >/dev/null 2>&1 || { pass "unowned legacy not-adopted skipped without jq"; return; }
+  dir="$TMP_ROOT/resolve-unowned-legacy"
+  mkdir -p "$dir"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-other","status":"open","labels":["task:task-xyz"]}]' \
+    "bead-fresh"
+
+  id=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b fm_beads_resolve_or_create "task-xyz")
+  [ "$id" = "bead-fresh" ] \
+    || fail "a home that does not own the legacy bead must mint its own, got: $id"
+  assert_grep "create --title" "$calls_log" \
+    "resolve adopted another home's open legacy bead instead of minting its own"
+  pass "an open legacy unscoped bead owned by another home is never adopted"
 }
 
 # Test: the library stays sourceable on its own. It is copied WITHOUT its
@@ -1066,6 +1169,10 @@ test_beads_resolve_or_create_reuses_existing
 test_beads_resolve_or_create_skips_closed_bead
 test_beads_resolve_or_create_prefers_live_bead_over_closed
 test_beads_resolve_or_create_ignores_predecessor_backlog_depth
+test_beads_home_scope_stable_and_distinct
+test_beads_resolve_or_create_two_homes_same_slug
+test_beads_resolve_or_create_owned_legacy_bead_is_reused_and_migrated
+test_beads_resolve_or_create_unowned_legacy_bead_is_not_adopted
 test_lib_sources_without_its_siblings
 test_beads_status_read_outcomes
 test_beads_status_down_store_is_not_absent
