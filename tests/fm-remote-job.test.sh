@@ -354,19 +354,24 @@ OTHER_PID=
 pass "stale ownership is reclaimed without signaling a reused pid"
 
 FM_REMOTE_JOB_TIMEOUT=1
-TIMEOUT_STAGED_AT=$(date +%s)
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-timeout-job.sh < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
+TIMEOUT_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 [ "$FM_REMOTE_JOB_EXIT" -eq 124 ] || fail "the worker did not terminate an over-time job"
 # The worker reads the claim instant with whole-second resolution, so a
-# deadline of exactly stage-second plus timeout would silently bill the job
-# whatever fraction of that second had already passed. Reading the recorded
-# deadline pins the rounding structurally, without timing the kill.
-TIMEOUT_EXEC_DEADLINE=$(fm_remote_job_read_number "$STATE_ROOT/jobs/$JOB_ID" deadline) \
+# deadline of exactly the claim second plus the timeout would silently bill the
+# job whatever fraction of that second had already passed. The claim artifact
+# is written immediately before the deadline is minted, so its mtime pins the
+# claim second exactly and the round-up can be asserted as an equality, without
+# timing the kill and without a stage-time baseline that a second boundary in
+# the staging gap can satisfy for the wrong reason.
+TIMEOUT_CLAIMED_AT=$(fm_remote_job_path_mtime "$TIMEOUT_JOB_DIR/.claim/owner") \
+  || fail "the timed-out job recorded no claim instant"
+TIMEOUT_EXEC_DEADLINE=$(fm_remote_job_read_number "$TIMEOUT_JOB_DIR" deadline) \
   || fail "the timed-out job recorded no execution deadline"
-[ "$TIMEOUT_EXEC_DEADLINE" -ge "$((TIMEOUT_STAGED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
-  || fail "the claimed job was billed the remainder of the second it was claimed in"
+[ "$TIMEOUT_EXEC_DEADLINE" -eq "$((TIMEOUT_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+  || fail "the claimed job's deadline did not round its truncated claim second up, so it was billed the remainder of the second it was claimed in"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the timed-out job could not be reaped"
 pass "the worker enforces the job timeout and publishes its result"
 
@@ -430,18 +435,25 @@ else
     || fail "queue time consumed the second job's execution timeout"
 fi
 # Staging derives queue_deadline from one clock read, so the stage second is
-# exactly recoverable from the record. The latest deadline a stage-minted
-# window could carry is that second plus the timeout plus the rounded-up claim
-# second; the job waited longer than that behind the first job, so a deadline
-# past it proves the window was minted at claim time rather than at stage time
-# - the same contract the exit status above asserts, without the wall clock.
+# exactly recoverable from the record, and the claim artifact's mtime pins the
+# claim second exactly. The job was held behind the first job for longer than a
+# second, so its claim second is strictly later than its stage second; an
+# execution deadline that equals the claim second plus the timeout plus the
+# rounded-up claim second therefore proves both halves of the contract -
+# claim-time minting rather than stage-time minting, and the full configured
+# window - without the wall clock and without a baseline a second boundary in
+# the staging gap can satisfy for the wrong reason.
 SECOND_QUEUE_DEADLINE=$(fm_remote_job_read_number "$SECOND_JOB_DIR" queue_deadline) \
   || fail "the queued job recorded no queue deadline"
 SECOND_EXEC_DEADLINE=$(fm_remote_job_read_number "$SECOND_JOB_DIR" deadline) \
   || fail "the queued job recorded no execution deadline"
+SECOND_CLAIMED_AT=$(fm_remote_job_path_mtime "$SECOND_JOB_DIR/.claim/owner") \
+  || fail "the queued job recorded no claim instant"
 SECOND_STAGED_AT=$((SECOND_QUEUE_DEADLINE - FM_REMOTE_JOB_QUEUE_TIMEOUT))
-[ "$SECOND_EXEC_DEADLINE" -gt "$((SECOND_STAGED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
-  || fail "the queued job's execution window was minted at stage time, not at claim time"
+[ "$SECOND_CLAIMED_AT" -gt "$SECOND_STAGED_AT" ] \
+  || fail "the queued job was not held past its stage second, so claim-time minting is unproven"
+[ "$SECOND_EXEC_DEADLINE" -eq "$((SECOND_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+  || fail "the queued job's execution window was not minted from its claim second with that truncated second rounded up"
 fm_remote_job_reap "$ACCOUNT_HOME" "$FIRST_JOB_ID" || fail "the first delayed job could not be reaped"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the second delayed job could not be reaped"
 pass "queued jobs receive a fresh bounded execution window"
