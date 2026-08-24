@@ -168,6 +168,14 @@ extract_title() {
 # fm_beads_resolve_or_create's own lookup (fm_beads_lookup, which asks only for
 # the home-scoped label) so this report's "(exists)" annotation and the
 # blocked-by dependency edges name the bead the apply path resolves to.
+#
+# Both of fm_beads_lookup's failure statuses read as "nothing here" on purpose:
+# this helper only annotates the report, counts imported against skipped, and
+# names dependency endpoints, and every one of those degrades to a less complete
+# report rather than a wrong write. The write itself never goes through here -
+# the apply path calls fm_beads_resolve_or_create, which refuses to mint over an
+# unreadable store - so a store that goes quiet mid-import aborts this importer
+# instead of duplicating a bead it could not see.
 resolve_existing_bead() {
   fm_beads_lookup "$1" || true
 }
