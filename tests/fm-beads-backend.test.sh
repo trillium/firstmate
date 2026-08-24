@@ -421,6 +421,170 @@ test_beads_migration_leaves_a_bead_another_home_claimed_alone() {
   pass "the sweep leaves a bead another home already scoped alone and that home mints its own"
 }
 
+# Regression: leaving the winner's bead alone is only enough for a task this
+# home never dispatched. A DISPATCHED task is pinned to that shared bead by its
+# own state/<id>.meta beads_id=, which bin/fm-crew-state.sh and bin/fm-teardown.sh
+# read directly and never re-resolve, so a bare skip left both homes acting on
+# one bead forever. The sweep must mint this home a bead of its own and repoint
+# this home's OWN record at it, leaving the other home's bead untouched.
+test_beads_migration_repoints_a_dispatched_task_off_another_homes_bead() {
+  local dir fakebin calls_log home out got want
+  command -v jq >/dev/null 2>&1 || { pass "repoint migration skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-repoint"
+  home="$dir/home-b"
+  mkdir -p "$home/state" "$home/data"
+  printf 'window=w1\nworktree=/tmp/wt\nbeads_id=bead-shared\nproject=demo\n' \
+    > "$home/state/task-xyz.meta"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  # bead-shared already carries home A's scoped label, i.e. home A swept first.
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-shared","status":"open","labels":["task:task-xyz","task:home-a:task-xyz"]}]' \
+    "bead-b-own"
+
+  out=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels 2>&1) \
+    || fail "repointing this home's own record is a success path, not a failure: $out"
+  printf '%s\n' "$out" | grep -q "repointed task-xyz onto its own bead bead-b-own" \
+    || fail "the sweep did not report the repointing, so an operator cannot see it: $out"
+
+  got=$(cat "$home/state/task-xyz.meta")
+  want=$(printf 'window=w1\nworktree=/tmp/wt\nbeads_id=bead-b-own\nproject=demo\n')
+  [ "$got" = "$want" ] \
+    || fail "the record must name this home's own bead with every other line and its order intact, got: $got"
+  assert_no_grep "tag bead-shared" "$calls_log" \
+    "the sweep wrote to the bead another home had already claimed"
+  assert_absent "$home/state/task-xyz.meta.beads-repoint.$$" \
+    "the repoint left its temporary record behind"
+  pass "the sweep repoints a dispatched task off another home's bead onto one of its own"
+}
+
+# Test: the repointing path is safe to re-run. Once this home's own record names
+# its replacement bead, the shared bead is no longer a candidate this home
+# claims, so a second sweep mints nothing and rewrites nothing.
+test_beads_migration_repoint_second_run_is_a_no_op() {
+  local dir fakebin calls_log home mints before after
+  command -v jq >/dev/null 2>&1 || { pass "repoint idempotence skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-repoint-twice"
+  home="$dir/home-b"
+  mkdir -p "$home/state" "$home/data"
+  printf 'window=w1\nbeads_id=bead-shared\n' > "$home/state/task-xyz.meta"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-shared","status":"open","labels":["task:task-xyz","task:home-a:task-xyz"]}]' \
+    "bead-b-own"
+
+  PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels >/dev/null \
+    || fail "the first sweep reported failure against a healthy store"
+  before=$(cat "$home/state/task-xyz.meta")
+
+  # Drop the marker so the second pass runs for real and the store's own
+  # evidence, not the one-shot record, has to carry the idempotence.
+  rm -f "$home/state/.beads-label-migration-v1"
+  PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels >/dev/null \
+    || fail "the second sweep reported failure with nothing left to do"
+
+  after=$(cat "$home/state/task-xyz.meta")
+  [ "$after" = "$before" ] \
+    || fail "the second sweep rewrote an already-repointed record: $after"
+  mints=$(grep -c '^create ' "$calls_log" || true)
+  [ "$mints" = 1 ] || fail "the replacement bead should be minted exactly once, saw $mints"
+  pass "re-running the sweep after a repoint mints nothing and rewrites nothing"
+}
+
+# Regression (silent pin): if the replacement bead cannot be minted, the task is
+# still pointed at the other home's bead. Treating that as a clean pass would
+# write the permanent one-shot marker and leave it pinned forever, so it must
+# count as a failure and hold the marker back.
+test_beads_migration_counts_a_failed_replacement_mint_as_a_failure() {
+  local dir fakebin calls_log home out
+  command -v jq >/dev/null 2>&1 || { pass "failed-mint migration skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-mint-fails"
+  home="$dir/home-b"
+  mkdir -p "$home/state" "$home/data"
+  printf 'window=w1\nbeads_id=bead-shared\n' > "$home/state/task-xyz.meta"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  # A store that answers every read but refuses the mint: the shape a write
+  # outage actually takes once the sweep has already decided to repoint.
+  cat > "$fakebin/task" <<SH
+#!/usr/bin/env bash
+set -u
+printf '%s\n' "\$*" >> "$calls_log"
+case "\$1 \${2:-}" in
+  "label list-all") printf '%s\n' '[{"label":"task:task-xyz","count":1}]'; exit 0 ;;
+  "label list") printf '%s\n' '["task:task-xyz","task:home-a:task-xyz"]'; exit 0 ;;
+esac
+case "\$1" in
+  create) exit 1 ;;
+  list)
+    for a in "\$@"; do
+      if [ "\$a" = "task:task-xyz" ]; then
+        printf '%s\n' '[{"id":"bead-shared","status":"open"}]'
+        exit 0
+      fi
+    done
+    printf '%s\n' '[]'
+    ;;
+  *) printf '%s\n' '[]' ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/task"
+
+  out=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels 2>&1) \
+    && fail "a task left pinned to another home's bead was reported as a clean sweep"
+  printf '%s\n' "$out" | grep -q "could not mint task-xyz a bead of its own" \
+    || fail "the sweep did not report the failed mint, so the pin is invisible: $out"
+  assert_absent "$home/state/.beads-label-migration-v1" \
+    "a failed mint still wrote the one-shot marker, so that task stays pinned forever"
+  assert_grep "beads_id=bead-shared" "$home/state/task-xyz.meta" \
+    "the record was rewritten even though no replacement bead exists"
+  pass "a failed replacement mint counts as a failure and the sweep retries next session"
+}
+
+# Regression (silent pin, write half): the mint can succeed and the record
+# rewrite still fail - another process is mid-write on that record. The task is
+# then pinned to the other home's bead exactly as if nothing happened, so this
+# too must count as a failure and hold the one-shot marker back.
+test_beads_migration_counts_a_failed_repoint_write_as_a_failure() {
+  local dir fakebin calls_log home out lock
+  command -v jq >/dev/null 2>&1 || { pass "failed-repoint migration skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-repoint-write-fails"
+  home="$dir/home-b"
+  mkdir -p "$home/state" "$home/data"
+  printf 'window=w1\nbeads_id=bead-shared\n' > "$home/state/task-xyz.meta"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-shared","status":"open","labels":["task:task-xyz","task:home-a:task-xyz"]}]' \
+    "bead-b-own"
+
+  # Hold the record's own write lock from a live process, which is what a
+  # concurrent full-record rewrite looks like to the sweep.
+  fm_beads_require_lock_lib || { pass "failed-repoint migration skipped without the lock library"; return; }
+  lock=$(fm_meta_lock_path "$home/state/task-xyz.meta") \
+    || fail "could not derive the record's write lock path"
+  fm_lock_try_acquire "$lock" || fail "could not take the record's write lock in the test"
+
+  out=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels 2>&1) \
+    && { fm_lock_release "$lock"; fail "a record the sweep could not rewrite was reported as a clean sweep"; }
+  fm_lock_release "$lock"
+
+  printf '%s\n' "$out" | grep -q "could not repoint task-xyz's own record onto bead-b-own" \
+    || fail "the sweep did not report the failed record rewrite, so the pin is invisible: $out"
+  assert_absent "$home/state/.beads-label-migration-v1" \
+    "a failed record rewrite still wrote the one-shot marker, so that task stays pinned forever"
+  assert_grep "beads_id=bead-shared" "$home/state/task-xyz.meta" \
+    "the record changed even though the sweep reported it could not be rewritten"
+  pass "a failed record rewrite counts as a failure and the sweep retries next session"
+}
+
 # Regression: a slug this home holds no record for is not one of its tasks, so
 # its pre-migration bead belongs to some other home and must be left untouched -
 # the enumeration-side half of the same cross-home guarantee.
@@ -1540,6 +1704,10 @@ test_beads_home_scope_stable_and_distinct
 test_beads_resolve_or_create_two_homes_same_slug
 test_beads_migration_retags_a_scaffolded_tasks_legacy_bead
 test_beads_migration_leaves_a_bead_another_home_claimed_alone
+test_beads_migration_repoints_a_dispatched_task_off_another_homes_bead
+test_beads_migration_repoint_second_run_is_a_no_op
+test_beads_migration_counts_a_failed_replacement_mint_as_a_failure
+test_beads_migration_counts_a_failed_repoint_write_as_a_failure
 test_beads_migration_ignores_a_slug_this_home_has_no_record_for
 test_beads_migration_never_touches_closed_beads
 test_beads_migration_second_run_is_a_no_op
