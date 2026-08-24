@@ -286,6 +286,24 @@ SH
 # nothing on stdout - and delegates every other invocation to the real git. A clean
 # tree prints nothing too, so reading that silence as "nothing uncommitted" is the
 # bug this guards: the refusal must count as unlanded, never done.
+# A git that records the credential-prompt environment it was handed on a fetch and
+# then delegates to the real git, so a test can observe whether the caller imposed
+# the never-prompt posture on the landing predicate's fetches.
+add_fetch_env_recording_git() {  # <fakebin> <real-git-path> <record-file>
+  local fb=$1 real=$2 rec=$3
+  cat > "$fb/git" <<SH
+#!/usr/bin/env bash
+set -u
+for arg in "\$@"; do
+  [ "\$arg" = fetch ] || continue
+  printf 'prompt=%s askpass=%s\n' "\${GIT_TERMINAL_PROMPT-unset}" "\${GIT_ASKPASS-unset}" >> "$rec"
+  break
+done
+exec "$real" "\$@"
+SH
+  chmod +x "$fb/git"
+}
+
 add_porcelain_refusing_git() {  # <fakebin> <real-git-path>
   local fb=$1 real=$2
   cat > "$fb/git" <<SH
@@ -1595,11 +1613,13 @@ test_beads_closed_bead_merged_pr_done() {
   pass "closed bead over a merged PR reports done"
 }
 
-# Drop-recovery guard, unreadable worktree: a git that REFUSES the unlanded-work
-# probe prints nothing, exactly like a clean tree does. Reading that silence as
-# "nothing unlanded" would report done over a worktree whose state was never
-# actually read, so a probe that cannot answer counts as unlanded and the read
-# falls through to the existing logic.
+# Drop-recovery guard, unanswerable landing question: a git that REFUSES the
+# content-in-default comparison (git merge-tree, the landing predicate's own
+# fallback leg) cannot say whether the work reached the default branch. Treating
+# that refusal as "yes, landed" would report done over work whose whereabouts were
+# never actually established, so a comparison that cannot answer counts as unlanded
+# and the read falls through to the existing logic. This is the merge-tree half of
+# the gate's fail-closed contract; the dirty-tree half is the porcelain case below.
 test_beads_closed_bead_probe_failure_not_done() {
   command -v jq >/dev/null 2>&1 || { pass "beads closed+probe-failure skipped without jq"; return; }
   reset_fakes
@@ -1615,10 +1635,10 @@ test_beads_closed_bead_probe_failure_not_done() {
   printf 'working: still grinding\n' > "$d/state/feat-beadprobe.status"
   FM_FAKE_BEAD_STATUS=closed
   local out; out=$(run_crew_state "$d" feat-beadprobe)
-  assert_not_contains "$out" "source: bead" "a refused unlanded-work probe must not report a bead-sourced done"
-  assert_not_contains "$out" "state: done" "an unreadable worktree must not read as done from the bead"
-  assert_contains "$out" "source: status-log" "an unreadable worktree falls through to existing logic"
-  pass "closed bead over an unreadable worktree does not report done (probe failure counts as unlanded)"
+  assert_not_contains "$out" "source: bead" "a refused content comparison must not report a bead-sourced done"
+  assert_not_contains "$out" "state: done" "an unanswerable landing comparison must not read as done from the bead"
+  assert_contains "$out" "source: status-log" "a refused content comparison falls through to existing logic"
+  pass "closed bead whose content comparison is refused does not report done (refusal counts as unlanded)"
 }
 
 # The gate's OTHER fail-closed dimension, and the one the merge-tree case above
@@ -1730,6 +1750,60 @@ SH
   pass "landing predicate is unbounded by default and bounded only on opt-in"
 }
 
+# The strict posture the supervision reader opts into has TWO halves that must
+# travel together: the network bound, and a never-prompt guarantee on the landing
+# predicate's fetches. An opted-in fetch runs under GIT_TERMINAL_PROMPT=0 and
+# GIT_ASKPASS=true, so a project cloned over HTTPS with no cached credential fails
+# fast into the unlanded fail-safe instead of blocking a watcher poll on a terminal
+# read nobody is there to answer. The fake git here reports the environment it was
+# actually handed, so this pins the imposed behavior rather than the source.
+test_landed_fetch_is_hardened_when_bound_requested() {
+  reset_fakes
+  local d fb rec seen
+  d=$(new_case landed-fetch-hardened)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-fetchharden
+  fb=$(make_fakebin "$d")
+  rec="$d/fetch-env.log"
+  add_fetch_env_recording_git "$fb" "$(command -v git)" "$rec"
+  (
+    unset GIT_TERMINAL_PROMPT GIT_ASKPASS
+    PATH="$fb:$PATH" FM_LANDED_NET_TIMEOUT=10 \
+      bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3"' \
+      _ "$ROOT/bin" "$d/wt" fm/feat-fetchharden
+  ) >/dev/null 2>&1 || true
+  [ -s "$rec" ] || fail "the landing predicate never reached a fetch, so the posture was never exercised"
+  seen=$(cat "$rec")
+  assert_contains "$seen" "prompt=0" "an opted-in fetch must run with GIT_TERMINAL_PROMPT=0"
+  assert_contains "$seen" "askpass=true" "an opted-in fetch must run with GIT_ASKPASS=true"
+  pass "opting into the bound also imposes the never-prompt posture on the fetch"
+}
+
+# The other side of that one opt-in: a caller that asks for nothing gets exactly the
+# pre-extraction behavior bin/fm-teardown.sh depends on. Its landing check runs at an
+# interactive gate that REFUSES to remove a worktree, so a credential prompt an
+# operator can answer is far better than a fast failure that refuses teardown - or
+# files a staleness triage bead - for work that actually landed.
+test_landed_fetch_is_plain_by_default() {
+  reset_fakes
+  local d fb rec seen
+  d=$(new_case landed-fetch-plain)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-fetchplain
+  fb=$(make_fakebin "$d")
+  rec="$d/fetch-env.log"
+  add_fetch_env_recording_git "$fb" "$(command -v git)" "$rec"
+  (
+    unset FM_LANDED_NET_TIMEOUT GIT_TERMINAL_PROMPT GIT_ASKPASS
+    PATH="$fb:$PATH" \
+      bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3"' \
+      _ "$ROOT/bin" "$d/wt" fm/feat-fetchplain
+  ) >/dev/null 2>&1 || true
+  [ -s "$rec" ] || fail "the landing predicate never reached a fetch, so the default posture was never exercised"
+  seen=$(cat "$rec")
+  assert_contains "$seen" "prompt=unset" "a default fetch must not have GIT_TERMINAL_PROMPT imposed on it"
+  assert_contains "$seen" "askpass=unset" "a default fetch must not have GIT_ASKPASS imposed on it"
+  pass "the default landing path leaves the fetch free to prompt, as teardown expects"
+}
+
 # A still-open bead with a live (busy) endpoint must be completely unaffected -
 # the bead-closed signal ADDS a completion truth, it must never mark live work
 # done prematurely.
@@ -1791,6 +1865,8 @@ test_beads_closed_bead_probe_failure_not_done
 test_beads_closed_bead_porcelain_refusal_not_done
 test_beads_closed_bead_stalled_remote_bounded
 test_landed_predicate_bound_is_opt_in
+test_landed_fetch_is_hardened_when_bound_requested
+test_landed_fetch_is_plain_by_default
 test_beads_open_bead_live_pane_unaffected
 test_beads_backend_guard_tasks_axi_ignores_closed_bead
 test_stale_needs_decision_superseded

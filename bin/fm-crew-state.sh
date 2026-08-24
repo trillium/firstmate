@@ -107,6 +107,9 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # that reaches the predicate here: the generic FM_LANDED_NET_TIMEOUT an operator
 # may export for another caller never raises or lowers the supervision bound, so
 # the worst case stated above holds whatever the surrounding environment says.
+# Opting in also buys the predicate's never-prompt posture, so a missing git
+# credential fails fast into the unlanded fail-safe rather than blocking this read
+# on a terminal prompt no supervision poll can answer.
 LANDED_TIMEOUT=${FM_CREW_STATE_LANDED_TIMEOUT:-$NM_TIMEOUT}
 case "$LANDED_TIMEOUT" in ''|*[!0-9]*) LANDED_TIMEOUT=10 ;; esac
 # How many of the most recent `no-mistakes runs` rows the cross-branch fallback

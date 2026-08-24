@@ -27,13 +27,20 @@
 # probe fails closed: any lookup, fetch, or git operation that cannot answer
 # returns non-zero, which the caller treats as unlanded rather than guessing.
 #
-# The predicate is UNBOUNDED by default, and bounded only when a caller opts in by
-# setting FM_LANDED_NET_TIMEOUT. Unbounded is bin/fm-teardown.sh's historic
-# behavior, preserved deliberately: teardown asks this question once, at a gate
-# that REFUSES to remove a worktree, so waiting out a slow remote is far cheaper
-# than refusing a teardown - or filing a staleness triage bead - for work that
-# actually landed. A future caller that says nothing inherits that same safe
-# semantics rather than a deadline meant for the watcher.
+# Setting FM_LANDED_NET_TIMEOUT opts the caller into a STRICTER POSTURE with two
+# halves that travel together, because a caller that cannot afford to wait also
+# cannot afford to be asked a question: a single overall bound on the predicate's
+# remote work, and a never-prompt guarantee on the two fetches (they run under
+# GIT_TERMINAL_PROMPT=0 and GIT_ASKPASS=true, so a missing credential fails fast
+# into the unlanded fail-safe instead of blocking on a terminal read).
+#
+# The DEFAULT path - no FM_LANDED_NET_TIMEOUT - is unbounded and may prompt, which
+# is bin/fm-teardown.sh's historic behavior, preserved deliberately: teardown asks
+# this question once, interactively, at a gate that REFUSES to remove a worktree,
+# so waiting out a slow remote (or letting an operator answer a credential prompt)
+# is far cheaper than refusing a teardown - or filing a staleness triage bead - for
+# work that actually landed. A future caller that says nothing inherits that same
+# safe semantics rather than a posture meant for the watcher.
 #
 # When the bound IS requested, fm_work_is_landed opens ONE deadline that every
 # remote leg shares (the two fetches, `gh pr view`, `gh-axi pr list`), so the whole
@@ -51,6 +58,7 @@
 #
 #   fm_landed_bound_seconds                           -> the opt-in bound, if any
 #   fm_landed_run_leg <command...>                    -> a remote leg, bounded on opt-in
+#   fm_landed_run_fetch_leg <command...>              -> a fetch leg, also never-prompt on opt-in
 #   fm_work_is_landed <wt> <proj> <branch> [pr_url]   -> 0 landed, 1 not landed
 #   fm_landed_pr_is_merged <wt> <branch> [pr_url]
 #   fm_landed_content_in_default <wt> <proj>
@@ -94,6 +102,22 @@ fm_landed_bound_seconds() {
 # same fail-closed direction every other probe takes. fm_run_timed itself needs no
 # `timeout` binary: fm-timeout-lib.sh owns the coreutils/BSD/perl/bash mechanism
 # selection.
+# Run one fetching leg, which is a remote leg that additionally must never stop to
+# ASK for anything when the caller opted into the strict posture. Both halves hang
+# off that one opt-in: without it the fetch runs exactly as it did before this
+# library existed, free to prompt on the terminal and to take as long as it takes,
+# which is what bin/fm-teardown.sh's interactive gate depends on. With it the fetch
+# is bounded AND non-interactive, so a missing credential fails fast into the same
+# unlanded fail-safe a timeout produces rather than blocking a supervision read on
+# a terminal that may have nobody in front of it.
+fm_landed_run_fetch_leg() {  # <command...>
+  if fm_landed_bound_seconds >/dev/null; then
+    fm_landed_run_leg env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true "$@"
+    return $?
+  fi
+  fm_landed_run_leg "$@"
+}
+
 fm_landed_run_leg() {  # <command...>
   local bound remaining lib_dir
   if ! bound=$(fm_landed_bound_seconds); then
@@ -173,7 +197,7 @@ fm_landed_ensure_commit_object() {  # <wt> <target> <commit>
   git -C "$wt" cat-file -e "$commit^{commit}" 2>/dev/null && return 0
   n=$(fm_landed_pr_number_from_target "$target") || return 1
   git -C "$wt" remote get-url origin >/dev/null 2>&1 || return 1
-  fm_landed_run_leg env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
+  fm_landed_run_fetch_leg \
     git -C "$wt" fetch --quiet origin "refs/pull/$n/head" >/dev/null 2>&1 || return 1
   git -C "$wt" cat-file -e "$commit^{commit}" 2>/dev/null
 }
@@ -264,7 +288,7 @@ fm_landed_content_in_default() {  # <wt> <proj>
   local wt=$1 proj=$2 name ref default_tree merged_tree
   name=$(fm_landed_default_branch "$proj") || return 1
   if git -C "$wt" remote get-url origin >/dev/null 2>&1; then
-    fm_landed_run_leg env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
+    fm_landed_run_fetch_leg \
       git -C "$wt" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
     ref="refs/remotes/origin/$name"
   elif git -C "$wt" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
