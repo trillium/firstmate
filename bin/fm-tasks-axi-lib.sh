@@ -463,21 +463,141 @@ fm_beads_fleet_label() {
   printf '%s\n' "${FM_BEADS_FLEET_LABEL:-fleet:firstmate}"
 }
 
+# fm_beads_home_scope - the stable per-home scope that keeps the task:<id>
+# idempotency label distinct across firstmate homes sharing one beads store.
+#
+# WHY IT EXISTS. The beads store is machine-wide: the federation `task` wrapper
+# pins one BEADS_DIR for every home, and config/backlog-backend is inherited by
+# secondmate homes, so the primary and every secondmate resolve against one
+# store while picking task slugs from independent per-home backlogs. A label
+# keyed only on the task slug (task:<id>) is therefore identical across homes:
+# home B reusing a slug home A already used adopts A's bead, and A closing its
+# bead marks B's live work done. Home-scoping the label is the only fix that
+# keeps two homes' beads distinct, which is also why ANDing the shared
+# fleet:firstmate label into the lookup is NOT sufficient - every home shares
+# that label too.
+#
+# DERIVATION. The home path is the home's own durable identity, read fresh from
+# FM_HOME exactly as fm_backend_herdr_workspace_label does: it is stable across
+# restarts and distinct per FM_HOME by construction. SHA-256 of that path,
+# truncated to 16 hex chars, keeps the label short and readable while making a
+# collision across a small fleet effectively impossible. The shasum/sha256sum
+# fallback matches the established pattern in fm-decision-hold.sh and
+# fm-remote-home-provision.sh, and the scope is lowercase hex so it is a legal
+# label character class and never contains a comma (labels are comma-separated).
+#
+# FM_BEADS_HOME_SCOPE is a test-fixture override (mirroring FM_BEADS_FLEET_LABEL)
+# so suites can pin a deterministic scope; production code calls this function
+# rather than hardcoding a scope.
+fm_beads_home_scope() { # [home] - echo the home's 16-hex scope, or fail (return 1, print nothing)
+  local home=${1:-${FM_HOME:-}} scope
+  if [ -n "${FM_BEADS_HOME_SCOPE:-}" ]; then
+    printf '%s\n' "$FM_BEADS_HOME_SCOPE"
+    return 0
+  fi
+  [ -n "$home" ] || return 1
+  if command -v shasum >/dev/null 2>&1; then
+    scope=$(printf '%s' "$home" | shasum -a 256 | awk '{print $1}')
+  elif command -v sha256sum >/dev/null 2>&1; then
+    scope=$(printf '%s' "$home" | sha256sum | awk '{print $1}')
+  else
+    return 1
+  fi
+  case "$scope" in
+    '' | *[!0-9a-fA-F]*) return 1 ;;
+  esac
+  printf '%s\n' "${scope:0:16}"
+}
+
+# fm_beads_task_label <task_id> - the home-scoped idempotency label for a task:
+# task:<home-scope>:<task_id>. Prints nothing and returns 1 when the scope
+# cannot be derived (missing home or hash tool) so callers fail open.
+fm_beads_task_label() { # <task_id>
+  local task_id=$1 scope
+  scope=$(fm_beads_home_scope) || return 1
+  printf 'task:%s:%s\n' "$scope" "$task_id"
+}
+
+# fm_beads_task_label_legacy <task_id> - the pre-home-scoping idempotency label
+# task:<task_id>, kept only as the one-way compatibility read in
+# fm_beads_lookup below. It is never minted anymore.
+fm_beads_task_label_legacy() { # <task_id>
+  printf 'task:%s\n' "$1"
+}
+
+# fm_beads_home_owns_task_bead <task_id> <bead_id> - true when this home's own
+# durable record already links <task_id> to <bead_id>, i.e. this home minted
+# that bead. This is the only sound ownership signal for a pre-migration bead:
+# the legacy task:<id> label records no home, so a bead found by it is provably
+# this home's only when the home's own state/<task_id>.meta already carries
+# beads_id=<bead_id>. Fails open (returns 1) when the record is absent or
+# unreadable, so the legacy fallback never adopts another home's open bead.
+fm_beads_home_owns_task_bead() { # <task_id> <bead_id>
+  local task_id=$1 bead_id=$2 meta recorded
+  [ -n "$task_id" ] && [ -n "$bead_id" ] || return 1
+  # Same resolution order the callers use: an already-resolved STATE, else the
+  # FM_STATE_OVERRIDE a caller may have set without exporting STATE, else the
+  # home's own state dir.
+  meta="${STATE:-${FM_STATE_OVERRIDE:-${FM_HOME:-}/state}}/$task_id.meta"
+  [ -f "$meta" ] || return 1
+  recorded=$(grep '^beads_id=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  [ -n "$recorded" ] && [ "$recorded" = "$bead_id" ]
+}
+
+# fm_beads_lookup <task_id> - echo the id of the OPEN bead this home resolves
+# <task_id> to, or print nothing and return 1. Read-only: it never mints and
+# never writes. The exit status names WHICH label matched, so the caller knows
+# whether a migration write is owed: 0 = the scoped label matched (nothing to
+# do), 2 = an owned legacy label matched (the bead still needs the scoped
+# label), 1 = no match. Scoped label first, then a legacy fallback that adopts an open
+# pre-migration task:<task_id> bead only when this home provably owns it (see
+# fm_beads_home_owns_task_bead). The default store filter excludes closed beads
+# server side, so a closed predecessor is never adopted no matter which label
+# it carries. This is the single lookup both fm_beads_resolve_or_create and
+# fm-backlog-import-beads.sh's resolve_existing_bead share, so the importer's
+# "(exists)" annotation and blocked-by edges always name the same bead the
+# apply path resolves to.
+fm_beads_lookup() { # <task_id>
+  local task_id=$1 task_label existing id
+  [ -n "$task_id" ] || return 1
+  task_label=$(fm_beads_task_label "$task_id") || return 1
+  existing=$(task list --label "$task_label" --limit 1 --json 2>/dev/null) || existing=
+  id=$(printf '%s' "$existing" \
+    | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
+  if [ -n "$id" ]; then
+    printf '%s\n' "$id"
+    return 0
+  fi
+  existing=$(task list --label "$(fm_beads_task_label_legacy "$task_id")" --limit 1 --json 2>/dev/null) || existing=
+  id=$(printf '%s' "$existing" \
+    | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
+  if [ -n "$id" ] && fm_beads_home_owns_task_bead "$task_id" "$id"; then
+    printf '%s\n' "$id"
+    return 2
+  fi
+  return 1
+}
+
 # fm_beads_resolve_or_create <task_id> [title] - beads-authority migration
 # Stage 3 (see data/beads-authority-migration-scout/report.md section "Stage
 # 3"): under config/backlog-backend=beads, every firstmate task must have a
-# linked bead without requiring an explicit --beads flag. Looks up an
-# existing OPEN bead carrying the idempotency label "task:<task_id>" first (so
-# fm-brief.sh and fm-spawn.sh converge on the same bead regardless of call
-# order) and mints one with that label plus the fleet label
-# (fm_beads_fleet_label) only if none is found. Echoes the resolved bead id on
-# success. Fails open like the rest of the beads integration: prints nothing
-# and returns 1 on any missing tool or failure, never blocking dispatch.
+# linked bead without requiring an explicit --beads flag. Resolves an existing
+# OPEN bead via fm_beads_lookup (home-scoped task:<scope>:<task_id> label, plus
+# an owned legacy task:<task_id> fallback) so fm-brief.sh and fm-spawn.sh
+# converge on the same bead regardless of call order, and mints one with the
+# scoped label plus the fleet label (fm_beads_fleet_label) only if none is
+# found. When (and only when) it resolves an OWNED legacy bead, it re-tags that
+# bead with the scoped label so the migration happens exactly once and the bead
+# is never re-resolved through the legacy path; a bead that already carries the
+# scoped label is left alone rather than rewritten on every brief scaffold and
+# spawn. Echoes the resolved bead id on success.
+# Fails open like the rest of the beads integration: prints nothing and
+# returns 1 on any missing tool or failure, never blocking dispatch.
 #
 # A CLOSED bead is never adopted. Task ids are reusable slugs, and
-# fm-teardown.sh closes a task's bead without stripping its "task:<id>" label,
-# so that record outlives the task in the federated store forever. Adopting it
-# would link brand-new work to a bead that was already closed before the task
+# fm-teardown.sh closes a task's bead without stripping its label, so that
+# record outlives the task in the federated store forever. Adopting it would
+# link brand-new work to a bead that was already closed before the task
 # existed - and a closed bead is the authoritative "task complete" signal
 # bin/fm-crew-state.sh reads under this backend, so the fresh crew would
 # reconcile as done before its worker made a single commit. Omitting --all
@@ -485,14 +605,19 @@ fm_beads_fleet_label() {
 # excluded server side and no client-side ordering or page depth can decide
 # the match.
 fm_beads_resolve_or_create() {
-  local task_id=$1 title=${2:-"firstmate: $1"} task_label existing id
+  local task_id=$1 title=${2:-"firstmate: $1"} task_label id rc=0
   command -v task >/dev/null 2>&1 || return 1
   command -v jq >/dev/null 2>&1 || return 1
-  task_label="task:$task_id"
-  existing=$(task list --label "$task_label" --limit 1 --json 2>/dev/null) || existing=
-  id=$(printf '%s' "$existing" \
-    | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null) || id=
+  task_label=$(fm_beads_task_label "$task_id") || return 1
+  id=$(fm_beads_lookup "$task_id") || rc=$?
   if [ -n "$id" ]; then
+    # rc 2 is fm_beads_lookup's legacy hit: migrate that bead onto the scoped
+    # label exactly once so it is never resolved through the legacy path again.
+    # Fail-open - a transient tag failure leaves the bead resolved, just not yet
+    # migrated, and the next resolve retries. rc 0 is a scoped hit, already
+    # carrying the label, so it is left alone rather than rewritten on every
+    # brief scaffold and spawn.
+    [ "$rc" -ne 2 ] || task tag "$id" "$task_label" >/dev/null 2>&1 || true
     printf '%s\n' "$id"
     return 0
   fi

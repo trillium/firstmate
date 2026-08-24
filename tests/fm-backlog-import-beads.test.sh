@@ -12,6 +12,10 @@ set -u
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+# shellcheck disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/../bin/fm-tasks-axi-lib.sh"
+
 IMPORT="$ROOT/bin/fm-backlog-import-beads.sh"
 TMP_ROOT=$(fm_test_tmproot fm-backlog-import-beads)
 
@@ -19,6 +23,15 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v beads >/dev/null 2>&1 || { echo "skip: beads not found"; exit 0; }
 
 FLEET="fleet:test-import"
+
+# The importer mints the HOME-SCOPED idempotency label (bin/fm-tasks-axi-lib.sh's
+# fm_beads_task_label owns its shape), so these helpers must name that same label
+# rather than the pre-migration unscoped task:<id>. One scope is pinned for the
+# whole suite - it shares the store exactly the way the old unscoped label did, and
+# cases already use distinct backlog ids so they never collide. Cross-home
+# separation is a property of the label itself, covered by
+# tests/fm-beads-backend.test.sh rather than here.
+HOME_SCOPE="import-beads-suite"
 
 # One isolated store for the whole suite; cases use distinct backlog ids so they
 # never collide within it.
@@ -102,7 +115,7 @@ run_import() {  # <home> <args...>
   local home=$1; shift
   PATH="$FAKEBIN:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_BEADS_FLEET_LABEL="$FLEET" \
+    FM_BEADS_FLEET_LABEL="$FLEET" FM_BEADS_HOME_SCOPE="$HOME_SCOPE" \
     "$IMPORT" "$@"
 }
 
@@ -110,7 +123,7 @@ run_import_badstore() {  # <home> <args...>
   local home=$1; shift
   PATH="$BADBIN:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_BEADS_FLEET_LABEL="$FLEET" \
+    FM_BEADS_FLEET_LABEL="$FLEET" FM_BEADS_HOME_SCOPE="$HOME_SCOPE" \
     "$IMPORT" "$@"
 }
 
@@ -118,17 +131,21 @@ run_import_with_bin() {  # <fakebin-dir> <home> <args...>
   local bin=$1 home=$2; shift 2
   PATH="$bin:$PATH" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_BEADS_FLEET_LABEL="$FLEET" \
+    FM_BEADS_FLEET_LABEL="$FLEET" FM_BEADS_HOME_SCOPE="$HOME_SCOPE" \
     "$IMPORT" "$@"
 }
 
-bead_for() {  # <task-id> -> bead id carrying task:<id>, or empty
-  beads -C "$STORE" list --label "task:$1" --all --json 2>/dev/null \
+task_label_for() {  # <task-id> -> the home-scoped idempotency label the importer mints
+  FM_BEADS_HOME_SCOPE="$HOME_SCOPE" fm_beads_task_label "$1"
+}
+
+bead_for() {  # <task-id> -> bead id carrying the task's idempotency label, or empty
+  beads -C "$STORE" list --label "$(task_label_for "$1")" --all --json 2>/dev/null \
     | jq -r 'if type=="array" and length>0 then .[0].id else empty end'
 }
 
-bead_count_for() {  # <task-id> -> how many beads carry task:<id>
-  beads -C "$STORE" list --label "task:$1" --all --json 2>/dev/null \
+bead_count_for() {  # <task-id> -> how many beads carry the task's idempotency label
+  beads -C "$STORE" list --label "$(task_label_for "$1")" --all --json 2>/dev/null \
     | jq 'if type=="array" then length else 0 end'
 }
 

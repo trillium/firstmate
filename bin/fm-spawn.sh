@@ -153,8 +153,9 @@
 #   dispatch=claimed/lifecycle=claimed and close the bead on completion. Under
 #   config/backlog-backend=beads, this whole linkage is automatic for every ship/scout
 #   spawn (an explicit --beads still wins): fm_beads_resolve_or_create looks up or mints a
-#   bead labeled task:<task-id> (bin/fm-tasks-axi-lib.sh), so beads_id= is always populated
-#   and the claim/close lifecycle applies to every dispatch, not just opted-in ones
+#   bead labeled task:<home-scope>:<task-id> (bin/fm-tasks-axi-lib.sh), so beads_id= is
+#   always populated and the claim/close lifecycle applies to every dispatch, not just
+#   opted-in ones
 #   (beads-authority migration Stage 3). --secondmate launches stay exempt (a secondmate
 #   home is an operational entity, not a backlog work item). Under the default tasks-axi
 #   or manual backends, --beads remains the deliberate opt-in cross-reference, unchanged.

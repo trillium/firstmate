@@ -35,10 +35,10 @@
 #
 # Every created bead carries the firstmate-fleet label (fm_beads_fleet_label)
 # so `task list --label <fleet>` scopes to firstmate's fleet, and the
-# `task:<id>` idempotency label that fm_beads_resolve_or_create already uses, so
-# re-running the importer resolves the existing bead instead of duplicating it.
-# Captain holds are idempotent through fm-decision-hold.sh's own `hold:<id>`
-# anchor lookup.
+# home-scoped task:<scope>:<id> idempotency label that fm_beads_resolve_or_create
+# already uses, so re-running the importer resolves the existing bead instead of
+# duplicating it. Captain holds are idempotent through fm-decision-hold.sh's own
+# `hold:<id>` anchor lookup.
 #
 # Modes:
 #   (default)   Dry run. Prints what it WOULD create and whether each item
@@ -152,13 +152,13 @@ extract_title() {
 }
 
 # resolve_existing_bead <task-id> - echo the bead id already carrying the
-# task:<id> idempotency label, or nothing. Read-only. Matches
-# fm_beads_resolve_or_create's own lookup so this report's "(exists)" annotation
-# and the blocked-by dependency edges name the bead the apply path resolves to.
+# home-scoped idempotency label, or nothing. Read-only. Matches
+# fm_beads_resolve_or_create's own lookup (fm_beads_lookup: scoped label first,
+# then an owned legacy task:<id> fallback) so this report's "(exists)"
+# annotation and the blocked-by dependency edges name the bead the apply path
+# resolves to.
 resolve_existing_bead() {
-  local existing
-  existing=$(task list --label "task:$1" --limit 1 --json 2>/dev/null) || existing=
-  printf '%s' "$existing" | jq -r 'if type=="array" and length>0 then .[0].id else empty end' 2>/dev/null || true
+  fm_beads_lookup "$1" || true
 }
 
 # beads_create_failure_reason <task-id> <title> - a one-line, actionable reason a
@@ -182,7 +182,7 @@ beads_create_failure_reason() {
   fi
   existing=$(resolve_existing_bead "$id")
   if [ -n "$existing" ]; then
-    printf 'the store is reachable and bead %s now carries task:%s, so the create landed without returning its id; re-run --apply to converge' \
+    printf 'the store is reachable and bead %s now carries the idempotency label for task %s, so the create landed without returning its id; re-run --apply to converge' \
       "$existing" "$id"
     return 0
   fi
@@ -193,7 +193,7 @@ beads_create_failure_reason() {
   # raw would hide it in the very message meant to expose it.
   shown=${title//$'\n'/\\n}
   [ "${#shown}" -le 200 ] || shown="${shown:0:200}..."
-  printf "the store is reachable and no bead carries task:%s, so 'task create' itself refused this title (%s line(s), %s chars): '%s'" \
+  printf "the store is reachable and no bead carries the idempotency label for task %s, so 'task create' itself refused this title (%s line(s), %s chars): '%s'" \
     "$id" "$lines" "$chars" "$shown"
 }
 
