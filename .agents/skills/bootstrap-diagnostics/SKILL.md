@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, DEGRADED, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, BEADS_WRITE_QUEUE, BEADS_SYNC, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap section prints an actionable diagnostic line - MISSING, DEGRADED, MISSING_MANUAL, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, PR_CHECK_MIGRATION, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, BEADS_WRITE_QUEUE, BEADS_LABEL_MIGRATION, BEADS_SYNC, or FMX - or when a standalone bin/fm-bootstrap.sh run prints one of those lines.
   A silent bootstrap section, or a BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -72,6 +72,18 @@ When any diagnostic needs captain attention, report the plain consequence and re
   `(bead already closed)` on a queued close means the bead was already closed - by the outage's original close attempt landing after all, or by someone else - and firstmate reconciled instead of retrying it forever.
 - `BEADS_WRITE_QUEUE: task CLI not found, N write(s) remain queued` / `BEADS_WRITE_QUEUE: store still unreachable, N write(s) remain queued` - the beads store outage is still ongoing; treat the same as an unresolved `DEGRADED:`/`MISSING:` beads line above rather than a new problem, and expect the queue to keep draining on later bootstraps once the store recovers.
 - `BEADS_WRITE_QUEUE: replay failed for <id> (<description>); re-queued` - a queued write hit a genuine replay failure (not just an unreachable store) and was left queued for the next attempt.
+
+- `BEADS_LABEL_MIGRATION: re-tagged <bead> onto task:<scope>:<id>` / `BEADS_LABEL_MIGRATION: complete: N bead(s) re-tagged, M left to another home` - the one-shot migration off the pre-home-scoping `task:<id>` label ran and finished; no action needed, it is reported only so the one-time rescue of this home's in-flight beads is visible ([`docs/configuration.md`](../../../docs/configuration.md) "Backlog backend" owns the scheme and what the sweep will and will not touch).
+
+- `BEADS_LABEL_MIGRATION: left <bead> alone: another home already claimed it for <id>` / `BEADS_LABEL_MIGRATION: left <bead> alone: this home's own record for <id> names <other-bead>` - expected and correct, not a failure: the unscoped label records no home, so a bead another home has already scoped, or one this home's own record contradicts, is deliberately not claimed and this home mints its own bead for that task on its next dispatch.
+
+- `BEADS_LABEL_MIGRATION: task CLI or jq not found, ...` / `BEADS_LABEL_MIGRATION: store unreachable, ...` / `BEADS_LABEL_MIGRATION: the store's label list could not be read, ...` / `BEADS_LABEL_MIGRATION: timeout library unavailable, ...` - the same underlying beads outage as the `DEGRADED:`/`MISSING:` beads lines above rather than a new problem; the sweep writes no completion marker and retries on a later bootstrap once the store recovers.
+
+- `BEADS_LABEL_MIGRATION: the <N>s budget was spent, so the rest stays unmigrated and retries next session` - the sweep stopped itself at its own bound rather than holding the bootstrap phase open; whatever it re-tagged before that point is durable, no completion marker was written, and the remaining candidates are picked up next session. Investigate only if the same sweep keeps exhausting its budget across several sessions, which points at a store answering far slower than the per-read bound expects.
+
+- `BEADS_LABEL_MIGRATION: could not read <bead>'s labels, so <id> stays unmigrated and retries next session` / `BEADS_LABEL_MIGRATION: re-tagging <bead> onto task:<scope>:<id> failed; it retries next session` - one candidate failed while the store was otherwise reachable; nothing is lost, because that task keeps resolving through its own scoped label or mints a fresh bead, and the sweep retries next session.
+
+- `BEADS_LABEL_MIGRATION: this home's scope could not be derived, ...` - unlike the store lines above this one is local: `FM_HOME` is unset or empty, or no SHA-256 tool is on PATH, so the home-scoped label cannot be built at all. Under the beads backend that also means dispatch cannot link beads, so treat it as blocking and fix the environment before dispatching.
   Investigate if the same id keeps failing to replay across multiple bootstraps rather than treating a one-off as actionable.
 - `BEADS_SYNC: pushed local commits to the configured Dolt remote` / `BEADS_SYNC: pulled remote commits into the local store` - the routine store sync ran; no action needed, it is reported only so the sync is visible.
 - `BEADS_SYNC: skipped: no Dolt remote configured, so this store is single-machine only` - expected on every home today, because firstmate configures no Dolt remote: adding one publishes the task store to that destination and the destination is the captain's decision ([`docs/beads-sync-topology.md`](../../../docs/beads-sync-topology.md) owns the recommendation and the one question to ask).

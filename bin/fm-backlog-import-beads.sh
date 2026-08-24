@@ -36,9 +36,14 @@
 # Every created bead carries the firstmate-fleet label (fm_beads_fleet_label)
 # so `task list --label <fleet>` scopes to firstmate's fleet, and the
 # home-scoped task:<scope>:<id> idempotency label that fm_beads_resolve_or_create
-# already uses, so re-running the importer resolves the existing bead instead of
-# duplicating it. Captain holds are idempotent through fm-decision-hold.sh's own
-# `hold:<id>` anchor lookup.
+# already uses, so re-running the importer resolves the bead THIS home created
+# instead of duplicating it. A bead an older importer created before the label
+# was home-scoped carries the unscoped task:<id> label and is invisible to that
+# lookup until bootstrap's one-shot migration re-tags it (fm-tasks-axi-lib.sh's
+# fm_beads_migrate_legacy_task_labels, which reads this file's item ids as one of
+# its ownership signals); running that migration before re-importing is what
+# keeps a pre-scoping import from being duplicated. Captain holds are idempotent
+# through fm-decision-hold.sh's own `hold:<id>` anchor lookup.
 #
 # Modes:
 #   (default)   Dry run. Prints what it WOULD create and whether each item
@@ -153,10 +158,9 @@ extract_title() {
 
 # resolve_existing_bead <task-id> - echo the bead id already carrying the
 # home-scoped idempotency label, or nothing. Read-only. Matches
-# fm_beads_resolve_or_create's own lookup (fm_beads_lookup: scoped label first,
-# then an owned legacy task:<id> fallback) so this report's "(exists)"
-# annotation and the blocked-by dependency edges name the bead the apply path
-# resolves to.
+# fm_beads_resolve_or_create's own lookup (fm_beads_lookup, which asks only for
+# the home-scoped label) so this report's "(exists)" annotation and the
+# blocked-by dependency edges name the bead the apply path resolves to.
 resolve_existing_bead() {
   fm_beads_lookup "$1" || true
 }
