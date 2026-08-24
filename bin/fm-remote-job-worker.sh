@@ -396,7 +396,7 @@ worker_publish_result() { # <job-dir> <exit>
 }
 
 worker_run_with_timeout() { # <job-dir> <epoch-deadline> <command> [args...]
-  local job=$1 deadline=$2 group_file armed_file group_pid rc tmp soft_deadline next_heartbeat attempt
+  local job=$1 deadline=$2 group_file armed_file group_pid rc tmp now soft_deadline next_heartbeat attempt
   local timed_out=0 heartbeat_failed=0
   WORKER_PREEMPTED=0
   shift 2
@@ -453,7 +453,17 @@ worker_run_with_timeout() { # <job-dir> <epoch-deadline> <command> [args...]
   # as the cheap gate and let the job's own epoch deadline decide, so a command
   # is never cut short and `date` stays off the poll path until the window is
   # nearly spent.
-  soft_deadline=$((SECONDS + deadline - $(date +%s) - 1))
+  #
+  # Read the clock into a variable and validate it before the arithmetic. An
+  # empty substitution inside `$((SECONDS + deadline - $(date +%s) - 1))` parses
+  # as a double negation rather than an error, silently producing a gate an
+  # epoch away that never opens, so a failed `date` would let the command run
+  # unbounded. Falling back to the deadline opens the cheap gate immediately and
+  # leaves the kill decision to the epoch check below, which is the conservative
+  # direction: the job is still never cut short.
+  now=$(date +%s 2>/dev/null || true)
+  case "$now" in ''|*[!0-9]*) now=$deadline ;; esac
+  soft_deadline=$((SECONDS + deadline - now - 1))
   next_heartbeat=$((SECONDS + 1))
   while worker_process_or_group_alive group "$group_pid"; do
     if [ "$SECONDS" -ge "$soft_deadline" ] && [ "$(date +%s)" -ge "$deadline" ]; then
