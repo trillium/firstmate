@@ -215,9 +215,12 @@ SH
 
 # make_fake_task_beads_compact <fakebin>: a fake `task` (beads) CLI whose
 # `list --limit 1` (availability probe), `list --label fleet:firstmate
-# --status in_progress,blocked` (In flight section), and `list --label
-# fleet:firstmate --ready` (Queued section) all succeed, each scoped by the
-# firstmate-fleet label so unscoped or wrong-status regressions are caught.
+# --status in_progress,blocked` (In flight section), and `ready --label
+# fleet:firstmate` (Queued section - bd's priority-ordered ready set) all
+# succeed, each scoped by the firstmate-fleet label so unscoped or
+# wrong-status regressions are caught. The Queued fixture emits ready-task-1
+# before ready-task-2 so the digest's order-preservation of bd ready's
+# priority sort is assertable.
 make_fake_task_beads_compact() {
   local fakebin=$1
   cat > "$fakebin/task" <<'SH'
@@ -236,7 +239,7 @@ case "$*" in
     printf '%s\n' 'inflight-task-2'
     exit 0
     ;;
-  *'--label fleet:firstmate'*'--ready'*)
+  'ready --label fleet:firstmate'*)
     case "$*" in *'--limit 80'*) : ;; *) printf '%s\n' 'missing compact limit' >&2; exit 9 ;; esac
     printf '%s\n' 'ready-task-1'
     printf '%s\n' 'ready-task-2'
@@ -250,7 +253,7 @@ SH
 
 # make_fake_task_beads_inflight_read_fails <fakebin>: same availability probe
 # as make_fake_task_beads_compact, but the In flight `--status
-# in_progress,blocked` call fails while the Queued `--ready` call would
+# in_progress,blocked` call fails while the Queued `ready` call would
 # otherwise succeed, so the whole beads listing must fall back to title-line
 # rendering rather than printing a partial digest.
 make_fake_task_beads_inflight_read_fails() {
@@ -269,7 +272,7 @@ case "$*" in
     printf '%s\n' 'store timeout' >&2
     exit 1
     ;;
-  *'--ready'*)
+  'ready '*)
     printf '%s\n' 'ready-task-1'
     exit 0
     ;;
@@ -1886,10 +1889,23 @@ EOF
   assert_contains "$out" "ready-task-2" "beads compact listing omitted a second Queued item"
   assert_grep "list --label fleet:firstmate --status in_progress,blocked --limit 80" "$log" \
     "session start did not query beads for its own fleet's in_progress/blocked set with the bounded limit"
-  assert_grep "list --label fleet:firstmate --ready --limit 80" "$log" \
-    "session start did not query beads for its own fleet's ready set with the bounded limit"
+  assert_grep "ready --label fleet:firstmate --limit 80" "$log" \
+    "session start did not source the Queued set from bd ready (priority-ordered) with the bounded limit"
+  # Regression guard: the Queued set must come from the priority-ordered `bd
+  # ready` command, never the unordered `list --ready` path it replaced.
+  if grep -q -- 'list --label fleet:firstmate --ready' "$log"; then
+    fail "session start used the unordered 'list --ready' path instead of the priority-ordered 'task ready'"
+  fi
+  # Order preservation: bd ready returns highest-priority claimable work first
+  # (default --sort priority); the digest must render that order unchanged.
+  local pos1 pos2
+  pos1=$(printf '%s\n' "$out" | grep -n 'ready-task-1' | head -1 | cut -d: -f1)
+  pos2=$(printf '%s\n' "$out" | grep -n 'ready-task-2' | head -1 | cut -d: -f1)
+  if [ -z "$pos1" ] || [ -z "$pos2" ] || [ "$pos1" -ge "$pos2" ]; then
+    fail "beads Queued section did not preserve bd ready's priority order (ready-task-1 must precede ready-task-2)"
+  fi
 
-  pass "beads backend digest shows In flight (in_progress/blocked) and Queued (ready) sections, both scoped by the fleet label"
+  pass "beads backend digest shows In flight (in_progress/blocked) and priority-ordered Queued (bd ready) sections, both scoped by the fleet label"
 }
 
 test_backlog_compact_beads_partial_failure_falls_back_to_manual() {
@@ -1939,7 +1955,7 @@ case "$*" in
     printf '%s\n' 'inflight-task-1'
     exit 0
     ;;
-  *'--ready'*)
+  'ready '*)
     printf '%s\n' 'ready-task-1'
     printf '%s\n' 'ready-task-2'
     exit 0
@@ -2058,7 +2074,7 @@ EOF
   assert_contains "$out" "RUNTIME BOUND" "the truncation banner did not name the bound it hit"
   assert_contains "$out" 'stopped during the "bootstrap" stage' "the truncation banner did not name the incomplete stage"
   assert_contains "$out" "RECONCILE these stages" "the truncation banner did not tell the agent what to reconcile"
-  assert_contains "$out" "wake-queue supervision-instructions read-once fleet-state network-checks persona context next-step" \
+  assert_contains "$out" "wake-queue supervision-instructions read-once fleet-state network-checks persona context parlay next-step" \
     "the truncation banner did not list every stage that never ran"
   assert_not_contains "$out" "NEXT STEP" "a truncated digest claimed to have reached its closing reminder"
   assert_absent "$home/state/.session-start-complete" \
@@ -2492,6 +2508,134 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
+# --- parlay sweep section ---------------------------------------------------
+
+test_parlay_section_with_held_agents() {
+  local rec root home fakebin out fleet_line parlay_line
+  rec=$(new_world parlay-held)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  # Stub parlay sweep with a canned mix: one needs-decision, one blocked, one
+  # failed, one unknown (to be ignored), one would-close (to be ignored), and
+  # one done (to be ignored).
+  cat > "$fakebin/parlay" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = sweep ] || exit 0
+cat <<'OUT'
+HOLD     agent-alpha — state=needs-decision — PR #1 green; captain picks merge or park
+HOLD     agent-beta — state=blocked — waiting on upstream fix before any PR can land
+HOLD     agent-gamma — state=failed — pipeline exit 1 on the last run
+HOLD     agent-delta — state=unknown — no status recorded
+would-close mc-robots-0shd — done · task robots-0shd
+OUT
+SH
+  chmod +x "$fakebin/parlay"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "PARLAY" "digest did not print a PARLAY section header"
+  assert_contains "$out" "parlay: 3 agent(s) held for captain action" \
+    "digest did not print correct hold count (expected 3: alpha, beta, gamma)"
+  assert_contains "$out" "agent-alpha" "digest did not surface the needs-decision agent"
+  assert_contains "$out" "agent-beta" "digest did not surface the blocked agent"
+  assert_contains "$out" "agent-gamma" "digest did not surface the failed agent"
+  assert_not_contains "$out" "agent-delta" "digest surfaced an unknown-state agent (should be ignored)"
+  assert_not_contains "$out" "would-close" "digest surfaced a would-close line (should be ignored)"
+
+  # PARLAY section must appear after FLEET STATE.
+  fleet_line=$(printf '%s\n' "$out" | grep -n '^FLEET STATE$' | head -1 | cut -d: -f1)
+  parlay_line=$(printf '%s\n' "$out" | grep -n '^PARLAY$' | head -1 | cut -d: -f1)
+  [ -n "$fleet_line" ] && [ -n "$parlay_line" ] || fail "FLEET STATE or PARLAY section header missing: $out"
+  [ "$parlay_line" -gt "$fleet_line" ] || fail "PARLAY did not follow FLEET STATE"
+
+  pass "session start PARLAY section surfaces needs-decision/blocked/failed hold agents"
+}
+
+test_parlay_section_none_held() {
+  local rec root home fakebin out
+  rec=$(new_world parlay-none-held)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  # Stub parlay sweep with only ignored lines.
+  cat > "$fakebin/parlay" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = sweep ] || exit 0
+cat <<'OUT'
+HOLD     agent-alpha — state=unknown — no status recorded
+would-close mc-robots-0shd — done · task robots-0shd
+OUT
+SH
+  chmod +x "$fakebin/parlay"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "PARLAY" "digest did not print a PARLAY section header when parlay is present"
+  assert_contains "$out" "parlay: none held for captain action" \
+    "digest did not print none-held summary when no agents need captain action"
+
+  pass "session start PARLAY section prints none-held summary when no agents are held"
+}
+
+test_parlay_section_absent_when_no_binary() {
+  local rec root home fakebin out
+  rec=$(new_world parlay-absent)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  # parlay is deliberately NOT added to fakebin; it must not be on PATH.
+
+  out=$(run_session_start "$home" "$root" "$fakebin:/usr/bin:/bin")
+
+  assert_not_contains "$out" "PARLAY" "digest printed a PARLAY section when parlay binary is absent"
+  assert_not_contains "$out" "parlay:" "digest printed parlay output when binary is absent"
+
+  pass "session start omits PARLAY section silently when parlay binary is absent"
+}
+
+test_parlay_section_truncates_long_lines() {
+  local rec root home fakebin out long_line
+  rec=$(new_world parlay-truncate)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  # Stub parlay with a HOLD line whose agent description exceeds 80 chars.
+  long_line="HOLD     very-long-agent-name-here — state=needs-decision — $(printf '%0.s x' {1..60})"
+  cat > "$fakebin/parlay" <<SH
+#!/usr/bin/env bash
+[ "\${1:-}" = sweep ] || exit 0
+printf '%s\n' '$long_line'
+SH
+  chmod +x "$fakebin/parlay"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "parlay: 1 agent(s) held for captain action" \
+    "digest did not surface the held agent"
+  # Each printed HOLD line must be at most 80 chars.
+  while IFS= read -r line; do
+    if printf '%s' "$line" | grep -q '^HOLD'; then
+      [ "${#line}" -le 80 ] || fail "HOLD line exceeds 80 chars: $line"
+    fi
+  done <<BLOCK
+$out
+BLOCK
+
+  pass "session start PARLAY section truncates HOLD lines to 80 chars"
+}
+
 test_context_digest_absent_empty_present
 test_persona_tracked_default_printed
 test_persona_local_override_supersedes_default
@@ -2542,5 +2686,9 @@ test_runtime_bound_leaves_a_healthy_digest_untouched
 test_runtime_bound_leaves_harness_ancestry_headroom
 test_reemit_skips_startup_sweeps_but_keeps_the_wake_drain
 test_reemit_keeps_repair_ownership_with_the_lock_holder
+test_parlay_section_with_held_agents
+test_parlay_section_none_held
+test_parlay_section_absent_when_no_binary
+test_parlay_section_truncates_long_lines
 
 echo "# fm-session-start.test.sh: all assertions passed"

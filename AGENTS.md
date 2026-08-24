@@ -120,6 +120,7 @@ state/               volatile runtime signals; gitignored
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .beads-mirror-<view>.json  generated read-side mirror of the beads task store, refreshed opportunistically by ordinary reads (session start, fleet snapshot); never a second authority (`docs/configuration.md` "Backlog backend"; `bin/fm-beads-resilience-lib.sh`)
   .beads-write-queue .beads-write-queue.lock  durable pending-writes log and its lock for a beads write attempted during a store outage, replayed by bootstrap once the store recovers; never touch by hand
+  .beads-sync-last  cadence stamp for the routine beads store sync, touched when a sweep is attempted rather than when it succeeds so a broken remote backs off (`docs/configuration.md` "Beads store provisioning and sync"); safe to delete (forces one sweep)
   .<id>.open-decisions-cursor  per-task byte cursor and folded open-decision set bounding the OPEN DECISIONS scan's cost to new status-log appends; written only by fm-classify-lib.sh's status_open_decisions_incremental, removed by teardown, safe to delete (forces one full re-fold)
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
@@ -156,13 +157,13 @@ If the session lock cannot be acquired and verified, report its exact diagnostic
 A lock-refused session must not spawn, steer, merge, drain the wake queue, repair supervision, repair a checkout, or perform any other fleet mutation.
 
 The digest itself makes no external-network call and never waits for one.
-Every network check a session start owes - GitHub auth, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, and project clone refresh - runs concurrently in a bounded worker owned by `bin/fm-startup-network.sh` and is reported in the digest's own `NETWORK CHECKS` section.
+Every network check a session start owes - GitHub auth, dead-secondmate relaunch, secondmate convergence, pending handoff delivery, project clone refresh, and the routine beads store sync when the beads backlog backend is selected - runs concurrently in a bounded worker owned by `bin/fm-startup-network.sh` and is reported in the digest's own `NETWORK CHECKS` section.
 When that section reports its checks still in progress it names exactly what is unconfirmed; treat none of those as passed until the result lands, either from `bin/fm-startup-network.sh report` or as a `check: startup-network` wake.
 
 1. **Lock** - acquires the per-home session lock first, before anything mutates shared state, then starts the deferred network stage above.
 2. **Bootstrap** - detect-only checks (tool/version problems, the worktree-tangle check, harness override, dispatch-profile validation, backlog-backend status) always run, but routine confirmations stay silent by default.
    When the lock could not be acquired, the worktree-tangle check uses read-only advisory wording without a checkout repair command.
-   Home-local stale Herdr projection cleanup and the seven bootstrap MUTATING sweeps - non-executing legacy PR-check migration, the beads write-queue reconcile (beads backend only), fleet sync, secondmate convergence, secondmate liveness, pending remote handoff retry, and Relay artifact writes - run only when this session actually holds the lock from step 1.
+   Home-local stale Herdr projection cleanup and the eight bootstrap MUTATING sweeps - non-executing legacy PR-check migration, the beads write-queue reconcile and the beads store sync (both beads backend only), fleet sync, secondmate convergence, secondmate liveness, pending remote handoff retry, and Relay artifact writes - run only when this session actually holds the lock from step 1.
    The secondmate liveness sweep deterministically accounts for every registered secondmate: it relaunches only from the recovery-grade `dead` or `missing` states, preserves ambiguous, unreadable, or unreachable remote targets, and reports skipped or failed guarantees as `SECONDMATE_LIVENESS:` lines (`bin/fm-bootstrap.sh`; `bin/fm-backend.sh`'s `fm_backend_agent_state`; `docs/remote-secondmates.md`).
 3. **Wake queue** - when locked, drains the durable wake queue and prints the raw records prominently as this turn's first work queue; a bounded, clearly labeled historical status-event annotation may follow a valid `signal` record but never replaces it or current-state reconciliation, and a lapsed watcher chain still surfaces here via the same guard alarm.
    Every locked drain also prints a bounded fleet-wide `OPEN DECISIONS` section when durable decision records remain open, including when the queue itself is empty; reconcile those entries before continuing.
@@ -174,10 +175,14 @@ When that section reports its checks still in progress it names exactly what is 
 6. **Fleet-state digest** - the compact backlog listing owned by `bin/fm-session-start.sh`; every `state/<id>.meta`; a bounded tail of each task's `state/<id>.status` (labeled as wake-EVENT history, not current state, with the full log path printed for a deeper read); the `state/.afk` flag; and one cheap alive/dead read of each task's recorded backend endpoint.
    It emits before persona and context.
    That liveness line is a fast presence check only, not a full state read - when you need a crew's actual current state (a run-step, not just "is the pane there"), read it with `bin/fm-crew-state.sh <id>` as before; the digest deliberately skips that deeper, slower read for every task so it stays fast and bounded.
-7. **Network checks** - the `NETWORK CHECKS` section reports the deferred non-blocking harvest of the five network checks started at step 1 (GitHub auth, project clone refresh, secondmate liveness, secondmate convergence, and pending handoff delivery), printing whatever the worker has published by now and naming the rest as not yet confirmed.
+7. **Network checks** - the `NETWORK CHECKS` section reports the deferred non-blocking harvest of the network checks started at step 1 and enumerated above, printing whatever the worker has published by now and naming the rest as not yet confirmed.
 8. **Persona** - the full contents of the active persona file (`config/persona.md` when present, else tracked `persona.md`), always printed regardless of lock state - including lock-refused read-only mode - after the fleet-state digest and the network-checks section but before the context digest, so the captain-facing voice is reliably in force.
 9. **Context digest** - the full contents of `data/projects.md`, `data/secondmates.md`, `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, each clearly delimited.
    A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use the firstmate repo's built-in defaults, `projects.md` absent means rebuild it from the clones under `projects/`, etc.).
+10. **Parlay** - a read-only `parlay sweep` that surfaces captain-parked agents held for captain action.
+   A one-line count summary (`parlay: N agent(s) held for captain action` or `parlay: none held for captain action`) is always printed when the `parlay` binary is on PATH.
+   When N > 0, the HOLD lines with `state=needs-decision`, `state=blocked`, or `state=failed` follow, each truncated to 80 chars; `done`, `unknown`, `no-launch-spec`, and `would-close` lines are suppressed.
+   The section is absent entirely when the `parlay` binary is not installed; no action is required in that case.
 
 Bootstrap detects first, asks for consent, and installs only after the captain approves in the current session.
 Do not dispatch until the required tools are present and GitHub authentication is good.
@@ -300,6 +305,7 @@ Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in sec
 The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.
 After spawning, confirm the worker is processing the brief, handle any trust dialog through `harness-adapters`, and record ship or scout work as under way.
 When spawning with `--beads <id>`, the task is linked to an external bead item for progress tracking on `mg` or similar tools; under `config/backlog-backend=beads`, every non-secondmate spawn is linked this way automatically when `--beads` was not given, auto-resolving or minting the bead via `fm_beads_resolve_or_create` (`bin/fm-tasks-axi-lib.sh`) so firstmate's own work is always represented in the store; `fm-bead-stamp.sh` stamps the bead's `dispatch=sent` and `lifecycle=sent` state dimensions, and the generated brief includes instructions for the worker to confirm `dispatch=claimed` and `lifecycle=claimed` after reading, and to close the bead on completion.
+Under that backend the bead is opened at intake, not only at dispatch: `bin/fm-brief.sh` mints or resolves it (the same idempotent `fm_beads_resolve_or_create`, keyed on the `task:<id>` label) the moment a task's brief is scaffolded, so a task firstmate is aware of but has not yet spawned already has an open bead and spawn's later resolve returns that same bead.
 `fm-teardown.sh` also closes the linked bead itself once a non-force teardown confirms the task's work landed, so a worker that cannot reach the closing step is still covered; `--force` and a refused teardown never close it.
 `bin/fm-ledger.sh` is the fleet-wide safety net for a bead that falls outside both paths - claimed, still open, and gone quiet past its staleness window - and can list or close those likely-dropped beads.
 A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
@@ -428,6 +434,7 @@ A secondmate's idle endpoint is healthy, and parent supervision relies on its ro
 Waiting on a healthy supervision cycle is silent; empty polls, elapsed time, and no-change updates are not captain-facing progress.
 Never broadly kill watchers, especially never `pkill -f bin/fm-watch.sh`, because that can kill sibling firstmate homes.
 A forced repair must use the home-scoped owner path emitted by supervision instructions.
+The same hazard applies to the behavior-test runner, which concurrent agents invoke with near-identical command lines: stop a suite with `bin/fm-test-run.sh --stop [<run-id>]`, never `pkill -f fm-test-run.sh`, and treat a run log carrying neither `FM_TEST_SUMMARY` nor `FM_TEST_ABORTED` as lost output rather than a pass.
 
 Guard warnings do not replace the contract.
 Queued wakes must be drained before other action, stale liveness must be repaired through the emitted protocol, and the worktree-tangle warning must be resolved without touching unlanded work.
@@ -499,10 +506,11 @@ Mention cost as a courtesy when unusually much work is running, but never block 
 ## 10. Backlog contract
 
 `data/backlog.md` is the durable queue (for tasks-axi and manual backends); when `config/backlog-backend=beads` is set, the beads federated task store is the queue source instead.
+Under the beads backend an open bead must represent every task firstmate is aware of from intake onward, not only from dispatch; scaffolding a task's brief opens that bead (section 7's bead-linked dispatch owns the mechanism).
 It tracks work items only, never agents; persistent secondmates never appear as backlog items.
 Work routed to a secondmate is recorded in that secondmate home's own backlog, not the main backlog.
-When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item; use `tasks-axi hold <id> --reason "<reason>" --kind captain` for a captain-gated thread.
-Captain-held decision threads are not supported when `config/backlog-backend=beads` or `config/backlog-backend=manual` is set; they require the tasks-axi backend.
+When a main-side thread such as a pending captain decision or relay reminder is worth durable tracking, file it as its own work item; under tasks-axi use `tasks-axi hold <id> --reason "<reason>" --kind captain` for a captain-gated thread, and under beads use the beads-native captain hold owned by `bin/fm-decision-hold.sh` (a labeled anchor plus a human gate).
+Captain-held decision threads are unavailable only under `config/backlog-backend=manual`.
 Unresolved decisions discovered by investigations or visual reviews follow `decision-hold-lifecycle`, which owns their mandatory backlog lifecycle.
 Update the backlog on every dispatch, completion, and decision for a work item.
 Re-evaluate queued work after every teardown and heartbeat, dispatching items only when dependencies and time gates have cleared.
@@ -544,7 +552,7 @@ It performs guarded fast-forward updates of firstmate and registered secondmate 
 
 These skills are not captain-invocable; load them only at their precise triggers.
 
-- `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints an actionable diagnostic line (`MISSING:`, `DEGRADED:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `STARTUP_MEMORY_BUDGET:`, `CREW_DISPATCH: invalid`, `FLEET_SYNC:`, `PR_CHECK_MIGRATION:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `SECONDMATE_HANDOFF:`, `NUDGE_SECONDMATES:`, `BEADS_WRITE_QUEUE:`, or `FMX:`); silence and `BOOTSTRAP_INFO:` need no load.
+- `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints an actionable diagnostic line (`MISSING:`, `DEGRADED:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `STARTUP_MEMORY_BUDGET:`, `CREW_DISPATCH: invalid`, `FLEET_SYNC:`, `PR_CHECK_MIGRATION:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `SECONDMATE_HANDOFF:`, `NUDGE_SECONDMATES:`, `BEADS_WRITE_QUEUE:`, `BEADS_SYNC:`, or `FMX:`); silence and `BOOTSTRAP_INFO:` need no load.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding, regardless of the project's `yolo` posture.
 - `quota-array-dispatch` - load before choosing among a matched crew-dispatch profile array from current quota-axi output.

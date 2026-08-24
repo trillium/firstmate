@@ -30,11 +30,20 @@
 #   check <check>=skip: <why this host is exempt>
 #   check <check>=fixable: <gap --fix can close>
 #   check <check>=human: <gap only a person at that machine can close>
+#   check <check>=info: <gap no repair here can close>
 #   action: <check>: <the exact step to take>
+#   repairable-advisory: <check>   (a non-gating gap --fix can still close)
 # Every check line is authoritative for the moment it printed: under --fix it is
 # the state after the repair attempt, so a human gap is never presented as
-# fixed. Any remaining fixable or human gap, and any missing required tool,
-# exits non-zero.
+# fixed. Any remaining fixable or human gap on a GATING check, and any missing
+# required tool, exits non-zero.
+#
+# NON-GATING checks (see NON_GATING_CHECKS below) are the exception, and they
+# are exempt from the VERDICT only: they print their state and their operator
+# action like every other check, --fix still repairs a fixable one, and an open
+# repairable one still prints repairable-advisory so the readiness gate runs
+# its repair pass. What no value of theirs ever does is make this command exit
+# non-zero, because they do not describe whether an agent can run on this host.
 #
 # --fix is idempotent and closes only automatable gaps: it writes and reloads
 # both Firstmate-owned Aqua agents, starts the Linux workers where no Aqua agent
@@ -43,6 +52,18 @@
 # installs packages, creates a login session, writes an auto-login password,
 # changes FileVault, stores an account password, or replaces a non-Firstmate
 # wrapper; those remain reported gaps.
+#
+# The beads-store check is the one backend-gated check here: it runs only when
+# the home this command was pointed at selects config/backlog-backend=beads,
+# and is skipped entirely otherwise, so the tasks-axi and manual backends see
+# no change. It exists because a remote home inherits that backend setting from
+# its parent while nothing provisions the beads CLI or store on that host. Its
+# repair publishes an owned BEADS_DIR-pinning `task` wrapper in front of a bd
+# binary already present on the host, then provisions a store with the
+# non-destructive `bd bootstrap` only when none answers; a host with no bd
+# binary stays a reported gap, because --fix installs no packages. It is also
+# the one NON-GATING check, so none of its states withholds the readiness
+# verdict, while a repairable one still asks the readiness gate to repair it.
 set -eu
 
 # Resolve this script's directory with builtins only: a host missing a required
@@ -112,6 +133,26 @@ check_value() { # <name>; prints the recorded value, empty when unrecorded
 
 check_is_ok() { # <name>
   case "$(check_value "$1" 2>/dev/null || true)" in ok:*) return 0 ;; esac
+  return 1
+}
+
+# A non-gating check suppresses exactly one thing: the readiness VERDICT. It is
+# still checked, still printed with its operator action, still repaired by
+# --fix, and an open repairable one still publishes the repairable-advisory
+# line below so the readiness gate knows to run its repair pass. Nothing about
+# this list means "ignore".
+#
+# beads-store is the only one, and deliberately so. "Ready for a remote second
+# mate" means that host can start and supervise an agent; the task store is a
+# separate concern that the parent home's inherited backlog backend drags onto
+# a host whose route already works. Gating on it would refuse every seed,
+# launch, and liveness relaunch through bin/fm-remote-readiness-lib.sh over a
+# gap unrelated to the agent runtime - and in the no-bd case, over one --fix
+# cannot close at all, because this command installs no packages.
+NON_GATING_CHECKS="beads-store"
+
+check_is_non_gating() { # <name>
+  case " $NON_GATING_CHECKS " in *" $1 "*) return 0 ;; esac
   return 1
 }
 
@@ -574,10 +615,164 @@ check_entrypoint_link() {
     "rerun this command with --fix to create it"
 }
 
+# --- beads store readiness (config/backlog-backend=beads only) --------------
+#
+# A remote home inherits config/backlog-backend from its parent, but nothing
+# ever provisioned the beads CLI or store on that host, so the home comes up
+# with the backend selected and the task queue dead. This check closes exactly
+# that gap and is scoped to remote hosts by construction: it runs only inside
+# this remote readiness command, and only when the home it was pointed at
+# actually selects the beads backend.
+#
+# It deliberately does NOT test for a .beads/ directory in the home. The `task`
+# wrapper pins BEADS_DIR for the whole federation, so a home with no local
+# .beads/ can be perfectly healthy while a host with one can still be broken;
+# the only meaningful test is whether the CLI answers a read.
+beads_home_config_dir() {
+  local home=${FM_HOME:-}
+  [ -n "$home" ] || return 1
+  printf '%s/config\n' "$home"
+}
+
+beads_backend_selected() {
+  local config_dir
+  config_dir=$(beads_home_config_dir) || return 1
+  [ -d "$config_dir" ] || return 1
+  [ "$(fm_backlog_backend_value "$config_dir")" = beads ]
+}
+
+# The wrapper this host needs is the same shape as the parent's `task`: a
+# BEADS_DIR-pinning shim in front of the bd binary. Without it a bare `bd`
+# auto-discovers from the working directory, finds nothing, and fails with "no
+# beads database found" even when a perfectly good store exists on the host -
+# the exact failure a remote home reports today.
+BEADS_TASK_WRAPPER="${HOME:-}/.local/bin/task"
+BEADS_STORE_DIR="${HOME:-}/data/tasks/.beads"
+
+# Probes PATH first, then the two account-local install locations a
+# non-interactive ssh PATH routinely omits - `go install` writes ~/go/bin and
+# beads' own installer writes ~/.local/bin, and neither is on the stripped PATH
+# a remote command inherits. Every candidate stays inside PATH or HOME so this
+# check reports on the account it was pointed at and never on the host running it.
+beads_bd_binary() {
+  local resolved
+  resolved=$(command -v bd 2>/dev/null || true)
+  if [ -n "$resolved" ] && [ -x "$resolved" ]; then printf '%s\n' "$resolved"; return 0; fi
+  for resolved in "${HOME:-}/go/bin/bd" "${HOME:-}/.local/bin/bd"; do
+    [ -x "$resolved" ] && { printf '%s\n' "$resolved"; return 0; }
+  done
+  return 1
+}
+
+# The `task` wrapper this check reports on and publishes lives in ~/.local/bin,
+# which the remote runtime PATH always contains but a plain-SSH invocation of
+# this command routinely does not - the same PATH hole beads_bd_binary probes
+# around for bd. Resolving the CLI through a bare `command -v task` would
+# therefore misreport a healthy host as broken, and would make --fix verify its
+# own freshly published wrapper through a PATH that cannot see it. Both helpers
+# run in a subshell so the augmented PATH never leaks into the `path=` line this
+# command reports or into any other check.
+beads_store_reachable_here() (
+  # shellcheck disable=SC2030,SC2031 # The subshell-local PATH is the point: it must not escape.
+  PATH="${HOME:-}/.local/bin:${PATH:-}"
+  fm_beads_store_reachable
+)
+
+beads_bootstrap_store_here() (
+  # shellcheck disable=SC2030,SC2031 # The subshell-local PATH is the point: it must not escape.
+  PATH="${HOME:-}/.local/bin:${PATH:-}"
+  fm_beads_bootstrap_store
+)
+
+check_beads_store() {
+  local bd_bin
+  if ! beads_backend_selected; then
+    record beads-store "skip: this home does not select the beads backlog backend"
+    return 0
+  fi
+  if beads_store_reachable_here; then
+    record beads-store "ok: the task CLI resolves and the beads store answers a read"
+    return 0
+  fi
+  if ! bd_bin=$(beads_bd_binary); then
+    record beads-store "info: this home selects the beads backend but no bd binary exists on this host" \
+      "install beads on that account with 'go install github.com/steveyegge/beads/cmd/bd@latest', then rerun this command with --fix to add the task wrapper and provision the store"
+    return 0
+  fi
+  # Only a gap --fix can actually close may be reported fixable, because a
+  # fixable non-gating gap is what makes the readiness gate spend a repair pass
+  # and a re-check on every seed, launch, and liveness relaunch. fix_beads_store
+  # refuses an operator-owned wrapper by design, so that gap would never
+  # converge and must be classified as the informational gap it is.
+  if { [ -e "$BEADS_TASK_WRAPPER" ] || [ -L "$BEADS_TASK_WRAPPER" ]; } &&
+    ! wrapper_is_firstmate_owned "$BEADS_TASK_WRAPPER"; then
+    record beads-store "info: bd resolves at $bd_bin but $BEADS_TASK_WRAPPER is not Firstmate-owned, so no repair here can replace it" \
+      "on that account, either make $BEADS_TASK_WRAPPER export BEADS_DIR=$BEADS_STORE_DIR before exec'ing $bd_bin, or remove it and rerun this command with --fix"
+    return 0
+  fi
+  record beads-store "fixable: bd resolves at $bd_bin but the task CLI does not answer a read" \
+    "rerun this command with --fix to add the BEADS_DIR-pinning task wrapper and run the non-destructive 'task bootstrap'"
+}
+
+# Repair is two steps, in order: publish the wrapper so `task` exists and is
+# pinned, then bootstrap a store only if one still does not answer.
+#
+# `bd bootstrap` is the only provisioning verb used here because it is the
+# documented non-destructive one; `bd init --force` is never run. The
+# reachability guard inside fm_beads_bootstrap_store is what makes that safe in
+# practice, because bootstrap's own detection reads the .beads/ directory and
+# reports a healthy Dolt server-mode store as absent.
+fix_beads_store() {
+  local bd_bin tmp
+  if ! bd_bin=$(beads_bd_binary); then
+    fix_report beads-store failed "no bd binary on this host to point a wrapper at"
+    return 1
+  fi
+  if [ -e "$BEADS_TASK_WRAPPER" ] || [ -L "$BEADS_TASK_WRAPPER" ]; then
+    if ! wrapper_is_firstmate_owned "$BEADS_TASK_WRAPPER"; then
+      fix_report beads-store failed "$BEADS_TASK_WRAPPER exists and is not Firstmate-owned"
+      return 1
+    fi
+  elif ! mkdir -p "${HOME:-}/.local/bin" 2>/dev/null || [ -L "${HOME:-}/.local/bin" ]; then
+    fix_report beads-store failed "cannot create ${HOME:-}/.local/bin"
+    return 1
+  fi
+  tmp="${HOME:-}/.local/bin/.task.tmp.$$"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' '# Firstmate remote tool wrapper v1'
+    printf 'export BEADS_DIR=%q\n' "$BEADS_STORE_DIR"
+    printf '%s\n' 'export BD_NAME=task'
+    printf 'exec %q "$@"\n' "$bd_bin"
+  } > "$tmp" || { rm -f -- "$tmp"; fix_report beads-store failed "cannot write $BEADS_TASK_WRAPPER"; return 1; }
+  if ! chmod 0700 "$tmp" || ! mv -f -- "$tmp" "$BEADS_TASK_WRAPPER"; then
+    rm -f -- "$tmp"
+    fix_report beads-store failed "cannot publish $BEADS_TASK_WRAPPER"
+    return 1
+  fi
+  fix_report beads-store applied "wrote $BEADS_TASK_WRAPPER pinning BEADS_DIR=$BEADS_STORE_DIR in front of $bd_bin"
+
+  if beads_store_reachable_here; then
+    fix_report beads-store applied "the beads store answers a read through the new wrapper; no bootstrap needed"
+    return 0
+  fi
+  if ! mkdir -p "$BEADS_STORE_DIR" 2>/dev/null; then
+    fix_report beads-store failed "cannot create $BEADS_STORE_DIR"
+    return 1
+  fi
+  if beads_bootstrap_store_here >/dev/null 2>&1; then
+    fix_report beads-store applied "provisioned the store with the non-destructive 'task bootstrap'"
+    return 0
+  fi
+  fix_report beads-store failed "'task bootstrap' did not leave a store that answers a read"
+  return 1
+}
+
 run_checks() {
   CHECK_NAMES=()
   CHECK_VALUES=()
   CHECK_ACTIONS=()
+  check_beads_store
   check_herdr
   check_gui_session
   check_remote_job_worker
@@ -695,6 +890,9 @@ apply_fixes() {
     i=$((i + 1))
     case "$value" in fixable:*) ;; *) continue ;; esac
     case "$name" in
+      beads-store)
+        fix_beads_store || true
+        ;;
       remote-job-worker|remote-job-worker-loaded|remote-job-probe)
         [ "$remote_job_fixed" -eq 0 ] || continue
         remote_job_fixed=1
@@ -741,7 +939,12 @@ if [ "$MODE" = worker-tool-probe ]; then
 fi
 
 printf 'mode=%s\n' "$MODE"
+# This is the launch PATH, deliberately unaffected by the beads helpers' own
+# subshell-local augmentation above; reporting that augmented PATH here is the
+# bug those subshells exist to prevent.
+# shellcheck disable=SC2031
 printf 'path=%s\n' "${PATH:-}"
+# shellcheck disable=SC2031
 if [ -n "${FM_ROOT_OVERRIDE:-}" ] && [ "${PATH%%:*}" = "$FM_ROOT_OVERRIDE/bin" ]; then
   printf 'entrypoint=yes\n'
 else
@@ -772,16 +975,33 @@ for tool in "${OPTIONAL_TOOLS[@]}"; do
 done
 
 GAPS=()
+ADVISORIES=()
 i=0
 while [ "$i" -lt "${#CHECK_NAMES[@]}" ]; do
   printf 'check %s=%s\n' "${CHECK_NAMES[$i]}" "${CHECK_VALUES[$i]}"
-  case "${CHECK_VALUES[$i]}" in
-    fixable:*|human:*) GAPS+=("$i") ;;
-  esac
+  if check_is_non_gating "${CHECK_NAMES[$i]}"; then
+    case "${CHECK_VALUES[$i]}" in
+      fixable:*|human:*|info:*) ADVISORIES+=("$i") ;;
+    esac
+  else
+    case "${CHECK_VALUES[$i]}" in
+      fixable:*|human:*) GAPS+=("$i") ;;
+    esac
+  fi
   i=$((i + 1))
 done
-for i in ${GAPS[@]+"${GAPS[@]}"}; do
+for i in ${GAPS[@]+"${GAPS[@]}"} ${ADVISORIES[@]+"${ADVISORIES[@]}"}; do
   [ -z "${CHECK_ACTIONS[$i]}" ] || printf 'action: %s: %s\n' "${CHECK_NAMES[$i]}" "${CHECK_ACTIONS[$i]}"
+done
+# A non-gating check that --fix CAN close still needs the readiness gate to run
+# its repair pass, which it only does when the read-only run reports something.
+# Withholding the verdict is what must not happen; withholding the repair would
+# leave a host provisioned exactly as badly as before this check existed. This
+# line is that signal, and bin/fm-remote-readiness-lib.sh is its only consumer.
+for i in ${ADVISORIES[@]+"${ADVISORIES[@]}"}; do
+  case "${CHECK_VALUES[$i]}" in
+    fixable:*) printf 'repairable-advisory: %s\n' "${CHECK_NAMES[$i]}" ;;
+  esac
 done
 
 if [ "${#MISSING[@]}" -gt 0 ]; then

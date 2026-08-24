@@ -24,6 +24,10 @@
 # Aggregation (no suite execution):
 #   fm-test-run.sh --aggregate-json <out.json> <lane.json> [more lane.json...]
 #
+# Run control (no suite execution):
+#   fm-test-run.sh --list-runs
+#   fm-test-run.sh --stop [<run-id>]
+#
 # Options:
 #   --json <path>   write a deterministic timing artifact after the run
 #   --list          print selected script paths (one per line) and exit 0
@@ -32,6 +36,13 @@
 #                   drop scripts whose primary family matches <name> after selection
 #                   (repeatable; portable CI lanes exclude real-herdr-gated so the
 #                   dedicated required Herdr lane owns that coverage)
+#   --only-from <file>
+#                   intersect the selection with the test paths listed in <file>,
+#                   one per line (blank and #-comment lines ignored). A pure
+#                   filter: it can only shrink a selection, never add to it, so
+#                   this script stays the single owner of lane composition while
+#                   bin/fm-test-affected.sh supplies a pull request's impacted
+#                   set. An empty intersection is a successful empty run.
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
@@ -42,6 +53,15 @@
 #                   selected script is in the proven-isolated set
 #                   (bin/fm-test-isolation-proof.sh --list). Cap is 8. Stateful
 #                   families never schedule under --jobs.
+#   --list-runs     print one FM_TEST_RUN record per registered live run and exit
+#   --stop [<run-id>]
+#                   stop registered runs by identity, never by process-name
+#                   matching. With a run id, exactly that run. With no run id,
+#                   only the runs registered from THIS repository root, so a
+#                   concurrent agent's suite in another worktree is never a
+#                   candidate. Broad `pkill -f fm-test-run.sh` is what this
+#                   verb exists to replace: concurrent runs share a near
+#                   identical command line, so no pattern can tell them apart.
 #   -h, --help      print this header
 #
 # Per-script machine-parseable markers (stdout):
@@ -53,9 +73,22 @@
 #   FM_TEST_SUMMARY_FAMILY family=<name> count=<n> duration_ms=<n> failed=<n>
 #   FM_TEST_SLOWEST rank=<k> script=<path> duration_ms=<n>
 #
+# Instead of that summary, an interrupted run prints exactly one terminator:
+#   FM_TEST_ABORTED <iso8601> run_id=<id> signal=<name> completed=<n> selected=<n>
+# A killed run used to end mid-line, so a truncated log was indistinguishable
+# from a short clean one and a reader counting failures off it concluded the
+# suite passed. Treat a log with neither FM_TEST_SUMMARY nor FM_TEST_ABORTED as
+# lost output, never as a pass.
+#
 # Exit status is non-zero if any selected script exits non-zero or a configured
 # --fail-on-gate-skip token appears. Other gate skips (first meaningful line
 # matching ^skip:) remain successful and are counted as skipped_gate.
+# An aborted run exits 128+<signal> (143 for TERM, 130 for INT, 129 for HUP).
+#
+# Every executing run registers itself in a per-user registry directory
+# (FM_TEST_RUN_REGISTRY, default $TMPDIR/fm-test-run-registry) and removes that
+# record on exit. Records are pruned when their pid is gone, so a crashed run
+# leaves no stale entry that a later --stop could act on.
 #
 # Family labels, the changed-file map, and production portable-shard composition
 # live in this script only (one owner). The proven-isolated candidate set remains
@@ -85,9 +118,23 @@ BASE_REF=origin/main
 JSON_PATH=
 SCRIPTS=()
 EXCLUDE_FAMILIES=()
+ONLY_FROM=
 FAIL_ON_GATE_SKIP=
 JOBS=1
 JOBS_MAX=8
+LIST_RUNS=0
+STOP_REQUESTED=0
+STOP_RUN_ID=
+
+# Where executing runs register their identity so a concurrent agent can stop
+# one exactly instead of pattern-matching a shared command line. Per-user by
+# default because TMPDIR is per-user on macOS; FM_TEST_RUN_REGISTRY overrides it
+# for tests and for anyone deliberately partitioning runs further.
+RUN_REGISTRY="${FM_TEST_RUN_REGISTRY:-${TMPDIR:-/tmp}/fm-test-run-registry}"
+
+# Seconds to wait for a signalled run to write its terminator and exit before
+# escalating to SIGKILL on whatever is left.
+STOP_GRACE_SECONDS="${FM_TEST_RUN_STOP_GRACE:-10}"
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
@@ -126,6 +173,211 @@ now_ms() {
     # Second precision only when python3 is unavailable.
     echo $(($(date +%s) * 1000))
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Run registry: identity-scoped stop, so nobody has to reach for pkill.
+#
+# Concurrent agents invoke this runner with near-identical command lines
+# ("--changed --base origin/main"), so `pkill -f` cannot distinguish one run
+# from another and has killed a sibling agent's suite mid-flight. Each
+# executing run therefore records its own identity here and --stop acts only on
+# those records: by exact run id, or by this repository root.
+# ---------------------------------------------------------------------------
+
+run_registry_file() {
+  printf '%s/%s.run\n' "$RUN_REGISTRY" "$1"
+}
+
+# One field out of a registry record. Fields are "key=value", one per line, and
+# values may contain "=" so only the first is a separator.
+run_record_field() {
+  local file=$1 key=$2 line
+  [ -f "$file" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "$key="*) printf '%s\n' "${line#*=}"; return 0 ;;
+    esac
+  done <"$file"
+  return 1
+}
+
+pid_is_alive() {
+  kill -0 "$1" 2>/dev/null
+}
+
+# Direct and transitive children of a pid, deepest last. Used so a stop reaches
+# the test script the run is currently executing (and any --jobs workers)
+# without ever touching a process the run does not own.
+descendant_pids() {
+  local root=$1 snapshot
+  snapshot=$(ps -eo pid=,ppid= 2>/dev/null || true)
+  [ -n "$snapshot" ] || return 0
+  # One breadth-first pass per level, driven off a single ps snapshot so the
+  # tree cannot shift underneath a walk that re-reads the process table.
+  printf '%s\n' "$snapshot" | awk -v root="$root" '
+    { child[NR] = $1; parent[NR] = $2; rows = NR }
+    END {
+      want[root] = 1
+      # Bounded by tree depth; each pass adopts children of everything marked
+      # so far, and stops as soon as a pass marks nothing new.
+      do {
+        added = 0
+        for (i = 1; i <= rows; i++) {
+          if (want[parent[i]] && !want[child[i]]) {
+            want[child[i]] = 1
+            print child[i]
+            added = 1
+          }
+        }
+      } while (added)
+    }
+  '
+}
+
+# Drop records whose process is gone. A crashed run must not leave an entry
+# that a later --stop could act on, and a recycled pid must not inherit one.
+prune_run_registry() {
+  local file pid
+  [ -d "$RUN_REGISTRY" ] || return 0
+  for file in "$RUN_REGISTRY"/*.run; do
+    [ -f "$file" ] || continue
+    pid=$(run_record_field "$file" pid || true)
+    if [ -z "$pid" ] || ! pid_is_alive "$pid"; then
+      rm -f "$file"
+    fi
+  done
+}
+
+register_run() {
+  local file
+  mkdir -p "$RUN_REGISTRY" || die "could not create run registry: $RUN_REGISTRY"
+  chmod 0700 "$RUN_REGISTRY" 2>/dev/null || true
+  file=$(run_registry_file "$RUN_ID")
+  {
+    printf 'run_id=%s\n' "$RUN_ID"
+    printf 'pid=%s\n' "$$"
+    printf 'root=%s\n' "$ROOT"
+    printf 'fm_home=%s\n' "${FM_HOME:--}"
+    printf 'json=%s\n' "${JSON_PATH:--}"
+    printf 'selection=%s\n' "$SELECTION_DESC"
+    printf 'started=%s\n' "$RUN_STARTED_ISO"
+  } >"$file" || die "could not write run record: $file"
+  RUN_REGISTERED_FILE=$file
+}
+
+list_runs() {
+  local file run_id pid root started selection printed=0
+  prune_run_registry
+  for file in "$RUN_REGISTRY"/*.run; do
+    [ -f "$file" ] || continue
+    run_id=$(run_record_field "$file" run_id || echo unknown)
+    pid=$(run_record_field "$file" pid || echo unknown)
+    root=$(run_record_field "$file" root || echo unknown)
+    started=$(run_record_field "$file" started || echo unknown)
+    selection=$(run_record_field "$file" selection || echo unknown)
+    printf 'FM_TEST_RUN run_id=%s pid=%s started=%s root=%s selection=%s\n' \
+      "$run_id" "$pid" "$started" "$root" "$selection"
+    printed=1
+  done
+  [ "$printed" -eq 1 ] || log "no live runs registered in $RUN_REGISTRY"
+}
+
+# Signal one registered run and, after its grace period, whatever it left
+# behind. The run's own handler writes FM_TEST_ABORTED, so its log identifies
+# itself as truncated rather than looking like a short clean run.
+stop_one_run() {
+  local file=$1 run_id pid waited child
+  run_id=$(run_record_field "$file" run_id || echo unknown)
+  pid=$(run_record_field "$file" pid || true)
+  if [ -z "$pid" ] || ! pid_is_alive "$pid"; then
+    rm -f "$file"
+    log "run $run_id was already gone"
+    return 0
+  fi
+
+  log "stopping run $run_id (pid $pid)"
+  # The run's currently-executing test script is signalled alongside the run
+  # itself. Bash defers a trap until the foreground command returns, so TERMing
+  # only the run would leave it blocked in the middle of a long test and its
+  # terminator unwritten until the grace period expired and killed it silently.
+  for child in $(descendant_pids "$pid"); do
+    kill -TERM "$child" 2>/dev/null || true
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+
+  waited=0
+  while [ "$waited" -lt "$STOP_GRACE_SECONDS" ] && pid_is_alive "$pid"; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  # Anything still alive is the run's own subtree; the run itself already had
+  # its chance to exit cleanly. Children are collected before the final kill so
+  # a test script that ignored TERM cannot outlive its run.
+  for child in $(descendant_pids "$pid"); do
+    kill -KILL "$child" 2>/dev/null || true
+  done
+  if pid_is_alive "$pid"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    log "run $run_id did not exit within ${STOP_GRACE_SECONDS}s; killed"
+  fi
+  rm -f "$file"
+  printf 'FM_TEST_STOPPED run_id=%s pid=%s\n' "$run_id" "$pid"
+}
+
+# With a run id, stop exactly that run. Without one, stop only the runs this
+# repository root started - never a sibling worktree's run, which is the exact
+# collateral damage a broad pkill causes.
+stop_runs() {
+  local want=$1 file root matched=0
+  prune_run_registry
+  if [ -n "$want" ]; then
+    # Run ids are minted by this script as fm-test-run-<ms>-<pid>. Validating
+    # the shape keeps a caller-supplied id from resolving to a path outside the
+    # registry, since the id is used to build a file this function rm -f's.
+    case "$want" in
+      */*) die "not a run id: $want (expected fm-test-run-<ms>-<pid>; see --list-runs)" ;;
+      fm-test-run-[0-9]*-[0-9]*) ;;
+      *) die "not a run id: $want (expected fm-test-run-<ms>-<pid>; see --list-runs)" ;;
+    esac
+    file=$(run_registry_file "$want")
+    [ -f "$file" ] || die "no live run registered with id: $want (see --list-runs)"
+    stop_one_run "$file"
+    return 0
+  fi
+  [ -d "$RUN_REGISTRY" ] || die "no live run registered from this root: $ROOT"
+  for file in "$RUN_REGISTRY"/*.run; do
+    [ -f "$file" ] || continue
+    root=$(run_record_field "$file" root || true)
+    [ "$root" = "$ROOT" ] || continue
+    stop_one_run "$file"
+    matched=$((matched + 1))
+  done
+  [ "$matched" -gt 0 ] \
+    || die "no live run registered from this root: $ROOT (see --list-runs)"
+}
+
+# Terminator for an interrupted run. Printed exactly once, to stdout, in place
+# of FM_TEST_SUMMARY, so a truncated log is self-identifying.
+# shellcheck disable=SC2329 # Invoked indirectly by the signal traps below.
+abort_run() {
+  local signal=$1 status=$2 child
+  trap - TERM INT HUP
+  [ "${RUN_ABORTED:-0}" -eq 0 ] || exit "$status"
+  RUN_ABORTED=1
+  for child in $(descendant_pids "$$"); do
+    kill -TERM "$child" 2>/dev/null || true
+  done
+  printf 'FM_TEST_ABORTED %s run_id=%s signal=%s completed=%s selected=%s\n' \
+    "$(now_iso)" "${RUN_ID:-unknown}" "$signal" "${TOTAL:-0}" "${SELECTED_TOTAL:-0}"
+  exit "$status"
+}
+
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
+cleanup_run() {
+  [ -z "${RUN_REGISTERED_FILE:-}" ] || rm -f "$RUN_REGISTERED_FILE"
+  [ -z "${RUN_TMP:-}" ] || rm -rf "$RUN_TMP"
 }
 
 # Primary family for one tests/*.test.sh basename. Unmapped scripts are
@@ -850,7 +1102,7 @@ families_for_changed_path() {
       # resolution in the caller; emit a marker family of __script__
       printf '%s\n' "__script__:$(basename "$path")"
       ;;
-    bin/fm-test-run.sh|bin/fm-test-isolation-proof.sh)
+    bin/fm-test-run.sh|bin/fm-test-isolation-proof.sh|bin/fm-test-affected.sh)
       printf '%s\n' pure-contract-unit
       ;;
     bin/backends/herdr*|bin/fm-herdr-lab.sh|tests/herdr-test-safety.sh)
@@ -1118,6 +1370,36 @@ apply_exclude_families() {
   SCRIPTS=("${kept[@]+"${kept[@]}"}")
 }
 
+# Intersect the selection with an explicit allow list. Filter only: a path in
+# the file that this run did not already select stays unselected, so a caller
+# can never use it to reach into another lane.
+apply_only_from() {
+  local s line p keep
+  local -a kept=()
+  local -a allow=()
+  [ -n "$ONLY_FROM" ] || return 0
+  [ -f "$ONLY_FROM" ] || die "--only-from file not found: $ONLY_FROM"
+  while IFS= read -r line; do
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    allow+=("$(normalize_script_path "$line")")
+  done <"$ONLY_FROM"
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    keep=0
+    for p in "${allow[@]+"${allow[@]}"}"; do
+      if [ "$p" = "$s" ]; then
+        keep=1
+        break
+      fi
+    done
+    if [ "$keep" -eq 1 ]; then
+      kept+=("$s")
+    fi
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+}
+
 write_json_artifact() {
   local out=$1
   local started=$2
@@ -1276,6 +1558,26 @@ while [ "$#" -gt 0 ]; do
       CHECK_COVERAGE=1
       shift
       ;;
+    --list-runs)
+      LIST_RUNS=1
+      shift
+      ;;
+    --stop)
+      STOP_REQUESTED=1
+      shift
+      # An optional bare run id; anything starting with "-" is a later option.
+      if [ "$#" -gt 0 ]; then
+        case "$1" in
+          -*) ;;
+          *) STOP_RUN_ID=$1; shift ;;
+        esac
+      fi
+      ;;
+    --stop=*)
+      STOP_REQUESTED=1
+      STOP_RUN_ID=${1#--stop=}
+      shift
+      ;;
     --aggregate-json)
       [ "$#" -gt 1 ] || die "--aggregate-json requires an output path"
       AGGREGATE_OUT=$2
@@ -1291,6 +1593,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --exclude-family=*)
       EXCLUDE_FAMILIES+=("${1#--exclude-family=}")
+      shift
+      ;;
+    --only-from)
+      [ "$#" -gt 1 ] || die "--only-from requires a file of test paths"
+      ONLY_FROM=$2
+      shift 2
+      ;;
+    --only-from=*)
+      ONLY_FROM=${1#--only-from=}
       shift
       ;;
     --fail-on-gate-skip)
@@ -1337,6 +1648,16 @@ fi
 
 if [ "$LIST_LANES" -eq 1 ]; then
   list_known_lanes
+  exit 0
+fi
+
+if [ "$LIST_RUNS" -eq 1 ]; then
+  list_runs
+  exit 0
+fi
+
+if [ "$STOP_REQUESTED" -eq 1 ]; then
+  stop_runs "$STOP_RUN_ID"
   exit 0
 fi
 
@@ -1400,6 +1721,10 @@ apply_exclude_families
 if [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ]; then
   SELECTION_DESC="${SELECTION_DESC};exclude-family=$(IFS=,; printf '%s' "${EXCLUDE_FAMILIES[*]}")"
 fi
+apply_only_from
+if [ -n "$ONLY_FROM" ]; then
+  SELECTION_DESC="${SELECTION_DESC};only-from=$ONLY_FROM"
+fi
 if [ -n "$FAIL_ON_GATE_SKIP" ]; then
   SELECTION_DESC="${SELECTION_DESC};fail-on-gate-skip=$FAIL_ON_GATE_SKIP"
 fi
@@ -1449,15 +1774,25 @@ RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run.XXXXXX")
 RECORDS="$RUN_TMP/records.tsv"
 FAMILIES_TSV="$RUN_TMP/families.tsv"
 : >"$RECORDS"
-trap 'rm -rf "$RUN_TMP"' EXIT
 
 RUN_STARTED_ISO=$(now_iso)
 RUN_STARTED_MS=$(now_ms)
 RUN_ID="fm-test-run-${RUN_STARTED_MS}-$$"
+RUN_REGISTERED_FILE=
+RUN_ABORTED=0
 TOTAL=0
+SELECTED_TOTAL=${#SCRIPTS[@]}
 FAILED=0
 SKIPPED_GATE=0
 AGG_RC=0
+
+# Registered before the first script so a stop issued at any point during the
+# run finds this run's identity, and torn down on every exit path.
+trap 'cleanup_run' EXIT
+trap 'abort_run TERM 143' TERM
+trap 'abort_run INT 130' INT
+trap 'abort_run HUP 129' HUP
+register_run
 
 # Family accumulators as TSV lines updated in-memory via temp files.
 # family -> count, duration_ms, failed
@@ -1615,6 +1950,14 @@ else
     if [ -s "$out" ]; then
       cat "$out"
     fi
+    # This runner is deliberately standalone (its own test copies just this file
+    # into a fixture repo), so it does not source bin/fm-stat-lib.sh - the shared
+    # dialect owner every other caller uses. The ordering here is load-bearing
+    # and must stay GNU-FIRST: BSD stat rejects `-c` with a usage error on stderr
+    # and writes nothing to stdout, so the fallback fires cleanly. Flipping it to
+    # BSD-first would break on a GNU-coreutils-on-Darwin host, because GNU `-f`
+    # is --file-system: it writes a filesystem dump to stdout and only THEN
+    # fails, so `||` does fire and appends the real mode to that dump.
     mode=$(stat -c %a "$work" 2>/dev/null || stat -f %Lp "$work" 2>/dev/null || echo unknown)
     case "$mode" in
       700|0700) ;;

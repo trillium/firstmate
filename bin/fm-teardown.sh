@@ -57,7 +57,9 @@
 # A clean teardown best-effort deregisters the task from Parlay's live chat
 # panel (see bin/fm-spawn.sh's header for the enrollment contract): the recorded
 # `parlay listen` background pid is always killed, and `parlay agent-down` is
-# called only when `parlay` is on PATH. Neither ever blocks or fails teardown.
+# called only when `parlay` is on PATH and FM_SPAWN_SKIP_PARLAY is unset (a
+# test-suite spawn never enrolled, so its teardown must not touch the live
+# relay). Neither ever blocks or fails teardown.
 # A task linked to a bead (beads_id= in meta, set by fm-spawn.sh --beads or
 # auto-linked under config/backlog-backend=beads) has that
 # bead closed automatically once teardown reaches this point without --force, i.e.
@@ -267,16 +269,8 @@ META="$STATE/$ID.meta"
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
+META_LOCK_HELD=1
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
-
-# Serialize with concurrent lifecycle actions (control plane): fm-control.sh and fm-promote.sh
-# hold the control lock while modifying task state. Check BEFORE reading mutable task metadata
-# (endpoint_task_id), so a task whose metadata is being modified while locked is refused cleanly
-# rather than failing on a stale endpoint check.
-CONTROL_LOCK="$STATE/.control-$ID.lock"
-fm_lock_try_acquire "$CONTROL_LOCK" \
-  || { echo "REFUSED: another lifecycle action is already running for task $ID; preserving task state." >&2; exit 1; }
-fm_lock_release "$CONTROL_LOCK"
 
 REMOTE_HANDOFF_DIR_PRESENT=0
 REMOTE_HANDOFF_DIR_REAL=
@@ -740,15 +734,20 @@ retire_busy_state() {
 
 # Best-effort Parlay deregistration (bin/fm-spawn.sh's header owns enrollment).
 # The recorded background pid is killed unconditionally so a `parlay` that went
-# missing from PATH between spawn and teardown never orphans it; only the final
-# `parlay agent-down` network call is gated on `parlay` being present.
+# missing from PATH between spawn and teardown never orphans it. The final
+# `parlay agent-down` network call is gated on both `parlay` being present AND
+# FM_SPAWN_SKIP_PARLAY being unset: a test-suite spawn (FM_SPAWN_SKIP_PARLAY=1,
+# set by tests/lib.sh) never enrolled with the live relay, so calling agent-down
+# for it would contact the real Parlay relay with a fixture id and leak test
+# state into live Parlay (robots-8ce5) - the exact mirror of the spawn-side skip
+# guard in bin/fm-spawn.sh. Local pid cleanup above still runs unconditionally.
 deregister_parlay_agent() {
   local state_dir=$1 id=$2 pid_file pid
   pid_file="$state_dir/$id.parlay-listen-pid"
   pid=$(cat "$pid_file" 2>/dev/null || true)
   case "$pid" in ''|*[!0-9]*) ;; *) kill "$pid" 2>/dev/null || true ;; esac
   rm -f "$pid_file"
-  if command -v parlay >/dev/null 2>&1; then
+  if [ -z "${FM_SPAWN_SKIP_PARLAY:-}" ] && command -v parlay >/dev/null 2>&1; then
     parlay agent-down "$id" >/dev/null 2>&1 \
       || echo "warning: parlay agent-down failed for $id (non-blocking)" >&2
   fi
@@ -1131,7 +1130,7 @@ backlog_refresh_reminder() {
     esac
     printf '%s\n' "Backlog: $ID just finished. Run $done_cmd, then run tasks-axi ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   elif [ "$(fm_backlog_backend_value "$CONFIG")" = beads ]; then
-    printf '%s\n' "Backlog: $ID just finished. The beads store has been updated with the completion status. Run task list --ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
+    printf '%s\n' "Backlog: $ID just finished. The beads store has been updated with the completion status. Run task ready for dependency-cleared candidates (priority-ordered, blocker-aware ready work), check date gates, and dispatch only work whose blockers are gone and date is due."
   else
     printf '%s\n' "Backlog: $ID just finished. Update data/backlog.md - move $ID to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due."
   fi
@@ -2797,6 +2796,7 @@ rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note"
 fm_lock_release "$META_LOCK"
+META_LOCK_HELD=0
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi

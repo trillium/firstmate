@@ -84,8 +84,8 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh
 
 That run is read-only.
 It prints the exact `PATH` its own entrypoint launch produced, executes its required-tool probe through the installed worker when one is available, reports where each required and optional tool resolved, then reports one line per readiness check.
-Each gap is tagged `fixable:` when `--fix` can close it or `human:` when only a person at that machine can, and every gap is followed by an `action:` line naming the exact step.
-Any remaining gap exits non-zero.
+Each gap is tagged `fixable:` when `--fix` can close it, `human:` when only a person at that machine can, or `info:` when no repair here can close it, and every gap is followed by an `action:` line naming the exact step.
+Any remaining gap on a gating check exits non-zero; the non-gating checks below never withhold the verdict.
 The script's own header owns the full line protocol.
 
 `--fix` repairs only the automatable gaps and is safe to rerun:
@@ -110,6 +110,25 @@ These steps are never automated and are always reported rather than silently att
 
 Firstmate never writes an auto-login password, never changes FileVault, and never stores an account password.
 A file at `~/.local/bin/fm-remote-entrypoint.sh` that is not Firstmate's own symlink is reported for the operator to inspect and is never overwritten.
+
+### The beads store on a remote host
+
+The doctor's `beads-store` check runs only when the home it is pointed at selects `config/backlog-backend=beads`, and reports `skip:` otherwise.
+It tests the one thing that matters, whether the `task` CLI answers a read, and never looks for a `.beads/` directory: the `task` wrapper pins `BEADS_DIR` for the whole federation, so a host with no local `.beads/` can be healthy and a host with one can still be broken.
+
+The usual remote failure is a host that has `bd` installed but no wrapper in front of it, because a bare `bd` auto-discovers from the working directory, finds nothing, and fails with "no beads database found".
+That is tagged `fixable:`, and `--fix` writes the Firstmate-owned `~/.local/bin/task` wrapper pinning `BEADS_DIR`, then provisions a store with the non-destructive `task bootstrap` only when one still does not answer.
+An existing `~/.local/bin/task` that Firstmate does not own is reported and never overwritten, the same rule as every other reserved wrapper path; because that refusal is a policy the repair will never reverse, such a host is reported `info:` rather than `fixable:`, so the readiness gate does not spend a repair pass on it at every seed, launch, and relaunch.
+
+A host with no `bd` binary at all is reported `info:`, since the doctor never installs packages; install beads on that account, then rerun with `--fix`.
+The check looks for `bd` on `PATH` first, then at `~/go/bin/bd` and `~/.local/bin/bd`, and it resolves the `task` wrapper through `~/.local/bin` as well, because a non-interactive SSH `PATH` routinely omits both.
+
+`beads-store` is the doctor's only non-gating check: it is checked, reported, and repaired like any other, but no state of it ever makes the doctor exit non-zero.
+Readiness means this host can start and supervise an agent, and the task store is a separate concern the parent home's inherited backlog backend drags onto a host whose route already works, so a store gap must never refuse a seed, a launch, or a liveness relaunch.
+Not gating is not the same as not repairing, though: when the read-only run leaves a non-gating gap that `--fix` can close, the doctor also prints `repairable-advisory: beads-store`, and the readiness gate runs its repair pass on that line even though the read-only run exited 0.
+Only a gap the repair can actually close is published that way, so a host whose only gap is the missing wrapper still ends a seed, a launch, or a liveness relaunch with a working queue, while a host with no `bd` at all, or one whose wrapper the repair is forbidden to touch, stays informational, blocks nothing, and has no repair attempted for it.
+
+A machine provisioned this way holds its own store until a Dolt remote destination is approved, so it starts empty rather than inheriting the fleet's history; see [`beads-sync-topology.md`](beads-sync-topology.md).
 
 ## Provision a route
 

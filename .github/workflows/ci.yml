@@ -1,5 +1,16 @@
 name: CI
 
+# Test-impact selection, in one place so the safety rule is readable once:
+# a pull request runs only the tests bin/fm-test-affected.sh maps its changed
+# paths to, and a push to main always runs the complete regression suite. Every
+# selector is occasionally wrong; that unconditional full run on merge is what
+# makes being occasionally wrong survivable, so the subset must never become
+# the only thing that ever runs. Two independent layers hold that: the
+# "Select tests affected by this pull request" steps below are gated on the
+# event, and the selector itself prints the complete inventory for any event
+# other than pull_request. Lane and shard membership stay owned by
+# bin/fm-test-run.sh, which applies the list as a filter through --only-from,
+# so selection cannot reach into another lane or weaken the coverage guard.
 on:
   push:
     branches: [main]
@@ -70,11 +81,23 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
+      # Pull requests only; see the selection note above the triggers.
+      - name: Select tests affected by this pull request
+        if: github.event_name == 'pull_request'
+        env:
+          FM_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          bin/fm-test-affected.sh --base "$FM_PR_BASE_SHA" --explain \
+            --out "$RUNNER_TEMP/fm-test/affected.txt"
+          echo "FM_ONLY_FROM=$RUNNER_TEMP/fm-test/affected.txt" >> "$GITHUB_ENV"
       - name: Run portable parallel shard 1
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
           bin/fm-test-run.sh --lane portable-parallel-1 \
+            ${FM_ONLY_FROM:+--only-from "$FM_ONLY_FROM"} \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel-1.json"
       - name: Upload shard 1 timing artifact
         if: always()
@@ -102,11 +125,23 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
+      # Pull requests only; see the selection note above the triggers.
+      - name: Select tests affected by this pull request
+        if: github.event_name == 'pull_request'
+        env:
+          FM_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          bin/fm-test-affected.sh --base "$FM_PR_BASE_SHA" --explain \
+            --out "$RUNNER_TEMP/fm-test/affected.txt"
+          echo "FM_ONLY_FROM=$RUNNER_TEMP/fm-test/affected.txt" >> "$GITHUB_ENV"
       - name: Run portable parallel shard 2
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
           bin/fm-test-run.sh --lane portable-parallel-2 \
+            ${FM_ONLY_FROM:+--only-from "$FM_ONLY_FROM"} \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel-2.json"
       - name: Upload shard 2 timing artifact
         if: always()
@@ -156,6 +191,17 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
+      # Pull requests only; see the selection note above the triggers.
+      - name: Select tests affected by this pull request
+        if: github.event_name == 'pull_request'
+        env:
+          FM_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          bin/fm-test-affected.sh --base "$FM_PR_BASE_SHA" --explain \
+            --out "$RUNNER_TEMP/fm-test/affected.txt"
+          echo "FM_ONLY_FROM=$RUNNER_TEMP/fm-test/affected.txt" >> "$GITHUB_ENV"
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
           # job-total rather than a literal, so shrinking or growing the matrix
@@ -167,6 +213,7 @@ jobs:
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
           bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
+            ${FM_ONLY_FROM:+--only-from "$FM_ONLY_FROM"} \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
       - name: Upload portable serial shard ${{ matrix.shard }} timing artifact
         if: always()
@@ -264,6 +311,17 @@ jobs:
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-herdr"
           bin/fm-herdr-ci-cleanup.sh snapshot "$RUNNER_TEMP/fm-herdr/sessions-before.json"
+      # Pull requests only; see the selection note above the triggers.
+      - name: Select tests affected by this pull request
+        if: github.event_name == 'pull_request'
+        env:
+          FM_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          bin/fm-test-affected.sh --base "$FM_PR_BASE_SHA" --explain \
+            --out "$RUNNER_TEMP/fm-test/affected.txt"
+          echo "FM_ONLY_FROM=$RUNNER_TEMP/fm-test/affected.txt" >> "$GITHUB_ENV"
       - name: Run real-Herdr family (serial, required)
         run: |
           set -eu
@@ -272,6 +330,7 @@ jobs:
           # harness credential tests stay outside this family (opt-in env only).
           bin/fm-test-run.sh --family real-herdr-gated \
             --fail-on-gate-skip 'herdr not found' \
+            ${FM_ONLY_FROM:+--only-from "$FM_ONLY_FROM"} \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-herdr.json"
       - name: Cleanup job-owned Herdr lab sessions
         if: always()
@@ -393,5 +452,21 @@ jobs:
           if [ -n "$tracked" ]; then
             echo "::error::Personal fleet paths are tracked in git:"
             printf '%s\n' "$tracked"
+            exit 1
+          fi
+      - name: Spawning tests must carry the Parlay enrollment bypass
+        run: |
+          set -eu
+          # fm-spawn.sh enrollment must never reach the live Parlay relay from a test, and a test
+          # file that drives fm-spawn.sh without the flag reintroduces the leak (robots-8ce5).
+          uncovered=""
+          for f in tests/*.test.sh; do
+            grep -q 'fm-spawn\.sh' "$f" || continue
+            grep -qE '^\. "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/(lib|[a-z-]+-helpers)\.sh"' "$f" && continue
+            grep -q 'FM_SPAWN_SKIP_PARLAY' "$f" && continue
+            uncovered="$uncovered $(basename "$f")"
+          done
+          if [ -n "$uncovered" ]; then
+            echo "::error::These tests drive fm-spawn.sh without the Parlay enrollment bypass:$uncovered"
             exit 1
           fi

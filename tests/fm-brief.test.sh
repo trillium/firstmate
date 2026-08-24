@@ -494,12 +494,12 @@ test_secondmate_marked_request_reporting_contract() {
     "$ROOT/bin/fm-brief.sh" marked-request-reporting --secondmate --no-projects >/dev/null 2>&1
   brief="$home/data/marked-request-reporting/brief.md"
 
-  assert_grep 'A marked request requires one correlated answer after the work' "$brief" \
-    "secondmate charter did not require the correlated answer after the work"
-  assert_grep 'does not require a separate receipt or start acknowledgement' "$brief" \
-    "secondmate charter did not reject a separate receipt/start acknowledgement"
-  assert_grep "Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started." "$brief" \
-    "secondmate charter did not forbid a generic working acknowledgement"
+  assert_grep 'immediately append an intake acknowledgement line to the parent status file containing that corr=<id>' "$brief" \
+    "secondmate charter did not require an intake acknowledgement containing corr=<id>"
+  assert_grep 'after finishing, append the terminal result (also containing corr=<id>) to report completion.' "$brief" \
+    "secondmate charter did not require the terminal corr= outcome line"
+  assert_grep "Never append working: lines merely to acknowledge receipt or announce that a marked request has started." "$brief" \
+    "secondmate charter did not forbid working: for non-marked routine status updates"
   assert_no_grep "Give every routed-work phase a stable key: open it with \`working" "$brief" \
     "secondmate charter retained the unconditional working opener"
   assert_grep 'When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above' "$brief" \
@@ -757,6 +757,9 @@ EOF
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
   assert_grep 'Never run `no-mistakes init --fork-url`' "$brief" \
     "swapped no-mistakes rule dropped the --fork-url warning"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'verify `git remote get-url origin` returns the `trillium/rango` fork URL' "$brief" \
+    "swapped no-mistakes rule dropped the pre-invocation origin verification"
 
   # direct-PR pushes too; SSH origin still resolves the fork name, with an
   # explicit --repo override so gh cannot default the PR base to upstream.
@@ -771,6 +774,9 @@ EOF
   # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
   assert_grep 'gh pr create --repo trillium/rango --base' "$brief" \
     "direct-PR fork rule dropped the explicit --repo override in the gh pr create form"
+  # shellcheck disable=SC2016 # Literal backticks must stay unexpanded.
+  assert_grep 'gh-axi pr create --repo trillium/rango' "$brief" \
+    "direct-PR fork rule dropped the gh-axi alternative for --repo override"
   assert_grep "never stop to ask fork-vs-local" "$brief" \
     "fork rule dropped the never-ask-fork-vs-local instruction"
 
@@ -880,12 +886,15 @@ SH
   chmod +x "$fakebin_dir/task"
 }
 
-# Test: under config/backlog-backend=beads, fm-brief.sh does NOT mint or resolve
-# a bead at scaffold time (beads-authority migration Stage 3 defers that to
-# fm-spawn.sh, at actual dispatch time) - a brief that is scaffolded but never
-# spawned must never leave an orphaned bead in the shared store. Covers ship and
-# scout briefs; secondmate charters stay exempt as before.
-test_beads_backend_does_not_mint_at_brief_time() {
+# Test: under config/backlog-backend=beads, fm-brief.sh opens the task's bead at
+# INTAKE - it resolves-or-mints the task:<id>-labeled bead the moment the brief is
+# scaffolded (AGENTS.md sections 7 and 10), so a task known but not yet spawned
+# already has an open bead. It still does NOT inject the worker-facing Bead
+# Receipt/Closure sections (FM_HOOK_BEADS_ID stays unset; those are added at
+# dispatch by fm-spawn.sh). Covers ship and scout briefs. An explicit opt-in
+# (--beads flag or a preset FM_HOOK_BEADS_ID) and secondmate charters are exempt
+# and trigger no auto-mint.
+test_beads_backend_mints_bead_at_intake() {
   local home fakebin brief calls_log
   home="$TMP_ROOT/beads-backend-home"
   mkdir -p "$home/data" "$home/config"
@@ -898,38 +907,46 @@ test_beads_backend_does_not_mint_at_brief_time() {
   PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/beads-auto-ship/brief.md"
   assert_present "$brief" "ship brief was not scaffolded under the beads backend"
+  # The intake bead is opened via the idempotent task:<id> lookup-then-mint.
+  assert_grep "list --label task:beads-auto-ship --limit 1 --json" "$calls_log" \
+    "ship brief did not resolve the intake bead via its task:<id> label under the beads backend"
+  assert_grep "create --title" "$calls_log" \
+    "ship brief did not mint an intake bead under the beads backend"
+  assert_grep "task:beads-auto-ship" "$calls_log" \
+    "the minted intake bead did not carry the task:<id> idempotency label"
+  # Section injection still stays at dispatch (fm-spawn.sh), not at scaffold time.
   assert_no_grep "# Bead Receipt" "$brief" \
-    "ship brief wrongly minted/rendered a Bead Receipt section at scaffold time under the beads backend"
+    "ship brief wrongly rendered a Bead Receipt section at scaffold time (that belongs to fm-spawn.sh)"
   assert_no_grep "# Bead Closure" "$brief" \
-    "ship brief wrongly minted/rendered a Bead Closure section at scaffold time under the beads backend"
+    "ship brief wrongly rendered a Bead Closure section at scaffold time (that belongs to fm-spawn.sh)"
 
   PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-scout no-registry-proj --scout >/dev/null 2>&1
   brief="$home/data/beads-auto-scout/brief.md"
   assert_present "$brief" "scout brief was not scaffolded under the beads backend"
+  assert_grep "list --label task:beads-auto-scout --limit 1 --json" "$calls_log" \
+    "scout brief did not open its intake bead under the beads backend"
   assert_no_grep "# Bead Receipt" "$brief" \
-    "scout brief wrongly minted/rendered a Bead Receipt section at scaffold time under the beads backend"
+    "scout brief wrongly rendered a Bead Receipt section at scaffold time under the beads backend"
 
-  # Secondmate charters stay exempt too.
+  # Secondmate charters are operational entities, not backlog work items: no bead.
   FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
     PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-sm --secondmate alpha >/dev/null 2>&1
   brief="$home/data/beads-auto-sm/brief.md"
   assert_present "$brief" "secondmate charter was not scaffolded under the beads backend"
-  assert_no_grep "# Bead Receipt" "$brief" \
-    "secondmate charter wrongly picked up bead auto-linking under the beads backend"
+  assert_no_grep "task:beads-auto-sm" "$calls_log" \
+    "secondmate charter wrongly opened an intake bead under the beads backend"
 
-  # An explicit FM_HOOK_BEADS_ID still renders the hook sections under the beads
-  # backend (the pre-existing --beads opt-in path is unaffected by deferring
-  # auto-minting); it must not trigger any task CLI lookup/mint either.
+  # An explicit FM_HOOK_BEADS_ID renders the hook sections and must NOT auto-mint
+  # a second bead (the task is already linked by the opt-in caller).
   FM_HOOK_BEADS_ID=bead-explicit-under-beads-backend \
     PATH="$fakebin:$PATH" FM_HOME="$home" \
     "$ROOT/bin/fm-brief.sh" beads-explicit-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/beads-explicit-ship/brief.md"
   assert_grep "task set-state bead-explicit-under-beads-backend dispatch=claimed" "$brief" \
     "an explicit FM_HOOK_BEADS_ID did not render the Bead Receipt section under the beads backend"
-
-  [ -e "$calls_log" ] \
-    && fail "fm-brief.sh invoked the task CLI under the beads backend, minting a bead at scaffold time: $(cat "$calls_log")"
-  pass "fm-brief.sh: under config/backlog-backend=beads, briefs never mint/resolve a bead at scaffold time (deferred to fm-spawn.sh); an explicit FM_HOOK_BEADS_ID still renders hook sections; secondmate charters stay exempt"
+  assert_no_grep "task:beads-explicit-ship" "$calls_log" \
+    "an explicit FM_HOOK_BEADS_ID wrongly triggered a second intake-bead mint under the beads backend"
+  pass "fm-brief.sh: under config/backlog-backend=beads, briefs open the task's bead at intake (idempotent task:<id> mint) without injecting hook sections; explicit opt-ins and secondmate charters do not auto-mint"
 }
 
 # Test: under the default (non-beads) backend, briefs are unchanged - no Bead
@@ -980,5 +997,5 @@ test_scout_and_secondmate_load_decision_hold_policy
 test_fork_first_push_rule
 test_scout_and_secondmate_scaffold
 test_crewmate_briefs_enroll_in_parlay_first
-test_beads_backend_does_not_mint_at_brief_time
+test_beads_backend_mints_bead_at_intake
 test_default_backend_omits_hook_sections

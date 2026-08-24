@@ -16,10 +16,20 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|none> · <detail>
+#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <bead|run-step|pane|status-log|none> · <detail>
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta.
+#   1b. Under config/backlog-backend=beads only: a CLOSED linked bead (beads_id=
+#      in meta) is an authoritative lifecycle "done" - the worker closes it as
+#      its terminal step and teardown/ledger close it on landing, so a closed
+#      bead means complete regardless of a stale status-event tail. An OPEN bead
+#      falls through untouched, so live work is never marked done prematurely.
+#      A close alone is still not enough: fm-ledger.sh's drop-recovery can close
+#      a bead that never landed, so this reports done only when the task ALSO
+#      has no open decision and no unlanded (uncommitted or unpushed) work, with
+#      any probe that fails to answer counting as unlanded. Other backends never
+#      consult a bead here; the block below owns the exact gate.
 #   2. Matching no-mistakes run for this crew's branch AND current code identity,
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
@@ -55,9 +65,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 # shellcheck source=bin/fm-tmux-lib.sh
 . "$SCRIPT_DIR/fm-tmux-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -106,6 +119,51 @@ HARNESS=$(meta_value harness)
 # A torn-down (or never-created) worktree has no current state to read.
 if [ -z "$WT" ] || [ ! -d "$WT" ]; then
   emit unknown none "worktree gone (torn down?)"
+fi
+
+# --- lifecycle completion: a closed linked bead is authoritative "done" -----
+# Under config/backlog-backend=beads every task carries a linked bead (beads_id=
+# in meta). The worker closes that bead as its terminal step before reporting
+# done, and fm-teardown.sh/fm-ledger.sh close it on confirmed landing or
+# drop-recovery, so a CLOSED bead is a lifecycle-derived truth that the task is
+# complete - authoritative over a stale status-event tail. This fires ONLY when
+# the bead is closed: an OPEN bead (live work) never reaches `emit` here and
+# stays governed by the pane/run-step logic below, so live work is never marked
+# done prematurely. Config-gated to the beads backend (fm_backlog_backend_value);
+# tasks-axi/manual backends never consult a bead here. fm_beads_is_closed fails
+# open (missing tool or store error -> not closed -> existing logic governs).
+#
+# But a closed bead is NOT unconditionally done: fm-ledger.sh's drop-recovery
+# closes a claimed bead that went quiet WITHOUT landing, so a close can outrun the
+# actual work. The bead is authoritative only when the task also has no open
+# decision and no unlanded work; if a decision is still open, or the worktree has
+# uncommitted or unpushed commits, the close is not completion evidence, so we
+# fall through to the run-step/pane/status sources rather than reporting done.
+# Read-only, mirroring the uncommitted/unpushed probe fm-teardown.sh uses for its
+# staleness summary; work_is_landed itself lives in that mutating script this
+# side-effect-free reader must not source.
+#
+# Each probe's EXIT STATUS is checked, not just its output: a git that refused the
+# read (dubious ownership, a corrupt index, git missing) also prints nothing, and
+# reading that silence as "nothing unlanded" would let a closed bead report done
+# over a worktree whose state was never actually read. Any probe that fails to
+# answer counts as unlanded, the same fail-closed direction fm-teardown.sh's
+# validate_worktree_teardown_safety takes on the identical two commands.
+bead_task_has_unlanded_work() {
+  local out
+  out=$(git -C "$WT" status --porcelain 2>/dev/null) || return 0
+  [ -z "$out" ] || return 0
+  out=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null) || return 0
+  [ -z "$out" ] || return 0
+  return 1
+}
+BEADS_ID=$(meta_value beads_id)
+if [ -n "$BEADS_ID" ] \
+  && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ] \
+  && fm_beads_is_closed "$BEADS_ID" \
+  && [ -z "$(status_open_decisions "$LOG")" ] \
+  && ! bead_task_has_unlanded_work; then
+  emit "done" bead "linked bead $BEADS_ID closed: task complete"
 fi
 
 # --- status log ------------------------------------------------------------

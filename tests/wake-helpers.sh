@@ -81,6 +81,13 @@ fi
 exit 1
 SH
   chmod +x "$fakebin/tmux"
+  # Stub parlay with a fast no-op sweep so tests that use PATH="$fakebin:$PATH"
+  # are not slowed by a real parlay installation on the host.
+  cat > "$fakebin/parlay" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/parlay"
   make_fake_crew_state "$fakebin" >/dev/null
   printf '%s\n' "$dir"
 }

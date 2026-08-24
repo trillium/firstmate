@@ -34,10 +34,13 @@ FM_TEST_LIB_SOURCED=1
 # strips this to verify real refusal.
 export FM_GATE_REFUSE_BYPASS=1
 
-# Skip Parlay enrollment in all test-suite spawns. The live Parlay relay is not
-# a test fixture; without this guard every test spawn that reaches the enrollment
-# block would permanently register a fake agent ID and leave a listener process
-# running (robots-8ce5). FM_SPAWN_SKIP_PARLAY is distinct from FM_SPAWN_NO_GUARD
+# Keep the live Parlay relay out of every test-suite spawn and teardown. The
+# relay is not a test fixture; without this guard every test spawn that reaches
+# the enrollment block would permanently register a fake agent ID and leave a
+# listener process running, and every test that drives fm-teardown.sh would call
+# `parlay agent-down` with a fixture id against the live relay (robots-8ce5).
+# FM_SPAWN_SKIP_PARLAY gates both bin/fm-spawn.sh's enrollment and
+# bin/fm-teardown.sh's deregistration. It is distinct from FM_SPAWN_NO_GUARD
 # (watcher-guard bypass) so batch-dispatch production spawns, which also set
 # FM_SPAWN_NO_GUARD, are unaffected.
 export FM_SPAWN_SKIP_PARLAY=1
