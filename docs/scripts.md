@@ -99,6 +99,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-no-mistakes-liveness.sh` | Check liveness of no-mistakes runs and match them to tasks; list all running runs or check a specific task |
 | `fm-nm-run-is-live.sh`   | Fast liveness check for a specific no-mistakes run ID; designed for supervision loops |
 | `fm-nm-run-lib.sh`       | Shared branch-and-code-identity attribution for no-mistakes runs                    |
+| `fm-landed-lib.sh`       | Single owner of the "has this work LANDED" predicate (merged PR containing the work, or content already in the default branch), sourced by teardown's landing check and fm-crew-state.sh's closed-bead gate |
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-timeout-lib.sh`      | Single owner of hard-bounded command execution and its fallback watchdog |
 | `fm-timing-lib.sh`       | Single owner of the deferred network stage's per-step elapsed-time records, inert unless a run asks for them |
