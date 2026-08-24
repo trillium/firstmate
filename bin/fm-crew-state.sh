@@ -27,9 +27,12 @@
 #      falls through untouched, so live work is never marked done prematurely.
 #      A close alone is still not enough: fm-ledger.sh's drop-recovery can close
 #      a bead that never landed, so this reports done only when the task ALSO
-#      has no open decision and no unlanded (uncommitted or unpushed) work, with
-#      any probe that fails to answer counting as unlanded. Other backends never
-#      consult a bead here; the block below owns the exact gate.
+#      has no open decision, has a CLEAN worktree, and has committed work that
+#      actually LANDED, judged by the same predicate teardown uses
+#      (bin/fm-landed-lib.sh's fm_work_is_landed: PR merged, or content already
+#      in the default branch). Uncommitted work is unlanded work, and any probe
+#      that fails to answer counts as unlanded. Other backends never consult a
+#      bead here; the block below owns the exact gate.
 #   2. Matching no-mistakes run for this crew's branch AND current code identity,
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
@@ -57,8 +60,16 @@
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log.
 #
-# Read-only and side-effect free. Always exits 0 on a successful read regardless
-# of state; exit 2 only on a usage error (no id).
+# Read-only for this crew's working state: nothing here changes the index, the
+# working tree, HEAD, or any local branch. The one qualification is the closed-bead
+# landing predicate (bin/fm-landed-lib.sh's fm_work_is_landed), whose writes are
+# confined to the worktree's object store plus the remote-tracking ref a fetch
+# updates: it fetches the default branch before comparing content and
+# refs/pull/<n>/head when a merged PR's head commit is not present locally, and it
+# stores merged tree objects through `git merge-tree --write-tree`. That library's
+# header owns the full list; both fetches are the same reads of the remote teardown
+# performs. Always exits 0 on a successful read regardless of state; exit 2 only on
+# a usage error (no id).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,6 +90,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-landed-lib.sh
+. "$SCRIPT_DIR/fm-landed-lib.sh"
 
 ID=${1:-}
 [ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
@@ -87,6 +100,21 @@ META="$STATE/$ID.meta"
 LOG="$STATE/$ID.status"
 NM_TIMEOUT=${FM_CREW_STATE_NM_TIMEOUT:-10}
 case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
+# The bound this reader OPTS INTO for the closed-bead landing predicate.
+# bin/fm-landed-lib.sh is unbounded by default so bin/fm-teardown.sh keeps its
+# historic wait-as-long-as-it-takes semantics at a gate it asks once; this read
+# runs on every supervision poll instead, so an unreachable remote or a blocking
+# credential helper must cost a bounded wait rather than stall the watcher. The
+# predicate spends this once in total, not once per remote leg.
+# FM_CREW_STATE_LANDED_TIMEOUT is the knob for THIS reader and is the only value
+# that reaches the predicate here: the generic FM_LANDED_NET_TIMEOUT an operator
+# may export for another caller never raises or lowers the supervision bound, so
+# the worst case stated above holds whatever the surrounding environment says.
+# Opting in also buys the predicate's never-prompt posture, so a missing git
+# credential fails fast into the unlanded fail-safe rather than blocking this read
+# on a terminal prompt no supervision poll can answer.
+LANDED_TIMEOUT=${FM_CREW_STATE_LANDED_TIMEOUT:-$NM_TIMEOUT}
+case "$LANDED_TIMEOUT" in ''|*[!0-9]*) LANDED_TIMEOUT=10 ;; esac
 # How many of the most recent `no-mistakes runs` rows the cross-branch fallback
 # (nm_runs_status_for_branch, below) scans. Generous enough to still find a
 # branch's own run on a busy multi-crew fleet without listing the entire
@@ -121,6 +149,12 @@ if [ -z "$WT" ] || [ ! -d "$WT" ]; then
   emit unknown none "worktree gone (torn down?)"
 fi
 
+# The crew's branch, resolved ONCE for every consumer below (the closed-bead
+# landing gate and the no-mistakes run attribution). Empty at detached HEAD (a
+# just-spawned crew, or a scout's scratch worktree); with no branch there is no
+# run to attribute to this crew.
+CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+
 # --- lifecycle completion: a closed linked bead is authoritative "done" -----
 # Under config/backlog-backend=beads every task carries a linked bead (beads_id=
 # in meta). The worker closes that bead as its terminal step before reporting
@@ -136,33 +170,50 @@ fi
 # But a closed bead is NOT unconditionally done: fm-ledger.sh's drop-recovery
 # closes a claimed bead that went quiet WITHOUT landing, so a close can outrun the
 # actual work. The bead is authoritative only when the task also has no open
-# decision and no unlanded work; if a decision is still open, or the worktree has
-# uncommitted or unpushed commits, the close is not completion evidence, so we
-# fall through to the run-step/pane/status sources rather than reporting done.
-# Read-only, mirroring the uncommitted/unpushed probe fm-teardown.sh uses for its
-# staleness summary; work_is_landed itself lives in that mutating script this
-# side-effect-free reader must not source.
+# decision AND its work is landed on BOTH dimensions:
 #
-# Each probe's EXIT STATUS is checked, not just its output: a git that refused the
-# read (dubious ownership, a corrupt index, git missing) also prints nothing, and
-# reading that silence as "nothing unlanded" would let a closed bead report done
-# over a worktree whose state was never actually read. Any probe that fails to
-# answer counts as unlanded, the same fail-closed direction fm-teardown.sh's
-# validate_worktree_teardown_safety takes on the identical two commands.
-bead_task_has_unlanded_work() {
+#   1. The worktree is CLEAN (crew_tree_is_clean below). Uncommitted work is by
+#      definition unlanded: a crew that went quiet mid-edit has its whole change
+#      sitting unsaved, yet its HEAD is still the spawn base, which the content
+#      check would happily call "already in the default branch".
+#   2. Its COMMITTED work landed, judged by the same predicate teardown uses
+#      (bin/fm-landed-lib.sh's fm_work_is_landed): a merged PR proves the local
+#      work is contained in the PR head, or the content is already in the
+#      up-to-date default branch. A clean, fully-pushed worktree whose PR is still
+#      open and whose content is not yet in the default branch is NOT landed.
+#
+# The dirty-tree condition lives HERE rather than inside fm-landed-lib.sh on
+# purpose: that library's contract is deliberately "has this COMMITTED work
+# landed", and bin/fm-teardown.sh depends on exactly that meaning, reaching the
+# predicate only after validate_worktree_teardown_safety has already refused on a
+# dirty tree. If either dimension says unlanded, or a decision is still open, the
+# close is not completion evidence, so we fall through to the run-step/pane/status
+# sources rather than reporting done.
+#
+# Both dimensions fail closed. fm_work_is_landed returns non-zero for any gh/git
+# probe that cannot answer, including a remote leg killed by the bound this reader
+# opts into (LANDED_TIMEOUT above), and crew_tree_is_clean checks git's EXIT STATUS, not
+# just its output: a git that refused the read (dubious ownership, a corrupt
+# index, git missing) also prints nothing, and reading that silence as "nothing
+# uncommitted" is precisely the bug. Any probe that cannot answer counts as
+# unlanded, never done - the same fail-safe direction teardown's landing check
+# takes.
+crew_tree_is_clean() {
   local out
-  out=$(git -C "$WT" status --porcelain 2>/dev/null) || return 0
-  [ -z "$out" ] || return 0
-  out=$(git -C "$WT" log --oneline HEAD --not --remotes -- 2>/dev/null) || return 0
-  [ -z "$out" ] || return 0
-  return 1
+  out=$(git -C "$WT" status --porcelain 2>/dev/null) || return 1
+  [ -z "$out" ]
 }
+PROJ=$(meta_value project)
+[ -n "$PROJ" ] || PROJ="$WT"
+PR_URL=$(meta_value pr)
 BEADS_ID=$(meta_value beads_id)
 if [ -n "$BEADS_ID" ] \
   && [ "$(fm_backlog_backend_value "$CONFIG")" = beads ] \
   && fm_beads_is_closed "$BEADS_ID" \
   && [ -z "$(status_open_decisions "$LOG")" ] \
-  && ! bead_task_has_unlanded_work; then
+  && crew_tree_is_clean \
+  && FM_LANDED_NET_TIMEOUT=$LANDED_TIMEOUT \
+     fm_work_is_landed "$WT" "$PROJ" "$CREW_BRANCH" "$PR_URL"; then
   emit "done" bead "linked bead $BEADS_ID closed: task complete"
 fi
 
@@ -418,10 +469,6 @@ nm_runs_status_for_branch() {  # <branch>
   done <<< "$out"
   return 0
 }
-
-# CREW_BRANCH is empty at detached HEAD (a just-spawned crew, or a scout's
-# scratch worktree); with no branch there is no run to attribute to this crew.
-CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 
 # 0 if the active axi-status run's head field matches this worktree's code
 # identity. Branch match is a precondition (caller). Rule owned by

@@ -59,6 +59,10 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-tmux-lib.sh" "$fake/bin/fm-tmux-lib.sh"
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
   ln -s "$ROOT/bin/fm-nm-run-lib.sh" "$fake/bin/fm-nm-run-lib.sh"
+  # fm-landed-lib.sh (and the fm-timeout-lib.sh a bound-opting caller's remote legs
+  # load lazily): teardown sources the shared landing predicate before any work.
+  ln -s "$ROOT/bin/fm-landed-lib.sh" "$fake/bin/fm-landed-lib.sh"
+  ln -s "$ROOT/bin/fm-timeout-lib.sh" "$fake/bin/fm-timeout-lib.sh"
   # fm-lock-lib.sh: teardown sources it for the shared lock-staleness proof.
   ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
   # Lifecycle serialization and shared adapter ownership are sourced by teardown.
@@ -152,6 +156,10 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-tmux-lib.sh" "$fake/bin/fm-tmux-lib.sh"
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
   ln -s "$ROOT/bin/fm-nm-run-lib.sh" "$fake/bin/fm-nm-run-lib.sh"
+  # fm-landed-lib.sh (and the fm-timeout-lib.sh a bound-opting caller's remote legs
+  # load lazily): teardown sources the shared landing predicate before any work.
+  ln -s "$ROOT/bin/fm-landed-lib.sh" "$fake/bin/fm-landed-lib.sh"
+  ln -s "$ROOT/bin/fm-timeout-lib.sh" "$fake/bin/fm-timeout-lib.sh"
   ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
   ln -s "$ROOT/bin/fm-control-lib.sh" "$fake/bin/fm-control-lib.sh"
   ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"

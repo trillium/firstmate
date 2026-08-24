@@ -15,9 +15,10 @@
 #
 # There are two documented exceptions. The absorb classification
 # (crew_absorb_class and its working/paused wrappers) is NOT a pure status-file
-# read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
-# to decide whether a crew that just stopped its turn or went stale is working,
-# deliberately paused, or neither. Callers run it ONLY on no-verb signal handling
+# read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call
+# and, under the beads backend, bounded remote reads (gh/git) for its closed-bead
+# landing check, to decide whether a crew that just stopped its turn or went stale
+# is working, deliberately paused, or neither. Callers run it ONLY on no-verb signal handling
 # and first sighting of a stale hash, never on every wake, so the per-wake triage
 # stays cheap. status_open_decisions_incremental (see "incremental (cursor-backed)
 # open-decisions fold" below) also writes: it persists a per-status-file byte
@@ -644,8 +645,14 @@ signal_reason_is_actionable() {  # <file> ...
 # One fm-crew-state.sh read serves BOTH absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
-# NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
-# run it only on no-verb signal and first-sighting stale paths, never every wake.
+# NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, and under
+# the beads backend remote reads (gh/git) for its closed-bead landing check, so
+# callers run it only on no-verb signal and first-sighting stale paths, never every
+# wake. bin/fm-landed-lib.sh is unbounded by default, but fm-crew-state.sh opts
+# into a bound for that check and its remote legs then share ONE deadline for the
+# check as a whole (FM_CREW_STATE_LANDED_TIMEOUT, 10s by default), however many
+# legs it runs, so the wake cannot stall on an unreachable remote - but none of it
+# is free.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
   local id=$1 line state src

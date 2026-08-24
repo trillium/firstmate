@@ -38,12 +38,21 @@ CREW_STATE="$ROOT/bin/fm-crew-state.sh"
 TMP_ROOT=$(fm_test_tmproot fm-crew-state)
 fm_git_identity fmtest fmtest@example.invalid
 
+# The default branch every fixture repo below is pinned to. The landing predicate
+# resolves a project's default branch by name (origin/HEAD, else a local
+# main/master), so the fixtures must not inherit the host's init.defaultBranch.
+DEFAULT_BRANCH=main
+
 # A real git repo checked out on <branch>, so the helper's branch attribution
 # (git symbolic-ref) resolves like it would for a live crew worktree.
 make_repo_on_branch() {  # <dir> <branch>
   local dir=$1 branch=$2
   mkdir -p "$dir"
   git -C "$dir" init -q
+  # Pin the default branch instead of inheriting the host's init.defaultBranch:
+  # land_repo pushes it, and the landing predicate resolves it by name, so a host
+  # configured with any other default (trunk, devel) would otherwise fail opaquely.
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$DEFAULT_BRANCH"
   git -C "$dir" commit -q --allow-empty -m init
   git -C "$dir" checkout -q -b "$branch"
   # Real worktree HEAD for run head-binding (fixtures read FM_FAKE_RUN_HEAD).
@@ -51,18 +60,64 @@ make_repo_on_branch() {  # <dir> <branch>
   export FM_FAKE_RUN_HEAD
 }
 
-# Mark a repo's work as LANDED: add a bare remote and push HEAD, so
-# `git log HEAD --not --remotes` is empty (no unpushed commits) over a clean
-# tree. The bead-done path in fm-crew-state.sh only fires when the task has no
-# unlanded work, so the closed-bead happy path needs the branch to be pushed.
-# The bare remote lives OUTSIDE the worktree (a sibling path), so it never shows
-# up as an untracked entry in `git status --porcelain` - which the unlanded-work
-# probe reads as uncommitted work and would otherwise trip on.
+# Mark a repo's work as LANDED: add a bare remote and push HEAD plus the default
+# branch, so the branch is clean with nothing unpushed AND its content is in the
+# up-to-date default branch (the empty init commit equals the default tree). The
+# closed-bead path reports done only when fm_work_is_landed agrees, so the happy
+# path needs the default branch fetchable from origin. The bare remote lives
+# OUTSIDE the worktree (a sibling path), so it never shows up as an untracked entry.
 land_repo() {  # <dir>
   local dir=$1 remote="$1.remote.git"
+  git init -q --bare "$remote" || return 1
+  git -C "$dir" remote add origin "$remote" || return 1
+  git -C "$dir" push -q origin HEAD || return 1
+  # DEFAULT_BRANCH is the shared constant every fixture in this file pins its repo
+  # to, so this pushes the branch make_repo_on_branch actually created rather than
+  # guessing from a main|master name list.
+  git -C "$dir" push -q origin "refs/heads/$DEFAULT_BRANCH:refs/heads/$DEFAULT_BRANCH"
+}
+
+# Build a repo whose work is clean AND fully pushed (no unpushed commits, so the
+# pre-fix clean-tree/unpushed probe would have wrongly called it landed) yet whose
+# content is NOT in the default branch and has no merged PR: genuinely unlanded.
+# main carries a real base file; the feature branch adds a different file and both
+# are pushed to a bare origin. content_in_default then sees the branch introduce
+# content main lacks, so fm_work_is_landed returns unlanded.
+make_pushed_unlanded_repo() {  # <dir> <branch>
+  local dir=$1 branch=$2 remote="$1.remote.git"
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$DEFAULT_BRANCH"
+  printf 'base\n' > "$dir/base.txt"
+  git -C "$dir" add base.txt
+  git -C "$dir" -c user.email=t@t -c user.name=t commit -q -m 'base content'
+  git -C "$dir" checkout -q -b "$branch"
+  printf 'feature\n' > "$dir/feature.txt"
+  git -C "$dir" add feature.txt
+  git -C "$dir" -c user.email=t@t -c user.name=t commit -q -m 'feature content'
   git init -q --bare "$remote"
   git -C "$dir" remote add origin "$remote"
-  git -C "$dir" push -q origin HEAD
+  git -C "$dir" push -q origin "$branch"
+  git -C "$dir" push -q origin "$DEFAULT_BRANCH"
+}
+
+# Build a repo whose COMMITTED work is landed but whose actual change is entirely
+# UNCOMMITTED: HEAD sits on the feature branch at the spawn base, which is the tip
+# of the pushed default branch, so fm_landed_content_in_default alone would call it
+# landed. The crew's real work is an unsaved edit in the working tree.
+make_uncommitted_work_repo() {  # <dir> <branch>
+  local dir=$1 branch=$2 remote="$1.remote.git"
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$DEFAULT_BRANCH"
+  printf 'base\n' > "$dir/base.txt"
+  git -C "$dir" add base.txt
+  git -C "$dir" -c user.email=t@t -c user.name=t commit -q -m 'base content'
+  git init -q --bare "$remote"
+  git -C "$dir" remote add origin "$remote"
+  git -C "$dir" push -q origin "$DEFAULT_BRANCH"
+  git -C "$dir" checkout -q -b "$branch"
+  printf 'work in progress\n' >> "$dir/base.txt"
 }
 
 # A fakebin with a fake `no-mistakes` (serves the env-driven run output) and a
@@ -153,7 +208,32 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/herdr" "$fb/task"
+  cat > "$fb/gh" <<'SH'
+#!/usr/bin/env bash
+set -u
+# Fake `gh` for the landing predicate's `gh pr view --json state,headRefOid`.
+# FM_FAKE_GH_PR_STATE empty -> no PR found (exit 1); otherwise emit
+# "<state>\t<head>", the shape fm_landed_pr_is_merged parses.
+case "${1:-} ${2:-}" in
+  "pr view")
+    [ -n "${FM_FAKE_GH_PR_STATE:-}" ] || { echo "error: pull request not found" >&2; exit 1; }
+    printf '%s\t%s\n' "$FM_FAKE_GH_PR_STATE" "${FM_FAKE_GH_PR_HEAD:-}"
+    exit 0 ;;
+esac
+echo "error: pull request not found" >&2
+exit 1
+SH
+  cat > "$fb/gh-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+# Fake `gh-axi` for the landing predicate's `gh-axi pr list`. FM_FAKE_GHAXI_PR_LIST
+# empty -> no PR associated with the branch.
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' "${FM_FAKE_GHAXI_PR_LIST:-}" ; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/herdr" "$fb/task" "$fb/gh" "$fb/gh-axi"
   printf '%s\n' "$fb"
 }
 
@@ -180,11 +260,34 @@ new_case() {  # <name> -> echoes case dir with an empty state/
   printf '%s\n' "$d"
 }
 
-# A fake `git` that refuses exactly the unlanded-work probe (`status --porcelain`)
-# the way a dubious-ownership refusal or a corrupt index does - non-zero exit,
-# nothing on stdout - and delegates every other invocation to the real git, so the
-# rest of the read (branch attribution, run head binding) behaves normally.
+# The FIRST of three fake-git variants: one that refuses exactly the landing
+# predicate's content comparison (`merge-tree`) the way a dubious-ownership refusal
+# or a corrupt index does - non-zero exit, nothing on stdout - and delegates every
+# other invocation to the real git, so the rest of the read (branch attribution,
+# default-branch resolution, fetch) behaves normally. A probe that cannot answer
+# must count as unlanded rather than done.
 add_refusing_git() {  # <fakebin> <real-git-path>
+  local fb=$1 real=$2
+  cat > "$fb/git" <<SH
+#!/usr/bin/env bash
+set -u
+for arg in "\$@"; do
+  [ "\$arg" = merge-tree ] || continue
+  exit 128
+done
+exec "$real" "\$@"
+SH
+  chmod +x "$fb/git"
+}
+
+# The SECOND fake-git variant: one that refuses the gate's OTHER fail-closed
+# dimension, the dirty-tree probe (`status --porcelain`), the way a
+# dubious-ownership refusal, a corrupt index, or a git that cannot read the
+# worktree does - non-zero exit, nothing on stdout - and delegates every other
+# invocation to the real git. A clean tree prints nothing too, so reading that
+# silence as "nothing uncommitted" is the bug this guards: the refusal must count
+# as unlanded, never done.
+add_porcelain_refusing_git() {  # <fakebin> <real-git-path>
   local fb=$1 real=$2
   cat > "$fb/git" <<SH
 #!/usr/bin/env bash
@@ -192,6 +295,27 @@ set -u
 for arg in "\$@"; do
   [ "\$arg" = --porcelain ] || continue
   exit 128
+done
+exec "$real" "\$@"
+SH
+  chmod +x "$fb/git"
+}
+
+# The THIRD fake-git variant, and the only one that refuses nothing: it records the
+# credential-prompt environment it was handed on a fetch, then delegates every
+# invocation to the real git. It pins the posture dimension rather than a
+# fail-closed one, letting a test observe whether the caller imposed the
+# never-prompt guarantee (GIT_TERMINAL_PROMPT/GIT_ASKPASS) on the landing
+# predicate's fetches.
+add_fetch_env_recording_git() {  # <fakebin> <real-git-path> <record-file>
+  local fb=$1 real=$2 rec=$3
+  cat > "$fb/git" <<SH
+#!/usr/bin/env bash
+set -u
+for arg in "\$@"; do
+  [ "\$arg" = fetch ] || continue
+  printf 'prompt=%s askpass=%s\n' "\${GIT_TERMINAL_PROMPT-unset}" "\${GIT_ASKPASS-unset}" >> "$rec"
+  break
 done
 exec "$real" "\$@"
 SH
@@ -220,8 +344,12 @@ reset_fakes() {
   FM_FAKE_HERDR_AGENT_STATUS=""
   FM_FAKE_CI_LOGS=""
   FM_FAKE_BEAD_STATUS=""
+  FM_FAKE_GH_PR_STATE=""
+  FM_FAKE_GH_PR_HEAD=""
+  FM_FAKE_GHAXI_PR_LIST=""
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_BUSY_TEXT FM_FAKE_TMUX_MISSING
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS FM_FAKE_BEAD_STATUS
+  export FM_FAKE_GH_PR_STATE FM_FAKE_GH_PR_HEAD FM_FAKE_GHAXI_PR_LIST
 }
 
 # --- run-object fixtures (TOON, as `no-mistakes axi status` emits) -----------
@@ -1371,7 +1499,7 @@ test_beads_closed_bead_reconciles_done() {
   reset_fakes
   local d; d=$(new_case beads-closed)
   make_repo_on_branch "$d/wt" fm/feat-bead
-  land_repo "$d/wt"
+  land_repo "$d/wt" || fail "land_repo could not publish the fixture's default branch"
   make_fakebin "$d" >/dev/null
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
   fm_write_meta "$d/state/feat-bead.meta" "window=fm:fm-feat-bead" "worktree=$d/wt" \
@@ -1398,7 +1526,7 @@ test_beads_closed_bead_open_decision_not_done() {
   reset_fakes
   local d; d=$(new_case beads-closed-decision)
   make_repo_on_branch "$d/wt" fm/feat-beaddec
-  land_repo "$d/wt"   # landed, so the OPEN DECISION is the sole reason done is withheld
+  land_repo "$d/wt" || fail "land_repo could not publish the fixture's default branch"   # landed, so the OPEN DECISION is the sole reason done is withheld
   make_fakebin "$d" >/dev/null
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
   fm_write_meta "$d/state/feat-beaddec.meta" "window=fm:fm-feat-beaddec" "worktree=$d/wt" \
@@ -1413,39 +1541,95 @@ test_beads_closed_bead_open_decision_not_done() {
   pass "closed bead does not clear an open decision (drop-recovery guard)"
 }
 
-# Drop-recovery guard, unlanded branch: a closed bead over a worktree that still
-# holds unpushed commits is not landed work, so it must not short-circuit to done;
-# the existing status-log/pane logic governs instead.
+# Drop-recovery guard, and the P1 regression (PR #120, "bead-done-preempts-run-step"):
+# a worker closes its linked bead immediately before appending done: at checks-green,
+# then a required check re-runs RED. The worktree is clean and fully pushed - the
+# pre-fix clean-tree/no-unpushed probe wrongly read that as landed - but the PR is
+# not merged and the content is not in the default branch, so the work is genuinely
+# unlanded. A closed bead must not short-circuit to done over it; the existing
+# status-log/pane logic governs instead.
 test_beads_closed_bead_unlanded_not_done() {
   command -v jq >/dev/null 2>&1 || { pass "beads closed+unlanded skipped without jq"; return; }
   reset_fakes
   local d; d=$(new_case beads-closed-unlanded)
-  make_repo_on_branch "$d/wt" fm/feat-beadunl   # no remote -> HEAD is unpushed (unlanded)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-beadunl
   make_fakebin "$d" >/dev/null
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
   fm_write_meta "$d/state/feat-beadunl.meta" "window=fm:fm-feat-beadunl" "worktree=$d/wt" \
-    "kind=ship" "harness=claude" "beads_id=task-zz05"
+    "project=$d/wt" "kind=ship" "harness=claude" "beads_id=task-zz05"
   arm_idle_record "$d/state" feat-beadunl
   printf 'working: still grinding\n' > "$d/state/feat-beadunl.status"
   FM_FAKE_BEAD_STATUS=closed
   local out; out=$(run_crew_state "$d" feat-beadunl)
   assert_not_contains "$out" "source: bead" "a closed bead over unlanded work must not report done"
-  assert_not_contains "$out" "state: done" "unlanded work must not read as done from the bead"
+  assert_not_contains "$out" "state: done" "clean+pushed but unlanded work must not read as done from the bead"
   assert_contains "$out" "source: status-log" "unlanded work falls through to existing logic"
-  pass "closed bead over unlanded work does not report done (drop-recovery guard)"
+  pass "closed bead over clean, pushed, unlanded work does not report done (drop-recovery guard)"
 }
 
-# Drop-recovery guard, unreadable worktree: a git that REFUSES the unlanded-work
-# probe prints nothing, exactly like a clean tree does. Reading that silence as
-# "nothing unlanded" would report done over a worktree whose state was never
-# actually read, so a probe that cannot answer counts as unlanded and the read
-# falls through to the existing logic.
+# Drop-recovery guard, uncommitted dimension: fm-ledger.sh's drop-recovery closes
+# the bead of a crew that went quiet with its work entirely UNCOMMITTED. HEAD is
+# still the spawn base - an ancestor of the pushed default branch - so the
+# committed-content landing check alone reports LANDED over a worktree full of
+# unsaved work. Uncommitted work is unlanded work, so the closed bead must not
+# short-circuit to done; the status-log/pane logic governs instead.
+test_beads_closed_bead_uncommitted_not_done() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+uncommitted skipped without jq"; return; }
+  reset_fakes
+  local d; d=$(new_case beads-closed-uncommitted)
+  make_uncommitted_work_repo "$d/wt" fm/feat-beadwip
+  make_fakebin "$d" >/dev/null
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadwip.meta" "window=fm:fm-feat-beadwip" "worktree=$d/wt" \
+    "project=$d/wt" "kind=ship" "harness=claude" "beads_id=task-zz09"
+  arm_idle_record "$d/state" feat-beadwip
+  printf 'working: still grinding\n' > "$d/state/feat-beadwip.status"
+  FM_FAKE_BEAD_STATUS=closed
+  local out; out=$(run_crew_state "$d" feat-beadwip)
+  assert_not_contains "$out" "source: bead" "a closed bead over uncommitted work must not report done"
+  assert_not_contains "$out" "state: done" "uncommitted work must not read as done from the bead"
+  assert_contains "$out" "source: status-log" "uncommitted work falls through to existing logic"
+  pass "closed bead over uncommitted work does not report done (drop-recovery guard)"
+}
+
+# A closed bead over genuinely LANDED work via a MERGED PR (whose head contains the
+# local work) must report done. The fixture's branch carries a commit the default
+# branch does not have and pushes both to a real remote, so the content-in-default
+# leg answers unlanded and only fm_landed_pr_is_merged can produce done here.
+test_beads_closed_bead_merged_pr_done() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+merged-pr skipped without jq"; return; }
+  reset_fakes
+  local d head; d=$(new_case beads-closed-merged-pr)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-beadmerged
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadmerged.meta" "window=fm:fm-feat-beadmerged" "worktree=$d/wt" \
+    "project=$d/wt" "kind=ship" "beads_id=task-zz07" "pr=https://github.com/o/r/pull/9"
+  printf 'working: started\nworking: still grinding\n' > "$d/state/feat-beadmerged.status"
+  FM_FAKE_BEAD_STATUS=closed
+  FM_FAKE_GH_PR_STATE=MERGED
+  FM_FAKE_GH_PR_HEAD=$head
+  local out; out=$(run_crew_state "$d" feat-beadmerged)
+  assert_contains "$out" "state: done" "a closed bead over merged-PR work -> done"
+  assert_contains "$out" "source: bead" "merged-PR done -> bead source"
+  assert_contains "$out" "task-zz07" "detail names the closed bead"
+  pass "closed bead over a merged PR reports done"
+}
+
+# Drop-recovery guard, unanswerable landing question: a git that REFUSES the
+# content-in-default comparison (git merge-tree, the landing predicate's own
+# fallback leg) cannot say whether the work reached the default branch. Treating
+# that refusal as "yes, landed" would report done over work whose whereabouts were
+# never actually established, so a comparison that cannot answer counts as unlanded
+# and the read falls through to the existing logic. This is the merge-tree half of
+# the gate's fail-closed contract; the dirty-tree half is the porcelain case below.
 test_beads_closed_bead_probe_failure_not_done() {
   command -v jq >/dev/null 2>&1 || { pass "beads closed+probe-failure skipped without jq"; return; }
   reset_fakes
   local d fb; d=$(new_case beads-closed-probe-fail)
   make_repo_on_branch "$d/wt" fm/feat-beadprobe
-  land_repo "$d/wt"   # landed, so the refused probe is the sole reason done is withheld
+  land_repo "$d/wt" || fail "land_repo could not publish the fixture's default branch"   # landed, so the refused probe is the sole reason done is withheld
   fb=$(make_fakebin "$d")
   add_refusing_git "$fb" "$(command -v git)"
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
@@ -1455,10 +1639,173 @@ test_beads_closed_bead_probe_failure_not_done() {
   printf 'working: still grinding\n' > "$d/state/feat-beadprobe.status"
   FM_FAKE_BEAD_STATUS=closed
   local out; out=$(run_crew_state "$d" feat-beadprobe)
-  assert_not_contains "$out" "source: bead" "a refused unlanded-work probe must not report a bead-sourced done"
-  assert_not_contains "$out" "state: done" "an unreadable worktree must not read as done from the bead"
-  assert_contains "$out" "source: status-log" "an unreadable worktree falls through to existing logic"
-  pass "closed bead over an unreadable worktree does not report done (probe failure counts as unlanded)"
+  assert_not_contains "$out" "source: bead" "a refused content comparison must not report a bead-sourced done"
+  assert_not_contains "$out" "state: done" "an unanswerable landing comparison must not read as done from the bead"
+  assert_contains "$out" "source: status-log" "a refused content comparison falls through to existing logic"
+  pass "closed bead whose content comparison is refused does not report done (refusal counts as unlanded)"
+}
+
+# The gate's OTHER fail-closed dimension, and the one the merge-tree case above
+# cannot reach: a git that refuses the dirty-tree probe prints nothing, exactly
+# like a clean tree does. Everything else here says done - the work is landed, the
+# bead is closed, no decision is open - so the refused probe is the sole reason the
+# read must withhold it. Reading that silence as "nothing uncommitted" would report
+# done over a worktree whose state was never actually read.
+test_beads_closed_bead_porcelain_refusal_not_done() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+porcelain-refusal skipped without jq"; return; }
+  reset_fakes
+  local d fb; d=$(new_case beads-closed-porcelain-fail)
+  make_repo_on_branch "$d/wt" fm/feat-beadclean
+  land_repo "$d/wt" || fail "land_repo could not publish the fixture's default branch"
+  fb=$(make_fakebin "$d")
+  add_porcelain_refusing_git "$fb" "$(command -v git)"
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadclean.meta" "window=fm:fm-feat-beadclean" "worktree=$d/wt" \
+    "kind=ship" "harness=claude" "beads_id=task-zz10"
+  arm_idle_record "$d/state" feat-beadclean
+  printf 'working: still grinding\n' > "$d/state/feat-beadclean.status"
+  FM_FAKE_BEAD_STATUS=closed
+  local out; out=$(run_crew_state "$d" feat-beadclean)
+  assert_not_contains "$out" "source: bead" "a refused dirty-tree probe must not report a bead-sourced done"
+  assert_not_contains "$out" "state: done" "an unreadable working tree must not read as done from the bead"
+  assert_contains "$out" "source: status-log" "a refused dirty-tree probe falls through to existing logic"
+  pass "closed bead over a refused dirty-tree probe does not report done (probe failure counts as unlanded)"
+}
+
+# The bound bin/fm-crew-state.sh OPTS INTO, proven where it matters: a `gh` that
+# never answers in time. Everything else about this fixture says done - the bead is
+# closed, the tree is clean, no decision is open, and the PR the stalling `gh`
+# would eventually report is MERGED with a head containing HEAD - so an unbounded
+# read would sit through the stall and then emit done. The reader must instead give
+# up on the remote inside its own bound and fall through, because this read runs on
+# every supervision poll. The content fallback cannot rescue it either: this
+# fixture's branch introduces content the default branch lacks.
+test_beads_closed_bead_stalled_remote_bounded() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+stalled-remote skipped without jq"; return; }
+  reset_fakes
+  local d fb head out start elapsed
+  d=$(new_case beads-closed-stalled-remote)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-beadstall
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  fb=$(make_fakebin "$d")
+  cat > "$fb/gh" <<SH
+#!/usr/bin/env bash
+sleep 60
+printf 'MERGED\t%s\n' "$head"
+SH
+  chmod +x "$fb/gh"
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadstall.meta" "window=fm:fm-feat-beadstall" "worktree=$d/wt" \
+    "project=$d/wt" "kind=ship" "harness=claude" "beads_id=task-zz11" \
+    "pr=https://github.com/o/r/pull/11"
+  arm_idle_record "$d/state" feat-beadstall
+  printf 'working: still grinding\n' > "$d/state/feat-beadstall.status"
+  FM_FAKE_BEAD_STATUS=closed
+  export FM_CREW_STATE_LANDED_TIMEOUT=2
+  start=$SECONDS
+  out=$(run_crew_state "$d" feat-beadstall)
+  elapsed=$((SECONDS - start))
+  unset FM_CREW_STATE_LANDED_TIMEOUT
+  assert_not_contains "$out" "state: done" "a remote that outlasts the reader's bound must not read as done"
+  assert_not_contains "$out" "source: bead" "a bound that fires counts as unlanded, not a bead-sourced done"
+  assert_contains "$out" "source: status-log" "a stalled remote falls through to existing logic"
+  [ "$elapsed" -lt 30 ] || fail "the closed-bead landing check was not bounded (elapsed ${elapsed}s)"
+  pass "closed bead over a stalled remote stays bounded and does not report done"
+}
+
+# The landing predicate's bound is OPT-IN, and bin/fm-teardown.sh deliberately does
+# not take it: teardown asks this question once, at a gate that refuses to remove a
+# worktree, so it must wait out a slow remote rather than refuse a teardown for work
+# that actually landed. Both halves run the real library over one fixture whose only
+# landing evidence is a `gh` that answers late, so the two answers differ purely by
+# whether a bound was requested. The unbounded half runs from a copy of the library
+# with no sibling timeout library beside it, which the bounded path requires and can
+# only satisfy from the real bin/ - so it also proves the default engages none of
+# that machinery.
+test_landed_predicate_bound_is_opt_in() {
+  reset_fakes
+  local d fb head isolated rc
+  d=$(new_case landed-bound-optin)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-boundoptin
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  fb=$(make_fakebin "$d")
+  cat > "$fb/gh" <<SH
+#!/usr/bin/env bash
+sleep 3
+printf 'MERGED\t%s\n' "$head"
+SH
+  chmod +x "$fb/gh"
+  isolated="$d/isolated-bin"
+  mkdir -p "$isolated"
+  cp "$ROOT/bin/fm-landed-lib.sh" "$isolated/fm-landed-lib.sh"
+  rc=0
+  (
+    unset FM_LANDED_NET_TIMEOUT
+    PATH="$fb:$PATH" \
+      bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3" "$4"' \
+      _ "$isolated" "$d/wt" fm/feat-boundoptin https://github.com/o/r/pull/12
+  ) || rc=$?
+  [ "$rc" -eq 0 ] || fail "unbounded by default: a slow merged-PR lookup must be waited out, not cut off (rc=$rc)"
+  rc=0
+  PATH="$fb:$PATH" FM_LANDED_NET_TIMEOUT=1 \
+    bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3" "$4"' \
+    _ "$ROOT/bin" "$d/wt" fm/feat-boundoptin https://github.com/o/r/pull/12 || rc=$?
+  [ "$rc" -ne 0 ] || fail "an opted-in bound must cut off the same lookup and count as unlanded"
+  pass "landing predicate is unbounded by default and bounded only on opt-in"
+}
+
+# The strict posture the supervision reader opts into has TWO halves that must
+# travel together: the network bound, and a never-prompt guarantee on the landing
+# predicate's fetches. An opted-in fetch runs under GIT_TERMINAL_PROMPT=0 and
+# GIT_ASKPASS=true, so a project cloned over HTTPS with no cached credential fails
+# fast into the unlanded fail-safe instead of blocking a watcher poll on a terminal
+# read nobody is there to answer. The fake git here reports the environment it was
+# actually handed, so this pins the imposed behavior rather than the source.
+test_landed_fetch_is_hardened_when_bound_requested() {
+  reset_fakes
+  local d fb rec seen
+  d=$(new_case landed-fetch-hardened)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-fetchharden
+  fb=$(make_fakebin "$d")
+  rec="$d/fetch-env.log"
+  add_fetch_env_recording_git "$fb" "$(command -v git)" "$rec"
+  (
+    unset GIT_TERMINAL_PROMPT GIT_ASKPASS
+    PATH="$fb:$PATH" FM_LANDED_NET_TIMEOUT=10 \
+      bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3"' \
+      _ "$ROOT/bin" "$d/wt" fm/feat-fetchharden
+  ) >/dev/null 2>&1 || true
+  [ -s "$rec" ] || fail "the landing predicate never reached a fetch, so the posture was never exercised"
+  seen=$(cat "$rec")
+  assert_contains "$seen" "prompt=0" "an opted-in fetch must run with GIT_TERMINAL_PROMPT=0"
+  assert_contains "$seen" "askpass=true" "an opted-in fetch must run with GIT_ASKPASS=true"
+  pass "opting into the bound also imposes the never-prompt posture on the fetch"
+}
+
+# The other side of that one opt-in: a caller that asks for nothing gets exactly the
+# pre-extraction behavior bin/fm-teardown.sh depends on. Its landing check runs at an
+# interactive gate that REFUSES to remove a worktree, so a credential prompt an
+# operator can answer is far better than a fast failure that refuses teardown - or
+# files a staleness triage bead - for work that actually landed.
+test_landed_fetch_is_plain_by_default() {
+  reset_fakes
+  local d fb rec seen
+  d=$(new_case landed-fetch-plain)
+  make_pushed_unlanded_repo "$d/wt" fm/feat-fetchplain
+  fb=$(make_fakebin "$d")
+  rec="$d/fetch-env.log"
+  add_fetch_env_recording_git "$fb" "$(command -v git)" "$rec"
+  (
+    unset FM_LANDED_NET_TIMEOUT GIT_TERMINAL_PROMPT GIT_ASKPASS
+    PATH="$fb:$PATH" \
+      bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3"' \
+      _ "$ROOT/bin" "$d/wt" fm/feat-fetchplain
+  ) >/dev/null 2>&1 || true
+  [ -s "$rec" ] || fail "the landing predicate never reached a fetch, so the default posture was never exercised"
+  seen=$(cat "$rec")
+  assert_contains "$seen" "prompt=unset" "a default fetch must not have GIT_TERMINAL_PROMPT imposed on it"
+  assert_contains "$seen" "askpass=unset" "a default fetch must not have GIT_ASKPASS imposed on it"
+  pass "the default landing path leaves the fetch free to prompt, as teardown expects"
 }
 
 # A still-open bead with a live (busy) endpoint must be completely unaffected -
@@ -1516,7 +1863,14 @@ test_active_run_is_authoritative
 test_beads_closed_bead_reconciles_done
 test_beads_closed_bead_open_decision_not_done
 test_beads_closed_bead_unlanded_not_done
+test_beads_closed_bead_uncommitted_not_done
+test_beads_closed_bead_merged_pr_done
 test_beads_closed_bead_probe_failure_not_done
+test_beads_closed_bead_porcelain_refusal_not_done
+test_beads_closed_bead_stalled_remote_bounded
+test_landed_predicate_bound_is_opt_in
+test_landed_fetch_is_hardened_when_bound_requested
+test_landed_fetch_is_plain_by_default
 test_beads_open_bead_live_pane_unaffected
 test_beads_backend_guard_tasks_axi_ignores_closed_bead
 test_stale_needs_decision_superseded
