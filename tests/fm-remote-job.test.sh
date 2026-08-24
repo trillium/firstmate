@@ -411,8 +411,24 @@ JOB_ID=$FM_REMOTE_JOB_ID
 SECOND_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 fm_remote_job_wait "$ACCOUNT_HOME" "$FIRST_JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
-[ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "queue time consumed the second job's execution timeout"
-assert_present "$SECOND_DELAYED_SIDE_EFFECT" "the queued job did not receive its full execution timeout"
+# Bare exit-0 here was load-sensitive because it silently assumed the worker's
+# claim-to-exec overhead is zero, and that overhead is execution time, billed
+# against the window by design. Completing is a pass; a terminated run is a
+# pass only when the worker's own artifacts show the kill was not premature,
+# which - together with the claim-time deadline the next assertion pins - is
+# the >= configured-timeout guarantee. A PREMATURE kill still fails.
+if [ "$FM_REMOTE_JOB_EXIT" -eq 0 ]; then
+  assert_present "$SECOND_DELAYED_SIDE_EFFECT" "the queued job did not receive its full execution timeout"
+else
+  [ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
+    || fail "the queued job failed for a reason other than its execution timeout"
+  SECOND_TERMINATED_AT=$(fm_remote_job_path_mtime "$SECOND_JOB_DIR/exit") \
+    || fail "the terminated queued job published no result"
+  SECOND_ENFORCED_DEADLINE=$(fm_remote_job_read_number "$SECOND_JOB_DIR" deadline) \
+    || fail "the terminated queued job recorded no execution deadline"
+  [ "$SECOND_TERMINATED_AT" -ge "$SECOND_ENFORCED_DEADLINE" ] \
+    || fail "queue time consumed the second job's execution timeout"
+fi
 # Staging derives queue_deadline from one clock read, so the stage second is
 # exactly recoverable from the record. The latest deadline a stage-minted
 # window could carry is that second plus the timeout plus the rounded-up claim
