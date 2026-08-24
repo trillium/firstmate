@@ -52,7 +52,7 @@ make_repo_on_branch() {  # <dir> <branch>
   # Pin the default branch instead of inheriting the host's init.defaultBranch:
   # land_repo pushes it, and the landing predicate resolves it by name, so a host
   # configured with any other default (trunk, devel) would otherwise fail opaquely.
-  git -C "$dir" symbolic-ref HEAD refs/heads/main
+  git -C "$dir" symbolic-ref HEAD "refs/heads/$DEFAULT_BRANCH"
   git -C "$dir" commit -q --allow-empty -m init
   git -C "$dir" checkout -q -b "$branch"
   # Real worktree HEAD for run head-binding (fixtures read FM_FAKE_RUN_HEAD).
@@ -71,8 +71,9 @@ land_repo() {  # <dir>
   git init -q --bare "$remote" || return 1
   git -C "$dir" remote add origin "$remote" || return 1
   git -C "$dir" push -q origin HEAD || return 1
-  # The default branch is whatever make_repo_on_branch pinned, read back from the
-  # repo rather than guessed from a main|master name list.
+  # DEFAULT_BRANCH is the shared constant every fixture in this file pins its repo
+  # to, so this pushes the branch make_repo_on_branch actually created rather than
+  # guessing from a main|master name list.
   git -C "$dir" push -q origin "refs/heads/$DEFAULT_BRANCH:refs/heads/$DEFAULT_BRANCH"
 }
 
@@ -272,6 +273,26 @@ add_refusing_git() {  # <fakebin> <real-git-path>
 set -u
 for arg in "\$@"; do
   [ "\$arg" = merge-tree ] || continue
+  exit 128
+done
+exec "$real" "\$@"
+SH
+  chmod +x "$fb/git"
+}
+
+# The second refusing-git variant: a fake `git` that refuses exactly the gate's
+# dirty-tree probe (`status --porcelain`) the way a dubious-ownership refusal, a
+# corrupt index, or a git that cannot read the worktree does - non-zero exit,
+# nothing on stdout - and delegates every other invocation to the real git. A clean
+# tree prints nothing too, so reading that silence as "nothing uncommitted" is the
+# bug this guards: the refusal must count as unlanded, never done.
+add_porcelain_refusing_git() {  # <fakebin> <real-git-path>
+  local fb=$1 real=$2
+  cat > "$fb/git" <<SH
+#!/usr/bin/env bash
+set -u
+for arg in "\$@"; do
+  [ "\$arg" = --porcelain ] || continue
   exit 128
 done
 exec "$real" "\$@"
@@ -1599,6 +1620,33 @@ test_beads_closed_bead_probe_failure_not_done() {
   pass "closed bead over an unreadable worktree does not report done (probe failure counts as unlanded)"
 }
 
+# The gate's OTHER fail-closed dimension, and the one the merge-tree case above
+# cannot reach: a git that refuses the dirty-tree probe prints nothing, exactly
+# like a clean tree does. Everything else here says done - the work is landed, the
+# bead is closed, no decision is open - so the refused probe is the sole reason the
+# read must withhold it. Reading that silence as "nothing uncommitted" would report
+# done over a worktree whose state was never actually read.
+test_beads_closed_bead_porcelain_refusal_not_done() {
+  command -v jq >/dev/null 2>&1 || { pass "beads closed+porcelain-refusal skipped without jq"; return; }
+  reset_fakes
+  local d fb; d=$(new_case beads-closed-porcelain-fail)
+  make_repo_on_branch "$d/wt" fm/feat-beadclean
+  land_repo "$d/wt" || fail "land_repo could not publish the fixture's default branch"
+  fb=$(make_fakebin "$d")
+  add_porcelain_refusing_git "$fb" "$(command -v git)"
+  mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
+  fm_write_meta "$d/state/feat-beadclean.meta" "window=fm:fm-feat-beadclean" "worktree=$d/wt" \
+    "kind=ship" "harness=claude" "beads_id=task-zz10"
+  arm_idle_record "$d/state" feat-beadclean
+  printf 'working: still grinding\n' > "$d/state/feat-beadclean.status"
+  FM_FAKE_BEAD_STATUS=closed
+  local out; out=$(run_crew_state "$d" feat-beadclean)
+  assert_not_contains "$out" "source: bead" "a refused dirty-tree probe must not report a bead-sourced done"
+  assert_not_contains "$out" "state: done" "an unreadable working tree must not read as done from the bead"
+  assert_contains "$out" "source: status-log" "a refused dirty-tree probe falls through to existing logic"
+  pass "closed bead over a refused dirty-tree probe does not report done (probe failure counts as unlanded)"
+}
+
 # A still-open bead with a live (busy) endpoint must be completely unaffected -
 # the bead-closed signal ADDS a completion truth, it must never mark live work
 # done prematurely.
@@ -1657,6 +1705,7 @@ test_beads_closed_bead_unlanded_not_done
 test_beads_closed_bead_uncommitted_not_done
 test_beads_closed_bead_merged_pr_done
 test_beads_closed_bead_probe_failure_not_done
+test_beads_closed_bead_porcelain_refusal_not_done
 test_beads_open_bead_live_pane_unaffected
 test_beads_backend_guard_tasks_axi_ignores_closed_bead
 test_stale_needs_decision_superseded

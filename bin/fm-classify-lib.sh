@@ -646,10 +646,12 @@ signal_reason_is_actionable() {  # <file> ...
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, and under
-# the beads backend bounded remote reads (gh/git) for its closed-bead landing check,
-# so callers run it only on no-verb signal and first-sighting stale paths, never
-# every wake. Every one of those legs is hard-bounded, so the wake cannot stall on
-# an unreachable remote, but none of them is free.
+# the beads backend remote reads (gh/git) for its closed-bead landing check, so
+# callers run it only on no-verb signal and first-sighting stale paths, never every
+# wake. Those remote reads share ONE deadline for the landing check as a whole
+# (bin/fm-landed-lib.sh's FM_LANDED_NET_TIMEOUT, 10s by default), however many legs
+# it runs, so the wake cannot stall on an unreachable remote - but none of it is
+# free.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
   local id=$1 line state src

@@ -25,16 +25,21 @@
 # treats as unlanded rather than guessing.
 #
 # Every leg that talks to a REMOTE (the two git fetches, `gh pr view`, `gh-axi pr
-# list`) is hard-bounded through fm_landed_run_bounded, because a supervision
-# reader calls this predicate on every poll: an unreachable remote or a blocking
-# credential helper must cost a bounded wait, not stall the watcher. A bound that
-# fires exits non-zero, which lands in the same fail-closed direction as any other
-# probe that cannot answer.
+# list`) runs through fm_landed_run_bounded, and fm_work_is_landed opens ONE
+# deadline that all of them share, because a supervision reader calls this
+# predicate on every poll: an unreachable remote or a blocking credential helper
+# must cost a bounded wait, not stall the watcher. Sharing the deadline is what
+# gives the whole predicate a single stated worst case for its remote work -
+# FM_LANDED_NET_TIMEOUT seconds, 10 by default, matching bin/fm-crew-state.sh's
+# FM_CREW_STATE_NM_TIMEOUT - however many legs it ends up running, rather than
+# that bound once per leg. A deadline that expires exits non-zero, which lands in
+# the same fail-closed direction as any other probe that cannot answer.
 #
 # Functions take the worktree dir and (where needed) the project dir explicitly;
 # no function depends on ambient globals, so the same code serves teardown,
 # crew-state, and any future reader with a different variable naming scheme.
 #
+#   fm_landed_bound_seconds                           -> the configured bound
 #   fm_landed_run_bounded <command...>                -> the command, hard-bounded
 #   fm_work_is_landed <wt> <proj> <branch> [pr_url]   -> 0 landed, 1 not landed
 #   fm_landed_pr_is_merged <wt> <branch> [pr_url]
@@ -47,9 +52,24 @@
 #   fm_landed_unpushed_patches_are_in_pr_head <wt> <pr_head>
 #   fm_landed_squash_merged_pr_contains_work <wt> <pr_head>
 
-# Run a remote-touching command under a hard bound. FM_LANDED_NET_TIMEOUT (seconds,
-# default 25) tunes it; a non-numeric or zero value falls back to the default,
-# because `timeout 0` disables the deadline rather than tightening it.
+# The bound, in seconds, that FM_LANDED_NET_TIMEOUT tunes. A non-numeric or zero
+# value falls back to the default, because `timeout 0` disables the deadline
+# rather than tightening it.
+fm_landed_bound_seconds() {
+  local bound=${FM_LANDED_NET_TIMEOUT:-10}
+  case "$bound" in ''|*[!0-9]*) bound=10 ;; esac
+  [ "$bound" -gt 0 ] || bound=10
+  printf '%s' "$bound"
+}
+
+# Run a remote-touching command under a hard bound.
+#
+# When fm_work_is_landed opened a shared deadline this spends only the time left
+# on it, so a predicate that runs three remote legs still costs at most the one
+# bound in total instead of three of them back to back. An already-expired
+# deadline returns 124 without running the command at all, the same status a
+# bound that fires produces. Reached directly, with no deadline open, a single
+# leg still gets the full bound.
 #
 # bin/fm-timeout-lib.sh is loaded LAZILY, and only here: sourcing THIS library must
 # stay side-effect free for the readers it exists to serve, and a caller that never
@@ -59,9 +79,17 @@
 # fm_run_timed itself needs no `timeout` binary: fm-timeout-lib.sh owns the
 # coreutils/BSD/perl/bash mechanism selection.
 fm_landed_run_bounded() {  # <command...>
-  local bound=${FM_LANDED_NET_TIMEOUT:-25} lib_dir
-  case "$bound" in ''|*[!0-9]*) bound=25 ;; esac
-  [ "$bound" -gt 0 ] || bound=25
+  local bound remaining lib_dir
+  bound=$(fm_landed_bound_seconds)
+  if [ -n "${FM_LANDED_DEADLINE:-}" ]; then
+    remaining=$(( FM_LANDED_DEADLINE - $(date +%s) ))
+    if [ "$remaining" -le 0 ]; then
+      return 124
+    fi
+    if [ "$remaining" -lt "$bound" ]; then
+      bound=$remaining
+    fi
+  fi
   if ! declare -f fm_run_timed >/dev/null 2>&1; then
     lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return 1
     [ -f "$lib_dir/fm-timeout-lib.sh" ] || return 1
@@ -237,8 +265,17 @@ fm_landed_content_in_default() {  # <wt> <proj>
 # current local work is contained in the PR head, OR the content is already in the
 # default branch (fallback, which also covers the no-PR and gh-error paths). False
 # only for genuinely unlanded work.
+#
+# This is where the ONE deadline every remote leg below shares is opened, so the
+# whole predicate's remote work costs at most fm_landed_bound_seconds in total.
+# `local` is what scopes it: the deadline reaches the helpers through dynamic
+# scope and is restored automatically on return, so a caller that enters a helper
+# directly still gets the plain per-leg bound.
 fm_work_is_landed() {  # <wt> <proj> <branch> [pr_url]
   local wt=$1 proj=$2 branch=$3 pr_url=${4:-}
+  # shellcheck disable=SC2034  # Read by fm_landed_run_bounded through dynamic scope.
+  local FM_LANDED_DEADLINE
+  FM_LANDED_DEADLINE=$(( $(date +%s) + $(fm_landed_bound_seconds) ))
   fm_landed_pr_is_merged "$wt" "$branch" "$pr_url" && return 0
   fm_landed_content_in_default "$wt" "$proj"
 }
