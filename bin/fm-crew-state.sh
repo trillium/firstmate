@@ -60,13 +60,16 @@
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log.
 #
-# Read-only and side-effect free, except that the closed-bead landing predicate
-# (bin/fm-landed-lib.sh's fm_work_is_landed) fetches TWICE: the default branch into
-# the worktree's remote-tracking ref before comparing content, and refs/pull/<n>/head
-# when a merged PR's head commit is not present locally (the ordinary
-# squash-merge-then-delete-branch case, where this worktree never held the PR head).
-# Both are the same reads of the remote teardown performs. Always exits 0 on a
-# successful read regardless of state; exit 2 only on a usage error (no id).
+# Read-only for this crew's working state: nothing here changes the index, the
+# working tree, HEAD, or any local branch. The one qualification is the closed-bead
+# landing predicate (bin/fm-landed-lib.sh's fm_work_is_landed), whose writes are
+# confined to the worktree's object store plus the remote-tracking ref a fetch
+# updates: it fetches the default branch before comparing content and
+# refs/pull/<n>/head when a merged PR's head commit is not present locally, and it
+# stores merged tree objects through `git merge-tree --write-tree`. That library's
+# header owns the full list; both fetches are the same reads of the remote teardown
+# performs. Always exits 0 on a successful read regardless of state; exit 2 only on
+# a usage error (no id).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -260,12 +260,12 @@ new_case() {  # <name> -> echoes case dir with an empty state/
   printf '%s\n' "$d"
 }
 
-# A fake `git` that refuses exactly the landing predicate's content comparison
-# (`merge-tree`) the way a dubious-ownership refusal or a corrupt index does -
-# non-zero exit, nothing on stdout - and delegates every other invocation to the
-# real git, so the rest of the read (branch attribution, default-branch
-# resolution, fetch) behaves normally. A probe that cannot answer must count as
-# unlanded rather than done.
+# The FIRST of three fake-git variants: one that refuses exactly the landing
+# predicate's content comparison (`merge-tree`) the way a dubious-ownership refusal
+# or a corrupt index does - non-zero exit, nothing on stdout - and delegates every
+# other invocation to the real git, so the rest of the read (branch attribution,
+# default-branch resolution, fetch) behaves normally. A probe that cannot answer
+# must count as unlanded rather than done.
 add_refusing_git() {  # <fakebin> <real-git-path>
   local fb=$1 real=$2
   cat > "$fb/git" <<SH
@@ -280,15 +280,33 @@ SH
   chmod +x "$fb/git"
 }
 
-# The second refusing-git variant: a fake `git` that refuses exactly the gate's
-# dirty-tree probe (`status --porcelain`) the way a dubious-ownership refusal, a
-# corrupt index, or a git that cannot read the worktree does - non-zero exit,
-# nothing on stdout - and delegates every other invocation to the real git. A clean
-# tree prints nothing too, so reading that silence as "nothing uncommitted" is the
-# bug this guards: the refusal must count as unlanded, never done.
-# A git that records the credential-prompt environment it was handed on a fetch and
-# then delegates to the real git, so a test can observe whether the caller imposed
-# the never-prompt posture on the landing predicate's fetches.
+# The SECOND fake-git variant: one that refuses the gate's OTHER fail-closed
+# dimension, the dirty-tree probe (`status --porcelain`), the way a
+# dubious-ownership refusal, a corrupt index, or a git that cannot read the
+# worktree does - non-zero exit, nothing on stdout - and delegates every other
+# invocation to the real git. A clean tree prints nothing too, so reading that
+# silence as "nothing uncommitted" is the bug this guards: the refusal must count
+# as unlanded, never done.
+add_porcelain_refusing_git() {  # <fakebin> <real-git-path>
+  local fb=$1 real=$2
+  cat > "$fb/git" <<SH
+#!/usr/bin/env bash
+set -u
+for arg in "\$@"; do
+  [ "\$arg" = --porcelain ] || continue
+  exit 128
+done
+exec "$real" "\$@"
+SH
+  chmod +x "$fb/git"
+}
+
+# The THIRD fake-git variant, and the only one that refuses nothing: it records the
+# credential-prompt environment it was handed on a fetch, then delegates every
+# invocation to the real git. It pins the posture dimension rather than a
+# fail-closed one, letting a test observe whether the caller imposed the
+# never-prompt guarantee (GIT_TERMINAL_PROMPT/GIT_ASKPASS) on the landing
+# predicate's fetches.
 add_fetch_env_recording_git() {  # <fakebin> <real-git-path> <record-file>
   local fb=$1 real=$2 rec=$3
   cat > "$fb/git" <<SH
@@ -298,20 +316,6 @@ for arg in "\$@"; do
   [ "\$arg" = fetch ] || continue
   printf 'prompt=%s askpass=%s\n' "\${GIT_TERMINAL_PROMPT-unset}" "\${GIT_ASKPASS-unset}" >> "$rec"
   break
-done
-exec "$real" "\$@"
-SH
-  chmod +x "$fb/git"
-}
-
-add_porcelain_refusing_git() {  # <fakebin> <real-git-path>
-  local fb=$1 real=$2
-  cat > "$fb/git" <<SH
-#!/usr/bin/env bash
-set -u
-for arg in "\$@"; do
-  [ "\$arg" = --porcelain ] || continue
-  exit 128
 done
 exec "$real" "\$@"
 SH

@@ -17,15 +17,20 @@
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
 # on a remote yet the change is fully in main.
 #
-# Every function here is read-only except the TWO that fetch. Both write into the
-# worktree's shared object store, and both are reads of the remote teardown
-# already performed: fm_landed_content_in_default fetches the default branch into
-# the worktree's remote-tracking ref so the content comparison is against an
-# up-to-date default branch, and fm_landed_ensure_commit_object fetches
-# refs/pull/<n>/head (also writing FETCH_HEAD) when a merged PR's head commit is
-# not present locally, the ordinary squash-merge-then-delete-branch case. Each
-# probe fails closed: any lookup, fetch, or git operation that cannot answer
-# returns non-zero, which the caller treats as unlanded rather than guessing.
+# Nothing here touches the index, the working tree, HEAD, or any local branch, so
+# no reader can be left with a changed checkout. Its writes are confined to the
+# object store, plus the one remote-tracking ref (and FETCH_HEAD) a fetch updates,
+# and they only ever ADD objects. There are FOUR of them, not just the fetches.
+# TWO ARE FETCHES, each a read of the remote teardown already performed:
+# fm_landed_content_in_default fetches the default branch so the content comparison
+# runs against an up-to-date one, and fm_landed_ensure_commit_object fetches
+# refs/pull/<n>/head when a merged PR's head commit is not present locally, the
+# ordinary squash-merge-then-delete-branch case. THE OTHER TWO ARE PURELY LOCAL:
+# fm_landed_squash_merged_pr_contains_work and fm_landed_content_in_default each run
+# `git merge-tree --write-tree`, which by definition stores the merged tree objects
+# it computes. Each probe fails closed: any lookup, fetch, or git operation that
+# cannot answer returns non-zero, which the caller treats as unlanded rather than
+# guessing.
 #
 # Setting FM_LANDED_NET_TIMEOUT opts the caller into a STRICTER POSTURE with two
 # halves that travel together, because a caller that cannot afford to wait also
@@ -83,6 +88,22 @@ fm_landed_bound_seconds() {
   printf '%s' "$bound"
 }
 
+# Run one fetching leg, which is a remote leg that additionally must never stop to
+# ASK for anything when the caller opted into the strict posture. Both halves hang
+# off that one opt-in: without it the fetch runs exactly as it did before this
+# library existed, free to prompt on the terminal and to take as long as it takes,
+# which is what bin/fm-teardown.sh's interactive gate depends on. With it the fetch
+# is bounded AND non-interactive, so a missing credential fails fast into the same
+# unlanded fail-safe a timeout produces rather than blocking a supervision read on
+# a terminal that may have nobody in front of it.
+fm_landed_run_fetch_leg() {  # <command...>
+  if fm_landed_bound_seconds >/dev/null; then
+    fm_landed_run_leg env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true "$@"
+    return $?
+  fi
+  fm_landed_run_leg "$@"
+}
+
 # Run one remote-touching leg: hard-bounded when a bound was requested, plainly
 # otherwise.
 #
@@ -102,22 +123,6 @@ fm_landed_bound_seconds() {
 # same fail-closed direction every other probe takes. fm_run_timed itself needs no
 # `timeout` binary: fm-timeout-lib.sh owns the coreutils/BSD/perl/bash mechanism
 # selection.
-# Run one fetching leg, which is a remote leg that additionally must never stop to
-# ASK for anything when the caller opted into the strict posture. Both halves hang
-# off that one opt-in: without it the fetch runs exactly as it did before this
-# library existed, free to prompt on the terminal and to take as long as it takes,
-# which is what bin/fm-teardown.sh's interactive gate depends on. With it the fetch
-# is bounded AND non-interactive, so a missing credential fails fast into the same
-# unlanded fail-safe a timeout produces rather than blocking a supervision read on
-# a terminal that may have nobody in front of it.
-fm_landed_run_fetch_leg() {  # <command...>
-  if fm_landed_bound_seconds >/dev/null; then
-    fm_landed_run_leg env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true "$@"
-    return $?
-  fi
-  fm_landed_run_leg "$@"
-}
-
 fm_landed_run_leg() {  # <command...>
   local bound remaining lib_dir
   if ! bound=$(fm_landed_bound_seconds); then
