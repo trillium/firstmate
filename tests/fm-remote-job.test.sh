@@ -98,10 +98,12 @@ chmod +x "$RUNTIME_BIN/perl"
 # The reads are enumerable rather than timing-dependent, because
 # worker_run_with_timeout takes exactly two kinds while a job is armed - one
 # sizing the cheap poll gate, then one per poll deciding the kill once that gate
-# opens. So an empty trip file fails the gate sizing, and a count of 1 leaves
-# the gate correctly sized and fails every kill decision, which is what forces
-# the kill onto the forkless SECONDS fallback rather than a later real read.
-# Reads that mint the deadline come before the job is armed.
+# opens. So an empty trip file fails the gate sizing, a count of 1 leaves the
+# gate correctly sized and fails every kill decision, and a count of 0 lets no
+# read through at all, so the gate sizing and every kill decision after it fail
+# together. The last two are what force the kill onto the forkless SECONDS
+# fallback rather than a later real read. Reads that mint the deadline come
+# before the job is armed.
 #
 # The sticky form cannot signal that it fired by removing the trip file, so it
 # overwrites it with `tripped` instead and the subtest asserts that, keeping the
@@ -403,6 +405,47 @@ BLIND_KILL_DEADLINE=$(fm_remote_job_read_number "$BLIND_KILL_JOB_DIR" deadline) 
   || fail "a failed termination clock read cut the job short of its own execution deadline"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the terminated job could not be reaped"
 pass "a failed termination clock read still bounds a job at its execution deadline"
+
+# The two cases above each leave one side of the pair working: one fails the
+# gate sizing and then lets the kill decision read a real clock, the other sizes
+# the gate from a real clock and then fails every kill decision. A clock that
+# stays down covers both at once, and it is the case that pins where the SECONDS
+# fallback measures from. Sized off the deadline instead of the job's own window,
+# the gate opens immediately and the fallback kills about a second in whatever
+# the window was - bounded, but far short of the job's deadline. A count of 0
+# lets no read through, so the gate sizing and every kill decision after it fail,
+# and both invariants have to hold against that one path:
+#
+#   bounded         - the job is terminated rather than running to completion.
+#   never cut short - it is not terminated before its own execution deadline.
+BLIND_WINDOW_SIDE_EFFECT="$TMP_ROOT/blind-window-side-effect"
+FM_REMOTE_JOB_TIMEOUT=2
+printf '0\n' > "$DATE_SHIM_TRIP"
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-delay-job.sh 8 "$BLIND_WINDOW_SIDE_EFFECT" < /dev/null > /dev/null
+JOB_ID=$FM_REMOTE_JOB_ID
+BLIND_WINDOW_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
+fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+# Same non-vacuity guarantee as the sticky case above: anything other than that
+# stamp means the reads this subtest exists to fail were never taken and
+# everything below would pass for the wrong reason.
+BLIND_WINDOW_TRIPPED=0
+[ "$(cat "$DATE_SHIM_TRIP" 2>/dev/null || true)" = tripped ] && BLIND_WINDOW_TRIPPED=1
+rm -f -- "$DATE_SHIM_TRIP"
+[ "$BLIND_WINDOW_TRIPPED" -eq 1 ] \
+  || fail "the worker never took the clock reads this subtest fails, so it proved nothing"
+assert_absent "$BLIND_WINDOW_SIDE_EFFECT" \
+  "an unreadable clock let the job run past its execution deadline to completion"
+[ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
+  || fail "an unreadable clock did not leave the over-time job terminated at its deadline"
+BLIND_WINDOW_TERMINATED_AT=$(fm_remote_job_path_mtime "$BLIND_WINDOW_JOB_DIR/exit") \
+  || fail "the terminated job published no result while the clock was unreadable"
+BLIND_WINDOW_DEADLINE=$(fm_remote_job_read_number "$BLIND_WINDOW_JOB_DIR" deadline) \
+  || fail "the terminated job recorded no execution deadline"
+[ "$BLIND_WINDOW_TERMINATED_AT" -ge "$BLIND_WINDOW_DEADLINE" ] \
+  || fail "an unreadable clock cut the job short of its own execution deadline"
+fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the terminated job could not be reaped"
+pass "an unreadable clock bounds a job at its own recorded window"
 
 ACTIVE_SIDE_EFFECT="$TMP_ROOT/active-side-effect"
 FM_REMOTE_JOB_TIMEOUT=10

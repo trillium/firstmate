@@ -395,11 +395,11 @@ worker_publish_result() { # <job-dir> <exit>
   fm_remote_job_write_state "$job" 'done'
 }
 
-worker_run_with_timeout() { # <job-dir> <epoch-deadline> <command> [args...]
-  local job=$1 deadline=$2 group_file armed_file group_pid rc tmp now soft_deadline next_heartbeat attempt
+worker_run_with_timeout() { # <job-dir> <epoch-deadline> <timeout-seconds> <command> [args...]
+  local job=$1 deadline=$2 timeout=$3 group_file armed_file group_pid rc tmp now window soft_deadline next_heartbeat attempt
   local timed_out=0 heartbeat_failed=0
   WORKER_PREEMPTED=0
-  shift 2
+  shift 3
   group_file="$job/.claim/group"
   armed_file="$job/.claim/armed"
   WORKER_ACTIVE_JOB=$job
@@ -458,12 +458,21 @@ worker_run_with_timeout() { # <job-dir> <epoch-deadline> <command> [args...]
   # empty substitution inside `$((SECONDS + deadline - $(date +%s) - 1))` parses
   # as a double negation rather than an error, silently producing a gate an
   # epoch away that never opens, so a failed `date` would let the command run
-  # unbounded. Falling back to the deadline opens the cheap gate immediately and
-  # leaves the kill decision to the epoch check below, which is the conservative
-  # direction: the job is still never cut short.
+  # unbounded.
+  #
+  # What the gate needs is the remaining window, and the deadline alone only
+  # yields one through the clock. The job's configured timeout records that same
+  # window independently of the clock, so an unreadable clock sizes the gate from
+  # it - plus the whole second the minted deadline rounds up by - instead of
+  # collapsing the window to nothing. A gate sized from the deadline itself would
+  # open immediately and hand the SECONDS fallback below no window to measure,
+  # killing seconds into a run however large its window.
   now=$(date +%s 2>/dev/null || true)
-  case "$now" in ''|*[!0-9]*) now=$deadline ;; esac
-  soft_deadline=$((SECONDS + deadline - now - 1))
+  case "$now" in
+    ''|*[!0-9]*) window=$((timeout + 1)) ;;
+    *) window=$((deadline - now)) ;;
+  esac
+  soft_deadline=$((SECONDS + window - 1))
   next_heartbeat=$((SECONDS + 1))
   while worker_process_or_group_alive group "$group_pid"; do
     if [ "$SECONDS" -ge "$soft_deadline" ]; then
@@ -473,16 +482,14 @@ worker_run_with_timeout() { # <job-dir> <epoch-deadline> <command> [args...]
       # reports as false, so a failed clock read would keep the kill from ever
       # firing and let the command run unbounded.
       #
-      # The gate sizing can fall back to the deadline because a later epoch
-      # check still decides the kill. This read *is* that decision, so it cannot
-      # borrow that fallback: the cheap gate opens up to two seconds early
-      # (SECONDS floors, and the deadline carries the mint's round-up), and
-      # treating a failed read as "deadline reached" would cut the job short
-      # inside that window. Fall back to SECONDS instead, which is maintained by
-      # the shell itself and so keeps advancing under exactly the repeated
-      # `date` fork failure this guards. Two further whole ticks past the gate
-      # put the real epoch past the deadline no matter where it opened, so the
-      # run stays bounded without ever ending early.
+      # The cheap gate opens up to two seconds early (SECONDS floors, and the
+      # deadline carries the mint's round-up), so treating a failed read as
+      # "deadline reached" would cut the job short inside that window. Fall back
+      # to SECONDS instead, which is maintained by the shell itself and so keeps
+      # advancing under exactly the repeated `date` fork failure this guards.
+      # Two further whole ticks past a gate sized from a real window put the run
+      # past its deadline wherever that gate opened, so it stays bounded without
+      # ever ending early.
       now=$(date +%s 2>/dev/null || true)
       case "$now" in ''|*[!0-9]*) now= ;; esac
       if { [ -n "$now" ] && [ "$now" -ge "$deadline" ]; } \
@@ -561,7 +568,7 @@ worker_capture_output() { # <fifo> <destination>
 }
 
 worker_run_job() { # <account-home> <job-dir>
-  local account_home=$1 job=$2 root home command command_path git_bin rc deadline remaining
+  local account_home=$1 job=$2 root home command command_path git_bin rc deadline timeout remaining
   local stdout_pipe stderr_pipe stdout_reader stderr_reader preemptible=0
   local -a argv child_env
   root=$(worker_read_text "$job" root 8192) || { worker_publish_result "$job" 126; return; }
@@ -574,6 +581,13 @@ worker_run_job() { # <account-home> <job-dir>
   fm_remote_job_regular_bounded "$job/argv" "$FM_REMOTE_JOB_MAX_BYTES" || { worker_publish_result "$job" 126; return; }
   fm_remote_job_regular_bounded "$job/stdin" "$FM_REMOTE_JOB_MAX_BYTES" || { worker_publish_result "$job" 126; return; }
   deadline=$(fm_remote_job_read_deadline "$job") || { worker_publish_result "$job" 126; return; }
+  # The timeout is the job's window recorded independently of the clock, which is
+  # what lets worker_run_with_timeout size its poll gate when the clock is
+  # unreadable. Re-apply the same ceiling worker_process_once applies when it
+  # mints the deadline, so a record rewritten in between cannot stretch that
+  # fallback past the bound a job is allowed to run for.
+  timeout=$(fm_remote_job_read_number "$job" timeout) || { worker_publish_result "$job" 126; return; }
+  [ "$timeout" -le 3600 ] || { worker_publish_result "$job" 126; return; }
   remaining=$((deadline - $(date +%s)))
   [ "$remaining" -gt 0 ] || { worker_publish_result "$job" 124; return; }
   argv=()
@@ -594,7 +608,7 @@ worker_run_job() { # <account-home> <job-dir>
   remaining=$((deadline - $(date +%s)))
   [ "$remaining" -gt 0 ] || { worker_publish_result "$job" 124; return; }
   set +e
-  worker_run_with_timeout "$job" "$deadline" \
+  worker_run_with_timeout "$job" "$deadline" "$timeout" \
     "$git_bin" -C "$root" ls-files --error-unmatch "bin/$command" >/dev/null 2>&1
   rc=$?
   set -e
@@ -643,7 +657,7 @@ worker_run_job() { # <account-home> <job-dir>
   }
   set +e
   WORKER_PREEMPTIBLE=$preemptible
-  worker_run_with_timeout "$job" "$deadline" "${child_env[@]}" \
+  worker_run_with_timeout "$job" "$deadline" "$timeout" "${child_env[@]}" \
     "$command_path" "${argv[@]:1}" < "$job/stdin" > "$stdout_pipe" 2> "$stderr_pipe"
   rc=$?
   WORKER_PREEMPTIBLE=0
