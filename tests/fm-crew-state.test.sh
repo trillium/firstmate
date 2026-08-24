@@ -1571,13 +1571,14 @@ test_beads_closed_bead_uncommitted_not_done() {
 }
 
 # A closed bead over genuinely LANDED work via a MERGED PR (whose head contains the
-# local work) must report done. Covers fm_landed_pr_is_merged, the distinct path from
-# the content-in-default landing exercised by the happy-path test above.
+# local work) must report done. The fixture's branch carries a commit the default
+# branch does not have and pushes both to a real remote, so the content-in-default
+# leg answers unlanded and only fm_landed_pr_is_merged can produce done here.
 test_beads_closed_bead_merged_pr_done() {
   command -v jq >/dev/null 2>&1 || { pass "beads closed+merged-pr skipped without jq"; return; }
   reset_fakes
   local d head; d=$(new_case beads-closed-merged-pr)
-  make_repo_on_branch "$d/wt" fm/feat-beadmerged
+  make_pushed_unlanded_repo "$d/wt" fm/feat-beadmerged
   head=$(git -C "$d/wt" rev-parse HEAD)
   make_fakebin "$d" >/dev/null
   mkdir -p "$d/config"; printf 'beads\n' > "$d/config/backlog-backend"
@@ -1714,8 +1715,12 @@ SH
   mkdir -p "$isolated"
   cp "$ROOT/bin/fm-landed-lib.sh" "$isolated/fm-landed-lib.sh"
   rc=0
-  PATH="$fb:$PATH" bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3" "$4"' \
-    _ "$isolated" "$d/wt" fm/feat-boundoptin https://github.com/o/r/pull/12 || rc=$?
+  (
+    unset FM_LANDED_NET_TIMEOUT
+    PATH="$fb:$PATH" \
+      bash -c '. "$1/fm-landed-lib.sh"; fm_work_is_landed "$2" "$2" "$3" "$4"' \
+      _ "$isolated" "$d/wt" fm/feat-boundoptin https://github.com/o/r/pull/12
+  ) || rc=$?
   [ "$rc" -eq 0 ] || fail "unbounded by default: a slow merged-PR lookup must be waited out, not cut off (rc=$rc)"
   rc=0
   PATH="$fb:$PATH" FM_LANDED_NET_TIMEOUT=1 \

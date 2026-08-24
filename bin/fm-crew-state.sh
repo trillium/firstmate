@@ -103,6 +103,10 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # runs on every supervision poll instead, so an unreachable remote or a blocking
 # credential helper must cost a bounded wait rather than stall the watcher. The
 # predicate spends this once in total, not once per remote leg.
+# FM_CREW_STATE_LANDED_TIMEOUT is the knob for THIS reader and is the only value
+# that reaches the predicate here: the generic FM_LANDED_NET_TIMEOUT an operator
+# may export for another caller never raises or lowers the supervision bound, so
+# the worst case stated above holds whatever the surrounding environment says.
 LANDED_TIMEOUT=${FM_CREW_STATE_LANDED_TIMEOUT:-$NM_TIMEOUT}
 case "$LANDED_TIMEOUT" in ''|*[!0-9]*) LANDED_TIMEOUT=10 ;; esac
 # How many of the most recent `no-mistakes runs` rows the cross-branch fallback
@@ -202,7 +206,7 @@ if [ -n "$BEADS_ID" ] \
   && fm_beads_is_closed "$BEADS_ID" \
   && [ -z "$(status_open_decisions "$LOG")" ] \
   && crew_tree_is_clean \
-  && FM_LANDED_NET_TIMEOUT=${FM_LANDED_NET_TIMEOUT:-$LANDED_TIMEOUT} \
+  && FM_LANDED_NET_TIMEOUT=$LANDED_TIMEOUT \
      fm_work_is_landed "$WT" "$PROJ" "$CREW_BRANCH" "$PR_URL"; then
   emit "done" bead "linked bead $BEADS_ID closed: task complete"
 fi
