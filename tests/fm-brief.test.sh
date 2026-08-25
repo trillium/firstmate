@@ -870,7 +870,7 @@ test_crewmate_briefs_enroll_in_parlay_first() {
 }
 
 # add_beads_task_mock_resolve <fakebin_dir> <minted_id> <calls_log>: a fake `task`
-# CLI reporting no existing task:<id>-labeled bead, so `create` mints <minted_id>,
+# CLI reporting no existing idempotency-labeled bead, so `create` mints <minted_id>,
 # logging every invocation so a test can assert it was never called.
 add_beads_task_mock_resolve() {
   local fakebin_dir=$1 minted_id=$2 calls_log=$3
@@ -887,7 +887,7 @@ SH
 }
 
 # Test: under config/backlog-backend=beads, fm-brief.sh opens the task's bead at
-# INTAKE - it resolves-or-mints the task:<id>-labeled bead the moment the brief is
+# INTAKE - it resolves-or-mints the home-scoped-labeled bead the moment the brief is
 # scaffolded (AGENTS.md sections 7 and 10), so a task known but not yet spawned
 # already has an open bead. It still does NOT inject the worker-facing Bead
 # Receipt/Closure sections (FM_HOOK_BEADS_ID stays unset; those are added at
@@ -904,49 +904,55 @@ test_beads_backend_mints_bead_at_intake() {
   calls_log="$TMP_ROOT/beads-backend-fake-calls.log"
   add_beads_task_mock_resolve "$fakebin" bead-auto-brief-1 "$calls_log"
 
-  PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BEADS_HOME_SCOPE=brief-intake \
+    "$ROOT/bin/fm-brief.sh" beads-auto-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/beads-auto-ship/brief.md"
   assert_present "$brief" "ship brief was not scaffolded under the beads backend"
-  # The intake bead is opened via the idempotent task:<id> lookup-then-mint.
-  assert_grep "list --label task:beads-auto-ship --limit 1 --json" "$calls_log" \
-    "ship brief did not resolve the intake bead via its task:<id> label under the beads backend"
+  # The intake bead is opened via the idempotent HOME-SCOPED lookup-then-mint. The
+  # scope is pinned above so this names the exact label: a bare
+  # task:beads-auto-ship assertion is a substring of the scoped label too, so it
+  # would still pass with the scope segment dropped and prove nothing about it.
+  assert_grep "list --label task:brief-intake:beads-auto-ship --limit 1 --json" "$calls_log" \
+    "ship brief did not resolve the intake bead via its home-scoped label under the beads backend"
   assert_grep "create --title" "$calls_log" \
     "ship brief did not mint an intake bead under the beads backend"
-  assert_grep "task:beads-auto-ship" "$calls_log" \
-    "the minted intake bead did not carry the task:<id> idempotency label"
+  assert_grep "task:brief-intake:beads-auto-ship" "$calls_log" \
+    "the minted intake bead did not carry the home-scoped idempotency label"
   # Section injection still stays at dispatch (fm-spawn.sh), not at scaffold time.
   assert_no_grep "# Bead Receipt" "$brief" \
     "ship brief wrongly rendered a Bead Receipt section at scaffold time (that belongs to fm-spawn.sh)"
   assert_no_grep "# Bead Closure" "$brief" \
     "ship brief wrongly rendered a Bead Closure section at scaffold time (that belongs to fm-spawn.sh)"
 
-  PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-scout no-registry-proj --scout >/dev/null 2>&1
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_BEADS_HOME_SCOPE=brief-intake \
+    "$ROOT/bin/fm-brief.sh" beads-auto-scout no-registry-proj --scout >/dev/null 2>&1
   brief="$home/data/beads-auto-scout/brief.md"
   assert_present "$brief" "scout brief was not scaffolded under the beads backend"
-  assert_grep "list --label task:beads-auto-scout --limit 1 --json" "$calls_log" \
+  assert_grep "list --label task:brief-intake:beads-auto-scout --limit 1 --json" "$calls_log" \
     "scout brief did not open its intake bead under the beads backend"
   assert_no_grep "# Bead Receipt" "$brief" \
     "scout brief wrongly rendered a Bead Receipt section at scaffold time under the beads backend"
 
   # Secondmate charters are operational entities, not backlog work items: no bead.
   FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
-    PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-brief.sh" beads-auto-sm --secondmate alpha >/dev/null 2>&1
+    PATH="$fakebin:$PATH" FM_HOME="$home" FM_BEADS_HOME_SCOPE=brief-intake \
+    "$ROOT/bin/fm-brief.sh" beads-auto-sm --secondmate alpha >/dev/null 2>&1
   brief="$home/data/beads-auto-sm/brief.md"
   assert_present "$brief" "secondmate charter was not scaffolded under the beads backend"
-  assert_no_grep "task:beads-auto-sm" "$calls_log" \
+  assert_no_grep "task:brief-intake:beads-auto-sm" "$calls_log" \
     "secondmate charter wrongly opened an intake bead under the beads backend"
 
   # An explicit FM_HOOK_BEADS_ID renders the hook sections and must NOT auto-mint
   # a second bead (the task is already linked by the opt-in caller).
   FM_HOOK_BEADS_ID=bead-explicit-under-beads-backend \
-    PATH="$fakebin:$PATH" FM_HOME="$home" \
+    PATH="$fakebin:$PATH" FM_HOME="$home" FM_BEADS_HOME_SCOPE=brief-intake \
     "$ROOT/bin/fm-brief.sh" beads-explicit-ship no-registry-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/beads-explicit-ship/brief.md"
   assert_grep "task set-state bead-explicit-under-beads-backend dispatch=claimed" "$brief" \
     "an explicit FM_HOOK_BEADS_ID did not render the Bead Receipt section under the beads backend"
-  assert_no_grep "task:beads-explicit-ship" "$calls_log" \
+  assert_no_grep "task:brief-intake:beads-explicit-ship" "$calls_log" \
     "an explicit FM_HOOK_BEADS_ID wrongly triggered a second intake-bead mint under the beads backend"
-  pass "fm-brief.sh: under config/backlog-backend=beads, briefs open the task's bead at intake (idempotent task:<id> mint) without injecting hook sections; explicit opt-ins and secondmate charters do not auto-mint"
+  pass "fm-brief.sh: under config/backlog-backend=beads, briefs open the task's bead at intake (idempotent home-scoped mint) without injecting hook sections; explicit opt-ins and secondmate charters do not auto-mint"
 }
 
 # Test: under the default (non-beads) backend, briefs are unchanged - no Bead

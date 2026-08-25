@@ -79,9 +79,10 @@
 #          refresh relays any completed fm-fleet-sync.sh output before the
 #          aggregate timeout skip line with timeout and elapsed seconds.
 #          Set FM_FLEET_PRUNE=0 to skip branch pruning during that refresh.
-#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the eight MUTATING sweeps
-#          (PR-check migration, the beads write-queue reconcile and the beads
-#          store sync [both beads backend only], secondmate_sync,
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the nine MUTATING sweeps
+#          (PR-check migration, the beads write-queue reconcile, the one-shot
+#          legacy beads task-label migration and the beads
+#          store sync [all three beads backend only], secondmate_sync,
 #          secondmate_liveness_sweep, secondmate_handoff_resume, x_mode_setup,
 #          fleet_sync) while still
 #          printing every read-only detect line
@@ -1328,6 +1329,15 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     # confirmed is reachable and it must not spend the shared stage budget
     # ahead of the sweeps that keep the fleet running.
     fm_beads_write_queue_reconcile
+    # The one-shot legacy task-label migration reads that same local store, is
+    # marker-guarded so it costs one label read on the first sweep and nothing
+    # afterwards, and holds itself to its own budget so a store that accepts the
+    # connection and never answers cannot wedge this phase. It is gated to the
+    # local phase because session start runs this bootstrap twice concurrently -
+    # once with the network skipped, once with only the network - and an
+    # ungated sweep runs in both, spending up to its whole budget ahead of the
+    # network sweeps that share the deferred worker's stage budget.
+    local_phase && fm_beads_migrate_legacy_task_labels
   fi
   # secondmate_sync consumes SECONDMATE_RESPAWNED_IDS from the liveness sweep, so
   # those two always run together in the same phase. Each mutating network sweep

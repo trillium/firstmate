@@ -59,12 +59,20 @@ $1
 EOF
 }
 
+# The idempotency label spawn resolves is HOME-SCOPED (bin/fm-tasks-axi-lib.sh's
+# fm_beads_task_label owns its shape), so these cases pin one scope and assert the
+# exact scoped label. A bare task:<id> assertion would be satisfied by the scoped
+# label's own substring, so it would pass even if the scope segment were dropped,
+# which is the regression these cases exist to catch.
+HOME_SCOPE="spawn-beads-suite"
+
 run_case_spawn() {
   local id=$1; shift
   FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_BEADS_HOME_SCOPE="$HOME_SCOPE" \
     FM_FAKE_PANE_PATH="$WT_DIR" \
     PATH="$FAKEBIN_DIR:$PATH" \
     "$SPAWN" --mode no-mistakes --yolo off "$id" "$PROJ_DIR" "$@" 2>&1
@@ -165,8 +173,8 @@ test_spawn_under_beads_backend_auto_links_without_flag() {
     "spawn under the beads backend did not auto-record beads_id= without --beads"
 
   for _ in $(seq 1 30); do grep -q 'set-state bead-auto-9 lifecycle=sent' "$calls_log" 2>/dev/null && break; sleep 0.1; done
-  assert_grep "list --label task:$id --limit 1 --json" "$calls_log" \
-    "spawn did not resolve the bead via its task:<id> label under the beads backend"
+  assert_grep "list --label task:$HOME_SCOPE:$id --limit 1 --json" "$calls_log" \
+    "spawn did not resolve the bead via its home-scoped task:<scope>:<id> label under the beads backend"
   assert_grep "set-state bead-auto-9 dispatch=sent" "$calls_log" \
     "fm-bead-stamp.sh did not stamp dispatch=sent on the auto-linked bead"
   assert_grep "set-state bead-auto-9 lifecycle=sent" "$calls_log" \
@@ -193,7 +201,7 @@ test_spawn_under_beads_backend_explicit_beads_wins() {
     "an explicit --beads id was not preserved under the beads backend"
   grep -q '^beads_id=bead-should-not-be-used$' "$HOME_DIR/state/$id.meta" 2>/dev/null \
     && fail "spawn ignored the explicit --beads id and used an auto-resolved bead instead"
-  assert_no_grep "list --label task:$id" "$calls_log" \
+  assert_no_grep "list --label task:$HOME_SCOPE:$id" "$calls_log" \
     "spawn resolved/minted a bead via auto-lookup despite an explicit --beads flag"
   pass "an explicit --beads id wins over auto-resolution under the beads backend"
 }
