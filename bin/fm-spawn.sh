@@ -195,6 +195,78 @@
 # muse installs no hook at all - its plugin engine is off in the default build - so
 # it writes state/<id>.muse-session to bind the pane to muse's own session event
 # log; muse is crewmate/scout only and is refused for --secondmate.
+#
+# FIRST-TURN WATCHDOG. The launch prompt is TYPED into a pane, so the launch
+# itself proves nothing about whether the agent read it: under load that line
+# can be lost, leaving an agent parked at an empty composer having consumed
+# nothing while this script reported success. After the launch, every spawn
+# confirms the agent actually STARTED a turn before returning.
+# bin/fm-firstturn-lib.sh owns the proof (the semantic busy-state record, which
+# harnesses it can prove, and why); this script owns the response. When a first
+# turn provably did NOT fire and the pane is still up, the brief pointer
+# ("Read the brief at <path> and follow it exactly.") is resubmitted exactly
+# once through fm_backend_send_text_submit, then re-confirmed. Resubmission is
+# safe only because the not-fired verdict PROVES nothing was consumed; an
+# unproven verdict is never resubmitted into, so no charter can be duplicated.
+# Every launch appends one record to state/.firstturn.log:
+#   <ts> id= harness= backend= outcome=<outcome> detail=<detail>
+#   fired-normally           the launch prompt started a turn
+#   resubmitted-confirmed    it did not; the pointer was resent and confirmed
+#   resubmitted-unconfirmed  it did not, and the resubmission was not confirmed
+#   resubmit-send-failed     it did not, and the pointer could not be typed
+#   not-running              it did not, and no agent is running (launch command
+#                            failed, so typing a pointer would not recover it)
+#   unproven                 no verdict is possible; detail names why
+#                            (no-semantic-source for codex/grok/kimi/muse and
+#                            any unverified adapter, secondmate-unarmed for a
+#                            secondmate launch, plus malformed/gen-mismatch/
+#                            firstmate-source/unexpected-seq, or disabled)
+# A secondmate is never armed, so it is short-circuited to unproven WITHOUT
+# waiting: the poll could only ever time out, and paying that on every
+# secondmate launch would buy nothing.
+# Anything other than fired-normally, resubmitted-confirmed, or unproven also
+# appends a `blocked:` event to state/<id>.status so a launch that quietly
+# failed to land wakes firstmate instead of passing as a clean success.
+# Knobs: FM_SPAWN_FIRSTTURN=off disables the whole block (the launch behaves
+# exactly as it did before, and the log records detail=disabled);
+# FM_SPAWN_FIRSTTURN_POLLS (120) and FM_SPAWN_FIRSTTURN_INTERVAL (0.5) bound the
+# wait, which returns the instant a turn is proven, so a healthy launch costs
+# one read; FM_SPAWN_FIRSTTURN_RESUBMIT_POLLS (FM_SPAWN_FIRSTTURN_POLLS) bounds
+# the post-resubmission wait; FM_SPAWN_FIRSTTURN_SUBMIT_RETRIES (3),
+# FM_SPAWN_FIRSTTURN_SUBMIT_SLEEP (FM_SPAWN_FIRSTTURN_INTERVAL), and
+# FM_SPAWN_FIRSTTURN_SUBMIT_SETTLE (0) are passed straight to the submit
+# primitive. docs/configuration.md owns the schema.
+# The watchdog is independent of Parlay: it uses no optional tooling at all.
+#
+# OPTIONAL PARLAY CLAIM PROMPT. Default OFF. With config/spawn-claim-prompt set
+# to `on`, a bead-linked crewmate or scout is launched against a short
+# `parlay claim <bead>` prompt instead of its whole encoded brief, which is the
+# shape `parlay claim` is designed for. bin/fm-claim-prompt-lib.sh owns the gate
+# and the prompt text; this script owns only the substitution. The claim it
+# emits pins --agent to this task id and passes --silent, so the one agent
+# keeps the single Parlay identity this script already enrolled it under and
+# never arms a second listen loop beside the one teardown owns.
+# The ONLY thing that changes is which file the launch templates'
+# `__OPINPUT__ encode launch-brief < __BRIEF__` reads: the operational-input
+# encoding contract, every harness template, and every launch flag are
+# untouched, and $BRIEF is never reassigned, so BRIEF_REAL and the watchdog's
+# recovery pointer keep naming the real brief. The prompt is written beside the
+# brief at data/<id>/claim-prompt.md, and it NAMES that brief and declares it
+# authoritative, so a claim that fails at the agent's end still lands on the
+# full contract rather than on a truncated one.
+# Gate (any one degrades to the brief, i.e. to the behaviour above):
+#   disabled     the flag is absent or is not exactly `on`
+#   secondmate   a secondmate carries a charter, not a bead-backed work item
+#   no-bead      the task has no beads_id=
+#   no-parlay    the parlay binary is not installed
+#   unreachable  the bounded `parlay subscribers` probe did not answer
+# Degrading is not a second code path: it feeds the same $BRIEF the spawn always
+# fed, so a default home's launch command and state/<id>.meta are byte-identical
+# to what they were before this existed. state/<id>.meta records claim_prompt=on
+# only when the prompt was actually used, and a --relaunch re-decides rather
+# than inheriting it. Knob: FM_SPAWN_CLAIM_PROBE_TIMEOUT (10) bounds the probe,
+# which can only ever degrade the launch, never block it. docs/configuration.md
+# owns the schema.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> [mode=<mode> yolo=<on|off>] window=<backend-target> worktree=<path>
 # A ship task records the explicit mode/yolo it was passed; a secondmate spawn records
 # mode=secondmate, yolo=off, home=, and projects=; a scout records neither, and both the
@@ -277,6 +349,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-firstturn-lib.sh
+. "$SCRIPT_DIR/fm-firstturn-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
@@ -289,6 +363,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
+# shellcheck source=bin/fm-claim-prompt-lib.sh
+. "$SCRIPT_DIR/fm-claim-prompt-lib.sh"  # sourced AFTER fm-timeout-lib.sh: its reachability probe needs fm_run_timed
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -2782,12 +2858,41 @@ fi
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen claim_prompt traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
   ' "$RELAUNCH_META"
 }
+# The optional Parlay claim prompt (bin/fm-claim-prompt-lib.sh). Default OFF,
+# and off is not a second code path: LAUNCH_PROMPT_SRC stays $BRIEF, so the
+# launch command is byte-identical to what it was before this existed. When the
+# gate opens, the ONLY thing that changes is which file the templates'
+# `__OPINPUT__ encode launch-brief < __BRIEF__` substitution reads - the
+# operational-input encoding contract, every harness template, and every launch
+# flag are untouched. $BRIEF itself is never reassigned, so BRIEF_REAL and the
+# first-turn watchdog's recovery pointer keep naming the real brief.
+# Decided here, ahead of the metadata write, so the shape a launch actually used
+# is durably recorded rather than inferred later.
+LAUNCH_PROMPT_SRC=$BRIEF
+CLAIM_PROMPT=off
+CLAIM_PROMPT_DECISION=$(fm_claim_prompt_decide "$CONFIG" "$KIND" "$BEADS_ARG" \
+  "${FM_SPAWN_CLAIM_PROBE_TIMEOUT:-10}")
+if [ "$CLAIM_PROMPT_DECISION" = use ]; then
+  # Beside the brief, in this home's private data dir, not under $STATE: the
+  # prompt is launch provenance of the same kind as data/<id>/brief.md, and
+  # bin/fm-teardown.sh's state cleanup is a by-name list this must not join.
+  if fm_claim_prompt_write "$DATA/$ID/claim-prompt.md" "$BEADS_ARG" "$BRIEF_REAL" "$ID"; then
+    LAUNCH_PROMPT_SRC="$DATA/$ID/claim-prompt.md"
+    CLAIM_PROMPT=on
+  else
+    # An unwritable data dir is not a reason to fail a spawn that is otherwise
+    # good; it is a reason to launch the way we always did. Say so rather than
+    # degrading silently - the captain turned this on deliberately.
+    echo "notice: $ID could not write its claim prompt; launching the full brief instead" >&2
+  fi
+fi
+
 {
   echo "window=$META_WINDOW"
   echo "endpoint_task_id=$ID"
@@ -2806,6 +2911,9 @@ preserve_relaunch_meta() {
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   [ -z "$LABEL_ARG" ] || echo "label=$LABEL_ARG"
   [ -z "$BEADS_ARG" ] || echo "beads_id=$BEADS_ARG"
+  # claim_prompt= is written only when the optional Parlay claim prompt was
+  # actually used, so a default launch's meta stays byte-identical.
+  [ "$CLAIM_PROMPT" != on ] || echo "claim_prompt=on"
   # Default-off writes no traceparent= line (meta stays byte-identical).
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
@@ -2859,7 +2967,7 @@ if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
 fi
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
-sq_brief=$(shell_quote "$BRIEF")
+sq_brief=$(shell_quote "$LAUNCH_PROMPT_SRC")
 sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
@@ -2992,6 +3100,97 @@ if [ "$HARNESS" = kimi ]; then
     exit 1
   fi
 fi
+
+# --- first-turn watchdog ----------------------------------------------------
+# The launch prompt above was TYPED into a pane; nothing so far proves it landed.
+# bin/fm-firstturn-lib.sh owns the proof (and the reason each verdict is
+# trustworthy); this block owns what a spawn does about it. Confirm the agent
+# actually started a turn, and when it provably did not, resubmit the brief
+# pointer exactly once and re-confirm. Every outcome is recorded so a launch
+# that quietly failed to land can never be reported as a clean success.
+firstturn_outcome=unproven
+firstturn_detail=disabled
+# A secondmate launch is deliberately never armed (the busy-arm site above gates
+# on KIND), so its record can only ever read `missing` and the verdict can only
+# ever be unproven. Waiting the full poll budget to discover that would put a
+# silent minute on every secondmate launch, local and remote alike, and buy
+# nothing. Short-circuit straight to the verdict the wait would have reached.
+if [ "$KIND" = secondmate ]; then
+  firstturn_detail=secondmate-unarmed
+elif [ "${FM_SPAWN_FIRSTTURN:-on}" != off ]; then
+  firstturn_verdict=$(fm_firstturn_wait "$STATE_REAL" "$ID" "$HARNESS" \
+    "${FM_SPAWN_FIRSTTURN_POLLS:-120}" "${FM_SPAWN_FIRSTTURN_INTERVAL:-0.5}")
+  firstturn_detail=${firstturn_verdict#* }
+  case "$firstturn_verdict" in
+    fired*)
+      firstturn_outcome=fired-normally
+      ;;
+    'not-fired'*)
+      # Proven: the launch-time seed was never superseded, so this agent has
+      # never been observed in a turn and cannot have consumed the brief.
+      # Resubmitting therefore cannot duplicate a charter - that safety rests
+      # on the proof, which is why an unproven verdict never reaches here.
+      firstturn_agent_state=$(fm_backend_agent_state "$BACKEND" "$T" 2>/dev/null || printf 'unreadable')
+      case "$firstturn_agent_state" in
+        dead|missing)
+          # No agent is running at all, so the launch COMMAND failed rather than
+          # the prompt. Typing a pointer into a bare shell would not recover it
+          # and could run as a shell command, so report instead of resubmitting.
+          firstturn_outcome=not-running
+          firstturn_detail=$firstturn_agent_state
+          ;;
+        *)
+          # Same short pointer shape kimi has always used, and the same shape
+          # that recovered both observed failures by hand. Sent through the
+          # proof-carrying submit primitive so every backend keeps its own
+          # composer verification.
+          firstturn_pointer="Read the brief at $BRIEF_REAL and follow it exactly."
+          firstturn_submit=$(fm_backend_send_text_submit \
+            "$BACKEND" "$T" "$firstturn_pointer" \
+            "${FM_SPAWN_FIRSTTURN_SUBMIT_RETRIES:-3}" \
+            "${FM_SPAWN_FIRSTTURN_SUBMIT_SLEEP:-${FM_SPAWN_FIRSTTURN_INTERVAL:-0.5}}" \
+            "${FM_SPAWN_FIRSTTURN_SUBMIT_SETTLE:-0}" "$W" 2>/dev/null) \
+            || firstturn_submit=send-failed
+          if [ "$firstturn_submit" = send-failed ]; then
+            firstturn_outcome=resubmit-send-failed
+            firstturn_detail=$firstturn_agent_state
+          else
+            firstturn_verdict=$(fm_firstturn_wait "$STATE_REAL" "$ID" "$HARNESS" \
+              "${FM_SPAWN_FIRSTTURN_RESUBMIT_POLLS:-${FM_SPAWN_FIRSTTURN_POLLS:-120}}" \
+              "${FM_SPAWN_FIRSTTURN_INTERVAL:-0.5}")
+            firstturn_detail=${firstturn_verdict#* }
+            case "$firstturn_verdict" in
+              fired*) firstturn_outcome=resubmitted-confirmed ;;
+              *) firstturn_outcome=resubmitted-unconfirmed ;;
+            esac
+          fi
+          ;;
+      esac
+      ;;
+    *)
+      # No semantic turn source for this harness (codex, grok, kimi, muse, an
+      # unverified adapter). Nothing is proven
+      # either way, so nothing is resubmitted and no verdict is faked.
+      firstturn_outcome=unproven
+      ;;
+  esac
+fi
+fm_firstturn_log "$STATE_REAL" "$ID" "$HARNESS" "$BACKEND" \
+  "$firstturn_outcome" "$firstturn_detail"
+case "$firstturn_outcome" in
+  fired-normally|unproven) ;;
+  resubmitted-confirmed)
+    echo "FIRSTTURN: $ID did not start its first turn from the launch prompt; the brief pointer was resubmitted and the turn is confirmed" >&2
+    ;;
+  *)
+    # Actionable: this launch is not known to be working. Wake firstmate through
+    # the task's own status log rather than letting the success line stand alone.
+    printf 'blocked: launch prompt did not start a first turn (%s: %s); inspect %s\n' \
+      "$firstturn_outcome" "$firstturn_detail" "$META_WINDOW" >> "$STATE/$ID.status"
+    echo "FIRSTTURN: $ID did not start its first turn ($firstturn_outcome: $firstturn_detail); inspect window $T" >&2
+    ;;
+esac
+
 if [ "$KIND" = secondmate ] && [ "${FM_SKIP_SECONDMATE_INHERIT:-0}" != 1 ]; then
   if ! fm_config_reread_discard_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then
     if fm_config_reread_quarantine_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then
