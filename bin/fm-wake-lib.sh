@@ -607,6 +607,64 @@ fm_wake_queued_keys_locked() {
     "$FM_WAKE_QUEUE" 2>/dev/null || true
 }
 
+# fm_wake_records
+# Print every currently queued record verbatim, oldest first, read under the
+# append lock so a concurrent append is never observed half-written. Unlike
+# fm_wake_print_deduped this does NOT collapse duplicates: a triage caller
+# judges and removes individual records by their unique sequence number, so it
+# needs the raw rows.
+fm_wake_records() {
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  fm_wake_records_locked
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+}
+
+fm_wake_records_locked() {
+  awk -F '\t' 'NF >= 5' "$FM_WAKE_QUEUE" 2>/dev/null || true
+}
+
+# fm_wake_absorb_seqs <seq> [<seq>...]
+# Remove exactly the named records from the durable queue, under the same lock
+# bin/fm-wake-drain.sh holds for its whole atomic move/print/delete, so an
+# absorb can never race a main-session drain into losing or duplicating a
+# record. Sequence numbers are unique and monotonic (fm_wake_append), so this
+# removes precisely the records the caller judged and never a newer record
+# appended for the same key after that judgement.
+#
+# Prints the number of records removed. A queue that no longer holds a listed
+# sequence (a drain consumed it first) is not an error: the record is gone,
+# which is the outcome the caller wanted.
+fm_wake_absorb_seqs() {
+  local seq list='' tmp status=0 removed=0 before=0 after=0
+  [ "$#" -gt 0 ] || { printf '0\n'; return 0; }
+  for seq in "$@"; do
+    case "$seq" in
+      ''|*[!0-9]*) printf 'fm_wake_absorb_seqs: invalid sequence: %s\n' "$seq" >&2; return 2 ;;
+    esac
+    list="$list $seq "
+  done
+
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  if [ -s "$FM_WAKE_QUEUE" ]; then
+    tmp="$FM_WAKE_QUEUE.absorb.$(fm_current_pid)"
+    before=$(awk 'END { print NR }' "$FM_WAKE_QUEUE" 2>/dev/null || echo 0)
+    if awk -F '\t' -v drop="$list" '
+        NF >= 5 && index(drop, " " $2 " ") > 0 { next }
+        { print }
+      ' "$FM_WAKE_QUEUE" > "$tmp" 2>/dev/null && mv -f "$tmp" "$FM_WAKE_QUEUE" 2>/dev/null; then
+      after=$(awk 'END { print NR }' "$FM_WAKE_QUEUE" 2>/dev/null || echo 0)
+      removed=$((before - after))
+      [ "$removed" -ge 0 ] || removed=0
+    else
+      status=1
+    fi
+    rm -f "$tmp" 2>/dev/null || true
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  printf '%s\n' "$removed"
+  return "$status"
+}
+
 fm_wake_restore_queue() {
   local drained=$1 restore
   restore="$STATE/.wake-queue.restore.$(fm_current_pid)"

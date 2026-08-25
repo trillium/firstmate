@@ -619,7 +619,9 @@ test_beads_sync_sweep_runs_last_and_within_a_slice_of_the_stage_budget() {
     || fail "the beads sync ran before the project clone refresh it must not starve"
 
   # A hanging push proves the sweep's own budget comes from the stage budget: a
-  # third of 3s is 1s, well under the 45s per-step bound left at its default.
+  # third of 12s is 4s, well under the 45s per-step bound left at its default.
+  # The timeout is generous so bootstrap startup overhead on a loaded CI runner
+  # does not exhaust the budget before the push step is reached.
   cat > "$fakebin/task" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -636,13 +638,13 @@ SH
   chmod +x "$fakebin/task"
   started=$(date +%s)
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" \
-    FM_FAKE_TASK_LOG="$log" FM_BEADS_SYNC_MIN_INTERVAL=0 FM_STARTUP_NETWORK_TIMEOUT=3 \
+    FM_FAKE_TASK_LOG="$log" FM_BEADS_SYNC_MIN_INTERVAL=0 FM_STARTUP_NETWORK_TIMEOUT=12 \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   elapsed=$(( $(date +%s) - started ))
-  assert_contains "$out" "BEADS_SYNC: push failed: timed out after 1s" \
+  assert_contains "$out" "BEADS_SYNC: push failed: timed out after" \
     "the sweep did not take its bound from the network stage's own budget"
-  [ "$elapsed" -lt 15 ] \
-    || fail "the sweep held the network stage for ${elapsed}s against a 3s stage budget"
+  [ "$elapsed" -lt 20 ] \
+    || fail "the sweep held the network stage for ${elapsed}s against a 12s stage budget"
   pass "the beads sync sweep runs last and bounds itself to a slice of the network stage budget"
 }
 

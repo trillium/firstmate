@@ -15,9 +15,11 @@ FM_PUSH_TRANSITION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$FM_PUSH_TRANSITION_LIB_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-transition-lib.sh
 . "$FM_PUSH_TRANSITION_LIB_DIR/fm-transition-lib.sh"
-
-TRIAGE_LOG="$STATE/.watch-triage.log"
-TRIAGE_LOG_MAX_BYTES=${FM_WATCH_TRIAGE_LOG_MAX_BYTES:-262144}
+# The absorbed-wake triage log has one owner, shared with the sub-supervisor's
+# attended queue triage. Sourced AFTER fm-wake-lib.sh above so STATE is already
+# resolved and TRIAGE_LOG lands on the same path as before.
+# shellcheck source=bin/fm-triage-log-lib.sh
+. "$FM_PUSH_TRANSITION_LIB_DIR/fm-triage-log-lib.sh"
 FM_WAKE_POST_OUTPUT_ACTION=
 FM_WATCH_DELIVERY_PID=
 FM_WATCH_DELIVERY_IDENTITY=
@@ -66,18 +68,6 @@ watch_delivery_publish() {
       ;;
   esac
   fm_lock_release "$WATCH_DELIVERY_LOCK"
-}
-
-# Append one bounded best-effort line for an absorbed supervision event.
-triage_log() {
-  local sz
-  printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" >> "$TRIAGE_LOG" 2>/dev/null || return 0
-  sz=$(wc -c < "$TRIAGE_LOG" 2>/dev/null | tr -d '[:space:]')
-  case "$sz" in ''|*[!0-9]*) return 0 ;; esac
-  if [ "$sz" -ge "$TRIAGE_LOG_MAX_BYTES" ]; then
-    tail -n 2000 "$TRIAGE_LOG" > "$TRIAGE_LOG.tmp" 2>/dev/null && mv -f "$TRIAGE_LOG.tmp" "$TRIAGE_LOG" 2>/dev/null
-    rm -f "$TRIAGE_LOG.tmp" 2>/dev/null || true
-  fi
 }
 
 # Exit after reporting one actionable wake. Tests override this callback.

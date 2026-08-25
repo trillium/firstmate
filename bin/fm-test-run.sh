@@ -402,6 +402,7 @@ family_for_basename() {
     fm-test-parlay-guard.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
+    fm-attended-triage.test.sh|\
     fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-hash-pane.test.sh|\
     fm-pi-watch-extension.test.sh|\
     fm-session-lock-ancestry.test.sh|\
@@ -1192,9 +1193,13 @@ families_for_changed_path() {
       printf '%s\n' backend-dispatch
       printf '%s\n' real-herdr-gated
       ;;
-    bin/fm-watch*|bin/fm-wake*|\
+    bin/fm-watch*|bin/fm-wake*|bin/fm-attended-triage-lib.sh|bin/fm-triage-log-lib.sh|\
     bin/fm-classify-lib.sh|bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh)
       printf '%s\n' watcher-wake-lock
+      ;;
+    bin/fm-attended-start.sh)
+      printf '%s\n' watcher-wake-lock
+      printf '%s\n' afk
       ;;
     bin/fm-afk*)
       printf '%s\n' afk

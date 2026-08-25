@@ -77,6 +77,7 @@ config/trace-context  optional presence flag enabling default-off native W3C tra
 config/spawn-claim-prompt  optional "on" flag launching a bead-linked crewmate or scout against a short `parlay claim <bead>` prompt instead of its whole encoded brief; LOCAL, gitignored; off unless it reads exactly "on", and degrades back to the brief whenever the spawn is a secondmate, the task has no bead, or Parlay is absent or unreachable; see docs/configuration.md "Parlay claim prompt"
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
+config/attended-triage  optional "on" switch letting the sub-supervisor also triage the wake queue while the captain is present, dropping wakes it proves nobody needs; LOCAL, gitignored; absent or "off" = today's away-only behavior; see docs/configuration.md "Attended background triage"
 config/x-mode.env    generated Relay watcher cadence; LOCAL, gitignored; source before arming watcher when present
 config/herdr-spur.agents  optional watch list (one agent name per line) for bin/fm-herdr-spur.sh's external-agent completion bridge; LOCAL, gitignored; absent with no --agent flags means auto-track every agent herdr reports (docs/examples/herdr-spur.agents)
 data/                personal fleet records; LOCAL, gitignored as a whole
@@ -132,7 +133,7 @@ state/               volatile runtime signals; gitignored
   .firstturn.log     append-only record of whether each launch's prompt actually started a first turn, written by bin/fm-spawn.sh's watchdog (bin/fm-firstturn-lib.sh); evidence for a launch that quietly failed to land, never authority, safe to delete
   .staleness-autoclose.log  append-only log of the watcher's idle>2h staleness auto-close reclaim attempts against a ship task (bin/fm-teardown.sh --staleness-autoclose); never relied on, safe to delete
   .staleness-autoclose-afk.log  durable evidence of staleness auto-close reclaims made while away; surfaced by /afk return as catch-up evidence, then cleared
-  .watch-triage.log  watcher's absorbed-wake debug log (size-capped); never relied on, safe to delete
+  .watch-triage.log  absorbed-wake debug log written by both the watcher triage and the sub-supervisor's attended pass (single owner: bin/fm-triage-log-lib.sh; size-capped); never relied on, safe to delete
   .herdr-spur.log    bin/fm-herdr-spur.sh's own append-only run log; never relied on, safe to delete
   .last-watcher-beat watcher liveness beacon, touched every poll (including while absorbing benign wakes); guard scripts read it
   .subsuper-* .supervise-daemon.*   sub-supervisor internals; never touch
