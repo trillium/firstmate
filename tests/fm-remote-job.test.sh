@@ -323,19 +323,53 @@ pass "the worker preserves bounded argv and stdin in an empty environment"
 # subtests below replace it through fm_remote_job_ensure_worker, which inherits
 # this process's PATH instead.
 #
+# Each of the three subtests below needs the worker to actually reach the state
+# its trapped reads are taken from: the job claimed, armed, and wired for output
+# capture. Everything before that competes for the same window. The queue wait
+# has to fit inside the queue window, and the worker's own pre-execution
+# validation - resolving the operator PATH, running git ls-files, building the
+# capture pipes - is deliberately billed against the execution window, which
+# "pre-execution validation obeys the job timeout" below pins as product
+# behavior. Windows sized for an idle machine leave that work no room, so on a
+# loaded machine the worker correctly abandons the job at one of its own 124
+# gates, no trapped read is ever taken, and the guards below report that nothing
+# was proved.
+#
+# So size these windows for the whole path rather than the command alone. This
+# costs the assertions no sharpness: every one of them is anchored on the job's
+# own recorded deadline and on artifact mtimes, never on elapsed test time, so
+# the only thing a wider window changes is whether the scenario gets set up at
+# all. The delay still outlives its window many times over, keeping a completed
+# side effect the unbounded-run signature rather than a timing coincidence.
+BLIND_CLOCK_QUEUE_TIMEOUT=30
+BLIND_CLOCK_TIMEOUT=10
+BLIND_CLOCK_DELAY=120
+
+# A guard below fires when the job never reached that armed-and-wired state, and
+# the job's own record says which stage stopped it: a job abandoned in the queue
+# never had a deadline minted, while one abandoned during pre-execution
+# validation carries the deadline its claim wrote. Reporting that turns an
+# otherwise opaque result into a statement of which window was too small here.
+blind_clock_vacuity_cause() { # <job-dir>
+  if [ -f "$1/deadline" ]; then
+    printf 'the worker abandoned it during pre-execution validation, so its execution window did not cover that validation on this machine'
+  else
+    printf 'the job expired in the queue before the worker claimed it, so its queue window did not cover claim latency on this machine'
+  fi
+}
+
 # A clock read that fails must not vanish into the worker's arithmetic. An empty
 # command substitution inside the poll-gate expression parses as a double
 # negation rather than an error, which pushes the gate an epoch into the future
 # so it never opens and the command runs unbounded - the worker wedged until the
 # job finishes on its own. Fail exactly the read that sizes that gate and the
 # job must still be terminated at its own deadline and still publish a result.
-# The job outlives its window by several times over, so completing it is the
-# unbounded-run signature rather than a timing coincidence.
 BLIND_CLOCK_SIDE_EFFECT="$TMP_ROOT/blind-clock-side-effect"
-FM_REMOTE_JOB_TIMEOUT=2
+FM_REMOTE_JOB_QUEUE_TIMEOUT=$BLIND_CLOCK_QUEUE_TIMEOUT
+FM_REMOTE_JOB_TIMEOUT=$BLIND_CLOCK_TIMEOUT
 : > "$DATE_SHIM_TRIP"
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-delay-job.sh 8 "$BLIND_CLOCK_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-delay-job.sh "$BLIND_CLOCK_DELAY" "$BLIND_CLOCK_SIDE_EFFECT" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 BLIND_CLOCK_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
@@ -346,7 +380,7 @@ BLIND_CLOCK_TRIPPED=0
 [ -f "$DATE_SHIM_TRIP" ] || BLIND_CLOCK_TRIPPED=1
 rm -f -- "$DATE_SHIM_TRIP"
 [ "$BLIND_CLOCK_TRIPPED" -eq 1 ] \
-  || fail "the worker never took the clock read this subtest fails, so it proved nothing"
+  || fail "the worker never took the clock read this subtest fails, so it proved nothing: $(blind_clock_vacuity_cause "$BLIND_CLOCK_JOB_DIR")"
 assert_absent "$BLIND_CLOCK_SIDE_EFFECT" \
   "a failed clock read let the job run past its execution deadline to completion"
 [ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
@@ -364,9 +398,7 @@ pass "a failed clock read still bounds a job at its execution deadline"
 # that sizes the gate. A count of 1 lets the gate sizing take the real clock and
 # then fails every termination read. Unvalidated, such a read leaves an empty
 # operand, `-ge` rejects it as a non-integer and reports false, and the job runs
-# unbounded exactly as in the case above. The job again outlives its window
-# several times over, so completing it is the unbounded-run signature rather
-# than a timing coincidence.
+# unbounded exactly as in the case above.
 #
 # Failing every termination read, rather than only the first, is what makes this
 # subtest prove the guard instead of a later real read: the kill can only come
@@ -377,10 +409,11 @@ pass "a failed clock read still bounds a job at its execution deadline"
 #   bounded        - the job is terminated rather than running to completion.
 #   never cut short - it is not terminated before its own execution deadline.
 BLIND_KILL_SIDE_EFFECT="$TMP_ROOT/blind-kill-side-effect"
-FM_REMOTE_JOB_TIMEOUT=2
+FM_REMOTE_JOB_QUEUE_TIMEOUT=$BLIND_CLOCK_QUEUE_TIMEOUT
+FM_REMOTE_JOB_TIMEOUT=$BLIND_CLOCK_TIMEOUT
 printf '1\n' > "$DATE_SHIM_TRIP"
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-delay-job.sh 8 "$BLIND_KILL_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-delay-job.sh "$BLIND_CLOCK_DELAY" "$BLIND_KILL_SIDE_EFFECT" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 BLIND_KILL_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
@@ -392,7 +425,7 @@ BLIND_KILL_TRIPPED=0
 [ "$(cat "$DATE_SHIM_TRIP" 2>/dev/null || true)" = tripped ] && BLIND_KILL_TRIPPED=1
 rm -f -- "$DATE_SHIM_TRIP"
 [ "$BLIND_KILL_TRIPPED" -eq 1 ] \
-  || fail "the worker never took the clock reads this subtest fails, so it proved nothing"
+  || fail "the worker never took the clock reads this subtest fails, so it proved nothing: $(blind_clock_vacuity_cause "$BLIND_KILL_JOB_DIR")"
 assert_absent "$BLIND_KILL_SIDE_EFFECT" \
   "a failed termination clock read let the job run past its execution deadline to completion"
 [ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
@@ -419,10 +452,11 @@ pass "a failed termination clock read still bounds a job at its execution deadli
 #   bounded         - the job is terminated rather than running to completion.
 #   never cut short - it is not terminated before its own execution deadline.
 BLIND_WINDOW_SIDE_EFFECT="$TMP_ROOT/blind-window-side-effect"
-FM_REMOTE_JOB_TIMEOUT=2
+FM_REMOTE_JOB_QUEUE_TIMEOUT=$BLIND_CLOCK_QUEUE_TIMEOUT
+FM_REMOTE_JOB_TIMEOUT=$BLIND_CLOCK_TIMEOUT
 printf '0\n' > "$DATE_SHIM_TRIP"
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
-  fm-delay-job.sh 8 "$BLIND_WINDOW_SIDE_EFFECT" < /dev/null > /dev/null
+  fm-delay-job.sh "$BLIND_CLOCK_DELAY" "$BLIND_WINDOW_SIDE_EFFECT" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
 BLIND_WINDOW_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
@@ -433,7 +467,7 @@ BLIND_WINDOW_TRIPPED=0
 [ "$(cat "$DATE_SHIM_TRIP" 2>/dev/null || true)" = tripped ] && BLIND_WINDOW_TRIPPED=1
 rm -f -- "$DATE_SHIM_TRIP"
 [ "$BLIND_WINDOW_TRIPPED" -eq 1 ] \
-  || fail "the worker never took the clock reads this subtest fails, so it proved nothing"
+  || fail "the worker never took the clock reads this subtest fails, so it proved nothing: $(blind_clock_vacuity_cause "$BLIND_WINDOW_JOB_DIR")"
 assert_absent "$BLIND_WINDOW_SIDE_EFFECT" \
   "an unreadable clock let the job run past its execution deadline to completion"
 [ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
@@ -446,6 +480,10 @@ BLIND_WINDOW_DEADLINE=$(fm_remote_job_read_number "$BLIND_WINDOW_JOB_DIR" deadli
   || fail "an unreadable clock cut the job short of its own execution deadline"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the terminated job could not be reaped"
 pass "an unreadable clock bounds a job at its own recorded window"
+
+# The widened queue window above belongs to those three subtests alone; restore
+# the suite default so nothing below inherits it.
+FM_REMOTE_JOB_QUEUE_TIMEOUT=5
 
 ACTIVE_SIDE_EFFECT="$TMP_ROOT/active-side-effect"
 FM_REMOTE_JOB_TIMEOUT=10
