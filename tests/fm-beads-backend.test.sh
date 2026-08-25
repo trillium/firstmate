@@ -459,6 +459,49 @@ test_beads_migration_repoints_a_dispatched_task_off_another_homes_bead() {
   pass "the sweep repoints a dispatched task off another home's bead onto one of its own"
 }
 
+# Regression: repoint must skip a task whose tmux endpoint is still alive.
+# A live worker holds the old bead ID in its brief; rewriting meta under it
+# would give the worker a stale reference it would then act on erroneously.
+test_beads_migration_skips_repoint_for_live_endpoint() {
+  local dir fakebin calls_log home out before
+  command -v jq >/dev/null 2>&1 || { pass "live-endpoint repoint skip skipped without jq"; return; }
+  dir="$TMP_ROOT/migrate-repoint-live"
+  home="$dir/home-b"
+  mkdir -p "$home/state" "$home/data"
+  printf 'window=live-w1\nbeads_id=bead-shared\n' > "$home/state/task-xyz.meta"
+  fakebin=$(fm_fakebin "$dir")
+  calls_log="$dir/calls.log"
+  add_beads_task_mock_store "$fakebin" "$calls_log" \
+    '[{"id":"bead-shared","status":"open","labels":["task:task-xyz","task:home-a:task-xyz"]}]' \
+    "bead-b-own"
+  # A fake tmux that confirms live-w1 is alive (returns a pane id for display-message).
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "display-message" ] && [ "${4:-}" = "live-w1" ]; then
+  printf '%%100\n'
+  exit 0
+fi
+exit 1
+SH
+  chmod +x "$fakebin/tmux"
+  before=$(cat "$home/state/task-xyz.meta")
+
+  # The sweep returns non-zero when a repoint is skipped so the durable marker
+  # is not written and the sweep retries next session; capture the output
+  # without treating non-zero as a test failure.
+  out=$(PATH="$fakebin:$PATH" FM_BEADS_HOME_SCOPE=home-b STATE="$home/state" DATA="$home/data" \
+    fm_beads_migrate_legacy_task_labels 2>&1) || true
+  printf '%s\n' "$out" | grep -q "skipping repoint of task-xyz" \
+    || fail "the sweep did not log the live-endpoint skip diagnostic: $out"
+
+  after=$(cat "$home/state/task-xyz.meta")
+  [ "$before" = "$after" ] \
+    || fail "the sweep rewrote meta for a task with a live endpoint, got: $after"
+  assert_absent "$home/state/.beads-label-migration-v1" \
+    "the marker must not be written when a repoint was skipped (so the sweep retries next session)"
+  pass "the sweep skips repoint and logs a diagnostic when the task's tmux endpoint is alive"
+}
+
 # Test: the repointing path is safe to re-run. Once this home's own record names
 # its replacement bead, the shared bead is no longer a candidate this home
 # claims, so a second sweep mints nothing and rewrites nothing.
@@ -1800,6 +1843,7 @@ test_beads_resolve_or_create_two_homes_same_slug
 test_beads_migration_retags_a_scaffolded_tasks_legacy_bead
 test_beads_migration_leaves_a_bead_another_home_claimed_alone
 test_beads_migration_repoints_a_dispatched_task_off_another_homes_bead
+test_beads_migration_skips_repoint_for_live_endpoint
 test_beads_migration_repoint_second_run_is_a_no_op
 test_beads_migration_counts_a_failed_replacement_mint_as_a_failure
 test_beads_migration_counts_a_failed_repoint_write_as_a_failure
