@@ -103,6 +103,7 @@ make_spawn_case() {
 }
 
 read_spawn_record() {
+  # shellcheck disable=SC2034 # CASE_DIR is part of the shared record shape
   IFS='|' read -r CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR SEND_LOG <<EOF
 $1
 EOF

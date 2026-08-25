@@ -71,6 +71,7 @@ test_adapter_sources_are_derived_not_restated() {
   for h in claude opencode pi pi-signed codex grok kimi muse; do
     busy=$(fm_busy_sources_for_harness "$h")
     adapter=$(fm_firstturn_adapter_sources "$h")
+    # shellcheck disable=SC2086  # $busy is a space-separated list; word-split is intentional
     expected=$(printf '%s\n' $busy | grep -vxF -e fm-spawn -e fm-interrupt -e fm-recovery | tr '\n' ' ')
     expected=${expected% }
     [ "$adapter" = "$expected" ] \
