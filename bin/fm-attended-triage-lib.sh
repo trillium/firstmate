@@ -381,7 +381,7 @@ fm_attended_record_verdict() {  # <kind> <key> <payload> <state> <calls-left>
 # Prints nothing. Every verdict, absorbed or not, is written to the shared triage
 # log with its tier so the captain can audit what was dropped and why.
 fm_attended_triage_pass() {  # <state>
-  local state=$1 rows row epoch seq kind key payload
+  local state=$1 rows epoch seq kind key payload
   local verdict tier reason judged=0 absorbed=0 removed
   local max_calls calls_left
   local -a drop=()
