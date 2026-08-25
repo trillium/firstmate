@@ -139,8 +139,10 @@ test_foreign_adapter_source_does_not_prove_this_harness() {
   # A record written by a DIFFERENT harness's adapter says nothing about this
   # one. It must not read as fired (a false success that hides a dropped
   # prompt) and must not read as not-fired (a resubmit on no evidence).
+  # It must also not be mislabeled as a firstmate-owned source: pi-ext belongs
+  # to the Pi adapter, not to firstmate, and the log must reflect that.
   "$EV" apply "$state" t1 busy --gen "$gen" --source pi-ext --event agent-start
-  assert_verdict "$(fm_firstturn_observe "$state" t1 claude)" 'unproven firstmate-source' \
+  assert_verdict "$(fm_firstturn_observe "$state" t1 claude)" 'unproven foreign-source' \
     "another harness's adapter source"
   pass "another harness's adapter source proves nothing about this harness's first turn"
 }

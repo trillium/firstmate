@@ -95,7 +95,8 @@ fm_firstturn_provable() {  # <harness>
 #   not-fired seed          the launch-time seed is still untouched at seq=1
 #   unproven <reason>       nothing can be concluded; reason is one of
 #                           no-semantic-source, missing, malformed,
-#                           gen-mismatch, firstmate-source, unexpected-seq
+#                           gen-mismatch, firstmate-source, foreign-source,
+#                           unexpected-seq
 fm_firstturn_observe() {  # <state-dir> <id> <harness>
   local state=${1:-} id=${2:-} harness=${3:-} adapter_sources record
   local r_state r_source r_event r_seq
@@ -137,7 +138,10 @@ EOF
     fi
     return 0
   fi
-  printf 'unproven firstmate-source'
+  case " $FM_FIRSTTURN_NON_EVIDENCE_SOURCES " in
+    *" $r_source "*) printf 'unproven firstmate-source' ;;
+    *)               printf 'unproven foreign-source' ;;
+  esac
 }
 
 # fm_firstturn_wait: poll fm_firstturn_observe until it proves a turn fired or

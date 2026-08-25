@@ -220,7 +220,8 @@
 #                            (no-semantic-source for codex/grok/kimi/muse and
 #                            any unverified adapter, secondmate-unarmed for a
 #                            secondmate launch, plus malformed/gen-mismatch/
-#                            firstmate-source/unexpected-seq, or disabled)
+#                            firstmate-source/foreign-source/unexpected-seq,
+#                            or disabled)
 # A secondmate is never armed, so it is short-circuited to unproven WITHOUT
 # waiting: the poll could only ever time out, and paying that on every
 # secondmate launch would buy nothing.
