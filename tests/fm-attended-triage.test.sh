@@ -73,8 +73,11 @@ run_pass() {  # <dir> <state> [<env assignment>...]
   local dir=$1 state=$2
   shift 2
   ( set +e
+    # shellcheck disable=SC2030,SC2031
     export FM_ATTENDED_TRIAGE=on
+    # shellcheck disable=SC2030,SC2031
     export FM_ATTENDED_TRIAGE_EXEC="$dir/fakebin/claude"
+    # shellcheck disable=SC2030,SC2031
     export FM_STATE_OVERRIDE="$state"
     while [ "$#" -gt 0 ]; do export "${1?}"; shift; done
     fm_attended_triage_pass "$state"
@@ -90,7 +93,9 @@ test_switch_off_leaves_the_queue_and_log_untouched() {
 
   ( set +e
     unset FM_ATTENDED_TRIAGE
+    # shellcheck disable=SC2030,SC2031
     export FM_ATTENDED_TRIAGE_EXEC="$dir/fakebin/claude"
+    # shellcheck disable=SC2030,SC2031
     export FM_STATE_OVERRIDE="$state" FM_HOME="$dir"
     fm_attended_triage_pass "$state"
   )
@@ -109,7 +114,9 @@ test_config_file_turns_the_pass_on() {
 
   ( set +e
     unset FM_ATTENDED_TRIAGE
+    # shellcheck disable=SC2030,SC2031
     export FM_ATTENDED_TRIAGE_EXEC="$dir/fakebin/claude"
+    # shellcheck disable=SC2030,SC2031
     export FM_STATE_OVERRIDE="$state" FM_HOME="$dir"
     fm_attended_triage_pass "$state"
   )
@@ -129,7 +136,9 @@ test_unrecognised_switch_value_is_treated_as_off() {
 
   ( set +e
     unset FM_ATTENDED_TRIAGE
+    # shellcheck disable=SC2030,SC2031
     export FM_ATTENDED_TRIAGE_EXEC="$dir/fakebin/claude"
+    # shellcheck disable=SC2030,SC2031
     export FM_STATE_OVERRIDE="$state" FM_HOME="$dir"
     fm_attended_triage_pass "$state"
   )
@@ -185,6 +194,7 @@ test_away_mode_injection_still_gated_on_the_flag() {
   # into the captain's session.
   out=$(
     set +e
+    # shellcheck disable=SC2030,SC2031
     export FM_ATTENDED_TRIAGE=on FM_STATE_OVERRIDE="$state"
     export FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGET=fakepane
     export FM_FAKE_TMUX_SENT="$dir/sent"
@@ -286,7 +296,9 @@ test_model_missing_binary_escalates() {
   append_wake "$state" signal task-aa.status "signal: task-aa.status"
 
   ( set +e
+    # shellcheck disable=SC2030,SC2031
     export FM_ATTENDED_TRIAGE=on FM_STATE_OVERRIDE="$state"
+    # shellcheck disable=SC2030,SC2031
     export FM_ATTENDED_TRIAGE_EXEC="$dir/fakebin/no-such-model-binary"
     fm_attended_triage_pass "$state"
   )
