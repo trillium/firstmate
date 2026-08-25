@@ -45,6 +45,17 @@ export FM_GATE_REFUSE_BYPASS=1
 # FM_SPAWN_NO_GUARD, are unaffected.
 export FM_SPAWN_SKIP_PARLAY=1
 
+# Keep fm-spawn.sh's first-turn watchdog out of every test-suite spawn that is
+# not specifically testing it. The watchdog proves a launch prompt actually
+# started a turn by waiting for the harness's own busy-state adapter to replace
+# the launch seed (bin/fm-firstturn-lib.sh). No fake backend runs a real
+# harness, so for a provable harness (claude, opencode, pi, pi-signed) that
+# adapter record can never arrive: every such spawn would sit out the full poll
+# budget and then resubmit a brief pointer into a mock pane. Off here means the
+# suite stays fast and mocks stay unread; tests/fm-spawn-firstturn.test.sh sets
+# FM_SPAWN_FIRSTTURN back on per invocation to exercise the real thing.
+export FM_SPAWN_FIRSTTURN=off
+
 # Drop an inherited FM_HOME so no test can read the developer's real firstmate
 # home. Every bin/ script resolves "${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}",
 # so an ambient FM_HOME silently outranks the per-call FM_ROOT_OVERRIDE a case

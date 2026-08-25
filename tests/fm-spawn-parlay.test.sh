@@ -165,8 +165,86 @@ SH
   pass "FM_SPAWN_SKIP_PARLAY=1 (from lib.sh) skips Parlay enrollment and leaves no pid file"
 }
 
+test_spawn_unaffected_when_parlay_server_is_unreachable() {
+  local rec id out
+  id=spawn-parlay-unreachable-z4
+  rec=$(make_spawn_case spawn-parlay-unreachable "$id")
+  read_spawn_record "$rec"
+
+  # The binary is installed but the relay is not answering: `parlay listen`
+  # exits nonzero straight away. Parlay is optional captain tooling, so this
+  # must be invisible to the launch.
+  cat > "$FAKEBIN_DIR/parlay" <<'SH'
+#!/usr/bin/env bash
+echo "error: could not connect to relay" >&2
+exit 1
+SH
+  chmod +x "$FAKEBIN_DIR/parlay"
+
+  out=$(FM_SPAWN_SKIP_PARLAY='' run_case_spawn "$id")
+  expect_code 0 "$?" "spawn should succeed when the parlay relay is unreachable"
+  assert_contains "$out" "spawned $id" "spawn did not report success against an unreachable relay"
+  assert_not_contains "$out" "could not connect to relay" \
+    "the relay's own failure leaked into the launch output"
+  assert_present "$HOME_DIR/state/$id.meta" \
+    "an unreachable relay cost the task its durable record"
+  pass "an unreachable Parlay relay leaves the launch fully intact"
+}
+
+test_spawn_does_not_block_on_a_hanging_parlay() {
+  local rec id out started elapsed pid
+  id=spawn-parlay-hang-z5
+  rec=$(make_spawn_case spawn-parlay-hang "$id")
+  read_spawn_record "$rec"
+
+  # The worst relay failure: connected, accepted, and then silent forever.
+  # Enrollment is backgrounded precisely so this cannot hold a launch open.
+  cat > "$FAKEBIN_DIR/parlay" <<'SH'
+#!/usr/bin/env bash
+sleep 600
+SH
+  chmod +x "$FAKEBIN_DIR/parlay"
+
+  started=$(date +%s)
+  out=$(FM_SPAWN_SKIP_PARLAY='' run_case_spawn "$id")
+  expect_code 0 "$?" "spawn should succeed while parlay hangs"
+  elapsed=$(( $(date +%s) - started ))
+  assert_contains "$out" "spawned $id" "spawn did not report success while parlay hangs"
+  [ "$elapsed" -lt 60 ] \
+    || fail "spawn blocked ${elapsed}s on a hanging parlay enrollment"
+  if [ -e "$HOME_DIR/state/$id.parlay-listen-pid" ]; then
+    pid=$(cat "$HOME_DIR/state/$id.parlay-listen-pid")
+    kill "$pid" 2>/dev/null || true
+  fi
+  pass "a hanging Parlay enrollment never holds a launch open"
+}
+
+test_first_turn_verification_does_not_depend_on_parlay() {
+  local rec id out
+  id=spawn-parlay-firstturn-z6
+  rec=$(make_spawn_case spawn-parlay-firstturn "$id")
+  read_spawn_record "$rec"
+  # fm-spawn.sh's first-turn watchdog must reach a verdict with no Parlay on
+  # PATH at all. tests/fm-spawn-firstturn.test.sh owns the verdicts themselves;
+  # what is pinned here is that none of them is gated on optional tooling.
+  out=$(FM_SPAWN_FIRSTTURN=on FM_SPAWN_FIRSTTURN_POLLS=2 FM_SPAWN_FIRSTTURN_INTERVAL=0.1 \
+    PATH="$FAKEBIN_DIR:$(fm_path_without parlay)" \
+    FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    TMUX="fake,1,0" FM_FAKE_PANE_PATH="$WT_DIR" \
+    "$SPAWN" --mode no-mistakes --yolo off "$id" "$PROJ_DIR" 2>&1)
+  expect_code 0 "$?" "spawn should succeed with the watchdog on and no parlay present: $out"
+  assert_grep " id=$id " "$HOME_DIR/state/.firstturn.log" \
+    "the first-turn watchdog recorded no outcome without Parlay on PATH"
+  pass "first-turn verification reaches a recorded verdict with no Parlay installed at all"
+}
+
 test_parlay_listen_enrolled_when_present
 test_spawn_succeeds_when_parlay_absent
 test_parlay_skipped_in_test_mode
+test_spawn_unaffected_when_parlay_server_is_unreachable
+test_spawn_does_not_block_on_a_hanging_parlay
+test_first_turn_verification_does_not_depend_on_parlay
 
 echo "# all fm-spawn-parlay tests passed"

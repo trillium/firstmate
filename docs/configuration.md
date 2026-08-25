@@ -194,6 +194,20 @@ A Secondmate on a remote route is covered the same way: the primary resolves and
 The presence flag is session-scoped enablement, so it transfers at launch and is left unchanged by live convergence into a running home.
 See [`trace-context.md`](trace-context.md) for carrier semantics, supported routes, the manual fleet-restart requirement, the session boundary, and safety limits; `bin/fm-trace-context-lib.sh`'s header owns the exact mechanics, and [`verification/trace-context.md`](verification/trace-context.md) records repeatable evidence.
 
+## Parlay claim prompt (config/spawn-claim-prompt / FM_SPAWN_CLAIM_PROBE_TIMEOUT)
+
+The optional local, gitignored `config/spawn-claim-prompt` flag is **off unless it reads exactly `on`**, and an absent file is off.
+With it on, a bead-linked crewmate or scout is launched against a short `parlay claim <bead>` prompt instead of its whole encoded brief, which is the launch shape `parlay claim` is built for.
+The only thing that changes is which file the launch templates' `fm-operational-input.sh encode launch-brief < <file>` substitution reads; the operational-input encoding contract, every harness launch template, and every launch flag are untouched.
+The prompt is written beside the brief at `data/<id>/claim-prompt.md`, and it names that brief and declares it authoritative, so a claim that fails at the agent's end still lands on the full contract rather than on a truncated one.
+The claim it emits is `parlay claim <bead> --agent <task-id> --silent`: `--agent` keeps the one agent on the single Parlay identity `bin/fm-spawn.sh` already enrolled it under, instead of letting claim derive a second one from the ticket, and `--silent` suppresses the `parlay listen` arm-command claim would otherwise print for the agent to run, because that listener is already running and is already owned by teardown.
+
+Any one of five conditions degrades a launch back to its brief: the flag is off, the spawn is a secondmate (a charter is not a bead-backed work item), the task has no `beads_id=`, the `parlay` binary is not installed, or a bounded `parlay subscribers` probe does not answer.
+Degrading is not a second code path - it feeds the same brief the spawn always fed - so a home that has not turned this on produces a byte-identical launch command and `state/<id>.meta`.
+`FM_SPAWN_CLAIM_PROBE_TIMEOUT` (default 10 seconds) bounds that probe; hitting the bound degrades the launch and can never block or fail the spawn, so this optional Parlay path stays as non-load-bearing as every other Parlay use in `bin/fm-spawn.sh`.
+`state/<id>.meta` records `claim_prompt=on` only when the prompt was actually used, and a `--relaunch` re-decides the shape rather than inheriting it.
+`bin/fm-claim-prompt-lib.sh`'s header owns the gate and the prompt text; `bin/fm-spawn.sh`'s header owns the substitution.
+
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 
 Domain-local preferences for one captain's fleet live locally in each home's `data/captain.md`; it is gitignored and printed in the session-start context digest after `data/projects.md` and optional `data/secondmates.md`.
@@ -703,6 +717,14 @@ FM_STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=   # legacy alias for FM_TREEHOUSE_RETURN
 FM_POOL_STALE_LEASE_SECS=7200             # age past which a process-free treehouse pool lease counts as abandoned and bin/fm-pool-reclaim.sh may return it; invalid values use 7200
 FM_SPAWN_SKIP_POOL_RECLAIM=               # set to 1 to skip fm-spawn.sh's best-effort bin/fm-pool-reclaim.sh pre-flight before `treehouse get`
 FM_SPAWN_POOL_RECLAIM_TIMEOUT=30          # seconds fm-spawn.sh allows that pre-flight sweep before abandoning it; a timeout is fail-open like every other reclaim failure
+FM_SPAWN_FIRSTTURN=on                     # set to off to disable fm-spawn.sh's first-turn watchdog entirely; the launch then behaves exactly as it did before verification existed and state/.firstturn.log records detail=disabled
+FM_SPAWN_FIRSTTURN_POLLS=120              # polls fm-spawn.sh waits for proof that the launch prompt started a turn; the wait returns the instant a turn is proven, so a healthy launch costs one read and only a dropped prompt spends the budget
+FM_SPAWN_FIRSTTURN_INTERVAL=0.5           # seconds between those polls; 120 x 0.5 is the shipped 60s bound
+FM_SPAWN_FIRSTTURN_RESUBMIT_POLLS=        # polls spent re-confirming after the brief pointer is resubmitted; unset uses FM_SPAWN_FIRSTTURN_POLLS
+FM_SPAWN_FIRSTTURN_SUBMIT_RETRIES=3       # Enter retries for that single resubmission, passed straight to the backend's proof-carrying submit primitive
+FM_SPAWN_FIRSTTURN_SUBMIT_SLEEP=          # seconds between those Enter retries; unset uses FM_SPAWN_FIRSTTURN_INTERVAL
+FM_SPAWN_FIRSTTURN_SUBMIT_SETTLE=0        # seconds allowed for the typed pointer to settle before the first Enter
+FM_SPAWN_CLAIM_PROBE_TIMEOUT=10           # seconds bounding the `parlay subscribers` reachability probe behind config/spawn-claim-prompt; hitting the bound degrades that launch to its brief and can never block or fail the spawn
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRIES=3        # fetch retries after fm-fleet-sync.sh hits the orphaned .git/packed-refs.lock signature
 FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds fm-fleet-sync.sh waits before each of those retries
 FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
