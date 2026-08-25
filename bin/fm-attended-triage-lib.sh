@@ -195,6 +195,10 @@ fm_attended_never_absorb() {  # <kind> <key> <payload> <state>
       printf 'unauthenticated state-check refusal'
       return 0
       ;;
+    pr-poll-retirement|pr-poll-retirement:*)
+      printf 'PR poll retirement authentication failure'
+      return 0
+      ;;
     review-decision:*)
       printf 'captain review decision'
       return 0

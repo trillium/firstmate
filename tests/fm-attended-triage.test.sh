@@ -386,13 +386,40 @@ test_never_absorb_open_decision_record() {
 }
 
 test_never_absorb_relay_mention() {
-  assert_never_absorbed never-relay "a Relay mention" check x-watch \
-    'check: x-mention 12345: someone asked for a status update'
+  # Use the production key format: watcher queues relay wakes as the full path
+  # "$STATE/x-watch.check.sh", which does NOT match x-watch* in the key case.
+  # Protection comes from the payload-based match (*x-mention*) — this test
+  # proves that path is the live guard.
+  local dir state key
+  dir=$(attended_case never-relay); state="$dir/state"
+  key="$state/x-watch.check.sh"
+  append_wake "$state" check "$key" "check: $key: x-mention 12345: someone asked for a status update"
+
+  run_pass "$dir" "$state" 'FM_FAKE_MODEL_ANSWER=absorb looks routine to me'
+
+  [ -s "$state/.wake-queue" ] || fail "a Relay mention was absorbed; it must always reach the captain"
+  assert_grep 'attended: escalate tier=rule' "$state/.watch-triage.log" "a Relay mention was not kept by a tier-1 rule"
+  pass "a Relay mention (production full-path key) is never absorbed via payload match"
 }
 
 test_never_absorb_relay_configuration_error() {
-  assert_never_absorbed never-relay-error "a Relay configuration error" check x-watch \
-    'check: x-mode-error: pairing token rejected'
+  # Same production-key reasoning as test_never_absorb_relay_mention above.
+  local dir state key
+  dir=$(attended_case never-relay-error); state="$dir/state"
+  key="$state/x-watch.check.sh"
+  append_wake "$state" check "$key" "check: $key: x-mode-error: pairing token rejected"
+
+  run_pass "$dir" "$state" 'FM_FAKE_MODEL_ANSWER=absorb looks routine to me'
+
+  [ -s "$state/.wake-queue" ] || fail "a Relay configuration error was absorbed; it must always reach the captain"
+  assert_grep 'attended: escalate tier=rule' "$state/.watch-triage.log" "a Relay configuration error was not kept by a tier-1 rule"
+  pass "a Relay configuration error (production full-path key) is never absorbed via payload match"
+}
+
+test_never_absorb_pr_poll_retirement() {
+  assert_never_absorbed never-pr-poll-retirement "a PR poll retirement auth failure" \
+    check pr-poll-retirement \
+    'check: rejected unauthenticated PR poll retirement receipts: /tmp/state/task-aa.pr-poll-retirement'
 }
 
 test_never_absorb_merged_pr() {
@@ -453,6 +480,7 @@ test_never_absorb_failed_verb
 test_never_absorb_open_decision_record
 test_never_absorb_relay_mention
 test_never_absorb_relay_configuration_error
+test_never_absorb_pr_poll_retirement
 test_never_absorb_merged_pr
 test_never_absorb_checks_green
 test_never_absorb_staleness_autoclose
