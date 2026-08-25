@@ -437,6 +437,8 @@ test_beads_migration_repoints_a_dispatched_task_off_another_homes_bead() {
     > "$home/state/task-xyz.meta"
   fakebin=$(fm_fakebin "$dir")
   calls_log="$dir/calls.log"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
   # bead-shared already carries home A's scoped label, i.e. home A swept first.
   add_beads_task_mock_store "$fakebin" "$calls_log" \
     '[{"id":"bead-shared","status":"open","labels":["task:task-xyz","task:home-a:task-xyz"]}]' \
@@ -514,6 +516,8 @@ test_beads_migration_repoint_second_run_is_a_no_op() {
   printf 'window=w1\nbeads_id=bead-shared\n' > "$home/state/task-xyz.meta"
   fakebin=$(fm_fakebin "$dir")
   calls_log="$dir/calls.log"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
   add_beads_task_mock_store "$fakebin" "$calls_log" \
     '[{"id":"bead-shared","status":"open","labels":["task:task-xyz","task:home-a:task-xyz"]}]' \
     "bead-b-own"
