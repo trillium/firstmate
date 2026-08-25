@@ -613,6 +613,34 @@ fm_beads_home_repoint_recorded_bead() { # <task_id> <bead_id>
   [ -n "$task_id" ] && [ -n "$bead_id" ] || return 1
   meta="${STATE:-${FM_STATE_OVERRIDE:-${FM_HOME:-}/state}}/$task_id.meta"
   [ -f "$meta" ] || return 1
+  # Skip if the task's endpoint is still alive — the live worker carries the old
+  # bead ID in its brief and would act on a stale reference if meta were rewritten
+  # under it. Retry in a later session once the task completes.
+  local _ep_backend _ep_window
+  _ep_backend=$(grep '^backend=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-) || _ep_backend=
+  _ep_window=$(grep '^window=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-) || _ep_window=
+  if [ -n "$_ep_window" ]; then
+    if declare -f fm_backend_target_exists >/dev/null 2>&1; then
+      if fm_backend_target_exists "${_ep_backend:-tmux}" "$_ep_window" 2>/dev/null; then
+        printf 'diagnostic: skipping repoint of %s — endpoint still live, will retry in a later session\n' "$task_id" >&2
+        return 1
+      fi
+    else
+      case "${_ep_backend:-tmux}" in
+        tmux)
+          if tmux display-message -p -t "$_ep_window" '#{pane_id}' >/dev/null 2>&1; then
+            printf 'diagnostic: skipping repoint of %s — endpoint still live, will retry in a later session\n' "$task_id" >&2
+            return 1
+          fi
+          ;;
+        *)
+          printf 'diagnostic: skipping repoint of %s — cannot check %s endpoint without fm_backend_target_exists, will retry in a later session\n' \
+            "$task_id" "${_ep_backend:-unknown}" >&2
+          return 1
+          ;;
+      esac
+    fi
+  fi
   recorded=$(fm_beads_home_recorded_bead "$task_id") || recorded=
   [ "$recorded" = "$bead_id" ] && return 0
   [ -n "$recorded" ] || return 1

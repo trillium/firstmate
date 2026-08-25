@@ -40,15 +40,9 @@
 # instead of duplicating it. That idempotency only reaches back as far as the
 # home-scoped label: a bead an older importer created before the label was
 # home-scoped carries the unscoped task:<id> label and stays invisible to the
-# lookup. Bootstrap's one-shot migration does NOT generally rescue those.
-# fm-tasks-axi-lib.sh's fm_beads_migrate_legacy_task_labels takes its candidates
-# from this home's own dispatch records and briefs, not from the backlog file, so
-# it re-tags a pre-scoping bead only for an item this home had also dispatched or
-# briefed; an imported-but-never-dispatched item is not a candidate at all. The
-# consequence is concrete: re-importing a backlog that was first imported before
-# home scoping mints a SECOND bead for each such item rather than resolving the
-# old one. Prefer importing once, and reconcile any pre-scoping beads by hand
-# before a re-import rather than expecting the migration to adopt them. Captain
+# lookup. Bootstrap's one-shot migration rescues such beads only for tasks this
+# home had already dispatched or briefed; an item that exists only in the backlog
+# queue and was never briefed or dispatched is not a migration candidate. Captain
 # holds are idempotent through fm-decision-hold.sh's own `hold:<id>` anchor
 # lookup.
 #
