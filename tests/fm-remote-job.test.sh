@@ -15,7 +15,9 @@ ACCOUNT_HOME="$TMP_ROOT/account"
 STATE_ROOT="$TMP_ROOT/remote-jobs"
 RUNTIME_BIN="$TMP_ROOT/runtime-bin"
 FAKE_PERL_LOG="$TMP_ROOT/perl.log"
+DATE_SHIM_TRIP="$TMP_ROOT/date-shim-trip"
 REAL_GIT=$(command -v git)
+REAL_DATE=$(command -v date)
 OTHER_PID=
 RECOVERY_WORKER_PID=
 mkdir -p "$REMOTE_ROOT/bin" "$REMOTE_HOME" "$ACCOUNT_HOME" "$RUNTIME_BIN"
@@ -85,6 +87,47 @@ printf 'invoked\n' >> "$FM_FAKE_PERL_LOG"
 exit 127
 SH
 chmod +x "$RUNTIME_BIN/perl"
+# Inert unless the trip file exists, so every other subtest sees the real clock.
+# While it exists, clock reads taken after a job is both armed and wired for
+# output capture fail. The trip file's contents select which ones, in the two
+# shapes the guards need proving against:
+#
+#   empty  - fail the first such read, then disarm, so every later read is real.
+#   count N - let N through, then fail that read and every read after it.
+#
+# The reads are enumerable rather than timing-dependent, because
+# worker_run_with_timeout takes exactly two kinds while a job is armed - one
+# sizing the cheap poll gate, then one per poll deciding the kill once that gate
+# opens. So an empty trip file fails the gate sizing, a count of 1 leaves the
+# gate correctly sized and fails every kill decision, and a count of 0 lets no
+# read through at all, so the gate sizing and every kill decision after it fail
+# together. The last two are what force the kill onto the forkless SECONDS
+# fallback rather than a later real read. Reads that mint the deadline come
+# before the job is armed.
+#
+# The sticky form cannot signal that it fired by removing the trip file, so it
+# overwrites it with `tripped` instead and the subtest asserts that, keeping the
+# same non-vacuity guarantee as the one-shot form.
+cat > "$RUNTIME_BIN/date" <<'SH'
+#!/bin/sh
+if [ -n "${FM_DATE_SHIM_TRIP:-}" ] && [ -f "$FM_DATE_SHIM_TRIP" ]; then
+  for job in "$FM_DATE_SHIM_JOBS"/job-*; do
+    if [ -e "$job/.claim/armed" ] && [ -p "$job/.stdout.pipe" ]; then
+      skip=$(cat "$FM_DATE_SHIM_TRIP" 2>/dev/null || true)
+      case "$skip" in
+        '') rm -f "$FM_DATE_SHIM_TRIP" ;;
+        tripped) : ;;
+        *[!0-9]*) break ;;
+        0) printf 'tripped\n' > "$FM_DATE_SHIM_TRIP" ;;
+        *) printf '%s\n' "$((skip - 1))" > "$FM_DATE_SHIM_TRIP"; break ;;
+      esac
+      exit 1
+    fi
+  done
+fi
+exec "$FM_DATE_SHIM_REAL" "$@"
+SH
+chmod +x "$RUNTIME_BIN/date"
 
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
@@ -233,6 +276,7 @@ pass "operator PATH resolves the authorized Nix profile bin link"
 
 HOME="$ACCOUNT_HOME" PATH="$RUNTIME_BIN:/usr/bin:/bin:/usr/sbin:/sbin" FM_FAKE_PERL_LOG="$FAKE_PERL_LOG" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$STATE_ROOT" \
+  FM_DATE_SHIM_TRIP="$DATE_SHIM_TRIP" FM_DATE_SHIM_JOBS="$STATE_ROOT/jobs" FM_DATE_SHIM_REAL="$REAL_DATE" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux FM_REMOTE_JOB_TIMEOUT=5 \
   "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" > "$TMP_ROOT/worker.out" 2> "$TMP_ROOT/worker.err" &
 for _ in $(seq 1 100); do
@@ -273,6 +317,173 @@ fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the completed job could no
 assert_absent "$JOB_DIR" "reap retained a completed job record"
 assert_absent "$FAKE_PERL_LOG" "the worker invoked an unavailable Perl runtime"
 pass "the worker preserves bounded argv and stdin in an empty environment"
+
+# This has to run while the fixture's own worker is still the one serving: it
+# is the only worker launched with the clock shim ahead of it on PATH, and the
+# subtests below replace it through fm_remote_job_ensure_worker, which inherits
+# this process's PATH instead.
+#
+# Each of the three subtests below needs the worker to actually reach the state
+# its trapped reads are taken from: the job claimed, armed, and wired for output
+# capture. Everything before that competes for the same window. The queue wait
+# has to fit inside the queue window, and the worker's own pre-execution
+# validation - resolving the operator PATH, running git ls-files, building the
+# capture pipes - is deliberately billed against the execution window, which
+# "pre-execution validation obeys the job timeout" below pins as product
+# behavior. Windows sized for an idle machine leave that work no room, so on a
+# loaded machine the worker correctly abandons the job at one of its own 124
+# gates, no trapped read is ever taken, and the guards below report that nothing
+# was proved.
+#
+# So size these windows for the whole path rather than the command alone. This
+# costs the assertions no sharpness: every one of them is anchored on the job's
+# own recorded deadline and on artifact mtimes, never on elapsed test time, so
+# the only thing a wider window changes is whether the scenario gets set up at
+# all. The delay still outlives its window many times over, keeping a completed
+# side effect the unbounded-run signature rather than a timing coincidence.
+BLIND_CLOCK_QUEUE_TIMEOUT=30
+BLIND_CLOCK_TIMEOUT=10
+BLIND_CLOCK_DELAY=120
+
+# A guard below fires when the job never reached that armed-and-wired state, and
+# the job's own record says which stage stopped it: a job abandoned in the queue
+# never had a deadline minted, while one abandoned during pre-execution
+# validation carries the deadline its claim wrote. Reporting that turns an
+# otherwise opaque result into a statement of which window was too small here.
+blind_clock_vacuity_cause() { # <job-dir>
+  if [ -f "$1/deadline" ]; then
+    printf 'the worker abandoned it during pre-execution validation, so its execution window did not cover that validation on this machine'
+  else
+    printf 'the job expired in the queue before the worker claimed it, so its queue window did not cover claim latency on this machine'
+  fi
+}
+
+# A clock read that fails must not vanish into the worker's arithmetic. An empty
+# command substitution inside the poll-gate expression parses as a double
+# negation rather than an error, which pushes the gate an epoch into the future
+# so it never opens and the command runs unbounded - the worker wedged until the
+# job finishes on its own. Fail exactly the read that sizes that gate and the
+# job must still be terminated at its own deadline and still publish a result.
+BLIND_CLOCK_SIDE_EFFECT="$TMP_ROOT/blind-clock-side-effect"
+FM_REMOTE_JOB_QUEUE_TIMEOUT=$BLIND_CLOCK_QUEUE_TIMEOUT
+FM_REMOTE_JOB_TIMEOUT=$BLIND_CLOCK_TIMEOUT
+: > "$DATE_SHIM_TRIP"
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-delay-job.sh "$BLIND_CLOCK_DELAY" "$BLIND_CLOCK_SIDE_EFFECT" < /dev/null > /dev/null
+JOB_ID=$FM_REMOTE_JOB_ID
+BLIND_CLOCK_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
+fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+# The shim disarms itself by removing the trip file, so a surviving trip file
+# means the read this subtest exists to fail was never taken and everything
+# below would pass for the wrong reason.
+BLIND_CLOCK_TRIPPED=0
+[ -f "$DATE_SHIM_TRIP" ] || BLIND_CLOCK_TRIPPED=1
+rm -f -- "$DATE_SHIM_TRIP"
+[ "$BLIND_CLOCK_TRIPPED" -eq 1 ] \
+  || fail "the worker never took the clock read this subtest fails, so it proved nothing: $(blind_clock_vacuity_cause "$BLIND_CLOCK_JOB_DIR")"
+assert_absent "$BLIND_CLOCK_SIDE_EFFECT" \
+  "a failed clock read let the job run past its execution deadline to completion"
+[ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
+  || fail "a failed clock read did not leave the over-time job terminated at its deadline"
+BLIND_CLOCK_TERMINATED_AT=$(fm_remote_job_path_mtime "$BLIND_CLOCK_JOB_DIR/exit") \
+  || fail "the terminated job published no result after a failed clock read"
+BLIND_CLOCK_DEADLINE=$(fm_remote_job_read_number "$BLIND_CLOCK_JOB_DIR" deadline) \
+  || fail "the terminated job recorded no execution deadline"
+[ "$BLIND_CLOCK_TERMINATED_AT" -ge "$BLIND_CLOCK_DEADLINE" ] \
+  || fail "a failed clock read cut the job short of its own execution deadline"
+fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the terminated job could not be reaped"
+pass "a failed clock read still bounds a job at its execution deadline"
+
+# The companion case: the clock read that decides the kill, rather than the one
+# that sizes the gate. A count of 1 lets the gate sizing take the real clock and
+# then fails every termination read. Unvalidated, such a read leaves an empty
+# operand, `-ge` rejects it as a non-integer and reports false, and the job runs
+# unbounded exactly as in the case above.
+#
+# Failing every termination read, rather than only the first, is what makes this
+# subtest prove the guard instead of a later real read: the kill can only come
+# from the forkless SECONDS fallback. Both invariants are asserted against that
+# one path, because the fallback has to satisfy them together and an earlier
+# draft that satisfied only the first shipped a job killed short of its window:
+#
+#   bounded        - the job is terminated rather than running to completion.
+#   never cut short - it is not terminated before its own execution deadline.
+BLIND_KILL_SIDE_EFFECT="$TMP_ROOT/blind-kill-side-effect"
+FM_REMOTE_JOB_QUEUE_TIMEOUT=$BLIND_CLOCK_QUEUE_TIMEOUT
+FM_REMOTE_JOB_TIMEOUT=$BLIND_CLOCK_TIMEOUT
+printf '1\n' > "$DATE_SHIM_TRIP"
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-delay-job.sh "$BLIND_CLOCK_DELAY" "$BLIND_KILL_SIDE_EFFECT" < /dev/null > /dev/null
+JOB_ID=$FM_REMOTE_JOB_ID
+BLIND_KILL_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
+fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+# Same non-vacuity guarantee as above in the shape the sticky form allows: it
+# stamps the trip file rather than removing it, so anything other than that stamp
+# means the reads this subtest exists to fail were never taken and everything
+# below would pass for the wrong reason.
+BLIND_KILL_TRIPPED=0
+[ "$(cat "$DATE_SHIM_TRIP" 2>/dev/null || true)" = tripped ] && BLIND_KILL_TRIPPED=1
+rm -f -- "$DATE_SHIM_TRIP"
+[ "$BLIND_KILL_TRIPPED" -eq 1 ] \
+  || fail "the worker never took the clock reads this subtest fails, so it proved nothing: $(blind_clock_vacuity_cause "$BLIND_KILL_JOB_DIR")"
+assert_absent "$BLIND_KILL_SIDE_EFFECT" \
+  "a failed termination clock read let the job run past its execution deadline to completion"
+[ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
+  || fail "a failed termination clock read did not leave the over-time job terminated at its deadline"
+BLIND_KILL_TERMINATED_AT=$(fm_remote_job_path_mtime "$BLIND_KILL_JOB_DIR/exit") \
+  || fail "the terminated job published no result after a failed termination clock read"
+BLIND_KILL_DEADLINE=$(fm_remote_job_read_number "$BLIND_KILL_JOB_DIR" deadline) \
+  || fail "the terminated job recorded no execution deadline"
+[ "$BLIND_KILL_TERMINATED_AT" -ge "$BLIND_KILL_DEADLINE" ] \
+  || fail "a failed termination clock read cut the job short of its own execution deadline"
+fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the terminated job could not be reaped"
+pass "a failed termination clock read still bounds a job at its execution deadline"
+
+# The two cases above each leave one side of the pair working: one fails the
+# gate sizing and then lets the kill decision read a real clock, the other sizes
+# the gate from a real clock and then fails every kill decision. A clock that
+# stays down covers both at once, and it is the case that pins where the SECONDS
+# fallback measures from. Sized off the deadline instead of the job's own window,
+# the gate opens immediately and the fallback kills about a second in whatever
+# the window was - bounded, but far short of the job's deadline. A count of 0
+# lets no read through, so the gate sizing and every kill decision after it fail,
+# and both invariants have to hold against that one path:
+#
+#   bounded         - the job is terminated rather than running to completion.
+#   never cut short - it is not terminated before its own execution deadline.
+BLIND_WINDOW_SIDE_EFFECT="$TMP_ROOT/blind-window-side-effect"
+FM_REMOTE_JOB_QUEUE_TIMEOUT=$BLIND_CLOCK_QUEUE_TIMEOUT
+FM_REMOTE_JOB_TIMEOUT=$BLIND_CLOCK_TIMEOUT
+printf '0\n' > "$DATE_SHIM_TRIP"
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
+  fm-delay-job.sh "$BLIND_CLOCK_DELAY" "$BLIND_WINDOW_SIDE_EFFECT" < /dev/null > /dev/null
+JOB_ID=$FM_REMOTE_JOB_ID
+BLIND_WINDOW_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
+fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
+# Same non-vacuity guarantee as the sticky case above: anything other than that
+# stamp means the reads this subtest exists to fail were never taken and
+# everything below would pass for the wrong reason.
+BLIND_WINDOW_TRIPPED=0
+[ "$(cat "$DATE_SHIM_TRIP" 2>/dev/null || true)" = tripped ] && BLIND_WINDOW_TRIPPED=1
+rm -f -- "$DATE_SHIM_TRIP"
+[ "$BLIND_WINDOW_TRIPPED" -eq 1 ] \
+  || fail "the worker never took the clock reads this subtest fails, so it proved nothing: $(blind_clock_vacuity_cause "$BLIND_WINDOW_JOB_DIR")"
+assert_absent "$BLIND_WINDOW_SIDE_EFFECT" \
+  "an unreadable clock let the job run past its execution deadline to completion"
+[ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
+  || fail "an unreadable clock did not leave the over-time job terminated at its deadline"
+BLIND_WINDOW_TERMINATED_AT=$(fm_remote_job_path_mtime "$BLIND_WINDOW_JOB_DIR/exit") \
+  || fail "the terminated job published no result while the clock was unreadable"
+BLIND_WINDOW_DEADLINE=$(fm_remote_job_read_number "$BLIND_WINDOW_JOB_DIR" deadline) \
+  || fail "the terminated job recorded no execution deadline"
+[ "$BLIND_WINDOW_TERMINATED_AT" -ge "$BLIND_WINDOW_DEADLINE" ] \
+  || fail "an unreadable clock cut the job short of its own execution deadline"
+fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the terminated job could not be reaped"
+pass "an unreadable clock bounds a job at its own recorded window"
+
+# The widened queue window above belongs to those three subtests alone; restore
+# the suite default so nothing below inherits it.
+FM_REMOTE_JOB_QUEUE_TIMEOUT=5
 
 ACTIVE_SIDE_EFFECT="$TMP_ROOT/active-side-effect"
 FM_REMOTE_JOB_TIMEOUT=10
@@ -356,8 +567,29 @@ pass "stale ownership is reclaimed without signaling a reused pid"
 FM_REMOTE_JOB_TIMEOUT=1
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-timeout-job.sh < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
+TIMEOUT_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 [ "$FM_REMOTE_JOB_EXIT" -eq 124 ] || fail "the worker did not terminate an over-time job"
+# The worker reads the claim instant with whole-second resolution, so a
+# deadline of exactly the claim second plus the timeout would silently bill the
+# job whatever fraction of that second had already passed. The claim artifact
+# is written just before the deadline is minted, so its mtime pins the claim
+# second without a stage-time baseline that a second boundary in the staging
+# gap can satisfy for the wrong reason. The upper bound is anchored on the
+# deadline record's own mtime instead of on a wall-clock tolerance. That record
+# is written from the same clock read that minted the value, so its mtime is
+# never earlier than the mint second, which makes the bound impossible to
+# false-fail on a second boundary while still catching a window rounded up more
+# than the one truncated second the mint is allowed to reclaim.
+TIMEOUT_CLAIMED_AT=$(fm_remote_job_path_mtime "$TIMEOUT_JOB_DIR/.claim/owner") \
+  || fail "the timed-out job recorded no claim instant"
+TIMEOUT_MINTED_AT=$(fm_remote_job_path_mtime "$TIMEOUT_JOB_DIR/deadline") \
+  || fail "the timed-out job recorded no deadline mint instant"
+TIMEOUT_EXEC_DEADLINE=$(fm_remote_job_read_number "$TIMEOUT_JOB_DIR" deadline) \
+  || fail "the timed-out job recorded no execution deadline"
+[ "$TIMEOUT_EXEC_DEADLINE" -ge "$((TIMEOUT_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+  && [ "$TIMEOUT_EXEC_DEADLINE" -le "$((TIMEOUT_MINTED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+  || fail "the claimed job's deadline did not round its truncated claim second up, so it was billed the remainder of the second it was claimed in"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the timed-out job could not be reaped"
 pass "the worker enforces the job timeout and publishes its result"
 
@@ -399,10 +631,49 @@ done
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" \
   fm-delay-job.sh 1.8 "$SECOND_DELAYED_SIDE_EFFECT" < /dev/null > /dev/null
 JOB_ID=$FM_REMOTE_JOB_ID
+SECOND_JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 fm_remote_job_wait "$ACCOUNT_HOME" "$FIRST_JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
-[ "$FM_REMOTE_JOB_EXIT" -eq 0 ] || fail "queue time consumed the second job's execution timeout"
-assert_present "$SECOND_DELAYED_SIDE_EFFECT" "the queued job did not receive its full execution timeout"
+# Bare exit-0 here was load-sensitive because it silently assumed the worker's
+# claim-to-exec overhead is zero, and that overhead is execution time, billed
+# against the window by design. Completing is a pass; a terminated run is a
+# pass only when the worker's own artifacts show the kill was not premature,
+# which - together with the claim-time deadline the next assertion pins - is
+# the >= configured-timeout guarantee. A PREMATURE kill still fails.
+SECOND_EXEC_DEADLINE=$(fm_remote_job_read_number "$SECOND_JOB_DIR" deadline) \
+  || fail "the queued job recorded no execution deadline"
+if [ "$FM_REMOTE_JOB_EXIT" -eq 0 ]; then
+  assert_present "$SECOND_DELAYED_SIDE_EFFECT" "the queued job did not receive its full execution timeout"
+else
+  [ "$FM_REMOTE_JOB_EXIT" -eq 124 ] \
+    || fail "the queued job failed for a reason other than its execution timeout"
+  SECOND_TERMINATED_AT=$(fm_remote_job_path_mtime "$SECOND_JOB_DIR/exit") \
+    || fail "the terminated queued job published no result"
+  [ "$SECOND_TERMINATED_AT" -ge "$SECOND_EXEC_DEADLINE" ] \
+    || fail "queue time consumed the second job's execution timeout"
+fi
+# Staging derives queue_deadline from one clock read, so the stage second is
+# exactly recoverable from the record, and the claim artifact's mtime pins the
+# claim second. The job was held behind the first job for longer than a second,
+# so its claim second is strictly later than its stage second; a deadline
+# anchored on that claim second therefore proves claim-time minting rather than
+# stage-time minting, and the rounded-up second proves the full configured
+# window - both without the wall clock. The upper bound uses the deadline
+# record's own mtime, which the mint wrote from the same clock read, so it
+# cannot false-fail on a second boundary falling in the few forks between the
+# claim write and the mint.
+SECOND_QUEUE_DEADLINE=$(fm_remote_job_read_number "$SECOND_JOB_DIR" queue_deadline) \
+  || fail "the queued job recorded no queue deadline"
+SECOND_CLAIMED_AT=$(fm_remote_job_path_mtime "$SECOND_JOB_DIR/.claim/owner") \
+  || fail "the queued job recorded no claim instant"
+SECOND_MINTED_AT=$(fm_remote_job_path_mtime "$SECOND_JOB_DIR/deadline") \
+  || fail "the queued job recorded no deadline mint instant"
+SECOND_STAGED_AT=$((SECOND_QUEUE_DEADLINE - FM_REMOTE_JOB_QUEUE_TIMEOUT))
+[ "$SECOND_CLAIMED_AT" -gt "$SECOND_STAGED_AT" ] \
+  || fail "the queued job was not held past its stage second, so claim-time minting is unproven"
+[ "$SECOND_EXEC_DEADLINE" -ge "$((SECOND_CLAIMED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+  && [ "$SECOND_EXEC_DEADLINE" -le "$((SECOND_MINTED_AT + FM_REMOTE_JOB_TIMEOUT + 1))" ] \
+  || fail "the queued job's execution window was not minted from its claim second with that truncated second rounded up"
 fm_remote_job_reap "$ACCOUNT_HOME" "$FIRST_JOB_ID" || fail "the first delayed job could not be reaped"
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the second delayed job could not be reaped"
 pass "queued jobs receive a fresh bounded execution window"
