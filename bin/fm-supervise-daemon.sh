@@ -11,14 +11,29 @@
 # declared-pause recheck reach the LLM, and even then as one pre-read digest per
 # batch window.
 #
-# PRESENCE-GATING (the /afk contract). The daemon is the away-mode engine: it
-# injects ONLY when the durable away-mode flag state/.afk is present. Invoking
-# the /afk skill sets that flag and starts this daemon; any real (unmarked)
-# user message clears it and firstmate resumes full responsiveness.
-# When afk is off, normal fm-watch.sh always-on triage is the active mechanism.
-# Any buffered daemon escalations that remain while afk is off survive in
-# state/.subsuper-escalations and are flushed on the next "while you were out"
-# catch-up or when afk is re-entered.
+# PRESENCE-GATING (the /afk contract). The daemon INJECTS only when the durable
+# away-mode flag state/.afk is present. Invoking the /afk skill sets that flag
+# and starts this daemon; any real (unmarked) user message clears it and
+# firstmate resumes full responsiveness. Any buffered daemon escalations that
+# remain while afk is off survive in state/.subsuper-escalations and are flushed
+# on the next "while you were out" catch-up or when afk is re-entered.
+#
+# ATTENDED BACKGROUND TRIAGE (off by default; config/attended-triage). The
+# daemon may ALSO run while the captain is present, as a second triage pass over
+# the durable wake queue - see bin/fm-attended-triage-lib.sh, which owns that
+# behavior. Presence changes exactly one thing, what happens to a wake that must
+# reach the captain:
+#   afk present  buffer it and inject the marked away-supervisor escalation,
+#                exactly as described above; the queue is not touched.
+#   afk absent   leave it on state/.wake-queue untouched so the main session
+#                surfaces it on its next turn. Attended mode NEVER injects
+#                operational input: the captain is already there, and a
+#                marked/unmarked mixup in an attended session is the away-mode
+#                exit hazard.
+# A wake the attended pass proves nobody needs is removed from the queue and
+# recorded in state/.watch-triage.log with its verdict and tier. With the switch
+# off (the default) the daemon behaves exactly as it always has, and the
+# always-on fm-watch.sh triage is the only mechanism while afk is off.
 #
 # IN-BAND OPERATIONAL INPUT. bin/fm-operational-input.sh constructs every
 # current daemon injection as the typed away-supervisor kind after the stable
@@ -136,6 +151,12 @@
 #                                   (default 0.5)
 #          FM_LOG_MAX_BYTES / FM_LOG_KEEP_LINES / FM_CRASH_*  log + crash guards
 #          FM_STATE_OVERRIDE        alternate state dir (testing)
+#          FM_ATTENDED_TRIAGE / FM_ATTENDED_TRIAGE_MODEL /
+#          FM_ATTENDED_TRIAGE_TIMEOUT_SECS / FM_ATTENDED_TRIAGE_MAX_CALLS /
+#          FM_ATTENDED_TRIAGE_EXEC / FM_ATTENDED_TRIAGE_STATUS_TAIL_LINES
+#                                   attended-triage switch and bounds; owned and
+#                                   documented by bin/fm-attended-triage-lib.sh
+#                                   and docs/configuration.md.
 #          Logs each wake to state/.supervise-daemon.log (size-capped). Single
 #          instance via portable lock on state/.supervise-daemon.lock. Trapped
 #          SIGTERM/SIGINT shut down within ~1s, flush escalations, release the
@@ -174,6 +195,14 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # (bin/fm-afk-launch.sh) so the captain-pane resolution has exactly one owner.
 # shellcheck source=bin/fm-supervisor-target-lib.sh
 . "$FM_DAEMON_DIR/fm-supervisor-target-lib.sh"
+
+# Attended background triage (fm_attended_triage_pass and its pure classifiers).
+# Sourced at top level, after the shared classifier it reuses, so the unit tests
+# that source this daemon get the attended verdict functions too. The library is
+# deliberately free of source-time state side effects; it loads the durable-queue
+# primitives lazily, inside the pass.
+# shellcheck source=bin/fm-attended-triage-lib.sh
+. "$FM_DAEMON_DIR/fm-attended-triage-lib.sh"
 
 # The single owner of semantic busy state for recorded tasks
 # (fm_busy_classify).
@@ -962,6 +991,15 @@ housekeeping() {  # <state>
   local state=$1 now due f key task win marker age last max_defer oldest pause_secs
   now=$(_now)
   migrate_watcher_pause_markers "$state"
+
+  # (0) attended background triage. Runs FIRST, and only while the captain is
+  #     present with the switch on - the pass itself enforces both. It judges the
+  #     durable wake queue and removes the records it proves nobody needs, so the
+  #     main session's next turn is spent on real events instead of noise. It
+  #     never injects and never touches the away-mode buffer, so every step below
+  #     behaves identically whether or not it ran. Best-effort: a failure here can
+  #     only leave the queue exactly as the watcher wrote it.
+  fm_attended_triage_pass "$state" || true
 
   # (1) batch flush
   if [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ]; then

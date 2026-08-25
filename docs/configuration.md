@@ -184,6 +184,27 @@ An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisel
 A missing or failing channel logs and falls through to the next, never crashing the daemon.
 See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
+## Attended background triage (config/attended-triage / FM_ATTENDED_TRIAGE)
+
+The sub-supervisor is normally the away-mode engine, active only while `state/.afk` is present.
+The optional local, gitignored `config/attended-triage` flag also lets it run while the captain is present, as a background pass over the durable wake queue that drops the notifications it can prove nobody needs to act on.
+The point is to keep the main session available to the captain instead of spending its turns on routine fleet events.
+
+The flag holds one value on its first non-empty, non-comment line: `on` enables attended triage, and `off`, an absent file, or an unrecognised value leaves it disabled.
+`FM_ATTENDED_TRIAGE` overrides the file with the same values.
+**The default is off**, so a home that changes nothing keeps exactly today's supervision behavior; an unrecognised value is treated as off and noted in the triage log rather than silently enabling anything.
+Start an attended daemon with `bin/fm-attended-start.sh`, which refuses while the flag is off or while away mode already owns the daemon, and keep it as a tracked background session exactly as `bin/fm-afk-start.sh` documents.
+
+Presence changes exactly one thing - what happens to a notification that must reach the captain.
+While `state/.afk` is present the daemon buffers it and injects the marked away-supervisor escalation, unchanged.
+While the captain is present the daemon leaves it on `state/.wake-queue` so the main session surfaces it on its next turn, and never injects operational input.
+A notification judged routine is removed from the queue and recorded in `state/.watch-triage.log` with its verdict and the tier that produced it.
+
+The verdict is two-tier and only ever fails toward reaching the captain.
+The shared verb classifier in `bin/fm-classify-lib.sh` runs first and can only force an escalation, which nothing else can override; a cheap model is asked only about what those rules did not already classify, and a notification is dropped only on that model's affirmative answer.
+Every degraded path - no model binary, a non-zero exit, a timeout, an empty or unparseable answer, or the per-pass call cap - keeps the notification.
+`bin/fm-attended-triage-lib.sh`'s header owns the exact rules, including the categories that are never dropped: any `done`, `needs-decision`, `blocked`, or `failed` report, any Relay mention, any merged pull request or green checks result, any staleness reclaim, any work with an open decision still recorded against it, and every fleet-wide review request.
+
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
 The optional local, gitignored `config/trace-context` presence flag enables default-off native W3C trace-context propagation.
@@ -737,6 +758,13 @@ FM_CRASH_BACKOFF=60                # seconds to wait after crossing the crash th
 FM_CRASH_NORMAL_SLEEP=5            # seconds to wait after an isolated watcher crash
 FM_LOG_MAX_BYTES=1048576           # daemon log size that triggers trimming
 FM_LOG_KEEP_LINES=2000             # daemon log lines kept when trimming
+# attended background triage (bin/fm-attended-triage-lib.sh); active only while /afk is OFF
+FM_ATTENDED_TRIAGE=                # on|off override for config/attended-triage; unset defers to the file, which defaults to off
+FM_ATTENDED_TRIAGE_MODEL=haiku     # model passed to `claude -p --model` for the second-tier verdict
+FM_ATTENDED_TRIAGE_TIMEOUT_SECS=8  # hard per-call watchdog; a timeout keeps the wake, never drops it
+FM_ATTENDED_TRIAGE_MAX_CALLS=4     # model calls allowed per pass, so a wake storm cannot fan out; past the cap every remaining wake is kept
+FM_ATTENDED_TRIAGE_EXEC=           # verdict seam: run this command instead of `claude`; unset in production
+FM_ATTENDED_TRIAGE_STATUS_TAIL_LINES=8   # status lines shown to the model as context for one wake
 ```
 
 `fm-teardown.sh` retries only Git's `Unable to create '...index.lock': File exists` return failure up to `FM_TREEHOUSE_RETURN_LOCK_RETRIES` times.
