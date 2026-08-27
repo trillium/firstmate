@@ -27,6 +27,8 @@
 # operator's machine has normally already trusted; a trust dialog is a real
 # unready state and correctly fails that harness's check.
 set -u
+# Suppress Parlay enrollment side-effects when fm-spawn is referenced from tests.
+export FM_SPAWN_SKIP_PARLAY=1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
