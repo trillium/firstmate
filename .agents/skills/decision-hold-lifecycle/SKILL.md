@@ -2,7 +2,7 @@
 name: decision-hold-lifecycle
 description: >-
   Agent-only policy for completing investigations and visual reviews without losing unresolved captain decisions.
-  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a decision, and when recording or routing the captain's answer.
+  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a decision, when recording or routing the captain's answer, and on any RECORD DIVERGENCE line the wake drain prints.
 user-invocable: false
 metadata:
   internal: true
@@ -26,6 +26,7 @@ Do not close a hold merely because the originating investigation completed, its 
 The hold remains the authoritative Captain's Call item until the captain's answer is durably recorded, dependent work is created in the same backlog and blocked by that hold, and `bin/fm-decision-hold.sh resolve` routes the answer by clearing those dependency edges before closing the hold.
 Resolved findings, recommendations that need no captain choice, and prose that merely sounds decision-like do not create holds.
 Bearings reads the resulting structured state and must never compensate by scraping historical reports, visual-review artifacts, terminal output, chat, or other prose.
+A `RECORD DIVERGENCE` line from the wake drain is a contradiction between one captain call's status log and its backlog state, never proof the captain ruled; reconcile it in whichever direction the evidence supports rather than closing the hold on the status line alone.
 
 ## Operating sequence
 

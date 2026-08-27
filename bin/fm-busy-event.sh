@@ -116,6 +116,10 @@ lock_acquire() {
       # integer or nothing; $now still stands in when the lock is gone or
       # unreadable, which reads as age 0 (not stale), as before.
       mtime=$(fm_stat_mtime "$LOCK" 2>/dev/null) || mtime=$now
+      # Anything unreadable or non-numeric reads as "just created", so an
+      # unforeseen stat surprise degrades to a lock-timeout refusal instead of
+      # aborting the writer - and its caller, fm-teardown.sh - under `set -u`.
+      case "$mtime" in ''|*[!0-9]*) mtime=$now ;; esac
       age=$((now - mtime))
       if [ "$age" -ge "${FM_BUSY_LOCK_STALE_SECS:-5}" ]; then
         rmdir "$LOCK" 2>/dev/null || rm -rf "$LOCK" 2>/dev/null || true

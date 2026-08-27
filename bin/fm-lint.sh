@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# fm-lint.sh - the single owner of firstmate's shell-lint definition.
+# fm-lint.sh - the single owner of firstmate's lint definition.
 #
 # Runs its file set with ShellCheck's default severity, extended analysis,
 # ambient configuration disabled, and one exact ShellCheck version. CI and
 # no-mistakes both invoke this script with no arguments, so the rule set,
 # version, bounded execution, and diagnostics ordering cannot drift.
+# The explicit --fast mode is local-only and disables ShellCheck's extended
+# dataflow analysis while preserving ordinary shell lint checks. CI and
+# no-mistakes keep the full-analysis no-argument default.
 # Tests stop source analysis at imported production modules because every
 # production shell is already a canonical, source-aware root of this same run.
+# The default (no explicit-path) path also runs bin/fm-lint-workflows.sh so a
+# malformed GitHub workflow, including a self-broken ci.yml, fails locally
+# before merge instead of only failing to run as CI.
 #
 # With no explicit paths, the file set depends on context:
 #   - In CI (GITHUB_ACTIONS=true or CI=true), on the main branch, or when no
@@ -16,10 +22,10 @@
 #   - Otherwise (an ordinary local branch with a real merge-base) it lints
 #     only the canonical-set files changed since that merge-base, including
 #     uncommitted local edits, via plain local `git diff` (no network, no
-#     `gh`). A branch with zero matching changed files exits 0 and prints a
-#     "no changed lint targets" note instead of running ShellCheck.
+#     `gh`). A branch with zero matching changed files skips ShellCheck and
+#     prints a "no changed lint targets" note, then still validates workflows.
 # Explicit paths always bypass this file-set selection and lint exactly the
-# given paths, matching the same config.
+# given paths, matching the same config, without the workflow YAML check.
 #
 # Canonical lint defaults to two bounded workers over two stable logical shards.
 # Each shard writes separate diagnostics, and the parent replays every root's
@@ -55,6 +61,7 @@
 #
 # Usage:
 #   fm-lint.sh                         lint the context-selected file set (see above)
+#   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   fm-lint.sh <path>...               lint explicit roots with the same config
 #   fm-lint.sh --jobs <1|2> [path]...  override bounded worker count
 #   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
@@ -267,6 +274,13 @@ fm_lint_worker_stop() {
 # refused rather than acted on.
 fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
   local manifest=$1 output_dir=$2 shard_index=$3 tab index entry path rc=0 root_rc
+  local -a shellcheck_args
+  shellcheck_args=(--norc --external-sources)
+  # --fast is the local-only knob: ShellCheck extended analysis is the slowest
+  # part of a full lint, and CI always runs without it (see the --fast guard).
+  if [ "${FM_LINT_INTERNAL_FAST:-0}" -eq 1 ]; then
+    shellcheck_args+=(--extended-analysis=false)
+  fi
   tab=$(printf '\t')
   trap 'fm_lint_worker_stop; exit 129' HUP
   trap 'fm_lint_worker_stop; exit 130' INT
@@ -282,7 +296,7 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
     fi
     root_rc=0
     fm_lint_slot_acquire
-    "$FM_LINT_SHELLCHECK" --norc --external-sources -- "$path" > "$output_dir/raw.$index" 2>&1 &
+    "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" > "$output_dir/raw.$index" 2>&1 &
     FM_LINT_WORKER_SHELLCHECK_PID=$!
     wait "$FM_LINT_WORKER_SHELLCHECK_PID" || root_rc=$?
     FM_LINT_WORKER_SHELLCHECK_PID=
@@ -317,11 +331,24 @@ fi
 # The header block itself is the usage text, read to its end rather than to a
 # hardcoded line number so documenting a new knob cannot silently truncate it.
 fm_lint_usage() {
-  awk 'NR == 1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$SELF"
+  awk '
+    NR == 1 { next }
+    /^#/ { sub(/^# ?/, ""); print; next }
+    { exit }
+  ' "$SELF"
+}
+
+# Default no-args lint also validates GitHub workflows. Explicit paths stay a
+# ShellCheck-only override so callers can target one shell root.
+fm_lint_run_workflows() {
+  [ "$EXPLICIT_PATHS" -eq 0 ] || return 0
+  "$SELF_DIR/fm-lint-workflows.sh"
 }
 
 JOBS=${FM_LINT_JOBS:-2}
 TELEMETRY=${FM_LINT_TELEMETRY:-}
+FAST=0
+ANALYSIS_MODE=full
 LIST_FILES=0
 CHANGED_MODE=0
 while [ "$#" -gt 0 ]; do
@@ -342,6 +369,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --telemetry=*)
       TELEMETRY=${1#*=}
+      shift
+      ;;
+    --fast)
+      FAST=1
+      ANALYSIS_MODE=fast
       shift
       ;;
     --list-files)
@@ -375,6 +407,12 @@ fm_lint_require_count() {  # <name> <value>
       ;;
   esac
 }
+
+if [ "$FAST" -eq 1 ] && { [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CI:-}" = true ]; }; then
+  printf 'fm-lint.sh: --fast is local-only; CI uses full ShellCheck analysis.\n' >&2
+  exit 2
+fi
+
 [ -z "${FM_LINT_GLOBAL_LIMIT:-}" ] || fm_lint_require_count FM_LINT_GLOBAL_LIMIT "$FM_LINT_GLOBAL_LIMIT"
 [ -z "${FM_LINT_GLOBAL_WAIT:-}" ] || fm_lint_require_count FM_LINT_GLOBAL_WAIT "$FM_LINT_GLOBAL_WAIT"
 case "${FM_LINT_CACHE:-1}" in
@@ -382,7 +420,9 @@ case "${FM_LINT_CACHE:-1}" in
   *) printf 'fm-lint.sh: FM_LINT_CACHE must be 0 or 1, got %s.\n' "${FM_LINT_CACHE:-}" >&2; exit 2 ;;
 esac
 
+EXPLICIT_PATHS=0
 if [ "$#" -gt 0 ]; then
+  EXPLICIT_PATHS=1
   ROOTS=("$@")
 else
   full_lint=1
@@ -420,9 +460,9 @@ if [ "$LIST_FILES" -eq 1 ]; then
 fi
 
 if ! command -v shellcheck >/dev/null 2>&1; then
-  printf 'fm-lint.sh: ShellCheck not found; install ShellCheck %s for CI parity.\n' \
+  printf 'fm-lint.sh: ShellCheck not found; install ShellCheck %s with bin/fm-install-shellcheck.sh <destination-directory> and put that directory on PATH.\n' \
     "$REQUIRED_SHELLCHECK" >&2
-  exit 127
+  exit 1
 fi
 unset SHELLCHECK_OPTS
 SHELLCHECK_BIN=$(command -v shellcheck)
@@ -433,14 +473,21 @@ fi
 resolved=$("$SHELLCHECK_BIN" --version | awk '/^version:/ {print $2; exit}')
 printf 'fm-lint.sh: ShellCheck %s (pinned %s)\n' "$resolved" "$REQUIRED_SHELLCHECK" >&2
 if [ "$resolved" != "$REQUIRED_SHELLCHECK" ]; then
-  printf 'fm-lint.sh: ShellCheck %s required for CI parity, found %s. Install %s.\n' \
+  printf 'fm-lint.sh: ShellCheck %s required for CI parity, found %s. Install %s with bin/fm-install-shellcheck.sh <destination-directory>.\n' \
     "$REQUIRED_SHELLCHECK" "$resolved" "$REQUIRED_SHELLCHECK" >&2
   exit 1
+fi
+if [ "$FAST" -eq 1 ]; then
+  printf 'fm-lint.sh: fast local mode; ShellCheck extended analysis disabled\n' >&2
+else
+  printf 'fm-lint.sh: full ShellCheck extended analysis enabled\n' >&2
 fi
 
 if [ "$CHANGED_MODE" -eq 1 ] && [ "$ROOT_COUNT" -eq 0 ]; then
   printf 'fm-lint.sh: no changed lint targets\n'
-  exit 0
+  overall_rc=0
+  fm_lint_run_workflows || overall_rc=$?
+  exit "$overall_rc"
 fi
 
 if [ -n "$TELEMETRY" ]; then
@@ -760,18 +807,18 @@ fm_lint_run_worker() {  # <worker-index>
     if [ "$(uname)" = Darwin ]; then
       exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
         /usr/bin/time -lp -o "$timing" \
-        env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+        env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     else
       exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
         /usr/bin/time -f 'wall_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S\nmax_rss_kib=%M' -o "$timing" \
-        env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+        env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
         "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
     fi
   else
     [ -z "$TELEMETRY" ] || printf 'timing_unavailable=1\n' > "$timing"
     exec "$PERL_BIN" -e 'setpgrp(0, 0) or die "setpgrp: $!"; exec @ARGV or die "exec: $!"' \
-      env FM_LINT_INTERNAL=1 FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
+      env FM_LINT_INTERNAL=1 FM_LINT_INTERNAL_FAST="$FAST" FM_LINT_SHELLCHECK="$SHELLCHECK_BIN" \
       "${BASH:-bash}" "$SELF" --internal-worker "$manifest" "$OUTPUT_DIR" "$worker_index"
   fi
 }
@@ -949,6 +996,7 @@ EOF
     printf 'git_head\t%s\n' "$git_head"
     printf 'content_cksum\t%s\n' "$content_cksum"
     printf 'shellcheck_version\t%s\n' "$resolved"
+    printf 'analysis_mode\t%s\n' "$ANALYSIS_MODE"
     printf 'jobs\t%s\n' "$JOBS"
     printf 'root_count\t%s\n' "$ROOT_COUNT"
     printf 'direct_lines\t%s\n' "$direct_lines"
@@ -984,6 +1032,12 @@ EOF
     printf 'fm-lint.sh: could not write telemetry to %s.\n' "$TELEMETRY" >&2
     [ "$overall_rc" -ne 0 ] || overall_rc=2
   fi
+fi
+
+if [ "$overall_rc" -eq 0 ]; then
+  fm_lint_run_workflows || overall_rc=$?
+else
+  fm_lint_run_workflows || true
 fi
 
 exit "$overall_rc"
