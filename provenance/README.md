@@ -1,7 +1,7 @@
-# Fork-feature provenance (proof of concept)
+# Fork-feature provenance
 
 This directory proves, end to end, a mechanism that guarantees the captain's fork-only firstmate features survive fast-moving upstream merges, or a check fails loudly.
-It is a proof of concept on 3 pilot features, not the full fork surface.
+It currently registers 16 fork-only features, not yet the full fork surface.
 It converges the two research scouts under `data/prov-research/` and `data/prov-approvaltests/`: a fork-namespaced register that anchors each feature to its code, plus a golden-master behavioral proof per feature.
 
 Everything lives under the fork-owned `provenance/` and `tests/provenance/` namespaces that upstream firstmate never writes, so an upstream merge can never silently clobber the register or the approved snapshots.
@@ -53,15 +53,15 @@ It is the single most important helper for keeping golden masters from going fla
 `provenance_fingerprint` is the anchor drift signature, and it is a deliberate one-function swap point.
 Today it is a clearly-labeled PLACEHOLDER: it strips comments and blank lines, collapses whitespace, and hashes the result.
 The research recommends a normalized `tree-sitter-bash` AST fingerprint (node kinds plus token text, with whitespace, position, and comments stripped) so reformatting and edits elsewhere in the file never trip the alarm.
-That grammar is not wired into this proof of concept, so the placeholder stands in.
+That grammar is not wired in yet, so the placeholder stands in.
 Swapping to the real fingerprint is a change to `provenance_fingerprint` alone; the register format, `check.sh`, and every snapshot stay put.
-Because drift is a WARN rather than a FAIL, the placeholder's coarser sensitivity is safe for the proof of concept.
+Because drift is a WARN rather than a FAIL, the placeholder's coarser sensitivity is safe for now.
 
 ## Deferred: scaling and CI wiring
 
-The following are out of scope for this proof of concept and are described here rather than built.
+The following are out of scope for the current register and are described here rather than built.
 
-- Scaling from 3 pilots to the full fork surface is more register entries and more snapshots, no new machinery.
+- Scaling from the current 16 features to the full fork surface is more register entries and more snapshots, no new machinery.
   A proper TOML parser should replace `provenance_parse_register` once the register grows past a handful of entries.
 - Two-tier CI: the cheap deterministic tier here (help text, exit codes, scrubbed metadata shape) gates every pull request, while an expensive tier of real agent spawns runs nightly and never blocks a merge.
   firstmate's existing smoke-versus-e2e test split maps onto exactly this two-tier structure.
