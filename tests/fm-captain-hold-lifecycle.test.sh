@@ -72,8 +72,11 @@ run_captain() {  # <home> <command args...>
     FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-captain-hold.sh" "$@"
 }
 
-# The retired command surface, kept for one release as a shim; in-flight
-# pre-collapse work still drives the lifecycle through these spellings.
+# This fork keeps bin/fm-decision-hold.sh as its own backend-aware owner rather
+# than upstream's one-release shim, because the shim has no beads support. The
+# pre-collapse command spellings must still drive the tasks-axi lifecycle, so
+# they are exercised here; verbs this fork does not implement (decline, bind)
+# are covered through fm-captain-hold.sh instead.
 run_shim() {  # <home> <command args...>
   local home=$1
   shift
@@ -880,10 +883,10 @@ test_legacy_identities_keep_working() {
   show=$(tasks_in "$home" show sample-old-routed-work --full)
   assert_contains "$show" "blocked_by: none" "the replayed legacy resolve did not clear its recorded edge"
 
-  # The shim decline path maps onto the same recorded answer.
+  # A decline maps onto the same recorded answer for a legacy-composed identity.
   printf 'Declined: keep the current shape.\n' > "$home/decline.txt"
-  run_shim "$home" decline "$id" keep-two --decision-file "$home/decline.txt" >/dev/null \
-    || fail "the shim decline path failed"
+  run_captain "$home" answer "$id-decision-keep-two" --decision-file "$home/decline.txt" >/dev/null \
+    || fail "a declining answer failed against a legacy-composed identity"
   run_captain "$home" verify "$id" >/dev/null \
     || fail "shim-closed rows did not satisfy the completion gate"
 
@@ -891,7 +894,7 @@ test_legacy_identities_keep_working() {
   # resolve through the composed identity.
   run_shim "$home" hold "$id" third-choice \
     --title "Third choice" --reason "captain third choice pending" --repo sample >/dev/null
-  run_shim "$home" bind legacy-src "$id" >/dev/null || fail "the shim bind path failed"
+  run_captain "$home" bind legacy-src "$id" >/dev/null || fail "the bind path failed"
   [ "$(run_captain "$home" binding legacy-src)" = "$id" ] \
     || fail "the concrete-origin binding was not preserved"
   printf 'third-choice\toption b\t\n' \
@@ -923,7 +926,7 @@ test_legacy_identities_keep_working() {
     || fail "a full legacy task-id replay without an origin was not idempotent"
   assert_contains "$out" "closed: $id-decision-fourth-choice" \
     "the origin-free legacy replay digest was treated as drift"
-  pass "legacy identities, metadata, bindings, and the shim keep working"
+  pass "legacy identities, metadata, and bindings keep working"
 }
 
 # The intake is channel-agnostic, so chat must reach it the same way a captured
