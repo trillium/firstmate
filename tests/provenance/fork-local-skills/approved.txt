@@ -1,0 +1,4 @@
+../.agents/skills
+firstmate-orca:present
+---exit---
+0

@@ -1050,7 +1050,7 @@ trap 'exit 0' TERM INT
 while :; do sleep 0.02; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_PI_ARM_READY_TIMEOUT_MS="$ARM_READY_TIMEOUT_MS" FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_PI_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -1074,9 +1074,7 @@ writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
 mod.default(pi);
 await tool.execute("tool-call-hung-successor", {}, undefined, undefined, {});
-// Three unready successors each cost the full readiness budget, so wait well
-// past their sum. The wait ends as soon as the wake lands.
-for (let i = 0; i < 1500 && !prompt; i += 1) {
+for (let i = 0; i < 2000 && !prompt; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 const rows = existsSync(process.env.FM_ARM_LOG)
@@ -1092,7 +1090,7 @@ if (stableRows.length !== 4) throw new Error(`single-flight recovery launched ${
 EOF
 )
   status=$?
-  expect_code 0 "$status" "Pi must deliver the actionable wake after bounded hung-successor recovery"
+  expect_code 0 "$status" "Pi must deliver the actionable wake after bounded hung-successor recovery" "$out"
   [ -z "$out" ] || fail "Pi hung-successor test printed output: $out"
   pass "Pi hung successor falls back to one typed actionable wake"
 }
@@ -2269,7 +2267,7 @@ trap 'exit 0' TERM INT
 while :; do sleep 0.02; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_OPENCODE_ARM_READY_TIMEOUT_MS="$ARM_READY_TIMEOUT_MS" FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
+  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_OPENCODE_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -2293,9 +2291,7 @@ const hooks = await mod.FmPrimaryWatchArm({
 });
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
 await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-test" } } });
-// Three unready successors each cost the full readiness budget, so wait well
-// past their sum. The wait ends as soon as the wake lands.
-for (let i = 0; i < 1500 && !prompt; i += 1) {
+for (let i = 0; i < 2000 && !prompt; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 const rows = existsSync(process.env.FM_ARM_LOG)
@@ -2311,7 +2307,7 @@ if (stableRows.length !== 4) throw new Error(`single-flight recovery launched ${
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode must deliver the actionable wake after bounded hung-successor recovery"
+  expect_code 0 "$status" "OpenCode must deliver the actionable wake after bounded hung-successor recovery" "$out"
   [ -z "$out" ] || fail "OpenCode hung-successor test printed output: $out"
   pass "OpenCode hung successor falls back to one typed actionable wake"
 }

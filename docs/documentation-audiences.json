@@ -443,6 +443,74 @@
     {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
+    },
+    {
+      "path": "provenance/README.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "tests/provenance/backlog-handoff/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/claude-multi-account/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/decision-hold-lifecycle-skill/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/decision-hold/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/fork-local-skills/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/fork-origin-check/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/herdr-backend/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/launch-tracked-agent/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/project-dir-resolution/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/remote-ssh-transport/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/review-decision-pages/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/send-raw-and-verify-transition/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/staleness-autoclose-reap/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/tasks-toml-beads-backend/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/watch-cycle-diagnostics/approved.txt",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "tests/provenance/x-mode-relay/approved.txt",
+      "audience": "maintainer-verification"
     }
   ]
 }

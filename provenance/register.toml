@@ -1,0 +1,223 @@
+# provenance/register.toml - the fork-feature provenance register.
+#
+# One [[feature]] block per fork-only feature that must survive fast-moving
+# upstream merges. This file lives in the fork-owned provenance/ namespace that
+# upstream firstmate never writes, so a merge can never silently clobber it.
+#
+# Each feature carries:
+#   id      - stable slug (also names tests/provenance/<id>/).
+#   story   - the user-story / Given-When-Then spec, in human prose. Reviewed in
+#             PRs like any doc; this is the honest-keeping anchor.
+#   test    - a command whose scrubbed combined output + exit code is diffed
+#             against the approved golden master at tests/provenance/<id>/approved.txt.
+#             THIS is the load-bearing guarantee ("the feature still works as approved").
+#   [[feature.anchor]] - one or more locators + deletion tripwires:
+#             path   - file the feature lives in. A vanished path is a FAIL.
+#             symbol - optional bash function name; a vanished symbol is a FAIL.
+#                      Omit to anchor the whole file (existence tripwire only).
+#             sig    - normalized fingerprint of the anchored region. A drift is a
+#                      WARN, not a FAIL: upstream edits legitimately shift code
+#                      without deleting the feature. Re-bless with `check.sh --regen`.
+#
+# Adding a feature = one [[feature]] block here + one snapshot (via --regen).
+
+version = 1
+
+[[feature]]
+id    = "launch-tracked-agent"
+story = "As the captain, I want to launch an agent and have firstmate track it, so fork work runs in an isolated worktree with a recorded launch contract."
+test  = "bin/fm-spawn.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-spawn.sh"
+symbol = "usage"
+sig    = "70eb6ba9abdc98a9"
+[[feature.anchor]]
+path   = "bin/fm-spawn.sh"
+symbol = "launch_template"
+sig    = "06a8144e1dfc1c76"
+
+[[feature]]
+id    = "decision-hold"
+story = "As the captain, I want firstmate to record durable decision holds so an unresolved decision survives across sessions instead of being lost."
+test  = "bin/fm-decision-hold.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-decision-hold.sh"
+symbol = "hold_id"
+sig    = "2ec7fbd85debc2f1"
+[[feature.anchor]]
+path   = "bin/fm-decision-hold.sh"
+symbol = "validate_slug"
+sig    = "ba2c327a60dca27e"
+
+[[feature]]
+id    = "claude-multi-account"
+story = "As the captain, I want to launch Claude Code crewmates under isolated per-account credentials so accounts never leak OAuth tokens across each other."
+test  = "bin/claude-account.sh not-an-index"
+[[feature.anchor]]
+path   = "bin/claude-account.sh"
+sig    = "cf3c9bbe5cdc7735"
+
+[[feature]]
+id    = "remote-ssh-transport"
+story = "Given a reachable remote mini host, when the captain dispatches a crewmate to it, then firstmate allocates the remote worktree and drives launch, reclaim, reconcile, and status over the SSH bridge rather than running the work locally."
+test  = "bin/fm-remote-launch.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-remote-launch.sh"
+symbol = "usage"
+sig    = "76e7531d766651dd"
+[[feature.anchor]]
+path   = "bin/fm-remote-launch.sh"
+symbol = "fm_remote_bridge_command"
+sig    = "1da6e1926171af7c"
+[[feature.anchor]]
+path   = "docs/remote-secondmates.md"
+sig    = "339b47374f57647e"
+
+[[feature]]
+id    = "tasks-toml-beads-backend"
+story = "Given a firstmate home with a .tasks.toml backlog config, when firstmate resolves which task-store backend to use, then it reads the configured value (markdown, tasks-axi, or the beads federated store) instead of assuming one, so the backlog can move to beads without touching code."
+test  = "source bin/fm-tasks-axi-lib.sh && mkdir -p "$FM_HOME/config" && printf 'beads' > "$FM_HOME/config/backlog-backend" && fm_backlog_backend_value "$FM_HOME/config" && fm_backlog_backend_value "$FM_HOME/no-such-config" && echo backend-resolver:ok"
+[[feature.anchor]]
+path   = ".tasks.toml"
+sig    = "31c645e8fdeca7b7"
+[[feature.anchor]]
+path   = "bin/fm-tasks-axi-lib.sh"
+symbol = "fm_backlog_backend_value"
+sig    = "1ac247af6004aa26"
+[[feature.anchor]]
+path   = "bin/fm-tasks-axi-lib.sh"
+symbol = "fm_beads_backend_available"
+sig    = "22eb5049eab2e22b"
+
+[[feature]]
+id    = "fork-local-skills"
+story = "Given fork-local skills under .agents/skills, when a Claude or IDE harness looks for skills at .claude/skills, then the symlink resolves to .agents/skills and fork-only skills such as firstmate-orca are discoverable without colliding with upstream."
+test  = "readlink .claude/skills && test -f .agents/skills/firstmate-orca/SKILL.md && echo firstmate-orca:present"
+[[feature.anchor]]
+path   = ".agents/skills/firstmate-orca/SKILL.md"
+sig    = "c51ad0ccb1848c2a"
+
+[[feature]]
+id    = "decision-hold-lifecycle-skill"
+story = "Given the decision-hold-lifecycle skill and firstmate's OPEN DECISIONS startup display, when a status line records a keyed captain decision, then fm-classify-lib folds it by its stable decision key so the same unresolved decision is surfaced durably on every startup instead of being lost."
+test  = "source bin/fm-classify-lib.sh && _fm_decision_key 'blocked[key=deploy-region]: pick'"
+[[feature.anchor]]
+path   = ".agents/skills/decision-hold-lifecycle/SKILL.md"
+sig    = "4f0e7a02d350391b"
+[[feature.anchor]]
+path   = "bin/fm-classify-lib.sh"
+symbol = "_fm_decision_key"
+sig    = "09e6b7d5fb8f74ff"
+[[feature.anchor]]
+path   = "bin/fm-session-start.sh"
+sig    = "220290f6df7b257c"
+
+[[feature]]
+id    = "backlog-handoff"
+story = "Given work queued in one firstmate home, when the captain hands a backlog item to a secondmate home, then fm-backlog-handoff delivers it and fm-backlog-receive integrates only dependency-closed, non-duplicate items into the receiving home's backlog, so cross-home transfer stays safe."
+test  = "bin/fm-backlog-handoff.sh --help; bin/fm-backlog-receive.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-backlog-handoff.sh"
+symbol = "remote_deliver_outbox"
+sig    = "794a7f1d6129454f"
+[[feature.anchor]]
+path   = "bin/fm-backlog-receive.sh"
+symbol = "run_move"
+sig    = "a15c922bed43cb85"
+
+[[feature]]
+id    = "x-mode-relay"
+story = "Given a Relay-paired firstmate home, when a public mention needs an answer, then fm-x-lib resolves the pairing config and reply context and fm-x-reply posts a public-safe reply or completion follow-up, all gated behind the opt-in FMX_PAIRING_TOKEN."
+test  = "bin/fm-x-reply.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-x-lib.sh"
+symbol = "fmx_load_config"
+sig    = "0997b4359feb1c10"
+[[feature.anchor]]
+path   = "bin/fm-x-reply.sh"
+symbol = "usage"
+sig    = "ef50b5917c5bd992"
+[[feature.anchor]]
+path   = ".agents/skills/fmx-respond/SKILL.md"
+sig    = "31883529a8761949"
+
+[[feature]]
+id    = "herdr-backend"
+story = "Given the experimental Herdr session-provider backend, when firstmate decides whether Herdr's presentation projection is available, then bin/backends/herdr.sh gates it behind a Herdr release floor via a deterministic version comparison, so an older Herdr never triggers the projection path."
+test  = "source bin/backends/herdr.sh && fm_backend_herdr_version_at_least 0.8.1 0.8.0 && echo YES; fm_backend_herdr_version_at_least 0.7.1 0.8.0 || echo NO"
+[[feature.anchor]]
+path   = "bin/backends/herdr.sh"
+symbol = "fm_backend_herdr_version_at_least"
+sig    = "c180cac689124d60"
+[[feature.anchor]]
+path   = "docs/herdr-backend.md"
+sig    = "f668601cefc936fd"
+
+[[feature]]
+id    = "staleness-autoclose-reap"
+story = "As the captain, I want the watcher to notice when a live crew process (including a herdr agent firstmate did not spawn) has sat idle past the staleness window and reclaim only its runtime endpoint, filing a triage bead so its unlanded work is never lost."
+test  = "source bin/fm-watch.sh && hash_pane <<<'x'; bin/fm-herdr-spur.sh --help; bin/fm-staleness-file.sh"
+[[feature.anchor]]
+path   = "bin/fm-staleness-file.sh"
+sig    = "3e04928e8c5dd2f9"
+[[feature.anchor]]
+path   = "bin/fm-herdr-spur.sh"
+sig    = "f479f43cd86822cc"
+[[feature.anchor]]
+path   = "bin/fm-watch.sh"
+symbol = "hash_pane"
+sig    = "e8c29c1410091d6c"
+[[feature.anchor]]
+path   = "bin/fm-watch.sh"
+symbol = "staleness_autoclose_reclaim"
+sig    = "486e071a1e907c45"
+[[feature.anchor]]
+path   = "bin/fm-teardown.sh"
+symbol = "staleness_chat_only_teardown"
+sig    = "5dc6d96f53c82cdb"
+
+[[feature]]
+id    = "send-raw-and-verify-transition"
+story = "As the captain, I want fm-send to gain a --raw best-effort path for driving an unmanaged pane it cannot verify, and an opt-in FM_SEND_VERIFY_TRANSITION that confirms a normal send actually drove a turn (idle->working) rather than only clearing the composer."
+test  = "mkdir -p "$FM_HOME/state" "$FM_HOME/fakebin" && printf '#!/usr/bin/env bash\nexit 0\n' > "$FM_HOME/fakebin/tmux" && chmod +x "$FM_HOME/fakebin/tmux" && PATH="$FM_HOME/fakebin:$PATH" FM_ROOT_OVERRIDE="$FM_HOME" FM_SEND_SETTLE=0 bin/fm-send.sh sess:win --raw --key Enter"
+[[feature.anchor]]
+path   = "bin/fm-send.sh"
+symbol = "fm_send_resolve_target"
+sig    = "beedda6d13f41e4f"
+
+[[feature]]
+id    = "fork-origin-check"
+story = "As the captain, I want an advisory read-only scan that flags registered project clones whose origin/upstream remotes look like a botched fork-contribution swap, so a clone that would push to the wrong repo is caught before dispatch, never blocking a spawn."
+test  = "bin/fm-fork-origin-check.sh --help"
+[[feature.anchor]]
+path   = "bin/fm-fork-origin-check.sh"
+sig    = "3862c92eab7a17f3"
+
+[[feature]]
+id    = "review-decision-pages"
+story = "As the captain, I want each open item in the review store to get a phone-readable Pulse page with Approve/Decline/Comment controls wired to POST /api/review/decision, so I can clear the requires-human-eyes queue from my phone and the decision flows back into the wake queue."
+test  = "bin/fm-review-page.ts --help; bin/fm-review-decision.sh"
+[[feature.anchor]]
+path   = "bin/fm-review-decision.sh"
+sig    = "7da8813e8bc48877"
+[[feature.anchor]]
+path   = "bin/fm-review-page.ts"
+sig    = "9fd3f104f929c61a"
+
+[[feature]]
+id    = "project-dir-resolution"
+story = "As the captain, I want one shared definition mapping a project argument to its clone directory, used by both fm-brief and fm-spawn, so the two halves of a dispatch can never disagree about what a project string names."
+test  = "source bin/fm-project-dir-lib.sh && fm_project_dir_candidate projects/foo /PROJ"
+[[feature.anchor]]
+path   = "bin/fm-project-dir-lib.sh"
+symbol = "fm_project_dir_candidate"
+sig    = "b309b19750afdf09"
+
+[[feature]]
+id    = "watch-cycle-diagnostics"
+story = "As the captain, I want firstmate to read the watcher lifecycle ledger so a supervision arm the harness killed can be told apart from a clean handoff, keeping a supervision-down banner honest about why the last cycle ended."
+test  = "source bin/fm-watch-cycle-lib.sh && mkdir -p "$FM_HOME/state" && printf 'arm_pid=111\twatcher_pid=222\torigin=stop-hook\tended_at=1700000000\texit_code=143\tsignal=15\treason=arm-interrupted\tbeacon_age=7\tsuccessor=none\n' > "$FM_HOME/state/.watch-cycle-exits.log" && fm_cycle_last_row "$FM_HOME/state" && printf 'origin=%s exit=%s signal=%s reason=%s successor=%s\n' $FM_CYCLE_ORIGIN $FM_CYCLE_EXIT_CODE $FM_CYCLE_SIGNAL $FM_CYCLE_REASON $FM_CYCLE_SUCCESSOR"
+[[feature.anchor]]
+path   = "bin/fm-watch-cycle-lib.sh"
+symbol = "fm_cycle_last_row"
+sig    = "0f259f30a722cf44"

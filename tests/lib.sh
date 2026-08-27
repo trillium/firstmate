@@ -348,10 +348,15 @@ assert_not_contains() {
   esac
 }
 
-# expect_code <expected> <actual> <label>
+# expect_code <expected> <actual> <label> [details]
+# `details` is captured subject output printed to stderr on mismatch only.
+# A subject that reports its own failure reason must pass it here, or the
+# reason is lost and the log shows only the exit code.
 expect_code() {
-  local expected=$1 actual=$2 label=$3
-  [ "$actual" = "$expected" ] || fail "$label: expected exit $expected, got $actual"
+  local expected=$1 actual=$2 label=$3 details=${4-}
+  [ "$actual" = "$expected" ] && return 0
+  [ -z "$details" ] || printf '%s\n' "$details" >&2
+  fail "$label: expected exit $expected, got $actual"
 }
 
 # assert_grep <pattern> <file> <msg>: fixed-string grep must match in <file>.

@@ -1,0 +1,22 @@
+fm-review-page.ts — render review-store items to visitable Pulse pages.
+
+USAGE
+  fm-review-page.ts <id> [<id> ...]   render specific open review items
+  fm-review-page.ts --all             render every open review item + index
+  fm-review-page.ts --help
+
+Each rendered page lives at ${FM_REVIEW_PAGE_OUT}/<id>/index.html and is served
+at ${FM_REVIEW_PAGE_BASE_URL}/<id>/. An index at the root lists all open items.
+The item is wired back with its page_url (metadata + a "Page: <url>" note) so the
+URL travels with it in `review show` / `review ready`.
+
+ENV
+  FM_REVIEW_PAGE_OUT       output root      (default ~/pulse-pages/review)
+  FM_REVIEW_PAGE_BASE_URL  URL prefix       (default http://localhost:31337/review)
+  FM_REVIEW_BIN            review CLI path  (default `review` on PATH)
+  FM_REVIEW_PAGE_NO_WIRE   set 1 to skip the store wire-back
+
+Usage: fm-review-decision.sh <id> <approve|decline|comment> [comment...]
+       echo "<comment>" | fm-review-decision.sh <id> comment --stdin
+---exit---
+2
