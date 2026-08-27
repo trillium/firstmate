@@ -1,0 +1,3 @@
+origin=stop-hook exit=143 signal=15 reason=arm-interrupted successor=none
+---exit---
+0

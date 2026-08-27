@@ -1,0 +1,11 @@
+401<HEX>7919
+Usage: fm-herdr-spur.sh [options]
+  --agent <name>     watch this agent (repeatable; overrides config file)
+  --session <name>   herdr session (default: "default")
+  --once             run one poll pass and exit (no event-wait, no loop)
+  --self-detach      re-exec detached so the daemon survives its parent
+  --interval <secs>  poll-fallback interval (default: 5)
+  -h, --help         show this help
+warning: fm-staleness-file.sh needs at least a task id and worktree, skipping
+---exit---
+0
