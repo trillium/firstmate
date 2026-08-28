@@ -1313,6 +1313,26 @@ EOF
     tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
     h=$(printf '%s' "$tail40" | hash_pane)
     key=$(printf '%s' "$w" | tr ':/.' '___')
+    # Org-disabled early detection, ahead of ordinary busy/stale classification:
+    # a pane showing Claude Code's org-subscription-disabled error is wedged
+    # before its first turn and can never self-recover, so waiting out staleness
+    # escalation only burns the captain's time. Surface it on the first poll that
+    # sees it and fire a blocked wake so firstmate can relaunch on an account
+    # that still has access. Keyed on the pane hash so a pane that keeps
+    # rendering the same error wakes once, not every cycle.
+    odf="$STATE/.org-disabled-surfaced-$key"
+    if fm_busy_org_disabled "$tail40" && [ "$(cat "$odf" 2>/dev/null || true)" != "$h" ]; then
+      odsf="$STATE/$task.status"
+      printf 'blocked [key=org-disabled]: worker launched on an account whose organization has disabled Claude Code access; relaunch it on an account that still has access\n' \
+        >> "$odsf" 2>/dev/null || true
+      printf '%s' "$h" > "$odf"
+      # Enqueued and reported in the same "signal:<status-file>" shape every other
+      # status-driven wake uses, so the away daemon and the Stop auto-arm both read
+      # this close as actionable and surface the blocked line just appended.
+      fm_wake_append signal "$task.status" "signal:$odsf" || exit 1
+      mark_surfaced "$odsf"
+      wake "signal:$odsf"
+    fi
     hf="$STATE/.hash-$key"
     cf="$STATE/.count-$key"
     sf="$STATE/.stale-$key"

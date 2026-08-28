@@ -356,6 +356,40 @@ test_boolean_view_never_promotes_unknown() {
   pass "the boolean view reports busy only on an exact busy verdict"
 }
 
+# --- org-disabled detection --------------------------------------------------
+
+# The org-disabled pane is a wedge the crew can never clear itself, so the
+# watcher escalates it on sight instead of timing it out. These pin the
+# predicate the watcher gates that escalation on: it must fire on the vendor
+# string wherever it sits in the captured tail, and never on ordinary content.
+
+test_org_disabled_detects_rendered_error() {
+  local pane
+  pane=$(printf '%s\n' \
+    '> claude --account 1' \
+    '' \
+    "⏺ $FM_BUSY_ORG_DISABLED_PATTERN · Use an Anthropic API key instead, or ask your admin to enable access" \
+    '')
+  fm_busy_org_disabled "$pane" \
+    || fail "the rendered org-disabled error must be detected"
+  pass "org-disabled fires on the vendor error as it is actually rendered"
+}
+
+test_org_disabled_ignores_ordinary_pane() {
+  local pane
+  pane=$(printf '%s\n' '⏺ Reading bin/fm-watch.sh' '' '  ✻ Thinking… (12s · esc to interrupt)')
+  if fm_busy_org_disabled "$pane"; then
+    fail "an ordinary working pane must not read as org-disabled"
+  fi
+  if fm_busy_org_disabled ""; then
+    fail "an empty capture must not read as org-disabled"
+  fi
+  if fm_busy_org_disabled "Your organization has disabled something else entirely"; then
+    fail "a partial prefix must not read as org-disabled"
+  fi
+  pass "org-disabled stays silent on ordinary, empty, and near-miss panes"
+}
+
 # --- writer: the stale-lock reap must survive a GNU `stat` on any kernel ------
 
 # Shadow `stat` with a binary that speaks GNU coreutils' dialect, which is what a
@@ -451,5 +485,7 @@ test_dead_endpoint_overrides
 test_herdr_native_busy_only
 test_record_read_leaves_caller_shell_intact
 test_boolean_view_never_promotes_unknown
+test_org_disabled_detects_rendered_error
+test_org_disabled_ignores_ordinary_pane
 
 echo "all fm-busy-state tests passed"
