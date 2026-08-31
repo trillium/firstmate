@@ -179,7 +179,7 @@ test_spawn_records_beads_id_in_meta_and_runs_hook() {
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
     PATH="$task_fakebin:$fakebin:$PATH" \
-    "$SPAWN" "$id" "$proj" --mode no-mistakes --yolo off --beads task-open 2>&1); status=$?
+    "$SPAWN" "$id" "$proj" --mode no-mistakes --yolo off --beads task-open --model sonnet 2>&1); status=$?
 
   expect_code 0 "$status" "ship spawn with --beads should exit 0 (got: $out)"
   assert_grep "beads_id=task-open" "$home/state/$id.meta" "meta missing beads_id="

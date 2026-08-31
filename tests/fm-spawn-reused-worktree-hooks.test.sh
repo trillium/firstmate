@@ -67,7 +67,7 @@ run_spawn() {  # <id>
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
     GROK_HOME="$HOME_DIR/grok-home" PATH="$FAKEBIN_DIR:$PATH" \
-    "$SPAWN" --mode no-mistakes --yolo off "$1" "$PROJ_DIR" 2>&1
+    "$SPAWN" --mode no-mistakes --yolo off --model sonnet "$1" "$PROJ_DIR" 2>&1
 }
 
 run_teardown() {  # <id>

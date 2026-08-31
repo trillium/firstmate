@@ -123,7 +123,7 @@ mkdir -p "$SENDER_HOME/data"
 printf -- '- %s - marker fixture (home: %s; scope: marker fixture; projects: ; added 2026-08-05)\n' \
   "$ID" "$(cd "$SECOND_HOME" && pwd -P)" >> "$SENDER_HOME/data/secondmates.md"
 PATH="$FAKEBIN:$ORIGINAL_PATH" FM_GATE_REFUSE_BYPASS=1 FM_HOME="$SENDER_HOME" HERDR_SESSION="$SESSION" \
-  "$ROOT/bin/fm-spawn.sh" "$ID" "$SECOND_HOME" --secondmate --harness pi --backend herdr >/dev/null
+  "$ROOT/bin/fm-spawn.sh" "$ID" "$SECOND_HOME" --secondmate --harness pi --backend herdr --model sonnet >/dev/null
 
 META="$SENDER_HOME/state/$ID.meta"
 [ -f "$META" ] || fail "real secondmate spawn did not write exact-id metadata"

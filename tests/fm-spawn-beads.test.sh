@@ -75,7 +75,7 @@ run_case_spawn() {
     FM_BEADS_HOME_SCOPE="$HOME_SCOPE" \
     FM_FAKE_PANE_PATH="$WT_DIR" \
     PATH="$FAKEBIN_DIR:$PATH" \
-    "$SPAWN" --mode no-mistakes --yolo off "$id" "$PROJ_DIR" "$@" 2>&1
+    "$SPAWN" --mode no-mistakes --yolo off --model sonnet "$id" "$PROJ_DIR" "$@" 2>&1
 }
 
 # Mock `task` (the beads CLI) as fm-bead-stamp.sh calls it: logs every
