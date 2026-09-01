@@ -133,7 +133,7 @@ run_case_spawn() {
     FM_SPAWN_FIRSTTURN_SUBMIT_RETRIES=1 \
     FM_SPAWN_FIRSTTURN_SUBMIT_SLEEP=0.1 \
     PATH="$FAKEBIN_DIR:$PATH" \
-    "$SPAWN" --mode no-mistakes --yolo off --harness "$harness" "$id" "$PROJ_DIR" "$@" 2>&1
+    "$SPAWN" --mode no-mistakes --yolo off --harness "$harness" --model sonnet "$id" "$PROJ_DIR" "$@" 2>&1
 }
 
 # outcome_line <home> <id>: the task's single first-turn outcome record.

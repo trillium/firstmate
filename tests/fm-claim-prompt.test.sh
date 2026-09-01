@@ -259,7 +259,7 @@ run_case_spawn() {
     TMUX="fake,1,0" FM_FAKE_PANE_PATH="$WT_DIR" \
     FM_SPAWN_CLAIM_PROBE_TIMEOUT=2 \
     PATH="$pdir:$FAKEBIN_DIR:$(fm_path_without parlay)" \
-    "$SPAWN" --mode no-mistakes --yolo off --harness claude "$id" "$PROJ_DIR" "$@" 2>&1
+    "$SPAWN" --mode no-mistakes --yolo off --harness claude --model sonnet "$id" "$PROJ_DIR" "$@" 2>&1
 }
 
 # launch_line <sendlog>: the send-keys payload that carries the launch command.

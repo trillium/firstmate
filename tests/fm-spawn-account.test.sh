@@ -75,8 +75,8 @@ run_spawn() {
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
-    FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
-    "$SPAWN" --mode no-mistakes --yolo off "$@" 2>&1
+    CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
+    "$SPAWN" --mode no-mistakes --yolo off --model sonnet "$@" 2>&1
 }
 
 read_case_record() {
@@ -99,7 +99,7 @@ test_account_flag_records_meta_and_uses_account_launcher() {
   assert_grep "account=1" "$HOME_DIR/state/$id.meta" "meta missing account=1"
 
   launch=$(cat "$LAUNCH_LOG")
-  expected="CLAUDE_TRUST_DIR='$WT_DIR' CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '${ROOT}/bin/claude-account.sh' 1 --dangerously-skip-permissions \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  expected="CLAUDE_TRUST_DIR='$WT_DIR' CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '${ROOT}/bin/claude-account.sh' 1 --dangerously-skip-permissions --model 'sonnet' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
   [ "$launch" = "$expected" ] || fail "account launch did not use claude-account.sh with CLAUDE_TRUST_DIR"$'\n'"expected: $expected"$'\n'"actual:   $launch"
   pass "--account 1 records account=1 in meta and launches through claude-account.sh with CLAUDE_TRUST_DIR set"
 }
@@ -117,8 +117,8 @@ test_account_flag_defaults_to_absent_meta_and_plain_claude() {
   assert_no_grep "account=" "$HOME_DIR/state/$id.meta" "meta should not record account= when --account is absent"
 
   launch=$(cat "$LAUNCH_LOG")
-  expected="CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
-  [ "$launch" = "$expected" ] || fail "no-account launch should be byte-identical to current behavior"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  expected="CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --model 'sonnet' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "no-account launch should be unchanged except for the now-required --model flag"$'\n'"expected: $expected"$'\n'"actual:   $launch"
   pass "absent --account leaves meta and the launch command unchanged"
 }
 

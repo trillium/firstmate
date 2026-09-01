@@ -45,7 +45,11 @@
 #   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed.
+#   from that harness's launch rather than guessed. --model is REQUIRED on every
+#   ship, scout, or secondmate spawn on a named/templated harness (see the raw
+#   launch command and --relaunch notes above for the two exemptions); a spawn
+#   refuses closed rather than falling through to the harness's own implicit
+#   default model.
 #   --account <N> is the optional per-account Claude Code isolation index (see
 #   docs/configuration.md "Multi-account Claude Code"). It requires the claude
 #   harness, records account=N in the task's meta, sets CLAUDE_TRUST_DIR to the
@@ -128,6 +132,14 @@
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. pi-signed launches that exact executable name from PATH and
 #   refuses before endpoint creation when it is unavailable; it never falls back to pi.
+#   A raw launch command embeds its own full argv, so it is exempt from the
+#   explicit-model requirement below; the raw command itself should pin a model.
+#   Every OTHER ship, scout, or secondmate spawn (named/templated harness) REQUIRES
+#   an explicit --model: fm-spawn refuses (nothing launched, no meta written) rather
+#   than falling through to the harness's own implicit default, which is never a
+#   deliberately chosen model. The error names a per-harness model-discovery command
+#   (also: the harness-adapters skill's "Model support discovery" table). --relaunch
+#   is exempt (bin/fm-control.sh relaunch owns that axis).
 #   config/secondmate-harness may also carry an optional model and effort as extra
 #   whitespace-separated tokens ("<harness> [<model>] [<effort>]"). For a
 #   --secondmate spawn, those tokens apply only when this spawn also resolves its
@@ -396,6 +408,7 @@ MODE_SET=0
 YOLO_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
+RAW_LAUNCH=0
 POS=()
 want_value=
 end_of_flags=0
@@ -471,6 +484,31 @@ esac
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || { echo "error: --traceparent requires a non-empty value" >&2; exit 1; }
+
+# Captain directive: a spawn on a named/templated harness adapter must always
+# carry a deliberately chosen model; the harness's own implicit default is
+# never acceptable (a routine task once silently launched on a top-tier model
+# nobody chose). A raw launch command (the unverified-adapter escape hatch)
+# embeds its own full argv and is exempt - see its own help note instead.
+# --relaunch is exempt too: its harness/model axes are a replacement-agent
+# concern of bin/fm-control.sh relaunch, not a fresh spawn.
+model_discovery_hint() {
+  case "$1" in
+    claude) echo "claude: open the running session's /model picker (claude --help documents the accepted alias/full-model-name input)" ;;
+    codex) echo "codex: open the running session's /model picker" ;;
+    opencode) echo "opencode: run 'opencode models [provider]'" ;;
+    pi|pi-signed) echo "$1: run '$1 --list-models [search]'" ;;
+    grok) echo "grok: run 'grok models'" ;;
+    kimi) echo "kimi: run 'kimi provider list --json'" ;;
+    *) echo "$1: consult the harness-adapters skill's \"Model support discovery\" table" ;;
+  esac
+}
+require_explicit_model_message() {
+  local kind=$1 harness=$2
+  echo "error: --model is required for every $kind spawn on harness '$harness'; the implicit default model is never acceptable (captain directive: every spawn must carry a deliberately chosen model)." >&2
+  echo "Discover a model, then pass --model <name>. $(model_discovery_hint "$harness")." >&2
+}
+
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -603,6 +641,12 @@ spawn_remote_secondmate() {
       effort=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
       [ -n "$effort" ] || effort=-
     fi
+  fi
+  if [ "$model" = - ]; then
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    require_explicit_model_message secondmate "$harness"
+    return 1
   fi
   # A remote second mate always runs on Herdr: its server belongs to the host's
   # own GUI login session, so the endpoint outlives every SSH connection that
@@ -1316,6 +1360,7 @@ launch_template() {
 
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
+    RAW_LAUNCH=1
     LAUNCH=$ARG3
     HARNESS=""
     for word in $LAUNCH; do
@@ -1424,6 +1469,11 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
       esac
     fi
   fi
+fi
+
+if [ "$RELAUNCH" -eq 0 ] && [ "$RAW_LAUNCH" -eq 0 ] && [ -z "$MODEL" ]; then
+  require_explicit_model_message "$KIND" "$HARNESS"
+  exit 1
 fi
 
 secondmate_registry_value() {
