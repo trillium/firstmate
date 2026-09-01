@@ -81,10 +81,22 @@ REQUIRED_TOOLS=(git jq herdr tasks-axi treehouse)
 HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
 LAUNCH_AGENT_LABEL=dev.firstmate.herdr.fm-remote
-# The dedicated remote-secondmate session. The user's interactive Herdr work
-# remains in the separate default session, which this readiness check never
-# requires or changes.
-HERDR_SESSION_NAME=fm-remote
+# The Herdr session the remote secondmate runs in. Defaults to the host's shared
+# `default` server so remote work rides the same Herdr the user and federation
+# already observe.
+# DEPRECATED: a dedicated isolation session is still available by setting
+# FM_REMOTE_HERDR_SESSION=fm-remote (or any non-default name). Only on such a
+# dedicated session does this doctor provision and manage its own launch agent;
+# on the shared default session it never installs a competing server for the
+# session the host already owns (e.g. its federation origin) and only verifies.
+HERDR_SESSION_NAME="${FM_REMOTE_HERDR_SESSION:-default}"
+# Whether Firstmate owns this session's server lifecycle. False for the shared
+# default session, where the host's own server (dev.herdr.server.plist) owns it.
+if [ "$HERDR_SESSION_NAME" = default ]; then
+  HERDR_SESSION_DEDICATED=0
+else
+  HERDR_SESSION_DEDICATED=1
+fi
 LAUNCH_AGENT_DIR="${HOME:-}/Library/LaunchAgents"
 LAUNCH_AGENT_PLIST="$LAUNCH_AGENT_DIR/$LAUNCH_AGENT_LABEL.plist"
 LAUNCH_AGENT_LOG_DIR="${HOME:-}/Library/Logs"
@@ -525,6 +537,12 @@ check_gui_session() {
 }
 
 check_launch_agent() {
+  if [ "$HERDR_SESSION_DEDICATED" -eq 0 ]; then
+    record launchagent "skip: the shared '$HERDR_SESSION_NAME' server is owned by the host, not a Firstmate launch agent"
+    record launchagent-scope "skip: no Firstmate launch agent is managed for the shared session"
+    record launchagent-loaded "skip: no Firstmate launch agent is managed for the shared session"
+    return 0
+  fi
   if [ "$PLATFORM" != darwin ]; then
     record launchagent "skip: launch agents apply only on darwin"
     record launchagent-scope "skip: launch agents apply only on darwin"
@@ -584,6 +602,11 @@ check_herdr_server() {
   fi
   if herdr_server_running; then
     record herdr-server "ok: session $HERDR_SESSION_NAME is running"
+    return 0
+  fi
+  if [ "$HERDR_SESSION_DEDICATED" -eq 0 ]; then
+    record herdr-server "human: the shared herdr server for session $HERDR_SESSION_NAME is not running" \
+      "start the host's own herdr server for the '$HERDR_SESSION_NAME' session (e.g. its dev.herdr.server.plist launch agent); Firstmate does not manage the shared server"
     return 0
   fi
   if [ "$PLATFORM" = darwin ] && ! check_is_ok gui-session; then
