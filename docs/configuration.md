@@ -392,6 +392,7 @@ security add-generic-password -U -s "ccjuggler-acc<N>" -a "ccjuggler" -w "<sk-an
 
 `fm-spawn.sh --account <N>` wires a ship or scout claude-harness spawn to a specific account: it records `account=N` in the task's `state/<id>.meta`, sets `CLAUDE_TRUST_DIR` to the task's worktree in the crewmate's launch environment so the correct directory gets pre-trusted, and launches through `bin/claude-account.sh N` instead of the plain `claude` binary.
 `--account` requires the claude harness and is strictly optional; absent means current behavior (plain `claude`, no account isolation).
+A relaunch restores `account=N` from the task's own record rather than accepting `--account` again, so a replacement agent keeps the credential the task was launched on instead of falling back to the machine's default Claude account; relaunching onto a non-claude harness leaves the account behind.
 
 Full pattern, rationale, verification steps, and a capacity-aware routing reference: <https://gist.github.com/sjarmak/61e22d3625ecaac2279e8564d1b1b68f>.
 
