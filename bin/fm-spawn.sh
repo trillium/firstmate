@@ -31,9 +31,10 @@
 #   owns the checkpoint, the progress note, stopping the previous agent, and the
 #   transaction; call fm-control rather than this flag directly unless you are
 #   deliberately re-launching an already-stopped task. Every identity axis -
-#   backend, kind, project or home, worktree, endpoint - comes from the task's
-#   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
-#   positional, and batch pairs are all refused alongside it; only harness,
+#   backend, kind, project or home, worktree, endpoint, claude account - comes
+#   from the task's validated state/<id>.meta, so --backend, --scout,
+#   --secondmate, --account, a project positional, and batch pairs are all
+#   refused alongside it; only harness,
 #   model, and effort may change, which is what makes a harness switch one
 #   ordinary relaunch. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
@@ -55,7 +56,11 @@
 #   harness, records account=N in the task's meta, sets CLAUDE_TRUST_DIR to the
 #   task's worktree in the crewmate's launch environment, and launches through
 #   bin/claude-account.sh N instead of the plain claude binary. Absent means
-#   current behavior: plain claude, no account isolation.
+#   current behavior: plain claude, no account isolation. A --relaunch restores
+#   account=N from the task's own record once the harness is resolved, and
+#   refuses when a recorded account did not survive that restore, so a
+#   replacement agent can never silently fall back to the machine's default
+#   Claude account; a relaunch onto a non-claude harness leaves it behind.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -542,6 +547,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
+  [ "$ACCOUNT_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded claude account; --account cannot override it" >&2; exit 1; }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -1200,6 +1206,7 @@ FIRSTMATE_HOME=
 # validation teardown uses, so a malformed, ambiguous, or foreign record
 # refuses here exactly as it refuses there.
 RELAUNCH_PRIOR_HARNESS=
+RELAUNCH_META=
 if [ "$RELAUNCH" -eq 1 ]; then
   [ "${#POS[@]}" -eq 1 ] || {
     echo "error: --relaunch takes the task id only; its project or home comes from the task's own record" >&2
@@ -1424,6 +1431,25 @@ esac
 case "$HARNESS" in
   pi|pi-signed) LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH" ;;
 esac
+
+# A relaunch restores the recorded account the same way it restores every other
+# identity axis, but only here, once $HARNESS is resolved: account= is
+# claude-only, so a relaunch that moves the task onto another harness leaves the
+# credential behind instead of tripping the harness check below. Restoring it is
+# not cosmetic - account=N selects the config store bin/claude-account.sh
+# launches against, so dropping it silently falls the replacement agent back to
+# the machine's default Claude account, which on an org-restricted machine kills
+# every relaunched worker at launch.
+if [ "$RELAUNCH" -eq 1 ] && [ "$HARNESS" = claude ]; then
+  ACCOUNT=$(fm_meta_get "$RELAUNCH_META" account)
+  # Read the record independently of the restore above, so a future rename or
+  # typo of the meta field fails loudly right here rather than quietly
+  # relaunching claude workers onto the wrong credential.
+  if [ -z "$ACCOUNT" ] && grep -q '^account=.' "$RELAUNCH_META" 2>/dev/null; then
+    echo "error: task $ID's record carries an account= credential that did not survive the relaunch restore; refusing rather than launching claude on this machine's default account" >&2
+    exit 1
+  fi
+fi
 
 if [ -n "$ACCOUNT" ] && [ "$HARNESS" != claude ]; then
   echo "error: --account requires the claude harness (got '$HARNESS')" >&2
