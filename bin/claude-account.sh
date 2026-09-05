@@ -33,9 +33,7 @@
 # writes and corrupt .claude.json; the lock fd is closed before exec claude so
 # the agent process never inherits it.
 #
-# See docs/configuration.md "Multi-account Claude Code" and the reference
-# pattern this implements:
-# https://gist.github.com/sjarmak/61e22d3625ecaac2279e8564d1b1b68f
+# See docs/configuration.md "Multi-account Claude Code".
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
@@ -62,6 +60,15 @@ if ! curl -sf --max-time 1 "$PROXY_URL/teamclaude/status" -o /dev/null 2>/dev/nu
   exit 1
 fi
 export ANTHROPIC_BASE_URL="$PROXY_URL"
+
+# Drop any account-pinned credential inherited from the launching shell. The
+# previous auth model exported CLAUDE_CODE_OAUTH_TOKEN, so a spawn started from
+# an old switcher-era environment would otherwise carry a token that pins the
+# request to one account while the base URL says the proxy owns selection -
+# exactly the silent wrong-account failure the preflight above exists to
+# prevent, and one the preflight cannot see. The proxy is the only credential
+# path.
+unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 
 # Create the per-account config dir (not just the home) so a brand-new account -
 # one never seeded by an interactive login - has $CLAUDE_CONFIG_DIR present for

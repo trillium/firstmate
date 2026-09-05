@@ -40,7 +40,9 @@ CURLEOF
 #!/usr/bin/env bash
 printf 'CLAUDE_CONFIG_DIR=%s args=%s\n' "\$CLAUDE_CONFIG_DIR" "\$*" >> '$log'
 printf 'BASE_URL=%s\n' "\$ANTHROPIC_BASE_URL" >> '$log'
-printf 'OAUTH=%s\n' "\$CLAUDE_CODE_OAUTH_TOKEN" >> '$log'
+printf 'OAUTH=%s\n' "\${CLAUDE_CODE_OAUTH_TOKEN-}" >> '$log'
+printf 'APIKEY=%s\n' "\${ANTHROPIC_API_KEY-}" >> '$log'
+printf 'AUTHTOKEN=%s\n' "\${ANTHROPIC_AUTH_TOKEN-}" >> '$log'
 EOF
   chmod +x "$fakebin/claude"
   : > "$log"
@@ -53,10 +55,15 @@ $1
 EOF
 }
 
+# The launcher's credential contract is a negative one - it must inject no token
+# and pass none through - so the ambient shell must not be able to supply one.
+# Clearing the auth env here keeps every case hermetic in the same way the curl
+# mock does for the proxy; a case that needs an inherited token sets it itself.
 run_launcher() {
   local home=$1 fakebin=$2
   shift 2
-  HOME="$home" PATH="$fakebin:$PATH" "$LAUNCHER" "$@" 2>&1
+  env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+    -u ANTHROPIC_BASE_URL HOME="$home" PATH="$fakebin:$PATH" "$LAUNCHER" "$@" 2>&1
 }
 
 test_unreachable_proxy_fails_loudly() {
@@ -98,6 +105,30 @@ test_auth_routes_through_proxy() {
   assert_no_grep "OAUTH=sk-" "$log" \
     "the launcher must not inject a per-account token; the proxy owns credentials"
   pass "auth is routed through the teamclaude proxy with no per-account token injected"
+}
+
+test_inherited_auth_env_is_cleared() {
+  local rec home fakebin log out status
+  rec=$(make_case stale-auth-env)
+  read_case_record "$rec"
+  home=$CASE_HOME fakebin=$CASE_FAKEBIN log=$CASE_LOG
+
+  # A shell left over from the pre-proxy auth model still exports an
+  # account-pinned credential. It must not ride along to claude, or the request
+  # is pinned to one account while the base URL says the proxy owns selection.
+  out=$(CLAUDE_CODE_OAUTH_TOKEN=inherited-oauth ANTHROPIC_API_KEY=inherited-apikey \
+    ANTHROPIC_AUTH_TOKEN=inherited-authtoken \
+    HOME="$home" PATH="$fakebin:$PATH" "$LAUNCHER" 1 /status 2>&1)
+  status=$?
+  expect_code 0 "$status" "a reachable proxy should launch claude"
+  grep -Fxq 'OAUTH=' "$log" || fail "an inherited CLAUDE_CODE_OAUTH_TOKEN must not reach claude"
+  grep -Fxq 'APIKEY=' "$log" || fail "an inherited ANTHROPIC_API_KEY must not reach claude"
+  grep -Fxq 'AUTHTOKEN=' "$log" || fail "an inherited ANTHROPIC_AUTH_TOKEN must not reach claude"
+  assert_no_grep "inherited-" "$log" \
+    "no inherited credential value may appear in the launched environment"
+  assert_grep "BASE_URL=http://127.0.0.1:3456" "$log" \
+    "clearing inherited credentials must not disturb the proxy routing"
+  pass "inherited account-pinned credentials are cleared before claude is launched"
 }
 
 test_symlinks_shared_config_idempotently() {
@@ -225,6 +256,7 @@ test_settings_json_flag_set_when_real_per_account_file() {
 
 test_unreachable_proxy_fails_loudly
 test_auth_routes_through_proxy
+test_inherited_auth_env_is_cleared
 test_symlinks_shared_config_idempotently
 test_does_not_symlink_credentials_or_claude_json
 test_prewrites_onboarding_and_trust_dialog

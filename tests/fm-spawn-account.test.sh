@@ -160,6 +160,52 @@ test_explicit_account_overrides_crew_account_default() {
   pass "an explicit --account overrides the config/crew-account default"
 }
 
+test_crew_account_default_ignored_on_non_claude_harness() {
+  local rec id out status launch expected
+  id=crew-account-codex-z7
+  rec=$(make_spawn_case crew-account-codex codex "$id")
+  read_case_record "$rec"
+  printf '3\n' > "$HOME_DIR/config/crew-account"
+
+  # The default is a claude-only auth-routing convenience. A home that has the
+  # file must still be able to spawn every other harness exactly as it did
+  # before the file existed - never turned into the --account refusal.
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex)
+  status=$?
+  expect_code 0 "$status" "a codex spawn beside a config/crew-account default should succeed"
+  assert_no_grep "account=" "$HOME_DIR/state/$id.meta" \
+    "the crew-account default should not be recorded for a non-claude harness"
+
+  launch=$(cat "$LAUNCH_LOG")
+  case "$launch" in
+    *claude-account.sh*) fail "a codex launch must not go through claude-account.sh"$'\n'"actual: $launch" ;;
+  esac
+  pass "the config/crew-account default is ignored on a non-claude harness rather than refusing the spawn"
+}
+
+test_crew_account_malformed_value_is_no_default() {
+  local rec id out status launch expected
+  id=crew-account-malformed-z8
+  rec=$(make_spawn_case crew-account-malformed claude "$id")
+  read_case_record "$rec"
+  # A partially-numeric value must not be accepted on a first-character match:
+  # it would reach meta and be concatenated unquoted into the launch command.
+  printf '2junk\n' > "$HOME_DIR/config/crew-account"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude)
+  status=$?
+  expect_code 0 "$status" "a malformed config/crew-account should leave the spawn working"
+  assert_no_grep "account=" "$HOME_DIR/state/$id.meta" \
+    "a malformed config/crew-account value must not reach meta"
+
+  launch=$(cat "$LAUNCH_LOG")
+  expected="CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --model 'sonnet' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "a malformed crew-account value must leave the launch command unchanged"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  pass "a malformed config/crew-account value is treated as no default"
+}
+
 test_account_flag_requires_claude_harness() {
   local rec id out status
   id=account-wrong-harness-z3
@@ -196,6 +242,8 @@ test_account_flag_records_meta_and_uses_account_launcher
 test_account_flag_defaults_to_absent_meta_and_plain_claude
 test_crew_account_supplies_default_account
 test_explicit_account_overrides_crew_account_default
+test_crew_account_default_ignored_on_non_claude_harness
+test_crew_account_malformed_value_is_no_default
 test_account_flag_requires_claude_harness
 test_account_flag_rejects_non_positive_integer
 

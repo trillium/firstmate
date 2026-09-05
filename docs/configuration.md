@@ -396,6 +396,8 @@ Account credentials live in the proxy's own store outside this repo; nothing in 
 `config/crew-account` is a local, gitignored file holding one positive integer.
 When it is present, `fm-spawn.sh` applies that account as the default for a spawn that passes no `--account`, so a claude-harness spawn goes through `bin/claude-account.sh` with a deliberate account slot instead of silently landing on account 1.
 An explicit `--account <N>` at spawn time overrides it, and an absent or malformed file leaves the previous behavior unchanged.
+The default applies only to a claude-harness spawn: a home holding this file spawns every other harness exactly as it would without it, since account isolation has no meaning there.
+The file's contents are validated as strictly as an explicit `--account`, and anything that is not a positive integer is treated as no default rather than as a spawn-time refusal, so it never reaches the task's metadata or launch command.
 
 `fm-spawn.sh --account <N>` wires a ship or scout claude-harness spawn to a specific account: it records `account=N` in the task's `state/<id>.meta`, sets `CLAUDE_TRUST_DIR` to the task's worktree in the crewmate's launch environment so the correct directory gets pre-trusted, and launches through `bin/claude-account.sh N` instead of the plain `claude` binary.
 `--account` requires the claude harness and is strictly optional; absent (with no `config/crew-account` default) means plain `claude` with no account isolation.

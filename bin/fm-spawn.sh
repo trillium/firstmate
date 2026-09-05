@@ -532,17 +532,6 @@ if [ "$ACCOUNT_SET" -eq 1 ]; then
     0) echo "error: --account requires a positive integer" >&2; exit 1 ;;
   esac
 fi
-# Apply default account from config/crew-account when --account was not passed.
-# This ensures every claude-harness spawn goes through claude-account.sh, which
-# routes auth through the teamclaude proxy and gives the spawn the account's own
-# CLAUDE_CONFIG_DIR, avoiding silent fallback to account 1.
-if [ "$ACCOUNT_SET" -eq 0 ] && [ -f "$FM_HOME/config/crew-account" ]; then
-  _default_acct=$(tr -d '[:space:]' < "$FM_HOME/config/crew-account")
-  case "$_default_acct" in
-    [1-9]*) ACCOUNT=$_default_acct ;;
-  esac
-fi
-
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
 # so every axis this block resolves for a fresh spawn instead comes from that
 # task's own durable record below. Contradicting it on the command line is a
@@ -1438,6 +1427,24 @@ esac
 if [ -n "$ACCOUNT" ] && [ "$HARNESS" != claude ]; then
   echo "error: --account requires the claude harness (got '$HARNESS')" >&2
   exit 1
+fi
+
+# Apply the default account from config/crew-account when --account was not
+# passed. This ensures every claude-harness spawn goes through
+# claude-account.sh, which routes auth through the teamclaude proxy and gives
+# the spawn the account's own CLAUDE_CONFIG_DIR, avoiding silent fallback to
+# account 1. Resolved after the harness so a home holding this file can still
+# spawn on every other harness exactly as it did before the file existed: only
+# an explicit --account refuses a non-claude harness above. The contents are
+# validated as strictly as an explicit --account, and a malformed value is no
+# default rather than a spawn-time refusal, so operator config that has rotted
+# never blocks a spawn nor reaches meta or the launch command.
+if [ "$ACCOUNT_SET" -eq 0 ] && [ "$HARNESS" = claude ] && [ -f "$CONFIG/crew-account" ]; then
+  _default_acct=$(tr -d '[:space:]' < "$CONFIG/crew-account")
+  case "$_default_acct" in
+    ''|*[!0-9]*|0) ;;
+    *) ACCOUNT=$_default_acct ;;
+  esac
 fi
 
 # muse is verified as a CREWMATE/SCOUT adapter only. A secondmate is a firstmate
