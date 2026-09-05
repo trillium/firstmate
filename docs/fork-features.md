@@ -12,8 +12,8 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 
 **Files:**
 - `bin/fm-spawn.sh` — accepts `--account <N>` flag, records in task meta, sets `CLAUDE_TRUST_DIR` and `CLAUDE_ACCOUNT_ID`
-- `bin/claude-account.sh` — launcher that reads account setup token from macOS keychain (ccjuggler-acc<N>) and sets `CLAUDE_CONFIG_DIR` per account
-- `docs/configuration.md` — documents multi-account setup and keychain integration
+- `bin/claude-account.sh` — launcher that sets `CLAUDE_CONFIG_DIR` per account and routes auth through the local teamclaude proxy (`ANTHROPIC_BASE_URL`)
+- `docs/configuration.md` — documents multi-account setup and teamclaude proxy auth
 
 **Observable behavior:**
 - `fm-spawn.sh --account 2 <task> <project>` succeeds (flag accepted)

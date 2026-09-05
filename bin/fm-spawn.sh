@@ -533,8 +533,9 @@ if [ "$ACCOUNT_SET" -eq 1 ]; then
   esac
 fi
 # Apply default account from config/crew-account when --account was not passed.
-# This ensures every claude-harness spawn goes through claude-account.sh and gets
-# the correct setup token from the keychain, avoiding silent fallback to account 1.
+# This ensures every claude-harness spawn goes through claude-account.sh, which
+# routes auth through the teamclaude proxy and gives the spawn the account's own
+# CLAUDE_CONFIG_DIR, avoiding silent fallback to account 1.
 if [ "$ACCOUNT_SET" -eq 0 ] && [ -f "$FM_HOME/config/crew-account" ]; then
   _default_acct=$(tr -d '[:space:]' < "$FM_HOME/config/crew-account")
   case "$_default_acct" in

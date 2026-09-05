@@ -2,10 +2,11 @@
 # Behavior tests for bin/claude-account.sh: the per-account Claude Code
 # isolation launcher (docs/configuration.md "Multi-account Claude Code").
 #
-# Standalone script, so these tests mock the filesystem with a fake HOME and a
-# fake `claude` binary on PATH rather than requiring live credentials or a real
-# Claude Code install. Covers the idempotent shared-config symlink step and the
-# onboarding/trust-dialog .claude.json pre-write.
+# Standalone script, so these tests mock the filesystem with a fake HOME, a fake
+# `claude` binary, and a fake `curl` on PATH rather than requiring a real Claude
+# Code install or a live teamclaude proxy. Covers the proxy auth preflight, the
+# idempotent shared-config symlink step, and the onboarding/trust-dialog
+# .claude.json pre-write.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -26,23 +27,19 @@ make_case() {
   printf '{}\n' > "$home/.claude/settings.json"
   mkdir -p "$home/.claude-homes/account1/.claude"
   fakebin=$(fm_fakebin "$case_dir")
-  # Mock macOS `security`: return a valid setup token ONLY for account 1's
-  # keychain service (ccjuggler-acc1); "not found" (exit 44) for any other
-  # account, so unseeded-account cases exercise the refusal path hermetically
-  # without touching the real login keychain.
-  cat > "$fakebin/security" <<'SECEOF'
+  # Mock `curl`: the launcher's only use of it is the teamclaude proxy preflight,
+  # so a reachable proxy is simulated with exit 0. Cases that need an unreachable
+  # proxy overwrite this mock. Mocking it keeps every case hermetic - a real
+  # proxy running (or not) on this machine must not change the verdict.
+  cat > "$fakebin/curl" <<'CURLEOF'
 #!/usr/bin/env bash
-svc=""
-while [ $# -gt 0 ]; do
-  case "$1" in -s) svc=$2; shift 2 ;; *) shift ;; esac
-done
-[ "$svc" = "ccjuggler-acc1" ] && { printf 'sk-ant-oat01-TESTTOKEN\n'; exit 0; }
-exit 44
-SECEOF
-  chmod +x "$fakebin/security"
+exit 0
+CURLEOF
+  chmod +x "$fakebin/curl"
   cat > "$fakebin/claude" <<EOF
 #!/usr/bin/env bash
 printf 'CLAUDE_CONFIG_DIR=%s args=%s\n' "\$CLAUDE_CONFIG_DIR" "\$*" >> '$log'
+printf 'BASE_URL=%s\n' "\$ANTHROPIC_BASE_URL" >> '$log'
 printf 'OAUTH=%s\n' "\$CLAUDE_CODE_OAUTH_TOKEN" >> '$log'
 EOF
   chmod +x "$fakebin/claude"
@@ -62,59 +59,45 @@ run_launcher() {
   HOME="$home" PATH="$fakebin:$PATH" "$LAUNCHER" "$@" 2>&1
 }
 
-test_missing_setup_token_fails_loudly() {
+test_unreachable_proxy_fails_loudly() {
   local rec home fakebin log out status
-  rec=$(make_case missing-token)
+  rec=$(make_case proxy-unreachable)
   read_case_record "$rec"
   home=$CASE_HOME fakebin=$CASE_FAKEBIN log=$CASE_LOG
-
-  # Account 2 has no keychain setup token (the security mock only seeds acc1).
-  out=$(run_launcher "$home" "$fakebin" 2 /status)
-  status=$?
-  expect_code 1 "$status" "an account with no keychain setup token should refuse rather than launch claude"
-  assert_contains "$out" "no setup token in keychain service 'ccjuggler-acc2'" \
-    "refusal did not name the expected keychain service"
-  assert_contains "$out" "claude setup-token" \
-    "refusal did not show how to mint a setup token"
-  assert_contains "$out" "security add-generic-password" \
-    "refusal did not show the keychain seeding command"
-  [ ! -s "$log" ] || fail "claude should never be invoked when the setup token is missing"
-  pass "a missing keychain setup token refuses loudly with setup-token seeding, no claude invocation"
-}
-
-test_auth_exports_setup_token_from_keychain() {
-  local rec home fakebin log out status
-  rec=$(make_case token-export)
-  read_case_record "$rec"
-  home=$CASE_HOME fakebin=$CASE_FAKEBIN log=$CASE_LOG
-
-  out=$(run_launcher "$home" "$fakebin" 1 /status)
-  status=$?
-  expect_code 0 "$status" "account 1 with a valid keychain setup token should launch"
-  assert_grep "OAUTH=sk-ant-oat01-TESTTOKEN" "$log" \
-    "the account's setup token was not exported as CLAUDE_CODE_OAUTH_TOKEN for claude"
-  pass "interactive auth exports the per-account setup token from the keychain as CLAUDE_CODE_OAUTH_TOKEN"
-}
-
-test_malformed_setup_token_refused() {
-  local rec home fakebin log out status
-  rec=$(make_case malformed-token)
-  read_case_record "$rec"
-  home=$CASE_HOME fakebin=$CASE_FAKEBIN log=$CASE_LOG
-  # Override the security mock so account 1 returns a NON-oat value.
-  cat > "$fakebin/security" <<'SECEOF'
+  # Simulate an unreachable teamclaude proxy: the preflight curl fails.
+  cat > "$fakebin/curl" <<'CURLEOF'
 #!/usr/bin/env bash
-printf 'not-a-real-token\n'; exit 0
-SECEOF
-  chmod +x "$fakebin/security"
+exit 7
+CURLEOF
+  chmod +x "$fakebin/curl"
 
   out=$(run_launcher "$home" "$fakebin" 1 /status)
   status=$?
-  expect_code 1 "$status" "a non-setup-token value in the keychain must be refused, not launched"
-  assert_contains "$out" "not a setup token" \
-    "refusal did not flag the malformed keychain value"
-  [ ! -s "$log" ] || fail "claude should never be invoked with a malformed token"
-  pass "a malformed keychain value is refused with a clear message, no claude invocation"
+  expect_code 1 "$status" "an unreachable proxy should refuse rather than launch claude"
+  assert_contains "$out" "teamclaude proxy not reachable" \
+    "refusal did not name the unreachable proxy"
+  assert_contains "$out" "http://127.0.0.1:3456" \
+    "refusal did not name the proxy address"
+  assert_contains "$out" "launchctl start com.teamclaude.proxy" \
+    "refusal did not show how to start the proxy"
+  [ ! -s "$log" ] || fail "claude should never be invoked when the proxy is unreachable"
+  pass "an unreachable teamclaude proxy refuses with a start command, no claude invocation"
+}
+
+test_auth_routes_through_proxy() {
+  local rec home fakebin log out status
+  rec=$(make_case proxy-routing)
+  read_case_record "$rec"
+  home=$CASE_HOME fakebin=$CASE_FAKEBIN log=$CASE_LOG
+
+  out=$(run_launcher "$home" "$fakebin" 1 /status)
+  status=$?
+  expect_code 0 "$status" "a reachable proxy should launch claude"
+  assert_grep "BASE_URL=http://127.0.0.1:3456" "$log" \
+    "claude was not pointed at the teamclaude proxy via ANTHROPIC_BASE_URL"
+  assert_no_grep "OAUTH=sk-" "$log" \
+    "the launcher must not inject a per-account token; the proxy owns credentials"
+  pass "auth is routed through the teamclaude proxy with no per-account token injected"
 }
 
 test_symlinks_shared_config_idempotently() {
@@ -240,9 +223,8 @@ test_settings_json_flag_set_when_real_per_account_file() {
   pass "a real per-account settings.json gets skipDangerousModePermissionPrompt pre-written"
 }
 
-test_missing_setup_token_fails_loudly
-test_auth_exports_setup_token_from_keychain
-test_malformed_setup_token_refused
+test_unreachable_proxy_fails_loudly
+test_auth_routes_through_proxy
 test_symlinks_shared_config_idempotently
 test_does_not_symlink_credentials_or_claude_json
 test_prewrites_onboarding_and_trust_dialog

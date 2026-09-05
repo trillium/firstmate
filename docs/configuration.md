@@ -375,25 +375,32 @@ For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected exec
 ## Multi-account Claude Code (bin/claude-account.sh, --account)
 
 A captain with more than one paid Claude subscription can have claude-harness crewmates draw from a second account's quota instead of competing with the primary session's own account.
-[`bin/claude-account.sh <N> [args...]`](../bin/claude-account.sh) is a standalone launcher (it works with no firstmate checkout on `PATH`) that sets `CLAUDE_CONFIG_DIR` to `~/.claude-homes/account<N>/.claude`, symlinks shared config (`commands`, `hooks`, `skills`, `mcp-configs`, `settings.json`, `settings.local.json`, `rules`, `agents`) in from `~/.claude/` idempotently, authenticates the session with the account's long-lived setup token (below), and pre-accepts the onboarding, trust-dialog, and project-scoped MCP prompts so a session isn't dropped into a first-run or approval flow.
+[`bin/claude-account.sh <N> [args...]`](../bin/claude-account.sh) is a standalone launcher (it works with no firstmate checkout on `PATH`) that sets `CLAUDE_CONFIG_DIR` to `~/.claude-homes/account<N>/.claude`, symlinks shared config (`commands`, `hooks`, `skills`, `mcp-configs`, `settings.json`, `settings.local.json`, `rules`, `agents`) in from `~/.claude/` idempotently, routes the session's Anthropic API traffic through the teamclaude proxy (below), and pre-accepts the onboarding, trust-dialog, and project-scoped MCP prompts so a session isn't dropped into a first-run or approval flow.
 `.claude.json` is never symlinked - it stays a per-account real file, or project/session state leaks across accounts.
 `bin/claude-1.sh` and `bin/claude-2.sh` are one-line direct launchers (`claude-1.sh <args>` == `claude-account.sh 1 <args>`) for a human or an orchestrator to call.
 
-Two current-Claude-Code mechanics the launcher depends on:
+Two mechanics the launcher depends on:
 
 - **Onboarding pre-seed location.** When `CLAUDE_CONFIG_DIR` is set, Claude Code reads its global config JSON from `$CLAUDE_CONFIG_DIR/.claude.json` (path = `join(CLAUDE_CONFIG_DIR ?? homedir, ".claude.json")`), *not* from a `.claude.json` in the parent of that dir. The onboarding gate is the single key `hasCompletedOnboarding: true`; once set, the whole welcome/theme/login first-run flow is skipped. The launcher writes its `hasCompletedOnboarding`, per-project `hasTrustDialogAccepted`, and `enableAllProjectMcpServers: true` pre-seed into `$CLAUDE_CONFIG_DIR/.claude.json` for exactly this reason (the last auto-approves project-scoped `.mcp.json` servers, which are never inherited across account homes).
-- **Auth = per-account setup token, exported as `CLAUDE_CODE_OAUTH_TOKEN`.** The launcher resolves a long-lived `claude setup-token` (`sk-ant-oat01-…`) from the macOS keychain - service `ccjuggler-acc<N>`, account `ccjuggler`, the exact entry the `juggle`/ccjuggler switcher uses - validates the prefix, and exports it into the session env, where current Claude Code honors it for interactive sessions. Setup tokens are used on purpose over the `.credentials.json` / `claude /login` blob: they are ~1yr-lived and never silently log out mid-fleet-run (a cleared or expired `.credentials.json` does). The launcher refuses (rather than dropping into a login prompt) when the keychain token is absent or is not an `sk-ant-oat01-` value - a malformed value stored there is what once silently broke a second account.
+- **Auth = the local teamclaude proxy, selected with `ANTHROPIC_BASE_URL`.** The proxy at `http://127.0.0.1:3456` holds every account's credentials, picks the best available account per request, and rotates transparently on quota exhaustion. The launcher injects no per-account token at all: it exports `ANTHROPIC_BASE_URL` pointing at the proxy and lets the proxy own credential selection. It preflights the proxy with a one-second `curl` against `/teamclaude/status` first, and exits non-zero naming the start command rather than falling through to Anthropic directly on whatever account the ambient environment happens to carry.
 
-Seed or rotate an account's setup token once before first use: run `claude setup-token` under the target account (browser flow), then store the printed token in the keychain (or use `juggle add`):
+The proxy must be running before spawning agents:
 
 ```
-security add-generic-password -U -s "ccjuggler-acc<N>" -a "ccjuggler" -w "<sk-ant-oat01-… token>"
+launchctl start com.teamclaude.proxy
 ```
+
+`<N>` therefore selects config isolation only - the account's `CLAUDE_CONFIG_DIR`, and with it its session history, project state, and `.claude.json` - never auth routing.
+Account credentials live in the proxy's own store outside this repo; nothing in firstmate reads or holds them.
+
+`config/crew-account` is a local, gitignored file holding one positive integer.
+When it is present, `fm-spawn.sh` applies that account as the default for a spawn that passes no `--account`, so a claude-harness spawn goes through `bin/claude-account.sh` with a deliberate account slot instead of silently landing on account 1.
+An explicit `--account <N>` at spawn time overrides it, and an absent or malformed file leaves the previous behavior unchanged.
 
 `fm-spawn.sh --account <N>` wires a ship or scout claude-harness spawn to a specific account: it records `account=N` in the task's `state/<id>.meta`, sets `CLAUDE_TRUST_DIR` to the task's worktree in the crewmate's launch environment so the correct directory gets pre-trusted, and launches through `bin/claude-account.sh N` instead of the plain `claude` binary.
-`--account` requires the claude harness and is strictly optional; absent means current behavior (plain `claude`, no account isolation).
+`--account` requires the claude harness and is strictly optional; absent (with no `config/crew-account` default) means plain `claude` with no account isolation.
 
-Full pattern, rationale, verification steps, and a capacity-aware routing reference: <https://gist.github.com/sjarmak/61e22d3625ecaac2279e8564d1b1b68f>.
+Behavior is pinned by [`tests/claude-account.test.sh`](../tests/claude-account.test.sh).
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
