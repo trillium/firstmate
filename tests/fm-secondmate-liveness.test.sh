@@ -331,16 +331,21 @@ new_world() {
 # worktree; a non-git home just makes the unrelated fast-forward sweep log a
 # harmless "not a git repo" skip.
 add_sm_home() {
-  local w=$1 id=$2 window=$3 harness=${4:-claude}
+  local w=$1 id=$2 window=$3 harness=${4:-claude} model=${5-test-model}
   local home="$w/$id"
   mkdir -p "$home/bin" "$home/data" "$home/state" "$home/config" "$home/projects"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
   printf '# Firstmate\n' > "$home/AGENTS.md"
   printf 'charter\n' > "$home/data/charter.md"
+  # model= is what bin/fm-spawn.sh records on every launch, and is what a
+  # recovery relaunch resolves so it can pass an explicit --model. A secondmate
+  # that has an endpoint to recover was launched, so its meta carries one; pass
+  # "" for the fixture that models a home with no deliberate model recorded.
   {
     printf 'window=%s\n' "$window"
     printf 'kind=secondmate\n'
     printf 'harness=%s\n' "$harness"
+    [ -z "$model" ] || printf 'model=%s\n' "$model"
     printf 'home=%s\n' "$home"
   } > "$w/home/state/$id.meta"
   # The sweep relaunches through a --secondmate spawn, which refuses unless this
@@ -546,6 +551,57 @@ test_sweep_noop_with_no_secondmate_meta() {
   pass "sweep: a silent no-op with no kind=secondmate meta present (a secondmate home's own natural scoping)"
 }
 
+
+# The ordering regression. A spawn refuses without an explicit --model, so a
+# sweep that killed first and resolved second would destroy the endpoint and
+# then fail to recreate it - leaving the secondmate dead with its window gone,
+# strictly worse than never attempting recovery. The endpoint must survive.
+test_sweep_preserves_endpoint_when_no_model_resolves() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-no-model)
+  # No model= in the meta and no model token in config/secondmate-harness (the
+  # world pins a bare crew harness), so nothing deliberate can be resolved.
+  add_sm_home "$w" sm1 firstmate:fm-sm1 claude ""
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+
+  assert_not_contains "$(cat "$log")" "kill-window" \
+    "an endpoint that cannot be relaunched must never be killed"
+  assert_not_contains "$(cat "$log")" "new-window" \
+    "no relaunch should be attempted when no deliberate model resolves"
+  [ ! -s "$log" ] || fail "the preserved endpoint must be left completely untouched: $(cat "$log")"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped:" \
+    "an unrecoverable secondmate must surface an actionable diagnostic"
+  assert_contains "$out" "config/secondmate-harness" \
+    "the diagnostic must name the pin that fixes it"
+  assert_contains "$out" "$w/sm1" \
+    "the diagnostic must name the home whose pin is missing"
+  pass "sweep: an endpoint whose model cannot be resolved is preserved, not killed, with an actionable diagnostic"
+}
+
+# The same refusal must not fire when a pin exists: config/secondmate-harness
+# may legitimately carry a model token, and that is a deliberate model even
+# though the meta records none. Proves the refusal is about resolvability, not
+# about the meta field being present.
+test_sweep_recovers_from_config_model_token() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-config-model)
+  add_sm_home "$w" sm1 firstmate:fm-sm1 claude ""
+  printf '%s\n' "claude pinned-model high" > "$w/home/config/secondmate-harness"
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+
+  assert_not_contains "$out" "SECONDMATE_LIVENESS:" \
+    "a resolvable relaunch should stay non-actionable"
+  assert_contains "$(cat "$log")" "new-window" \
+    "a config-pinned model should let recovery proceed"
+  pass "sweep: a config/secondmate-harness model token is enough to recover an endpoint the meta does not pin"
+}
+
 test_tmux_agent_state_classifies
 test_tmux_agent_state_rejects_malformed_targets_before_probe
 test_herdr_agent_state_preserves_husk_classifier
@@ -561,5 +617,7 @@ test_sweep_never_acts_on_unverified_harness_dead_reading
 test_sweep_converges_no_retouch_once_alive
 test_sweep_skipped_under_detect_only
 test_sweep_noop_with_no_secondmate_meta
+test_sweep_preserves_endpoint_when_no_model_resolves
+test_sweep_recovers_from_config_model_token
 
 echo "# all fm-secondmate-liveness tests passed"

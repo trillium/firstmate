@@ -994,6 +994,9 @@ add_sm_worktree() {
   {
     printf 'window=firstmate:fm-%s\n' "$id"
     printf 'kind=secondmate\n'
+    # bin/fm-spawn.sh records model= on every launch, so a live secondmate always
+    # carries one. The bootstrap relaunch resolves it to pass an explicit --model.
+    printf 'model=test-model\n'
     printf 'home=%s/%s\n' "$w" "$id"
   } > "$w/home/state/$id.meta"
 }

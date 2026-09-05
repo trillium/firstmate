@@ -659,6 +659,43 @@ report_relaunch() {  # <id> <cause> <where>
   echo "BOOTSTRAP_INFO: secondmate $1 relaunched after $2 ($3)"
 }
 
+# Resolve the deliberate model a recovery relaunch must carry, or print nothing
+# when none can be established.
+#
+# Every spawn refuses without an explicitly chosen model (the captain directive
+# implemented in bin/fm-spawn.sh's require_explicit_model_message). A sweep that
+# killed the stale endpoint first and only then discovered it could not spawn
+# would leave the secondmate dead with its window gone - strictly worse than not
+# attempting recovery at all. So the model is resolved BEFORE anything is
+# killed, and an empty result means refuse rather than proceed.
+#
+# The secondmate's own recorded model comes first: it is what that secondmate
+# was actually last launched with, which is a truer answer for recovery than a
+# home-wide pin that may have been changed since. bin/fm-spawn.sh records it on
+# every launch. The config/secondmate-harness token is the fallback and is
+# exactly what a fresh spawn would resolve on its own.
+#
+# "default" is the sentinel bin/fm-spawn.sh writes when no deliberate model was
+# chosen (a pre-directive launch, or a --relaunch that inherited its axes). It
+# is treated as absent, so such an endpoint surfaces the missing pin instead of
+# being destroyed.
+secondmate_recovery_model() {  # <meta> -> model on stdout, empty when unresolvable
+  local meta=$1 recorded
+  recorded=$(fm_meta_get "$meta" model)
+  case "$recorded" in
+    ''|default) ;;
+    *) printf '%s\n' "$recorded"; return 0 ;;
+  esac
+  "$FM_ROOT/bin/fm-harness.sh" secondmate-model 2>/dev/null || true
+}
+
+# The one diagnostic both relaunch paths emit when no deliberate model exists.
+# It has to be actionable on its own: it names the home whose pin is missing and
+# the exact file and line shape that fixes it.
+report_unresolvable_model() {  # <id> <agent-state> <home> <where>
+  echo "SECONDMATE_LIVENESS: secondmate $1: skipped: endpoint is $2 but no deliberate model could be resolved, so it was preserved rather than killed for a relaunch that would refuse; record one by pinning config/secondmate-harness as \"<harness> <model> [<effort>]\" (home=${3:-unknown}, $4)"
+}
+
 secondmate_liveness_sweep() {
   # Idempotent secondmate liveness guarantee - SESSION START ONLY. The detailed
   # state machine and its only recovery-authorizing states are owned by
@@ -697,10 +734,11 @@ secondmate_liveness_sweep() {
 # unchanged.
 secondmate_liveness_one() {  # <meta> <id>
   local meta=$1 id=$2
-  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend
+  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend model home
   window=$(fm_meta_get "$meta" window)
   [ -n "$window" ] || return 0
   harness=$(fm_meta_get "$meta" harness)
+  home=$(fm_meta_get "$meta" home)
   remote_host=$(fm_meta_get "$meta" remote_host)
   if [ -n "$remote_host" ]; then
     remote_rc=0
@@ -755,7 +793,12 @@ secondmate_liveness_one() {  # <meta> <id>
         ;;
       dead|missing)
         cause="remote endpoint $agent_state on its configured host"
-        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
+        model=$(secondmate_recovery_model "$meta")
+        if [ -z "$model" ]; then
+          report_unresolvable_model "$id" "$agent_state" "$home" "host=$remote_host"
+          return 0
+        fi
+        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate --model "$model" 2>&1); then
           SECONDMATE_RESPAWNED_IDS="$SECONDMATE_RESPAWNED_IDS $id"
           report_relaunch "$id" "$cause" "host=$remote_host"
         else
@@ -786,13 +829,20 @@ secondmate_liveness_one() {  # <meta> <id>
       fi
       ;;
     dead|missing)
+      # Resolve the model before the kill below: killing an endpoint we then
+      # cannot recreate is worse than leaving it alone.
+      model=$(secondmate_recovery_model "$meta")
+      if [ -z "$model" ]; then
+        report_unresolvable_model "$id" "$agent_state" "$home" "backend=$backend"
+        return 0
+      fi
       if [ "$agent_state" = dead ]; then
         cause="confirmed agent absence on existing endpoint"
         fm_backend_kill "$backend" "$target" 2>/dev/null || true
       else
         cause="recorded endpoint confidently missing"
       fi
-      if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
+      if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate --model "$model" 2>&1); then
         SECONDMATE_RESPAWNED_IDS="$SECONDMATE_RESPAWNED_IDS $id"
         report_relaunch "$id" "$cause" "backend=$backend"
       else
