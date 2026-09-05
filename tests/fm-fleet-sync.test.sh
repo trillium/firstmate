@@ -781,6 +781,36 @@ test_gone_branch_with_default_checked_out_elsewhere_is_stuck_untouched() {
   pass "a squash-merged gone branch is left untouched when the default is checked out elsewhere"
 }
 
+test_gone_branch_tracking_another_remote_is_stuck_untouched() {
+  local home clone out before fork
+  home=$(new_home)
+  clone=$(build_squash_merged "$home" otherremote --no-upstream)
+  # A branch whose upstream lives on some remote other than origin cannot be
+  # judged from origin's state at all. Point the branch at a second remote whose
+  # tracking ref is absent: to any check that ignored WHICH remote the upstream
+  # names, this branch would look "gone" and (being squash-contained) would be
+  # recovered. It must be left alone instead.
+  fork="$home/remotes/otherremote-fork.git"
+  git clone --quiet --bare "$home/remotes/otherremote.git" "$fork"
+  git -C "$clone" remote add fork "file://$(cd "$fork" && pwd)"
+  git -C "$clone" config branch.feature.remote fork
+  git -C "$clone" config branch.feature.merge refs/heads/feature
+  [ "$(git -C "$clone" for-each-ref --format='%(upstream:short)' refs/heads/feature)" = "fork/feature" ] \
+    || fail "fixture is not the other-remote shape: upstream is not fork/feature"
+  git -C "$clone" rev-parse --verify --quiet refs/remotes/fork/feature >/dev/null \
+    && fail "fixture is not the other-remote shape: fork/feature already exists locally"
+  before=$(head_sha "$clone")
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "otherremote: STUCK: on branch feature" \
+    "branch tracking a non-origin remote reports STUCK"
+  assert_not_contains "$out" "recovered" "a branch tracking a non-origin remote is never recovered"
+  [ "$(git -C "$clone" symbolic-ref --short HEAD)" = "feature" ] || fail "checkout was changed"
+  [ "$(head_sha "$clone")" = "$before" ] || fail "clone was moved"
+  pass "a gone-looking branch whose upstream is on another remote is reported STUCK and left untouched"
+}
+
 test_detached_clean_ancestor_recovers
 test_squash_merged_gone_branch_recovers
 test_squash_merged_gone_branch_without_upstream_recovers
@@ -788,6 +818,7 @@ test_squash_merged_branch_still_on_origin_is_stuck_untouched
 test_gone_branch_with_unique_content_is_stuck_untouched
 test_dirty_squash_merged_gone_branch_is_stuck_untouched
 test_gone_branch_with_default_checked_out_elsewhere_is_stuck_untouched
+test_gone_branch_tracking_another_remote_is_stuck_untouched
 test_detached_unique_commit_is_stuck_untouched
 test_detached_clean_ancestor_with_diverged_local_default_is_stuck_untouched
 test_dirty_is_stuck_untouched
