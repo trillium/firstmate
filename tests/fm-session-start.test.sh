@@ -615,7 +615,9 @@ EOF
   printf '%s\n' "$id" > "$mate/.fm-secondmate-home"
   printf '# Firstmate\n' > "$mate/AGENTS.md"
   printf 'Second mate charter.\n' > "$mate/data/charter.md"
-  printf '%s\n' pi > "$home/config/secondmate-harness"
+  # The model token is required: a bare harness pin makes the recovery respawn
+  # refuse, because every secondmate spawn must carry a deliberate model.
+  printf '%s\n' 'pi openai-codex/gpt-5.6-sol' > "$home/config/secondmate-harness"
   printf '%s\n' manual > "$home/config/backlog-backend"
   touch "$home/state/.last-watcher-beat"
   {
@@ -660,7 +662,9 @@ EOF
   printf '# Firstmate\n' > "$mate/AGENTS.md"
   printf 'Second mate charter.\n' > "$mate/data/charter.md"
   printf '%s\n' herdr > "$home/config/backend"
-  printf '%s\n' pi > "$home/config/secondmate-harness"
+  # The model token is required: a bare harness pin makes the recovery respawn
+  # refuse, because every secondmate spawn must carry a deliberate model.
+  printf '%s\n' 'pi openai-codex/gpt-5.6-sol' > "$home/config/secondmate-harness"
   printf '%s\n' manual > "$home/config/backlog-backend"
   touch "$home/state/.last-watcher-beat"
   {
