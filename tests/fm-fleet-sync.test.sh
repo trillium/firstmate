@@ -126,7 +126,7 @@ build_packed_prunable() {
   printf '%s\n' "$clone"
 }
 
-# build_squash_merged <home> <name> [--keep-remote-branch] [--extra-unmerged]:
+# build_squash_merged <home> <name> [--keep-remote-branch] [--extra-unmerged] [--no-upstream]:
 # a clone parked on `feature`, in the exact shape a squash-merged PR leaves behind.
 # The branch's two commits are collapsed into ONE differently-SHA'd commit on
 # origin/main (a real squash: same resulting content, new commit), origin/main is
@@ -134,6 +134,8 @@ build_packed_prunable() {
 # origin and is NOT an ancestor of origin/main, yet strands nothing.
 #   --keep-remote-branch  leaves origin/feature in place (branch still live: refuse)
 #   --extra-unmerged      adds a branch commit that never landed (unique content: refuse)
+#   --no-upstream         leaves the branch with no configured upstream, as a plain
+#                         `git push origin feature` without -u does, so it never shows [gone]
 # Echoes the clone path.
 build_squash_merged() {
   local home=$1 name=$2 work remote clone remote_abs keep=no extra=no noup=no squashed
