@@ -27,3 +27,4 @@ CHANGELOG.md
 /.opencode/plugins/fm-turn-end.js
 /.fm-grok-turnend
 /.fm-kimi-turnend
+.vercel
