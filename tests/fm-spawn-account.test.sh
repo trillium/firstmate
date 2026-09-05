@@ -122,6 +122,44 @@ test_account_flag_defaults_to_absent_meta_and_plain_claude() {
   pass "absent --account leaves meta and the launch command unchanged"
 }
 
+test_crew_account_supplies_default_account() {
+  local rec id out status launch expected
+  id=crew-account-default-z5
+  rec=$(make_spawn_case crew-account-default claude "$id")
+  read_case_record "$rec"
+  printf '3\n' > "$HOME_DIR/config/crew-account"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude)
+  status=$?
+  expect_code 0 "$status" "a claude spawn with a config/crew-account default should succeed"
+  assert_grep "account=3" "$HOME_DIR/state/$id.meta" \
+    "config/crew-account default was not recorded as account=3 in meta"
+
+  launch=$(cat "$LAUNCH_LOG")
+  expected="CLAUDE_TRUST_DIR='$WT_DIR' CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '${ROOT}/bin/claude-account.sh' 3 --dangerously-skip-permissions --model 'sonnet' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "the crew-account default did not launch through claude-account.sh on account 3"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  pass "config/crew-account supplies the default account when --account is absent"
+}
+
+test_explicit_account_overrides_crew_account_default() {
+  local rec id out status
+  id=crew-account-override-z6
+  rec=$(make_spawn_case crew-account-override claude "$id")
+  read_case_record "$rec"
+  printf '3\n' > "$HOME_DIR/config/crew-account"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude --account 1)
+  status=$?
+  expect_code 0 "$status" "an explicit --account beside a crew-account default should succeed"
+  assert_grep "account=1" "$HOME_DIR/state/$id.meta" \
+    "explicit --account 1 should win over the config/crew-account default"
+  assert_no_grep "account=3" "$HOME_DIR/state/$id.meta" \
+    "the crew-account default should not survive an explicit --account"
+  pass "an explicit --account overrides the config/crew-account default"
+}
+
 test_account_flag_requires_claude_harness() {
   local rec id out status
   id=account-wrong-harness-z3
@@ -156,6 +194,8 @@ test_account_flag_rejects_non_positive_integer() {
 
 test_account_flag_records_meta_and_uses_account_launcher
 test_account_flag_defaults_to_absent_meta_and_plain_claude
+test_crew_account_supplies_default_account
+test_explicit_account_overrides_crew_account_default
 test_account_flag_requires_claude_harness
 test_account_flag_rejects_non_positive_integer
 
