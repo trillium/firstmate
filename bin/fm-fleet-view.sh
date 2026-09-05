@@ -91,6 +91,15 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
     (.backlog.records[] | select(.state == "done") | backlog_row(.))
    end),
   "",
-  "## Secondmates",
-  .secondmate_guidance.note
+"## Secondmates",
+   .secondmate_guidance.note,
+   "",
+   "## Parlay-Recorded Agents",
+   (if (.parlay_records | length) == 0 then
+    "No parlay-recorded agents found (firstmate has no state/*.meta entry for any of these)."
+   else
+    "| ID | State | Age (s) | Workdir | Endpoint |",
+    "| --- | --- | --- | --- | --- |",
+    (.parlay_records[] | "| \(.id) | \(.state) | \(dash((.age_seconds // "-"))) | \(dash(.workdir)) | \(.endpoint) |")
+   end)
 '
