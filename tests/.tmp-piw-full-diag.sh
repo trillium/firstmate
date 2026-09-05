@@ -12,17 +12,6 @@ EXT="$ROOT/.pi/extensions/fm-primary-pi-watch.ts"
 # unrelated to plugin output, which the assertions intentionally require empty.
 export NODE_NO_WARNINGS=1
 
-# Every fixture that needs the extension to give up on a successor arm sets its
-# own readiness budget. That budget has to outlast the arm process actually
-# starting: the extension SIGTERMs the arm the moment the budget expires, and a
-# `bash -lc` spawn alone measures 27-355ms on a developer laptop and stretches
-# further on a loaded CI runner. A budget in that range races process startup,
-# and when startup loses, the signal lands before the arm script runs its first
-# statement. The arm dies instead of refusing retirement, so the premise these
-# tests assert on never exists and they fail with whatever the driver was
-# waiting for. 1200ms is the value the hung-successor fixtures have always used;
-# the rest match it so no fixture depends on winning that race.
-
 install_pi_watch_extension_fixture() {
   local repo=$1
   mkdir -p \
@@ -498,7 +487,7 @@ fi
 while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.1; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_PI_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_PI_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -581,7 +570,7 @@ trap 'exit 0' TERM INT
 while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
 SH
     chmod +x "$repo/bin/fm-watch-arm.sh"
-    out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_PI_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
+    out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_PI_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -638,7 +627,7 @@ await new Promise((resolve) => setTimeout(resolve, 80));
 EOF
 )
     status=$?
-    expect_code 0 "$status" "Pi late $kind close must remain supervised after fallback" "$out"
+    expect_code 0 "$status" "Pi late $kind close must remain supervised after fallback" "$out ARMLOG=[$(cat "$log" 2>&1 | tr "\n" ";")] READY=$([ -e "$ready" ] && echo y || echo n) RETIRED=$([ -e "$retired" ] && echo y || echo n)"
     [ -z "$out" ] || fail "Pi late-$kind test printed output: $out"
   done
   pass "Pi late unretired closes resume classified supervision"
@@ -1685,7 +1674,7 @@ fi
 while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.1; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_OPENCODE_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
+  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_OPENCODE_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -1770,7 +1759,7 @@ trap 'exit 0' TERM INT
 while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
 SH
     chmod +x "$repo/bin/fm-watch-arm.sh"
-    out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_OPENCODE_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
+    out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_OPENCODE_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -1827,7 +1816,7 @@ await new Promise((resolve) => setTimeout(resolve, 80));
 EOF
 )
     status=$?
-    expect_code 0 "$status" "OpenCode late $kind close must remain supervised after fallback" "$out"
+    expect_code 0 "$status" "OpenCode late $kind close must remain supervised after fallback" "$out ARMLOG=[$(cat "$log" 2>&1 | tr "\n" ";")] READY=$([ -e "$ready" ] && echo y || echo n) RETIRED=$([ -e "$retired" ] && echo y || echo n)"
     [ -z "$out" ] || fail "OpenCode late-$kind test printed output: $out"
   done
   pass "OpenCode late unretired closes resume classified supervision"

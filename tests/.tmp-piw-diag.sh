@@ -12,17 +12,6 @@ EXT="$ROOT/.pi/extensions/fm-primary-pi-watch.ts"
 # unrelated to plugin output, which the assertions intentionally require empty.
 export NODE_NO_WARNINGS=1
 
-# Every fixture that needs the extension to give up on a successor arm sets its
-# own readiness budget. That budget has to outlast the arm process actually
-# starting: the extension SIGTERMs the arm the moment the budget expires, and a
-# `bash -lc` spawn alone measures 27-355ms on a developer laptop and stretches
-# further on a loaded CI runner. A budget in that range races process startup,
-# and when startup loses, the signal lands before the arm script runs its first
-# statement. The arm dies instead of refusing retirement, so the premise these
-# tests assert on never exists and they fail with whatever the driver was
-# waiting for. 1200ms is the value the hung-successor fixtures have always used;
-# the rest match it so no fixture depends on winning that race.
-
 install_pi_watch_extension_fixture() {
   local repo=$1
   mkdir -p \
@@ -498,7 +487,7 @@ fi
 while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.1; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_PI_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_PI_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -581,7 +570,7 @@ trap 'exit 0' TERM INT
 while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
 SH
     chmod +x "$repo/bin/fm-watch-arm.sh"
-    out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_PI_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
+    out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_PI_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node --input-type=module 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -1685,7 +1674,7 @@ fi
 while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.1; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_OPENCODE_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
+  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_RELEASE_FILE="$release" FM_OPENCODE_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -1770,7 +1759,7 @@ trap 'exit 0' TERM INT
 while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
 SH
     chmod +x "$repo/bin/fm-watch-arm.sh"
-    out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_OPENCODE_ARM_READY_TIMEOUT_MS=1200 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
+    out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_UNRETIRED_READY_FILE="$ready" FM_UNRETIRED_RETIRE_FILE="$retired" FM_RELEASE_FILE="$release" FM_STOP_FILE="$stop" FM_LATE_KIND="$kind" FM_OPENCODE_ARM_READY_TIMEOUT_MS=250 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=20 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 FM_WATCH_REARM_RETRY_LIMIT=2 node 2>&1 <<'EOF'
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -1827,7 +1816,7 @@ await new Promise((resolve) => setTimeout(resolve, 80));
 EOF
 )
     status=$?
-    expect_code 0 "$status" "OpenCode late $kind close must remain supervised after fallback" "$out"
+    expect_code 0 "$status" "OpenCode late $kind close must remain supervised after fallback" "$out ARMLOG=[$(cat "$log" 2>&1 | tr "\n" ";")] READY=$([ -e "$ready" ] && echo y || echo n) RETIRED=$([ -e "$retired" ] && echo y || echo n)"
     [ -z "$out" ] || fail "OpenCode late-$kind test printed output: $out"
   done
   pass "OpenCode late unretired closes resume classified supervision"
@@ -2161,33 +2150,4 @@ EOF
   pass "OpenCode healthy arm output does not suppress the turn-end guard"
 }
 
-test_pi_extension_reports_external_healthy_watcher
-test_pi_tool_returns_agent_tool_result
-test_pi_redundant_tool_call_is_owned_noop
-test_pi_scheduled_retry_call_is_owned_noop
-test_pi_actionable_close_starts_single_successor_before_delivery
-test_pi_hung_successor_falls_back_to_typed_wake
-test_pi_unretired_successor_falls_back_without_retry
-test_pi_late_unretired_close_resumes_supervision
-test_pi_empty_close_retries_instead_of_disappearing
-test_pi_established_empty_close_honors_retry_limit
-test_pi_actionable_close_rechecks_session_lock
-test_pi_arm_distinguishes_session_lock_ownership
-test_pi_session_transition_generation_owner
-test_pi_process_exit_cleanup_listener_lifecycle
-test_pi_process_exit_cleanup_stops_arm_child
-test_opencode_plugin_package_boundary_is_explicit_esm
-test_opencode_primary_watch_plugin_uses_effective_state_home
-test_opencode_primary_watch_plugin_sources_effective_config
-test_opencode_primary_watch_plugin_requires_session_lock
-test_opencode_watch_arm_coordinator_respects_primary_scope
-test_opencode_primary_watch_plugin_rearms_after_wake
-test_opencode_pre_ready_actionable_close_preserves_its_successor
-test_opencode_hung_successor_falls_back_to_typed_wake
-test_opencode_unretired_successor_falls_back_without_retry
 test_opencode_late_unretired_close_resumes_supervision
-test_opencode_empty_close_retries_instead_of_disappearing
-test_opencode_established_empty_close_honors_retry_limit
-test_opencode_actionable_close_rechecks_session_lock
-test_opencode_watch_arm_coordinates_with_turnend_guard
-test_opencode_healthy_arm_output_does_not_suppress_guard
