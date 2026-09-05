@@ -233,6 +233,11 @@ For an ordinary direct report whose endpoint is dead or metadata has no window, 
 For a dead secondmate direct report, load `secondmate-provisioning` and reconcile only that secondmate, never its whole child tree from the main home.
 Each secondmate reconciles work already in its own home and then idles; recovery never authorizes it to invent work.
 
+A repeat wedge escalation that demands deep inspection is a decision you own, not a question for the captain.
+Once the inspection confirms the worker is not advancing, run the non-destructive recovery immediately, interrupting, stopping, or relaunching a hung validation, build, or poll in place, because those actions preserve the endpoint, the local copy, and every uncommitted change.
+`stuck-crewmate-recovery` owns that procedure and the record an autonomous recovery must leave behind.
+Consult the captain only when the recovery action itself would be destructive, irreversible, or security-sensitive.
+
 If away mode is present, load `/afk` and let its daemon own supervision rather than arming another cycle.
 Surface only captain-relevant decisions, review-ready PRs, failures, and credential needs; otherwise resume the emitted supervision protocol silently.
 A restart must be a non-event because durable state and live backend inventory, not conversation memory, are authoritative.
