@@ -546,6 +546,12 @@ test_pi_late_unretired_close_resumes_supervision() {
     plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
     cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
+# Record the retirement refusal before any other work. The successor arm is only
+# unretirable once this trap exists, so any fork or file test ahead of it is a
+# window where a slow runner can let the extension's SIGTERM kill it outright,
+# collapsing this test's premise before the arm ever reaches its wait. Arms that
+# want different TERM handling replace it below.
+trap 'printf "retired\\n" > "${FM_UNRETIRED_RETIRE_FILE:?}"' TERM INT
 printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
 count=$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')
 if [ "$count" -eq 1 ]; then
@@ -554,7 +560,6 @@ if [ "$count" -eq 1 ]; then
   exit 0
 fi
 if [ "$count" -eq 2 ]; then
-  trap 'printf "retired\\n" > "${FM_UNRETIRED_RETIRE_FILE:?}"' TERM INT
   printf 'ready\n' > "${FM_UNRETIRED_READY_FILE:?}"
   while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.02; done
   [ "$FM_LATE_KIND" = actionable ] && printf 'signal: late wake\n'
@@ -622,7 +627,7 @@ await new Promise((resolve) => setTimeout(resolve, 80));
 EOF
 )
     status=$?
-    expect_code 0 "$status" "Pi late $kind close must remain supervised after fallback"
+    expect_code 0 "$status" "Pi late $kind close must remain supervised after fallback" "$out"
     [ -z "$out" ] || fail "Pi late-$kind test printed output: $out"
   done
   pass "Pi late unretired closes resume classified supervision"
@@ -1730,6 +1735,12 @@ test_opencode_late_unretired_close_resumes_supervision() {
     : > "$home/state/task.meta"
     cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
+# Record the retirement refusal before any other work. The successor arm is only
+# unretirable once this trap exists, so any fork or file test ahead of it is a
+# window where a slow runner can let the extension's SIGTERM kill it outright,
+# collapsing this test's premise before the arm ever reaches its wait. Arms that
+# want different TERM handling replace it below.
+trap 'printf "retired\\n" > "${FM_UNRETIRED_RETIRE_FILE:?}"' TERM INT
 printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
 count=$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')
 if [ "$count" -eq 1 ]; then
@@ -1738,7 +1749,6 @@ if [ "$count" -eq 1 ]; then
   exit 0
 fi
 if [ "$count" -eq 2 ]; then
-  trap 'printf "retired\\n" > "${FM_UNRETIRED_RETIRE_FILE:?}"' TERM INT
   printf 'ready\n' > "${FM_UNRETIRED_READY_FILE:?}"
   while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.02; done
   [ "$FM_LATE_KIND" = actionable ] && printf 'signal: late wake\n'
@@ -1806,7 +1816,7 @@ await new Promise((resolve) => setTimeout(resolve, 80));
 EOF
 )
     status=$?
-    expect_code 0 "$status" "OpenCode late $kind close must remain supervised after fallback"
+    expect_code 0 "$status" "OpenCode late $kind close must remain supervised after fallback" "$out"
     [ -z "$out" ] || fail "OpenCode late-$kind test printed output: $out"
   done
   pass "OpenCode late unretired closes resume classified supervision"
