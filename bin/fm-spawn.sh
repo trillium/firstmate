@@ -54,8 +54,12 @@
 #   docs/configuration.md "Multi-account Claude Code"). It requires the claude
 #   harness, records account=N in the task's meta, sets CLAUDE_TRUST_DIR to the
 #   task's worktree in the crewmate's launch environment, and launches through
-#   bin/claude-account.sh N instead of the plain claude binary. Absent means
-#   current behavior: plain claude, no account isolation.
+#   bin/claude-account.sh N instead of the plain claude binary. When --account is
+#   absent and config/crew-account holds a positive integer, a claude-harness
+#   spawn takes that value as its default account and launches through
+#   bin/claude-account.sh the same way, recording account= in meta. Plain claude
+#   with no account isolation is the behavior only when neither --account nor
+#   config/crew-account supplies a value.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -2974,8 +2978,9 @@ fi
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
-  # account= is written only when --account was passed, matching the backend=
-  # convention below: absent means no per-account Claude Code isolation.
+  # account= is written when --account was passed or config/crew-account supplied
+  # the default, matching the backend= convention below: absent means no
+  # per-account Claude Code isolation.
   [ -z "$ACCOUNT" ] || echo "account=$ACCOUNT"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   [ -z "$LABEL_ARG" ] || echo "label=$LABEL_ARG"

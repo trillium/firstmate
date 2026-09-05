@@ -11,14 +11,14 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 **Capability:** Launch isolated Claude Code instances with per-account credential isolation using `--account N`.
 
 **Files:**
-- `bin/fm-spawn.sh` — accepts `--account <N>` flag, records in task meta, sets `CLAUDE_TRUST_DIR` and `CLAUDE_ACCOUNT_ID`
+- `bin/fm-spawn.sh` — accepts `--account <N>` flag, records in task meta, sets `CLAUDE_TRUST_DIR`
 - `bin/claude-account.sh` — launcher that sets `CLAUDE_CONFIG_DIR` per account and routes auth through the local teamclaude proxy (`ANTHROPIC_BASE_URL`)
 - `docs/configuration.md` — documents multi-account setup and teamclaude proxy auth
 
 **Observable behavior:**
 - `fm-spawn.sh --account 2 <task> <project>` succeeds (flag accepted)
 - Task meta contains `account=2` line
-- Crewmate environment exports `CLAUDE_ACCOUNT_ID=2` and `CLAUDE_TRUST_DIR=<worktree>`
+- Crewmate environment exports `CLAUDE_TRUST_DIR=<worktree>`
 - Claude Code reads account-isolated config from `~/.claude-homes/account2/.claude/`
 
 **References:**
