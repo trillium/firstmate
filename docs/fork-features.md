@@ -8,7 +8,7 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 
 ## Multi-account Claude Code
 
-**Capability:** Launch isolated Claude Code instances with per-account credential isolation using `--account N`.
+**Capability:** Launch isolated Claude Code instances with per-account config isolation using `--account N`, with auth routed through the local teamclaude proxy.
 
 **Files:**
 - `bin/fm-spawn.sh` — accepts `--account <N>` flag, records in task meta, sets `CLAUDE_TRUST_DIR`

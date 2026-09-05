@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# claude-account.sh: launch claude with per-account credential isolation.
+# claude-account.sh: launch claude with per-account config isolation.
+# Auth is not per-account here - it is delegated to the teamclaude proxy (below).
 # Usage: claude-account.sh <N> [args...]
 #
 # Standalone - works with no firstmate checkout on $PATH. Each account gets its
