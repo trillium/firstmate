@@ -622,6 +622,7 @@ EOF
     printf 'window=firstmate:fm-%s\n' "$id"
     printf 'kind=secondmate\n'
     printf 'harness=pi\n'
+    printf 'model=pi-model\n'
     printf 'home=%s\n' "$mate"
   } > "$home/state/$id.meta"
   # Recovery relaunches through a --secondmate spawn, which refuses unless this
@@ -667,6 +668,7 @@ EOF
     printf 'window=default:p-old\n'
     printf 'kind=secondmate\n'
     printf 'harness=pi\n'
+    printf 'model=pi-model\n'
     printf 'home=%s\n' "$mate"
     printf 'backend=herdr\n'
     printf 'herdr_session=default\n'
