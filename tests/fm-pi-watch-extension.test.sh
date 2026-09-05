@@ -473,19 +473,17 @@ test_pi_unretired_successor_falls_back_without_retry() {
   plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
-if [ -f "$FM_ARM_LOG" ]; then
-  count=$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')
-else
-  count=0
-fi
-if [ "$count" -eq 0 ]; then
-  printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+# Refuse TERM and register this arm before any other work. The successor arm
+# only stays unretirable once its trap is installed, so any fork or file test
+# ahead of the trap is a window where a slow runner can let the extension's
+# SIGTERM kill it, collapsing this test's premise into an ordinary retry.
+trap '' TERM INT
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+if [ "$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')" -eq 1 ]; then
   printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
   printf 'signal: synthetic wake\n'
   exit 0
 fi
-trap '' TERM INT
-printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
 while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.1; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
@@ -528,7 +526,7 @@ await new Promise((resolve) => setTimeout(resolve, 80));
 EOF
 )
   status=$?
-  expect_code 0 "$status" "Pi must fall back without overlapping an unretired successor"
+  expect_code 0 "$status" "Pi must fall back without overlapping an unretired successor" "$out"
   [ -z "$out" ] || fail "Pi unretired-successor test printed output: $out"
   pass "Pi unretired successor falls back without an overlapping retry"
 }
@@ -1657,19 +1655,17 @@ test_opencode_unretired_successor_falls_back_without_retry() {
   : > "$home/state/task.meta"
   cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
-if [ -f "$FM_ARM_LOG" ]; then
-  count=$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')
-else
-  count=0
-fi
-if [ "$count" -eq 0 ]; then
-  printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+# Refuse TERM and register this arm before any other work. The successor arm
+# only stays unretirable once its trap is installed, so any fork or file test
+# ahead of the trap is a window where a slow runner can let the extension's
+# SIGTERM kill it, collapsing this test's premise into an ordinary retry.
+trap '' TERM INT
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+if [ "$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')" -eq 1 ]; then
   printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
   printf 'signal: synthetic wake\n'
   exit 0
 fi
-trap '' TERM INT
-printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
 while [ ! -e "$FM_RELEASE_FILE" ]; do sleep 0.1; done
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
@@ -1712,7 +1708,7 @@ await new Promise((resolve) => setTimeout(resolve, 80));
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode must fall back without overlapping an unretired successor"
+  expect_code 0 "$status" "OpenCode must fall back without overlapping an unretired successor" "$out"
   [ -z "$out" ] || fail "OpenCode unretired-successor test printed output: $out"
   pass "OpenCode unretired successor falls back without an overlapping retry"
 }
