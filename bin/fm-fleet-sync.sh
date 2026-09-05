@@ -3,14 +3,20 @@
 # origin/<default> when safe, and prune local branches whose upstream tracking
 # branch is gone (the remote branch was deleted, i.e. its PR merged) and that no
 # worktree still needs.
-# Self-heals the one unambiguously safe drift: a clean, detached HEAD that holds
-# no unique commits (it is an ancestor of origin/<default>) and whose <default>
-# branch is free to check out is re-attached and then fast-forwarded ("recovered:").
-# Every other off-default state - a non-default named branch, a detached HEAD with
-# unique commits, a dirty tree, or a diverged default - may hold real work, so it
-# is left untouched and reported as a quantified, loud "STUCK: ... N commits behind
-# ... - needs attention" warning rather than a quiet drift. Nothing is ever forced,
-# stashed, or discarded.
+# Self-heals the two unambiguously safe off-default drifts, each of which also
+# requires a clean tree and a <default> branch free to check out here, and each of
+# which is then fast-forwarded ("recovered:"):
+#   - a detached HEAD holding no unique commits (it is an ancestor of
+#     origin/<default>), which is re-attached to <default>; and
+#   - a named branch that is gone from origin and whose entire contribution is
+#     already contained in origin/<default> - including when it was SQUASH-merged
+#     there - which is left for <default>. The stale branch is never deleted.
+# Neither strands anything. Every other off-default state - a branch still live on
+# origin or still holding content of its own, a detached HEAD with unique commits,
+# a dirty tree, or a diverged default - may hold real work, so it is left untouched
+# and reported as a quantified, loud "STUCK: ... N commits behind ... - needs
+# attention" warning rather than a quiet drift. Nothing is ever forced, stashed,
+# or discarded.
 # Still skips (benignly) local-only/no-origin projects, missing remotes/branches,
 # and fetch failures.
 # Pruning never deletes the checked-out branch or a branch that still has a
@@ -223,8 +229,8 @@ prune_gone_branches() {
 }
 
 # True when some worktree of $PROJ has $DEFAULT checked out (so we cannot attach
-# to it here). The current worktree is detached when this is consulted, so any
-# match is necessarily another worktree.
+# to it here). The current worktree is off $DEFAULT whenever this is consulted -
+# detached, or on some other branch - so any match is necessarily another worktree.
 default_checked_out_elsewhere() {
   git -C "$PROJ" worktree list --porcelain 2>/dev/null \
     | sed -n 's#^branch refs/heads/##p' \
@@ -234,6 +240,46 @@ default_checked_out_elsewhere() {
 local_default_safe_for_recovery() {
   ! git -C "$PROJ" rev-parse --verify --quiet "$DEFAULT^{commit}" >/dev/null \
     || git -C "$PROJ" merge-base --is-ancestor "$DEFAULT" "$BASE" 2>/dev/null
+}
+
+# True when local branch $1 has no counterpart on origin. Its configured upstream
+# is the counterpart when it has one; a branch pushed without -u never gets an
+# upstream (and so never shows "[gone]"), so origin/<branch> stands in. Only ever
+# consulted after the fetch --prune above, which is what makes an absent
+# remote-tracking ref current evidence rather than a stale local view. A branch
+# tracking some remote other than origin cannot be judged from origin's state at
+# all, so it is reported not-gone and left alone.
+branch_gone_from_origin() {
+  local up
+  up=$(git -C "$PROJ" for-each-ref --format='%(upstream:short)' "refs/heads/$1" 2>/dev/null) || return 1
+  [ -n "$up" ] || up="origin/$1"
+  case "$up" in origin/*) ;; *) return 1 ;; esac
+  ! git -C "$PROJ" rev-parse --verify --quiet "refs/remotes/$up^{commit}" >/dev/null
+}
+
+# True when everything branch $1 adds on top of its merge base with $BASE is
+# already contained in $BASE, INCLUDING when it got there as a squash merge.
+# Plain `git cherry "$BASE" "$1"` is not enough: it compares patch-ids commit by
+# commit, so N commits squashed into one upstream commit match nothing and every
+# commit reports "+". Collapsing the branch's whole contribution into a single
+# synthetic commit against the merge base and testing THAT is git's own
+# squash-detection idiom - a leading "-" means an equivalent change is already
+# upstream. The synthetic commit is unreferenced and is collected by the clone's
+# next gc; nothing on the branch or in $BASE is touched.
+# A branch that adds no tree difference at all from the merge base is degenerate:
+# the synthetic commit would carry an empty diff, which cherry cannot meaningfully
+# classify, and such a branch is indistinguishable from one freshly cut and about
+# to be worked in. Refuse rather than guess.
+branch_squash_contained_in_base() {
+  local mb tree mbtree synthetic
+  mb=$(git -C "$PROJ" merge-base "$BASE" "$1" 2>/dev/null) || return 1
+  tree=$(git -C "$PROJ" rev-parse "$1^{tree}" 2>/dev/null) || return 1
+  mbtree=$(git -C "$PROJ" rev-parse "$mb^{tree}" 2>/dev/null) || return 1
+  [ "$tree" != "$mbtree" ] || return 1
+  synthetic=$(GIT_AUTHOR_NAME=fleet-sync GIT_AUTHOR_EMAIL=fleet-sync@invalid \
+    GIT_COMMITTER_NAME=fleet-sync GIT_COMMITTER_EMAIL=fleet-sync@invalid \
+    git -C "$PROJ" commit-tree "$tree" -p "$mb" -m _ 2>/dev/null) || return 1
+  git -C "$PROJ" cherry "$BASE" "$synthetic" 2>/dev/null | grep -q '^-'
 }
 
 # Human-readable name for the unsafe state the clone is in, used in the STUCK
@@ -315,30 +361,48 @@ sync_project() {
   dirty=no
   [ -z "$(git -C "$PROJ" status --porcelain 2>/dev/null | head -1)" ] || dirty=yes
   recovered=no
+  recovered_desc=
 
   if [ "$cur" != "$DEFAULT" ]; then
-    # Off the default branch. Auto-recover only the one unambiguously safe drift:
-    # a clean, detached HEAD that holds no unique commits (it is an ancestor of
-    # origin/<default>) and whose <default> branch is free to check out here.
-    # Re-attaching to an already-published commit strands nothing, and the
-    # fast-forward path below then catches the clone up. Anything else - a
-    # non-default named branch, a detached HEAD with unique commits, a dirty tree,
-    # or <default> already checked out elsewhere - may hold real work, so it is
-    # reported loudly and left untouched.
-    if [ -z "$cur" ] && [ "$dirty" = no ] \
-        && git -C "$PROJ" merge-base --is-ancestor HEAD "$BASE" 2>/dev/null \
-        && ! default_checked_out_elsewhere \
+    # Off the default branch. Auto-recover only a state that provably strands
+    # nothing; everything else may hold real work and is reported loudly and left
+    # untouched. Two states qualify, and both additionally require a clean tree
+    # and a <default> that is free to check out here:
+    #
+    #   1. A detached HEAD holding no unique commits (it is an ancestor of
+    #      origin/<default>). Re-attaching to an already-published commit strands
+    #      nothing.
+    #   2. A named branch that is gone from origin AND whose whole contribution is
+    #      already contained in origin/<default>. This is the shape a clone is left
+    #      in when its PR was squash-merged and the remote branch deleted: the
+    #      squash rewrites the branch's commits into one new commit with a
+    #      different SHA, so case 1's ancestry test is false by construction even
+    #      though every line of the work is on <default>. Such a clone can never
+    #      self-heal and falls further behind on every sync, which is exactly the
+    #      drift this recovery exists to clear. Only the checkout moves - the stale
+    #      branch is left in place, since deleting it is a separate, riskier call.
+    #
+    # In both cases the fast-forward path below then catches the clone up.
+    if [ "$dirty" = no ] && ! default_checked_out_elsewhere \
         && local_default_safe_for_recovery; then
-      if ! git -C "$PROJ" checkout --quiet "$DEFAULT" 2>/dev/null; then
-        report_stuck "$(stuck_state)"
-        return 0
+      if [ -z "$cur" ] \
+          && git -C "$PROJ" merge-base --is-ancestor HEAD "$BASE" 2>/dev/null; then
+        recovered_desc="re-attached $DEFAULT"
+      elif [ -n "$cur" ] && branch_gone_from_origin "$cur" \
+          && branch_squash_contained_in_base "$cur"; then
+        recovered_desc="left merged branch $cur for $DEFAULT"
       fi
-      recovered=yes
-      cur=$DEFAULT
-    else
+    fi
+    if [ -z "$recovered_desc" ]; then
       report_stuck "$(stuck_state)"
       return 0
     fi
+    if ! git -C "$PROJ" checkout --quiet "$DEFAULT" 2>/dev/null; then
+      report_stuck "$(stuck_state)"
+      return 0
+    fi
+    recovered=yes
+    cur=$DEFAULT
   elif [ "$dirty" = yes ]; then
     # On the default branch but with uncommitted changes we must not disturb.
     report_stuck "$(stuck_state)"
@@ -360,7 +424,7 @@ sync_project() {
   }
   if [ "$local_rev" = "$remote_rev" ]; then
     if [ "$recovered" = yes ]; then
-      echo "$label: recovered: re-attached $DEFAULT (already current)"
+      echo "$label: recovered: $recovered_desc (already current)"
     else
       echo "$label: already current"
     fi
@@ -388,7 +452,7 @@ sync_project() {
     return 0
   }
   if [ "$recovered" = yes ]; then
-    echo "$label: recovered: re-attached $DEFAULT, synced $before..$after"
+    echo "$label: recovered: $recovered_desc, synced $before..$after"
   else
     echo "$label: synced $before..$after"
   fi

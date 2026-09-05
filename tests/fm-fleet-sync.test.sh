@@ -3,9 +3,13 @@
 #
 # fm-fleet-sync fast-forwards a clone that is cleanly on its default branch. This
 # suite pins the two behavioral additions on top of that:
-#   - the one safe drift self-heals: a clean, detached HEAD that holds no unique
-#     commits (it is an ancestor of origin/<default>) and whose <default> is free
-#     to check out is re-attached and then fast-forwarded ("recovered:").
+#   - the two safe drifts self-heal, each then fast-forwarded ("recovered:"):
+#     a clean detached HEAD that holds no unique commits (it is an ancestor of
+#     origin/<default>) is re-attached; and a clean named branch that is gone from
+#     origin whose whole contribution is already contained in origin/<default> -
+#     including when it was SQUASH-merged there, which no commit-by-commit
+#     ancestry or patch-id test can see - is left for <default>, without the stale
+#     branch ever being deleted.
 #   - every other off-default state is left untouched and reported as a loud,
 #     quantified "STUCK: ... N commits behind ... - needs attention" warning
 #     instead of a quiet skip.
@@ -119,6 +123,78 @@ build_packed_prunable() {
   git -C "$work" push -q origin main
   git -C "$work" push -q origin --delete feature
   git -C "$clone" pack-refs --all
+  printf '%s\n' "$clone"
+}
+
+# build_squash_merged <home> <name> [--keep-remote-branch] [--extra-unmerged] [--no-upstream]:
+# a clone parked on `feature`, in the exact shape a squash-merged PR leaves behind.
+# The branch's two commits are collapsed into ONE differently-SHA'd commit on
+# origin/main (a real squash: same resulting content, new commit), origin/main is
+# advanced past it, and the remote branch is deleted - so the branch is gone from
+# origin and is NOT an ancestor of origin/main, yet strands nothing.
+#   --keep-remote-branch  leaves origin/feature in place (branch still live: refuse)
+#   --extra-unmerged      adds a branch commit that never landed (unique content: refuse)
+#   --no-upstream         leaves the branch with no configured upstream, as a plain
+#                         `git push origin feature` without -u does, so it never shows [gone]
+# Echoes the clone path.
+build_squash_merged() {
+  local home=$1 name=$2 work remote clone remote_abs keep=no extra=no noup=no squashed
+  shift 2
+  for a in "$@"; do
+    case "$a" in
+      --keep-remote-branch) keep=yes ;;
+      --extra-unmerged) extra=yes ;;
+      --no-upstream) noup=yes ;;
+    esac
+  done
+  work="$home/work-$name"
+  remote="$home/remotes/$name.git"
+  clone="$home/projects/$name"
+  mkdir -p "$home/remotes"
+
+  git init -q "$work"
+  git -C "$work" symbolic-ref HEAD refs/heads/main
+  commit_file "$work" file.txt v0 C0 >/dev/null
+  git clone --quiet --bare "$work" "$remote"
+  remote_abs=$(cd "$remote" && pwd)
+  git -C "$work" remote add origin "file://$remote_abs"
+  git -C "$work" push -q -u origin main
+
+  # The feature branch: two commits building up one new file.
+  git -C "$work" checkout -q -b feature
+  commit_file "$work" feat.txt part1 "feat part 1" >/dev/null
+  printf 'part1\npart2\n' > "$work/feat.txt"
+  git -C "$work" add feat.txt
+  git -C "$work" commit -qm "feat part 2"
+  git -C "$work" push -q origin feature
+  squashed=$(git -C "$work" rev-parse feature)
+
+  # Squash-merge onto main: identical tree contribution, one brand-new commit SHA.
+  git -C "$work" checkout -q main
+  git -C "$work" merge -q --squash "$squashed" >/dev/null 2>&1
+  git -C "$work" commit -qm "feat: squashed PR"
+  commit_file "$work" file.txt v1 "unrelated main work after the merge" >/dev/null
+  git -C "$work" push -q origin main
+
+  # Clone while origin/feature still exists, so the clone actually holds the
+  # branch's commits; only then delete the remote branch and prune.
+  git clone --quiet "file://$remote_abs" "$clone"
+  if [ "$noup" = yes ]; then
+    # A branch pushed without -u: it never gets an upstream, so it never shows
+    # "[gone]" - the shape a plain `git push origin feature` leaves behind.
+    git -C "$clone" checkout -q -B feature "$squashed"
+  else
+    git -C "$clone" checkout -q -b feature origin/feature
+  fi
+  if [ "$extra" = yes ]; then
+    commit_file "$clone" stranded.txt never-landed "a change that never reached origin" >/dev/null
+  fi
+  [ "$keep" = yes ] || git -C "$work" push -q origin --delete feature
+  # origin advances again after the clone, so a successful recovery has a real
+  # fast-forward to perform rather than landing already-current.
+  commit_file "$work" file.txt v2 "main moves on while the clone sits on feature" >/dev/null
+  git -C "$work" push -q origin main
+  git -C "$clone" fetch -q origin --prune
   printf '%s\n' "$clone"
 }
 
@@ -603,7 +679,146 @@ test_non_signature_fetch_failure_is_not_retried() {
   pass "a non-packed-refs.lock fetch failure keeps today's behavior (no retry)"
 }
 
+test_squash_merged_gone_branch_recovers() {
+  local home clone out
+  home=$(new_home)
+  clone=$(build_squash_merged "$home" squashed)
+  # Precondition: the shape the plain ancestry test cannot see.
+  git -C "$clone" merge-base --is-ancestor HEAD origin/main 2>/dev/null \
+    && fail "fixture is not squash-shaped: branch is an ancestor of origin/main"
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "squashed: recovered: left merged branch feature for main, synced" \
+    "squash-merged gone branch reports recovered"
+  assert_not_contains "$out" "STUCK" "squash-merged gone branch is not flagged STUCK"
+  [ "$(git -C "$clone" symbolic-ref --short HEAD)" = "main" ] \
+    || fail "expected checkout moved to main"
+  [ "$(head_sha "$clone")" = "$(git -C "$clone" rev-parse origin/main)" ] \
+    || fail "expected clone fast-forwarded to origin/main after recovery"
+  git -C "$clone" rev-parse --verify --quiet refs/heads/feature >/dev/null \
+    || fail "the stale branch was deleted; recovery must only move the checkout"
+  pass "squash-merged, origin-deleted branch is left for the default branch and fast-forwarded"
+}
+
+test_squash_merged_gone_branch_without_upstream_recovers() {
+  local home clone out
+  home=$(new_home)
+  clone=$(build_squash_merged "$home" squashednoup --no-upstream)
+  [ -z "$(git -C "$clone" for-each-ref --format='%(upstream:short)' refs/heads/feature)" ] \
+    || fail "fixture is not the no-upstream shape: branch has an upstream configured"
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "squashednoup: recovered: left merged branch feature for main, synced" \
+    "squash-merged branch pushed without -u reports recovered"
+  [ "$(git -C "$clone" symbolic-ref --short HEAD)" = "main" ] || fail "expected checkout moved to main"
+  [ "$(head_sha "$clone")" = "$(git -C "$clone" rev-parse origin/main)" ] \
+    || fail "expected clone fast-forwarded to origin/main after recovery"
+  pass "a squash-merged branch that never had an upstream is still recovered when it is gone from origin"
+}
+
+test_squash_merged_branch_still_on_origin_is_stuck_untouched() {
+  local home clone out before
+  home=$(new_home)
+  clone=$(build_squash_merged "$home" stilllive --keep-remote-branch)
+  before=$(head_sha "$clone")
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "stilllive: STUCK: on branch feature" "branch still on origin reports STUCK"
+  assert_not_contains "$out" "recovered" "a branch still live on origin is never recovered"
+  [ "$(git -C "$clone" symbolic-ref --short HEAD)" = "feature" ] || fail "live branch checkout was changed"
+  [ "$(head_sha "$clone")" = "$before" ] || fail "live branch was moved"
+  pass "a branch still present on origin is reported STUCK and left untouched"
+}
+
+test_gone_branch_with_unique_content_is_stuck_untouched() {
+  local home clone out before
+  home=$(new_home)
+  clone=$(build_squash_merged "$home" stranded --extra-unmerged)
+  before=$(head_sha "$clone")
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "stranded: STUCK: on branch feature" "gone branch with unique content reports STUCK"
+  assert_not_contains "$out" "recovered" "a branch holding unlanded content is never recovered"
+  [ "$(head_sha "$clone")" = "$before" ] || fail "branch holding unlanded content was moved"
+  [ -f "$clone/stranded.txt" ] || fail "unlanded content was discarded"
+  pass "a gone branch still holding unlanded content is reported STUCK and left untouched"
+}
+
+test_dirty_squash_merged_gone_branch_is_stuck_untouched() {
+  local home clone out before
+  home=$(new_home)
+  clone=$(build_squash_merged "$home" dirtysquash)
+  before=$(head_sha "$clone")
+  printf 'uncommitted edit\n' >> "$clone/feat.txt"
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "dirtysquash: STUCK: on branch feature" "dirty stale branch reports STUCK"
+  assert_contains "$out" "uncommitted changes" "STUCK names the dirty state"
+  assert_not_contains "$out" "recovered" "a dirty stale branch is never recovered"
+  [ "$(head_sha "$clone")" = "$before" ] || fail "dirty stale branch was moved"
+  grep -q "uncommitted edit" "$clone/feat.txt" || fail "uncommitted change was discarded"
+  pass "a dirty tree on a squash-merged gone branch is reported STUCK and left untouched"
+}
+
+test_gone_branch_with_default_checked_out_elsewhere_is_stuck_untouched() {
+  local home clone out before
+  home=$(new_home)
+  clone=$(build_squash_merged "$home" elsewhere)
+  before=$(head_sha "$clone")
+  git -C "$clone" worktree add -q --checkout "$home/wt-elsewhere" main
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "elsewhere: STUCK: on branch feature" "default-elsewhere reports STUCK"
+  assert_not_contains "$out" "recovered" "recovery must not steal a default checked out elsewhere"
+  [ "$(git -C "$clone" symbolic-ref --short HEAD)" = "feature" ] || fail "checkout was changed"
+  [ "$(head_sha "$clone")" = "$before" ] || fail "clone was moved"
+  pass "a squash-merged gone branch is left untouched when the default is checked out elsewhere"
+}
+
+test_gone_branch_tracking_another_remote_is_stuck_untouched() {
+  local home clone out before fork
+  home=$(new_home)
+  clone=$(build_squash_merged "$home" otherremote --no-upstream)
+  # A branch whose upstream lives on some remote other than origin cannot be
+  # judged from origin's state at all. Point the branch at a second remote whose
+  # tracking ref is absent: to any check that ignored WHICH remote the upstream
+  # names, this branch would look "gone" and (being squash-contained) would be
+  # recovered. It must be left alone instead.
+  fork="$home/remotes/otherremote-fork.git"
+  git clone --quiet --bare "$home/remotes/otherremote.git" "$fork"
+  git -C "$clone" remote add fork "file://$(cd "$fork" && pwd)"
+  git -C "$clone" config branch.feature.remote fork
+  git -C "$clone" config branch.feature.merge refs/heads/feature
+  [ "$(git -C "$clone" for-each-ref --format='%(upstream:short)' refs/heads/feature)" = "fork/feature" ] \
+    || fail "fixture is not the other-remote shape: upstream is not fork/feature"
+  git -C "$clone" rev-parse --verify --quiet refs/remotes/fork/feature >/dev/null \
+    && fail "fixture is not the other-remote shape: fork/feature already exists locally"
+  before=$(head_sha "$clone")
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "otherremote: STUCK: on branch feature" \
+    "branch tracking a non-origin remote reports STUCK"
+  assert_not_contains "$out" "recovered" "a branch tracking a non-origin remote is never recovered"
+  [ "$(git -C "$clone" symbolic-ref --short HEAD)" = "feature" ] || fail "checkout was changed"
+  [ "$(head_sha "$clone")" = "$before" ] || fail "clone was moved"
+  pass "a gone-looking branch whose upstream is on another remote is reported STUCK and left untouched"
+}
+
 test_detached_clean_ancestor_recovers
+test_squash_merged_gone_branch_recovers
+test_squash_merged_gone_branch_without_upstream_recovers
+test_squash_merged_branch_still_on_origin_is_stuck_untouched
+test_gone_branch_with_unique_content_is_stuck_untouched
+test_dirty_squash_merged_gone_branch_is_stuck_untouched
+test_gone_branch_with_default_checked_out_elsewhere_is_stuck_untouched
+test_gone_branch_tracking_another_remote_is_stuck_untouched
 test_detached_unique_commit_is_stuck_untouched
 test_detached_clean_ancestor_with_diverged_local_default_is_stuck_untouched
 test_dirty_is_stuck_untouched

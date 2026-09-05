@@ -355,6 +355,9 @@ When it is absent or contains `default`, crewmates mirror the firstmate's own ha
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
 A bare `<harness>` preserves the previous behavior for effort: harness only, with no effort launch flag.
 `bin/fm-spawn.sh` now REQUIRES an explicit model for every secondmate spawn (its own implicit default is never acceptable), so a bare `<harness>` line with no model token no longer launches on its own; either add a model token here or pass `--model` at spawn time.
+A RESPAWN of a secondmate this home already stood up is the one case that needs neither: when no `--model` is passed and this file carries no model token, the spawn reuses the model recorded in that secondmate's own `state/<id>.meta`, which a prior spawn wrote from a model that was deliberately chosen then.
+A meta recording `model=default` records that no model was ever chosen, so it is not reused and the respawn refuses like any other modelless spawn.
+Without that reuse, `bin/fm-bootstrap.sh`'s liveness sweep could never relaunch a dead secondmate on a home that pins its model per-spawn rather than in this file.
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
 Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).

@@ -509,6 +509,25 @@ require_explicit_model_message() {
   echo "Discover a model, then pass --model <name>. $(model_discovery_hint "$harness")." >&2
 }
 
+# A secondmate RESPAWN (bin/fm-bootstrap.sh's liveness sweep, /updatefirstmate,
+# any restart of an endpoint this home already stood up) replaces an agent whose
+# model was already deliberately chosen and durably recorded in that
+# secondmate's own metadata. Reusing that recording is what the directive asks
+# for, not a way around it: refusing the recovery instead would strand a dead
+# secondmate on every home that pins its model per-spawn rather than in
+# config/secondmate-harness. Echoes nothing (so the caller falls through to the
+# refusal) unless an unremarkable secondmate meta records a concrete model;
+# "default" is the sentinel a pre-directive launch wrote for "no model was
+# chosen at all", which is exactly what must not be reused.
+recorded_secondmate_model() {  # <task-id> -> model on stdout, empty when none
+  local meta="$STATE/$1.meta" recorded
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
+  [ "$(fm_meta_get "$meta" kind)" = secondmate ] || return 0
+  recorded=$(fm_meta_get "$meta" model)
+  [ "$recorded" != default ] || return 0
+  printf '%s' "$recorded"
+}
+
 # A parent-delivered carrier replaces this home's own resolution, so it is
 # refused unless it is a secondmate spawn carrying a strictly valid W3C value.
 # Nothing else may reach the pane's TRACEPARENT export.
@@ -635,6 +654,7 @@ spawn_remote_secondmate() {
   if [ -z "$HARNESS_ARG" ] && [ -z "$positional" ]; then
     if [ "$MODEL_SET" -eq 0 ]; then
       model=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
+      [ -n "$model" ] || model=$(recorded_secondmate_model "$id")
       [ -n "$model" ] || model=-
     fi
     if [ "$EFFORT_SET" -eq 0 ]; then
@@ -1458,6 +1478,7 @@ fi
 if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
   if [ "$MODEL_SET" -eq 0 ]; then
     SM_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
+    [ -n "$SM_MODEL" ] || SM_MODEL=$(recorded_secondmate_model "$ID")
     [ -z "$SM_MODEL" ] || MODEL=$SM_MODEL
   fi
   if [ "$EFFORT_SET" -eq 0 ]; then
