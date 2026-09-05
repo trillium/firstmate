@@ -8,17 +8,17 @@ It is used by the automated test suite (`tests/fork-features.sh`) to prevent sil
 
 ## Multi-account Claude Code
 
-**Capability:** Launch isolated Claude Code instances with per-account credential isolation using `--account N`.
+**Capability:** Launch isolated Claude Code instances with per-account config isolation using `--account N`, with auth routed through the local teamclaude proxy.
 
 **Files:**
-- `bin/fm-spawn.sh` — accepts `--account <N>` flag, records in task meta, sets `CLAUDE_TRUST_DIR` and `CLAUDE_ACCOUNT_ID`
-- `bin/claude-account.sh` — launcher that reads account setup token from macOS keychain (ccjuggler-acc<N>) and sets `CLAUDE_CONFIG_DIR` per account
-- `docs/configuration.md` — documents multi-account setup and keychain integration
+- `bin/fm-spawn.sh` — accepts `--account <N>` flag, records in task meta, sets `CLAUDE_TRUST_DIR`
+- `bin/claude-account.sh` — launcher that sets `CLAUDE_CONFIG_DIR` per account and routes auth through the local teamclaude proxy (`ANTHROPIC_BASE_URL`)
+- `docs/configuration.md` — documents multi-account setup and teamclaude proxy auth
 
 **Observable behavior:**
 - `fm-spawn.sh --account 2 <task> <project>` succeeds (flag accepted)
 - Task meta contains `account=2` line
-- Crewmate environment exports `CLAUDE_ACCOUNT_ID=2` and `CLAUDE_TRUST_DIR=<worktree>`
+- Crewmate environment exports `CLAUDE_TRUST_DIR=<worktree>`
 - Claude Code reads account-isolated config from `~/.claude-homes/account2/.claude/`
 
 **References:**

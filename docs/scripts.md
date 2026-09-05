@@ -12,7 +12,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-sessionstart-run.sh` | Route a native session-open hook to the full digest, a context re-emit, or the nudge |
 | `fm-operational-input.sh` | Construct and parse the canonical cross-language operational-input protocol |
 | `fm-isolated-launch.sh`  | Launch `claude` with `HOME` redirected to a fresh isolated home, stripped of global harness config |
-| `claude-account.sh`      | Standalone launcher for `claude` with per-account credential isolation under `~/.claude-homes/account<N>/.claude` |
+| `claude-account.sh`      | Standalone launcher for `claude` with per-account config isolation under `~/.claude-homes/account<N>/.claude`, with auth routed through the teamclaude proxy |
 | `claude-1.sh`, `claude-2.sh` | One-line direct launchers for `claude-account.sh 1` and `claude-account.sh 2`               |
 | `fm-bootstrap.sh`        | Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools |
 | `fm-startup-network.sh`  | Run session start's network checks off its blocking path in a bounded detached worker, and publish the result inline or as a wake |

@@ -135,6 +135,10 @@ worker_quarantined_execution_stopped() { # <account-home>
       worker_process_or_group_alive "$kind" "$pid" && return 1
     done
   done
+  # Every recorded execution is stopped. Return success explicitly so the scan's
+  # own last liveness probe, which fails precisely when nothing is alive, cannot
+  # leak its status and permanently refuse a recoverable quarantine.
+  return 0
 }
 
 worker_recover_quarantine() { # <account-home>

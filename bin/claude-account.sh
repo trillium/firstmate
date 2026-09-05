@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# claude-account.sh: launch claude with per-account credential isolation.
+# claude-account.sh: launch claude with per-account config isolation.
+# Auth is not per-account here - it is delegated to the teamclaude proxy (below).
 # Usage: claude-account.sh <N> [args...]
 #
 # Standalone - works with no firstmate checkout on $PATH. Each account gets its
@@ -9,21 +10,16 @@
 # .credentials.json and .claude.json are never in that symlink list - they must
 # stay per-account real files or OAuth tokens leak across accounts.
 #
-# Auth model: this launcher authenticates each account with a long-lived
-# `claude setup-token` (a CLAUDE_CODE_OAUTH_TOKEN, sk-ant-oat01-...) resolved
-# from the macOS keychain, exported into the session env, and honored by current
-# Claude Code interactive sessions. Setup tokens are chosen over the interactive
-# .credentials.json / `claude /login` blob on purpose: they are ~1yr-lived and
-# never silently log out mid-fleet-run (an expired/cleared .credentials.json
-# does), and they are the same tokens the ccjuggler/juggle switcher already
-# stores, so all multi-account auth shares one source of truth.
+# Auth model: authentication is delegated to the teamclaude proxy running at
+# http://127.0.0.1:3456. The proxy holds all account credentials, picks the
+# best available account per request, and rotates transparently on quota
+# exhaustion. This launcher sets ANTHROPIC_BASE_URL to point at the proxy;
+# no per-account token is injected here. The proxy must be running before
+# spawning agents (start with: launchctl start com.teamclaude.proxy).
 #
-# Token store: keychain service "ccjuggler-acc<N>", account "ccjuggler" (the
-# exact lookup `juggle`/ccjuggler.py use). Seed or rotate a token with
-# `claude setup-token` under the target account, then store it with
-#   security add-generic-password -U -s "ccjuggler-acc<N>" -a "ccjuggler" -w "<token>"
-# (or `juggle add`). The launcher validates the sk-ant-oat01- prefix and refuses
-# a missing or malformed token rather than launching into a login prompt.
+# Account isolation: the <N> argument still governs CLAUDE_CONFIG_DIR so each
+# account slot gets its own session history, project state, and .claude.json.
+# Auth routing is entirely the proxy's responsibility.
 #
 # Onboarding pre-seed location (current Claude Code): when CLAUDE_CONFIG_DIR is
 # set, Claude Code reads its global config JSON from $CLAUDE_CONFIG_DIR/.claude.json
@@ -38,9 +34,7 @@
 # writes and corrupt .claude.json; the lock fd is closed before exec claude so
 # the agent process never inherits it.
 #
-# See docs/configuration.md "Multi-account Claude Code" and the reference
-# pattern this implements:
-# https://gist.github.com/sjarmak/61e22d3625ecaac2279e8564d1b1b68f
+# See docs/configuration.md "Multi-account Claude Code".
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
@@ -56,25 +50,26 @@ esac
 ACCOUNT_HOME="$HOME/.claude-homes/account${ACCOUNT}"
 export CLAUDE_CONFIG_DIR="$ACCOUNT_HOME/.claude"
 
-# Authenticate with the account's long-lived setup token from the keychain.
-# Refuse rather than launch into a login prompt when the token is absent or
-# malformed (a corrupt/non-oat value stored here is what silently broke acc2).
-KEYCHAIN_SERVICE="ccjuggler-acc${ACCOUNT}"
-OAUTH_TOKEN="$(security find-generic-password -s "$KEYCHAIN_SERVICE" -a "ccjuggler" -w 2>/dev/null || true)"
-case "$OAUTH_TOKEN" in
-  sk-ant-oat01-*) ;;
-  "")
-    echo "error: no setup token in keychain service '$KEYCHAIN_SERVICE' (account 'ccjuggler')" >&2
-    echo "seed it once: run 'claude setup-token' under the target account, then:" >&2
-    echo "  security add-generic-password -U -s \"$KEYCHAIN_SERVICE\" -a \"ccjuggler\" -w \"<token>\"" >&2
-    exit 1 ;;
-  *)
-    echo "error: keychain service '$KEYCHAIN_SERVICE' holds a value that is not a setup token" >&2
-    echo "(expected an sk-ant-oat01-... token). Re-store the correct token with:" >&2
-    echo "  security add-generic-password -U -s \"$KEYCHAIN_SERVICE\" -a \"ccjuggler\" -w \"<token>\"" >&2
-    exit 1 ;;
-esac
-export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN"
+# Route all Anthropic API traffic through the teamclaude proxy. The proxy
+# handles account selection, quota tracking, and rotation. Fail loudly if
+# the proxy is not reachable rather than silently hitting Anthropic directly
+# on the wrong account.
+PROXY_URL="http://127.0.0.1:3456"
+if ! curl -sf --max-time 1 "$PROXY_URL/teamclaude/status" -o /dev/null 2>/dev/null; then
+  echo "error: teamclaude proxy not reachable at $PROXY_URL" >&2
+  echo "start it with: launchctl start com.teamclaude.proxy" >&2
+  exit 1
+fi
+export ANTHROPIC_BASE_URL="$PROXY_URL"
+
+# Drop any account-pinned credential inherited from the launching shell. The
+# previous auth model exported CLAUDE_CODE_OAUTH_TOKEN, so a spawn started from
+# an old switcher-era environment would otherwise carry a token that pins the
+# request to one account while the base URL says the proxy owns selection -
+# exactly the silent wrong-account failure the preflight above exists to
+# prevent, and one the preflight cannot see. The proxy is the only credential
+# path.
+unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 
 # Create the per-account config dir (not just the home) so a brand-new account -
 # one never seeded by an interactive login - has $CLAUDE_CONFIG_DIR present for

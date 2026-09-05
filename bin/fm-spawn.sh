@@ -54,8 +54,12 @@
 #   docs/configuration.md "Multi-account Claude Code"). It requires the claude
 #   harness, records account=N in the task's meta, sets CLAUDE_TRUST_DIR to the
 #   task's worktree in the crewmate's launch environment, and launches through
-#   bin/claude-account.sh N instead of the plain claude binary. Absent means
-#   current behavior: plain claude, no account isolation.
+#   bin/claude-account.sh N instead of the plain claude binary. When --account is
+#   absent and config/crew-account holds a positive integer, a claude-harness
+#   spawn takes that value as its default account and launches through
+#   bin/claude-account.sh the same way, recording account= in meta. Plain claude
+#   with no account isolation is the behavior only when neither --account nor
+#   config/crew-account supplies a value.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -532,7 +536,6 @@ if [ "$ACCOUNT_SET" -eq 1 ]; then
     0) echo "error: --account requires a positive integer" >&2; exit 1 ;;
   esac
 fi
-
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
 # so every axis this block resolves for a fresh spawn instead comes from that
 # task's own durable record below. Contradicting it on the command line is a
@@ -1428,6 +1431,24 @@ esac
 if [ -n "$ACCOUNT" ] && [ "$HARNESS" != claude ]; then
   echo "error: --account requires the claude harness (got '$HARNESS')" >&2
   exit 1
+fi
+
+# Apply the default account from config/crew-account when --account was not
+# passed. This ensures every claude-harness spawn goes through
+# claude-account.sh, which routes auth through the teamclaude proxy and gives
+# the spawn the account's own CLAUDE_CONFIG_DIR, avoiding silent fallback to
+# account 1. Resolved after the harness so a home holding this file can still
+# spawn on every other harness exactly as it did before the file existed: only
+# an explicit --account refuses a non-claude harness above. The contents are
+# validated as strictly as an explicit --account, and a malformed value is no
+# default rather than a spawn-time refusal, so operator config that has rotted
+# never blocks a spawn nor reaches meta or the launch command.
+if [ "$ACCOUNT_SET" -eq 0 ] && [ "$HARNESS" = claude ] && [ -f "$CONFIG/crew-account" ]; then
+  _default_acct=$(head -n 1 "$CONFIG/crew-account" 2>/dev/null | tr -d '[:space:]' || true)
+  case "$_default_acct" in
+    ''|*[!0-9]*|0) ;;
+    *) ACCOUNT=$_default_acct ;;
+  esac
 fi
 
 # muse is verified as a CREWMATE/SCOUT adapter only. A secondmate is a firstmate
@@ -2957,8 +2978,9 @@ fi
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
-  # account= is written only when --account was passed, matching the backend=
-  # convention below: absent means no per-account Claude Code isolation.
+  # account= is written when --account was passed or config/crew-account supplied
+  # the default, matching the backend= convention below: absent means no
+  # per-account Claude Code isolation.
   [ -z "$ACCOUNT" ] || echo "account=$ACCOUNT"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   [ -z "$LABEL_ARG" ] || echo "label=$LABEL_ARG"

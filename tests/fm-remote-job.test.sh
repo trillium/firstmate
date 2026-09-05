@@ -959,4 +959,50 @@ wait "$RECOVERY_WORKER_PID" 2>/dev/null || true
 RECOVERY_WORKER_PID=
 pass "quarantine clears only after recorded execution has stopped"
 
+# A worker killed mid-shutdown strands its quarantine marker beside a job left
+# `running` whose only surviving claim is its command's process group. Recovery
+# has to clear that quarantine once the group is gone; refusing leaves the
+# account with no worker at all, because a refusal exits 75 and stops the
+# restart supervisor permanently rather than retrying.
+GROUP_HOME="$TMP_ROOT/group-recovery-account"
+GROUP_STATE="$TMP_ROOT/group-recovery-jobs"
+GROUP_JOB="$GROUP_STATE/jobs/job-group-quarantine"
+mkdir -p "$GROUP_HOME" "$GROUP_STATE/jobs" "$GROUP_STATE/logs" \
+  "$GROUP_STATE/worker.lock" "$GROUP_JOB/.claim"
+chmod 700 "$GROUP_HOME" "$GROUP_STATE" "$GROUP_STATE/jobs" "$GROUP_STATE/logs" \
+  "$GROUP_STATE/worker.lock" "$GROUP_JOB" "$GROUP_JOB/.claim"
+sleep 0.01 &
+GROUP_DEAD_PID=$!
+wait "$GROUP_DEAD_PID" 2>/dev/null || true
+printf '%s\n' "$GROUP_DEAD_PID" > "$GROUP_STATE/worker.lock/pid"
+printf 'stale\n' > "$GROUP_STATE/worker.lock/start"
+printf 'stale\n' > "$GROUP_STATE/worker.lock/command"
+printf 'active execution could not be confirmed stopped\n' > "$GROUP_STATE/worker.lock/quarantine"
+printf 'running\n' > "$GROUP_JOB/state"
+printf '%s\n' "$GROUP_DEAD_PID" > "$GROUP_JOB/.claim/owner"
+# No .claim/supervisor: the dead process group is the last execution record the
+# quarantine scan examines, which is the case that regressed.
+printf '%s\n' "$GROUP_DEAD_PID" > "$GROUP_JOB/.claim/group"
+: > "$GROUP_JOB/stdout"
+: > "$GROUP_JOB/stderr"
+chmod 600 "$GROUP_STATE/worker.lock"/* "$GROUP_JOB/state" "$GROUP_JOB/.claim"/* \
+  "$GROUP_JOB/stdout" "$GROUP_JOB/stderr"
+touch -t 200001010000 "$GROUP_STATE/worker.lock"
+HOME="$GROUP_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_REMOTE_JOB_STATE_ROOT="$GROUP_STATE" \
+  FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" \
+  > "$TMP_ROOT/group-recovery.out" 2> "$TMP_ROOT/group-recovery.err" &
+RECOVERY_WORKER_PID=$!
+for _ in $(seq 1 300); do
+  [ -f "$GROUP_STATE/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$GROUP_STATE/worker.ready" \
+  "a stopped process group did not permit worker recovery"
+assert_absent "$GROUP_STATE/worker.lock/quarantine" \
+  "recovered worker retained a stale process-group quarantine"
+kill -TERM "$RECOVERY_WORKER_PID"
+wait "$RECOVERY_WORKER_PID" 2>/dev/null || true
+RECOVERY_WORKER_PID=
+pass "quarantine clears when only a stopped process group remains recorded"
+
 echo "ALL TESTS PASSED"
