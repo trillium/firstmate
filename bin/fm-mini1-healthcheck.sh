@@ -103,7 +103,6 @@ echo ""
 # --- 4. Disk space ---
 echo "-- Disk space"
 FREE_BYTES=$(df -k "$HOME" | awk 'NR==2 {print $4}')
-FREE_GB=$(echo "scale=1; $FREE_BYTES / 1048576" | bc 2>/dev/null || echo "?")
 FREE_DISPLAY=$(df -h "$HOME" | awk 'NR==2 {print $4, "free (" $5, "used)"}')
 if (( FREE_BYTES < 5242880 )); then  # < 5 GB
   fail "disk: $FREE_DISPLAY  (run: brew cleanup && brew autoremove)"
