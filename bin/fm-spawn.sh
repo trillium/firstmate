@@ -1440,7 +1440,7 @@ fi
 # default rather than a spawn-time refusal, so operator config that has rotted
 # never blocks a spawn nor reaches meta or the launch command.
 if [ "$ACCOUNT_SET" -eq 0 ] && [ "$HARNESS" = claude ] && [ -f "$CONFIG/crew-account" ]; then
-  _default_acct=$(tr -d '[:space:]' < "$CONFIG/crew-account")
+  _default_acct=$(head -n 1 "$CONFIG/crew-account" 2>/dev/null | tr -d '[:space:]' || true)
   case "$_default_acct" in
     ''|*[!0-9]*|0) ;;
     *) ACCOUNT=$_default_acct ;;

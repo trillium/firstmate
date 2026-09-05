@@ -206,6 +206,55 @@ test_crew_account_malformed_value_is_no_default() {
   pass "a malformed config/crew-account value is treated as no default"
 }
 
+test_crew_account_multiline_file_uses_first_line_only() {
+  local rec id out status launch expected
+  id=crew-account-multiline-z9
+  rec=$(make_spawn_case crew-account-multiline claude "$id")
+  read_case_record "$rec"
+  # Whitespace stripping alone would fold these two lines into account 34.
+  printf '3\n4\n' > "$HOME_DIR/config/crew-account"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude)
+  status=$?
+  expect_code 0 "$status" "a multi-line config/crew-account should leave the spawn working"
+  assert_grep "account=3" "$HOME_DIR/state/$id.meta" \
+    "a multi-line config/crew-account should resolve to its first line"
+  assert_no_grep "account=34" "$HOME_DIR/state/$id.meta" \
+    "a multi-line config/crew-account must not concatenate into a different account"
+
+  launch=$(cat "$LAUNCH_LOG")
+  expected="CLAUDE_TRUST_DIR='$WT_DIR' CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '${ROOT}/bin/claude-account.sh' 3 --dangerously-skip-permissions --model 'sonnet' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "a multi-line crew-account file did not launch on account 3"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  pass "a multi-line config/crew-account uses its first line only"
+}
+
+test_crew_account_unreadable_file_is_no_default() {
+  local rec id out status launch expected
+  if [ "$(id -u)" -eq 0 ]; then
+    printf '# skip: unreadable-file case is meaningless as root\n'
+    return 0
+  fi
+  id=crew-account-unreadable-za
+  rec=$(make_spawn_case crew-account-unreadable claude "$id")
+  read_case_record "$rec"
+  printf '3\n' > "$HOME_DIR/config/crew-account"
+  chmod 000 "$HOME_DIR/config/crew-account"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness claude)
+  status=$?
+  chmod 600 "$HOME_DIR/config/crew-account"
+  expect_code 0 "$status" "an unreadable config/crew-account must not abort the spawn"$'\n'"output: $out"
+  assert_no_grep "account=" "$HOME_DIR/state/$id.meta" \
+    "an unreadable config/crew-account must not reach meta"
+
+  launch=$(cat "$LAUNCH_LOG")
+  expected="CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions --model 'sonnet' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/brief.md')\""
+  [ "$launch" = "$expected" ] || fail "an unreadable crew-account file must leave the launch command unchanged"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  pass "an unreadable config/crew-account yields no default instead of aborting the spawn"
+}
+
 test_account_flag_requires_claude_harness() {
   local rec id out status
   id=account-wrong-harness-z3
@@ -244,6 +293,8 @@ test_crew_account_supplies_default_account
 test_explicit_account_overrides_crew_account_default
 test_crew_account_default_ignored_on_non_claude_harness
 test_crew_account_malformed_value_is_no_default
+test_crew_account_multiline_file_uses_first_line_only
+test_crew_account_unreadable_file_is_no_default
 test_account_flag_requires_claude_harness
 test_account_flag_rejects_non_positive_integer
 

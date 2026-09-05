@@ -392,6 +392,8 @@ launchctl start com.teamclaude.proxy
 
 `<N>` therefore selects config isolation only - the account's `CLAUDE_CONFIG_DIR`, and with it its session history, project state, and `.claude.json` - never auth routing.
 Account credentials live in the proxy's own store outside this repo; nothing in firstmate reads or holds them.
+The launcher also unsets any inherited `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_AUTH_TOKEN` before exec'ing `claude`, so a credential exported into the launching shell is deliberately discarded in favour of proxy auth.
+Otherwise an account-pinned token from an older auth model would ride along and pin every request to one account while `ANTHROPIC_BASE_URL` says the proxy owns selection - a silent wrong-account failure the preflight cannot see.
 
 `config/crew-account` is a local, gitignored file holding one positive integer.
 When it is present, `fm-spawn.sh` applies that account as the default for a spawn that passes no `--account`, so a claude-harness spawn goes through `bin/claude-account.sh` with a deliberate account slot instead of silently landing on account 1.
