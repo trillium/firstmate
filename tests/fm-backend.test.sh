@@ -732,21 +732,7 @@ strip_send_preflight() {  # <log>
   preflight=$'tmux\x1fdisplay-message\x1f-p\x1f-t\x1fsess:win\x1f#{pane_id}'
   awk -v preflight="$preflight" '$0 != preflight { print }' "$1"
 }
-
-test_send_conformance_old_vs_new() {
-  local old_bin fb log_old log_new home rc_old rc_new filtered_old filtered_new send_ref
-  old_bin=$(build_old_bin send-old)
-  # The materialized old bin/ comes from BASE_REF = merge-base(HEAD, main),
-  # which on this bug-fix branch and on CI is the broken reconcile commit whose
-  # fm-send.sh dropped RESOLVE_KEYS and crashes with 'RESOLVE_KEYS: unbound
-  # variable'. Overlay a genuinely historical, correct fm-send.sh so the "old"
-  # fixture reflects pre-bug fork behavior, mirroring the teardown-conformance
-  # case's historical tmux adapter overlay.
-  send_ref=$(resolve_correct_fm_send_ref) \
-    || fail "no historical fm-send.sh with RESOLVE_KEYS found for conformance baseline"
-  git -C "$ROOT" show "$send_ref:bin/fm-send.sh" > "$old_bin/bin/fm-send.sh" \
-    || fail "could not overlay historical fm-send.sh"
-# The byte-identical old-vs-new tmux log comparison this test used to run
+# The byte-identical old-vs-new tmux log comparison this file used to run
 # covered the P1 backend extraction, which promised an unchanged command
 # sequence. The composer consolidation (fm-composer-thin-adapter-refactor-r1)
 # deliberately changed that sequence - the submit core reads a busy baseline
