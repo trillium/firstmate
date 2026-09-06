@@ -122,8 +122,8 @@ Sync is best-effort throughout: a failing step is reported as a `BEADS_SYNC:` li
 Best-effort never means silent, though. `task dolt commit` exits 0 whether it committed or found a clean working set, so any non-zero exit is reported as a commit failure on the exit status alone rather than on parsed vendor wording, and a push line can never announce success over writes that are still stranded uncommitted.
 Likewise, a remote listing that cannot be read at all is reported as its own distinct skip rather than as the no-remote line below, since a home that is silently not syncing to a configured remote is the opposite of a home that has none.
 
-Firstmate configures no Dolt remote, because adding one publishes the fleet's task store to that destination and the destination is the captain's decision; with none configured the sweep reports that the store is single-machine only and does nothing else.
-[`docs/beads-sync-topology.md`](beads-sync-topology.md) is the owner of that recommendation, its trade-offs, and the one question the captain answers to enable off-machine durability.
+The approved Dolt remote is the captain's decision: since 2026-09-06 that is `mini1`, and [`bin/fm-beads-remote-backup.sh`](../bin/fm-beads-remote-backup.sh) owns the verify/repair contract the routine sync sweep calls; with none configured the sweep reports that the store is single-machine only and does nothing else.
+[`docs/beads-sync-topology.md`](beads-sync-topology.md) owns that recommendation, its trade-offs, and the decision that enables off-machine durability.
 
 ### Beads resilience layer (state/.beads-mirror-*.json, state/.beads-write-queue)
 

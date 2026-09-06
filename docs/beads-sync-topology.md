@@ -1,7 +1,7 @@
 # Beads store topology and sync destination
 
-This document is the reasoning behind how a beads-backed fleet shares one task store, and it ends in a decision the captain owns.
-[`docs/configuration.md`](configuration.md) "Backlog backend" is the owner of the resulting configuration and mechanics; this file only explains why that shape was chosen and what remains unconfigured.
+This document is the reasoning behind how a beads-backed fleet shares one task store, and it ends in the decision the captain made.
+[`docs/configuration.md`](configuration.md) "Backlog backend" is the owner of the resulting configuration and mechanics; this file only explains why that shape was chosen and the decision that enabled off-machine durability.
 
 ## The state this was written against
 
