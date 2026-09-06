@@ -17,8 +17,13 @@
 #     those sections are preserved as unstructured records.
 #     Structured rows preserve captain-hold metadata such as hold_kind and
 #     hold_reason when tasks-axi emits it. They also carry normalized current_role,
-#     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids, and
-#     captain_actionable fields. Repeated blocker tokens remain ordered; a blocker
+#     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids,
+#     captain_actionable, hold_set, hold_age_days, and hold_bucket fields.
+#     hold_bucket is the single classification for every captain hold, decided
+#     only from structured fields and never from hold reason or body prose:
+#     "blocked", "dated", "aged", or "live". captain_actionable means
+#     "waiting on the captain now" and is exactly hold_bucket == "live".
+#     Repeated blocker tokens remain ordered; a blocker
 #     resolves only when its structured record is Done, and missing ids stay open.
 #     When config/backlog-backend=beads, backlog gains source:"beads",
 #     stale:false, stale_since:null, fleet_label (the queried fleet label),
@@ -92,6 +97,14 @@ else
     || date +%s)
 fi
 case "$SNAPSHOT_EPOCH" in ''|*[!0-9]*) SNAPSHOT_EPOCH=$(date +%s) ;; esac
+# The observation date gates captain-hold deferral: a `hold-until` date still in
+# the future keeps a captain hold out of captain_actionable until it is due.
+# (tasks-axi's own contract: the hold is inactive on and after that date).
+SNAPSHOT_TODAY=${SNAPSHOT_NOW%%T*}
+case "$SNAPSHOT_TODAY" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) : ;;
+  *) SNAPSHOT_TODAY=$(date -u +%Y-%m-%d) ;;
+esac
 
 # Cross-home bounds are explicit so one broken or unexpectedly large home cannot
 # hang or explode the parent snapshot.
@@ -114,6 +127,16 @@ FM_SNAPSHOT_REGISTRY_RECORDS=${FM_SNAPSHOT_REGISTRY_RECORDS:-40}
 FM_SNAPSHOT_REGISTRY_TIMEOUT=${FM_SNAPSHOT_REGISTRY_TIMEOUT:-2}
 FM_SNAPSHOT_BEADS_LIMIT=${FM_SNAPSHOT_BEADS_LIMIT:-200}
 FM_SNAPSHOT_BEADS_TIMEOUT=${FM_SNAPSHOT_BEADS_TIMEOUT:-4}
+# An undated hold ages once its hold-set timestamp is at least this many days
+# old (0 ages every hold with a non-negative computed age); legacy holds
+# without a stamp fall back to their since date.
+FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=${FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS:-14}
+case "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" in
+  ''|*[!0-9]*)
+    echo "fm-fleet-snapshot: FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS must be a non-negative integer" >&2
+    exit 2
+    ;;
+esac
 validate_positive_bound() {  # <name> <value>
   case "$2" in
     ''|*[!0-9]*|0)
@@ -299,8 +322,18 @@ backlog_json_markdown() {  # [<backlog-path>] - defaults to this home's $BACKLOG
   fi
 
   # shellcheck disable=SC2094
-  jq -Rn --arg path "$backlog" '
+  jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
+    --argjson age_days "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" '
     def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
+    def timestamp_epoch($d):
+      if ($d | type) != "string" then null
+      elif ($d | test("T")) then try ($d | fromdateiso8601) catch null
+      else try (($d + "T00:00:00Z") | fromdateiso8601) catch null end;
+    def days_between($from; $to):
+      (timestamp_epoch($from)) as $a
+      | (timestamp_epoch($to)) as $b
+      | if $a == null or $b == null then null
+        else (($b - $a) / 86400 | floor) end;
     def section_state:
       if . == "In flight" then "in_flight"
       elif . == "Queued" then "queued"
@@ -311,6 +344,8 @@ backlog_json_markdown() {  # [<backlog-path>] - defaults to this home's $BACKLOG
       | if $v == null then null else ($v | trim) end;
     def metadata($rest; $key):
       cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + ":[[:space:]]*(?<v>[^,)]*)");
+    def hold_metadata($rest):
+      cap($rest; ".*\\(hold:[[:space:]]*(?<v>[^)]*)");
     def metadata_word($rest; $key):
       cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + "[[:space:]]+(?<v>[^,)]*)");
     def url_pattern: "https?://[^[:space:])\"<>]+";
@@ -318,7 +353,7 @@ backlog_json_markdown() {  # [<backlog-path>] - defaults to this home's $BACKLOG
     def links($rest): [$rest | scan(url_pattern)];
     def strip_trailing_metadata:
       reduce range(0; 20) as $_ (.;
-        sub("[[:space:]]*\\([[:space:]]*(?:(?:repo|kind|priority|hold|hold-kind):[[:space:]]*[^)]*|(?:since|merged|reported|done)[[:space:]]+[^)]*)[[:space:]]*\\)[[:space:]]*$"; ""));
+        sub("[[:space:]]*\\([[:space:]]*(?:(?:repo|kind|priority|hold|hold-kind|hold-until):[[:space:]]*[^)]*|(?:since|merged|reported|done)[[:space:]]+[^)]*)[[:space:]]*\\)[[:space:]]*$"; ""));
     def strip_title_artifacts:
       sub("[[:space:]]+-[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
       | sub("[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
@@ -376,8 +411,10 @@ backlog_json_markdown() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              repo:metadata($rest; "repo"),
              kind:metadata($rest; "kind"),
              priority:metadata($rest; "priority"),
-             hold_reason:metadata($rest; "hold"),
+             hold_reason:hold_metadata($rest),
              hold_kind:metadata($rest; "hold-kind"),
+             hold_until:metadata($rest; "hold-until"),
+             hold_set:null,
              blocked_by:cap($rest; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
              blocked_by_ids:blocked_by_ids($rest),
              blocked_reason:blocked_reason($rest),
@@ -413,7 +450,8 @@ backlog_json_markdown() {  # [<backlog-path>] - defaults to this home's $BACKLOG
        end)
     | .records |= map(
         if (.body_lines | length) > 0 then
-          .body_excerpt = ((.body_lines | join(" "))[:240])
+          .hold_set = cap(.body_lines[0]; "^Captain hold set:[[:space:]]*(?<v>[0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?)$")
+          | .body_excerpt = ((.body_lines | join(" "))[:240])
         else . end)
     | .records as $records
     | (reduce ($records[] | select(.structured)) as $record ({};
@@ -433,9 +471,15 @@ backlog_json_markdown() {  # [<backlog-path>] - defaults to this home's $BACKLOG
                elif .state == "queued" then "queued"
                else "done" end)
           | .requires_child_metadata = (.current_role == "worker")
-          | .captain_actionable =
-              (.state == "queued" and .kind == "captain" and .hold_kind == "captain"
-               and .hold_reason != null and (.unresolved_blocker_ids | length) == 0)
+          | .hold_age_days = days_between((.hold_set // .since); $now)
+          | .hold_bucket =
+              (if .hold_kind != "captain" or .hold_reason == null or .state == "done" then null
+               elif (.unresolved_blocker_ids | length) > 0 then "blocked"
+               elif .hold_until != null and .hold_until > $today then "dated"
+               elif .hold_until == null and .hold_age_days != null
+                    and .hold_age_days >= $age_days then "aged"
+               else "live" end)
+          | .captain_actionable = (.hold_bucket == "live")
         else . end)
     | del(.section,.order)
   ' < "$backlog"
@@ -822,14 +866,17 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
     | ([ $backlog.records[]? | select(.state == "in_flight" and .structured) ]) as $owned_in_flight
     | ([ $backlog.records[]?
          | select(.structured and
-             (.state == "queued" or
+             (.hold_bucket != null or .state == "queued" or
               (.state == "in_flight" and .current_role == "held"
                and (.id as $id
                     | any($tasks[]; .id == $id and .current_state.state == "working") | not)))) ]) as $queued_all
     | ([ $queued_all[]
          | select(.captain_actionable == true)
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
-            reason:(.hold_reason | trunc(160)),source:"backlog"} ]) as $captain_holds_all
+            reason:(.hold_reason | trunc(160)),
+            hold_until:(.hold_until // null),
+            hold_bucket:(.hold_bucket // null),
+            hold_age_days:(.hold_age_days // null),source:"backlog"} ]) as $captain_holds_all
     | ([ $backlog.records[]? | select(.state == "done" and .structured and .kind != "captain")
          | {id:(.id | trunc(120)),title:(.title | trunc(120)),
             pr_url:((.pr_url // null) | if . == null then null else trunc(500) end),
@@ -926,6 +973,9 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
           blocked_reason:((.blocked_reason // null) | if . == null then null else trunc(160) end),
           hold_reason:((.hold_reason // null) | if . == null then null else trunc(160) end),
           hold_kind:((.hold_kind // null) | if . == null then null else trunc(40) end),
+          hold_until:((.hold_until // null) | if . == null then null else trunc(40) end),
+          hold_bucket:(.hold_bucket // null),
+          hold_age_days:(.hold_age_days // null),
           captain_actionable:(.captain_actionable // false),
           repo:((.repo // null) | if . == null then null else trunc(120) end),
           kind:((.kind // null) | if . == null then null else trunc(40) end)}][:$queued_n]),

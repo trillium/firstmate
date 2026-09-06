@@ -97,10 +97,14 @@
 # like fm-bead-stamp.sh: a missing task CLI or a close the CLI rejects warns on
 # stderr and never blocks or fails an already-confirmed teardown. bin/fm-ledger.sh
 # is the safety net for a bead that was claimed but never reaches this path.
-# Usage: fm-teardown.sh <task-id> [--force | --staleness-autoclose [<idle-since-epoch>] | --staleness-file-dead [<idle-since-epoch>]]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--staleness-autoclose [<idle-since-epoch>] | --staleness-file-dead [<idle-since-epoch>]]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
+#   --legacy-record accepts a task record that predates the spawn_gen field.
+#   Teardown then proceeds only when the recorded endpoint is confirmed dead or
+#   agent-less, and without --force the worktree still passes the ordinary
+#   landed-work checks.
 #   --staleness-autoclose is bin/fm-watch.sh's idle>2h backstop for kind=ship
 #   tasks only: work_is_landed decides the branch. Landed falls through to the
 #   ordinary teardown above unchanged. Unlanded reclaims only the runtime
@@ -211,6 +215,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-backlog-transition-lib.sh
+. "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-beads-resilience-lib.sh
 . "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-backend.sh
@@ -242,7 +248,50 @@ if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   exit 2
 fi
 ID=$1
-FORCE=${2:-}
+FORCE=
+LEGACY_RECORD_GIVEN=0
+STALENESS_MODE=
+STALENESS_IDLE_SINCE=
+shift
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force) FORCE=--force ;;
+    --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --staleness-autoclose|--staleness-file-dead)
+      [ -z "$STALENESS_MODE" ] || { echo "error: invalid teardown request" >&2; exit 2; }
+      [ -z "$FORCE" ] || { echo "error: invalid teardown request" >&2; exit 2; }
+      STALENESS_MODE=$1 ;;
+    *)
+      if [ -n "$STALENESS_MODE" ] && [ -z "$STALENESS_IDLE_SINCE" ]; then
+        STALENESS_IDLE_SINCE=$1
+      else
+        echo "error: invalid teardown request" >&2
+        exit 2
+      fi
+      ;;
+  esac
+  shift
+done
+fm_backlog_directory_present "$STATE" "state directory" || {
+  echo "error: teardown refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
+  exit 1
+}
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+# Supervision lease guard: post-landing cleanup is overlap territory between
+# the two Pi supervision actors; refuse while the OTHER actor holds this
+# task's live lease (contract: bin/fm-lease-lib.sh; no-op in homes without
+# leases).
+# shellcheck source=bin/fm-lease-lib.sh
+. "$SCRIPT_DIR/fm-lease-lib.sh"
+# Role partition: forced teardown discards work, and the supervision branch
+# never discards anything - only an ordinary landed-work teardown is branch
+# territory (contract: bin/fm-lease-lib.sh).
+if [ "$FORCE" = --force ] && [ "$(fm_lease_actor)" = branch ]; then
+  echo "error: forced teardown refused - the supervision branch cannot discard work" >&2
+  exit "$FM_LEASE_REFUSE_EXIT"
+fi
+fm_lease_guard "$ID" "teardown (fm-teardown)"
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 CONTROL_LOCK_HELD=0
 META_LOCK=
@@ -308,13 +357,10 @@ CONTROL_LOCK_HELD=1
 # state/<id>.staleness-unfiled fallback. Also takes the optional idle-since epoch.
 STALENESS_AUTOCLOSE=0
 STALENESS_FILE_DEAD=0
-STALENESS_IDLE_SINCE=${3:-}
-if [ "$FORCE" = "--staleness-autoclose" ]; then
+if [ "$STALENESS_MODE" = "--staleness-autoclose" ]; then
   STALENESS_AUTOCLOSE=1
-  FORCE=""
-elif [ "$FORCE" = "--staleness-file-dead" ]; then
+elif [ "$STALENESS_MODE" = "--staleness-file-dead" ]; then
   STALENESS_FILE_DEAD=1
-  FORCE=""
 fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
@@ -1269,6 +1315,27 @@ staleness_file_dead_only() {
 # Landing predicate: bin/fm-landed-lib.sh is the single owner. This wrapper binds
 # teardown's own globals ($WT, $PROJ, $PR_URL); see fm_work_is_landed.
 work_is_landed() { fm_work_is_landed "$WT" "$PROJ" "$1" "$PR_URL"; }
+# The completion links this teardown already holds locally. A scout's
+# deliverable is its report, a local-only ship lands on local main, and every
+# other ship carries the PR recorded on its own record.
+BACKLOG_DONE_ARGS=()
+backlog_done_args() {
+  local data_relative
+  BACKLOG_DONE_ARGS=()
+  case "$KIND" in
+    scout)
+      data_relative=$(fm_backlog_data_relative "$DATA") || return 1
+      BACKLOG_DONE_ARGS=(--report "$data_relative/$ID/report.md")
+      ;;
+    *)
+      if [ "$MODE" = local-only ]; then
+        BACKLOG_DONE_ARGS=(--note "local main")
+      elif [ -n "$PR_URL" ]; then
+        BACKLOG_DONE_ARGS=(--pr "$PR_URL")
+      fi
+      ;;
+  esac
+}
 backlog_refresh_reminder() {
   local backlog_display root
   [ "$KIND" = secondmate ] && return 0
@@ -2783,9 +2850,9 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     exit 1
   fi
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-      FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-captain-hold.sh" verify "$ID" >/dev/null; then
-    echo "REFUSED: scout task $ID has not passed the captain-call completion gate." >&2
-    echo "Inventory its report and any visual review through bin/fm-captain-hold.sh before teardown." >&2
+      FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-decision-hold.sh" verify "$ID" >/dev/null; then
+    echo "REFUSED: scout task $ID has not passed the unresolved-decision completion gate." >&2
+    echo "Inventory its report and any visual review through bin/fm-decision-hold.sh before teardown." >&2
     exit 1
   fi
 fi

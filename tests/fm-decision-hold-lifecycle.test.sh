@@ -67,7 +67,8 @@ EOF
     "project=$home/projects/sample" \
     "harness=codex" \
     "kind=scout" \
-    "mode=scout"
+    "mode=scout" \
+    "spawn_gen=lifecycle-test-$id"
   printf 'done: report and visual review complete\n' > "$home/state/$id.status"
   cat > "$home/data/$id/report.md" <<'EOF'
 # Sample route review
@@ -115,7 +116,8 @@ write_origin_meta() {  # <home> <id> [kind]
     "project=$home/projects/sample" \
     "harness=codex" \
     "kind=$kind" \
-    "mode=$kind"
+    "mode=$kind" \
+    "spawn_gen=lifecycle-test-$id"
 }
 
 test_structured_holds_survive_teardown_and_route_resolution() {
@@ -418,6 +420,20 @@ test_secondmate_hold_stays_in_authoritative_home() {
   cp "$ROOT/.tasks.toml" "$mate/.tasks.toml"
   printf '# Synthetic secondmate home\n' > "$mate/AGENTS.md"
   printf 'sample-mate\n' > "$mate/.fm-secondmate-home"
+  # Bind the synthetic mate home to its parent, the way every provisioned
+  # secondmate home is bound: teardown reports the final outcome upward
+  # through this channel before removing durable records.
+  {
+    printf 'schema=fm-secondmate-parent.v1\nroute=local\n'
+    printf 'parent_home=%s\n' "$parent"
+  } > "$mate/.fm-secondmate-parent"
+  # Register the mate in the parent before any teardown runs, the way
+  # provisioning does: teardown resolves this registration when it reports
+  # the final outcome upward and when it reconciles public-followup state.
+  printf -- '- sample-mate - synthetic scope (home: %s; scope: sample reviews; projects: sample; added 2026-07-14)\n' \
+    "$mate" > "$parent/data/secondmates.md"
+  fm_write_secondmate_meta "$parent/state/sample-mate.meta" "$mate" \
+    "firstmate:fm-sample-mate" sample
   cat > "$mate/data/backlog.md" <<'EOF'
 ## In flight
 
@@ -442,10 +458,6 @@ EOF
     || fail "secondmate investigation teardown failed: $(cat "$mate/teardown.err")"
   tasks_in "$mate" "done" "$origin" --report "data/$origin/report.md" --keep 0 >/dev/null
 
-  printf -- '- sample-mate - synthetic scope (home: %s; scope: sample reviews; projects: sample; added 2026-07-14)\n' \
-    "$mate" > "$parent/data/secondmates.md"
-  fm_write_secondmate_meta "$parent/state/sample-mate.meta" "$mate" \
-    "firstmate:fm-sample-mate" sample
   json=$(run_bearings "$parent") || fail "parent Bearings could not read secondmate hold"
   printf '%s' "$json" | jq -e --arg hold "$hold" '
     .decisions_open | any(.owner == "sample-mate" and .verb == "captain-hold" and (.id | endswith($hold)))
