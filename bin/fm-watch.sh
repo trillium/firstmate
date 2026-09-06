@@ -82,6 +82,23 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-wake-memo.sh
+. "$SCRIPT_DIR/fm-wake-memo.sh"
+
+# Wake-drain memo consult for the stale/heartbeat triage below (memo format owned
+# by bin/fm-wake-memo.sh). memo_cite_suffix prints " (memo: <citation>)" when an
+# identical wake was previously absorbed or reconciled, else prints nothing and
+# always exits 0, so a miss - genuinely new, pending, or previously actioned -
+# keeps the exact log line and verdict it has today. The consult only ever
+# annotates an absorb the triage already chose; it never overrides a surface
+# decision, and stale consults use the canonical "stale: <window>" payload that
+# matches what a surfaced stale for the same window would queue.
+memo_cite_suffix() {  # <kind> <key> <payload>
+  local cite
+  cite=$(fm_memo_consult "$1" "$2" "$3" 2>/dev/null) || cite=
+  [ -n "$cite" ] || return 0
+  printf ' (%s)' "$cite"
+}
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -360,7 +377,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
   case "$since" in
     ''|*[!0-9]*)
       date +%s > "$since_file"
-      triage_log "absorbed $label timer reset: $win"
+      triage_log "absorbed $label timer reset: $win$(memo_cite_suffix stale "$win" "stale: $win")"
       ;;
     *)
       age=$(( $(date +%s) - since ))
@@ -571,7 +588,8 @@ handle_paused_stale() {  # <window> <task> <hash>
     date +%s > "$rf"
     wake "$reason"
   fi
-  triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win"
+  fm_memo_record stale "$win" "stale: $win" reconciled-idle || true
+  triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win$(memo_cite_suffix stale "$win" "stale: $win")"
 }
 
 clear_pause_state() {  # <window>
@@ -1431,7 +1449,8 @@ EOF
             if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
-              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+              fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
+              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w$(memo_cite_suffix stale "$w" "stale: $w")"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
               printf '%s' "$h" > "$sf"
@@ -1471,7 +1490,8 @@ EOF
                 clear_pause_tracking "$w"
                 printf '%s' "$h" > "$sf"
                 date +%s > "$ssf"
-                triage_log "absorbed non-terminal stale (provably working): $w"
+                fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
+                triage_log "absorbed non-terminal stale (provably working): $w$(memo_cite_suffix stale "$w" "stale: $w")"
                 ;;
               paused)
                 handle_paused_stale "$w" "$task" "$h"
@@ -1487,8 +1507,9 @@ EOF
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$w"
                          printf '%s' "$h" > "$sf"
+                         fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf"
-                         triage_log "absorbed non-terminal stale (provably working): $w" ;;
+                         triage_log "absorbed non-terminal stale (provably working): $w$(memo_cite_suffix stale "$w" "stale: $w")" ;;
                 *)       handle_paused_stale "$w" "$task" "$h" ;;
               esac
             else
@@ -1557,9 +1578,11 @@ EOF
       mark_all_captain_relevant_surfaced
       wake "heartbeat"
     else
+      hb_payload=$(parlay_heartbeat_payload)
+      fm_memo_record heartbeat heartbeat "$hb_payload" absorbed-benign || true
       touch "$STATE/.last-heartbeat"
       echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
-      triage_log "absorbed heartbeat (no captain-relevant change)"
+      triage_log "absorbed heartbeat (no captain-relevant change)$(memo_cite_suffix heartbeat heartbeat "$hb_payload")"
     fi
   fi
 
