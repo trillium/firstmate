@@ -1171,6 +1171,7 @@ test_default_backend_backlog_json_has_no_beads_fields() {
     (.backlog | has("source") | not) and (.backlog | has("fleet_label") | not)
   ' >/dev/null || fail "default-backend backlog_json must stay byte-identical: unexpected beads-only field: $out"
   pass "default backend backlog_json carries no beads-only fields"
+}
 # Home-summary validity treats persistent secondmates as registered homes, not
 # in-flight children. They have no backlog rows, so they must not produce
 # unowned_current or terminal_in_flight. Ordinary crew/ship metas still do.

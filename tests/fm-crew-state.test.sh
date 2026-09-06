@@ -2452,6 +2452,7 @@ test_beads_backend_guard_tasks_axi_ignores_closed_bead() {
   assert_contains "$out" "source: status-log" "tasks-axi backend falls through to existing logic"
   assert_contains "$out" "state: working" "existing status-log verb governs under tasks-axi"
   pass "tasks-axi backend ignores a closed bead (config-gated)"
+}
 # Mint a descendant of <repo>'s HEAD in a separate clone, echoing its full sha.
 # The task copy never receives the new object, which is exactly the incident
 # shape: the pipeline committed its fix round in its own checkout, so the run
