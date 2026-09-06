@@ -590,10 +590,12 @@ run_session_start() {
   if [ -n "$pi_harness" ]; then
     env -u CLAUDECODE -u GROK_AGENT PI_CODING_AGENT=true FM_PI_HARNESS="$pi_harness" \
       FM_HOME="$home" FM_ROOT_OVERRIDE="$root" PATH="$path" \
+      PARLAY_AGENT_HOME="$home/.parlay/agents" \
       "$SESSION_START"
   else
     env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
       FM_HOME="$home" FM_ROOT_OVERRIDE="$root" PATH="$path" \
+      PARLAY_AGENT_HOME="$home/.parlay/agents" \
       "$SESSION_START"
   fi
 }
@@ -2638,6 +2640,145 @@ BLOCK
   pass "session start PARLAY section truncates HOLD lines to 80 chars"
 }
 
+# --- parlay recorded agents in the fleet-state digest -----------------------
+# run_session_start pins PARLAY_AGENT_HOME=$home/.parlay/agents, so these fixtures are
+# hermetic and never touch the developer's real ~/.parlay store.
+
+make_parlay_agent_fixture() {  # <store-root> <id> <name> <model> <cwd> <status-line>
+  local agents_root=$1 id=$2 name=$3 model=$4 cwd=$5 status_line=$6 dir
+  dir="$agents_root/$id"
+  mkdir -p "$dir"
+  cat > "$dir/identity.md" <<EOF
+---
+id: $id
+name: "$name"
+color: "#e11d48"
+model: $model
+cwd: $cwd
+mode: branch
+kind: claude
+yolo: on
+---
+EOF
+  date '+%s' > "$dir/session-start"
+  printf '%s\n' "$status_line" > "$dir/status"
+}
+
+stub_parlay_binary() {  # <fakebin> - sweep only (exit 0, nothing held)
+  cat > "$1/parlay" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = sweep ] || exit 0
+exit 0
+SH
+  chmod +x "$1/parlay"
+}
+
+test_parlay_records_surfaces_spawned_agents() {
+  local rec root home fakebin out fleet_line parlay_line rec_line
+  rec=$(new_world parlay-records)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  stub_parlay_binary "$fakebin"
+
+  # rsync_fixture: two parlay-recorded helpers firstmate never spawned as .meta.
+  make_parlay_agent_fixture "$home/.parlay/agents" helper-alpha "Helper Alpha" \
+    sonnet "/Users/trilliumsmith/.treehouse/pai-hooks-0d0b8e/3/pai-hooks" \
+    "working: analyzing the codebase"
+  make_parlay_agent_fixture "$home/.parlay/agents" helper-beta "Helper Beta" \
+    haiku "/Users/trilliumsmith" "done: ready in branch parlay/dybs-prefix"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "Parlay recorded agents" \
+    "fleet-state digest did not print the Parlay recorded agents subsection"
+  assert_contains "$out" "--- helper-alpha (Helper Alpha) ---" \
+    "digest did not surface helper-alpha with its name"
+  assert_contains "$out" "endpoint: parlay:helper-alpha (parlay-managed, not a firstmate task)" \
+    "digest did not mark helper-alpha as a parlay endpoint"
+  assert_contains "$out" "state: working" \
+    "digest did not carry helper-alpha's status-file state"
+  assert_contains "$out" "workdir: /Users/trilliumsmith/.treehouse/pai-hooks-0d0b8e/3/pai-hooks" \
+    "digest did not carry helper-alpha's working directory"
+  assert_contains "$out" "age: " \
+    "digest did not carry an age for helper-alpha"
+  assert_contains "$out" "model: sonnet" \
+    "digest did not carry helper-alpha's model"
+  assert_contains "$out" "state: done" \
+    "digest did not read helper-beta's terminal state from its status file"
+
+  # The subsection lives inside FLEET STATE, before the PARLAY hold section.
+  fleet_line=$(printf '%s\n' "$out" | grep -n '^FLEET STATE$' | head -1 | cut -d: -f1)
+  rec_line=$(printf '%s\n' "$out" | grep -n '^Parlay recorded agents' | head -1 | cut -d: -f1)
+  parlay_line=$(printf '%s\n' "$out" | grep -n '^PARLAY$' | head -1 | cut -d: -f1)
+  [ -n "$rec_line" ] || fail "Parlay recorded agents subsection missing: $out"
+  [ "$rec_line" -gt "$fleet_line" ] || fail "parlay records subsection not inside FLEET STATE"
+  [ -n "$parlay_line" ] && [ "$rec_line" -lt "$parlay_line" ] \
+    || fail "parlay records subsection did not precede the PARLAY hold section"
+
+  pass "session-start FLEET STATE surfaces parlay-recorded agents with endpoint, state, age, workdir"
+}
+
+test_parlay_records_none_when_store_empty() {
+  local rec root home fakebin out
+  rec=$(new_world parlay-records-none)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  stub_parlay_binary "$fakebin"
+  mkdir -p "$home/.parlay/agents"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_contains "$out" "Parlay recorded agents" \
+    "subsection missing when parlay store exists but is empty"
+  assert_contains "$out" "(none)" \
+    "empty parlay store did not print (none)"
+
+  pass "session start prints (none) for an installed-but-empty parlay store"
+}
+
+test_parlay_records_absent_when_no_store() {
+  local rec root home fakebin out
+  rec=$(new_world parlay-records-absent)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  stub_parlay_binary "$fakebin"
+  # No $home/.parlay directory is created: parlay installed, never used.
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  assert_not_contains "$out" "Parlay recorded agents" \
+    "digest printed the parlay records subsection when parlay has no store"
+
+  pass "session start stays silent about parlay when no store exists"
+}
+
+test_parlay_records_absent_when_binary_missing() {
+  local rec root home fakebin out
+  rec=$(new_world parlay-records-nobin)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  # Deliberately no parlay stub in fakebin; also no store dir.
+
+  out=$(run_session_start "$home" "$root" "$fakebin:/usr/bin:/bin")
+
+  assert_not_contains "$out" "Parlay recorded agents" \
+    "digest printed the parlay records subsection when parlay binary is absent"
+
+  pass "session start stays silent about parlay when the binary is absent"
+}
+
 test_context_digest_absent_empty_present
 test_persona_tracked_default_printed
 test_persona_local_override_supersedes_default
@@ -2692,5 +2833,9 @@ test_parlay_section_with_held_agents
 test_parlay_section_none_held
 test_parlay_section_absent_when_no_binary
 test_parlay_section_truncates_long_lines
+test_parlay_records_surfaces_spawned_agents
+test_parlay_records_none_when_store_empty
+test_parlay_records_absent_when_no_store
+test_parlay_records_absent_when_binary_missing
 
 echo "# fm-session-start.test.sh: all assertions passed"

@@ -162,6 +162,9 @@ validate_positive_bound FM_SNAPSHOT_BEADS_TIMEOUT "$FM_SNAPSHOT_BEADS_TIMEOUT"
 # shellcheck source=bin/fm-beads-resilience-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
+# shellcheck source=bin/fm-parlay-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-parlay-lib.sh"  # fm_parlay_store_present, fm_parlay_agent_records
 # shellcheck source=bin/fm-timeout-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound
@@ -1503,6 +1506,28 @@ secondmate_landed_from_current_json() {  # <secondmate-current-json>
     | .records |= sort_by([(.completion.date // ""), .id]) | .records |= reverse'
 }
 
+parlay_records_json() {
+  local out
+  if ! fm_parlay_store_present; then
+    jq -n '[]'
+    return 0
+  fi
+  out=$(fm_parlay_agent_records)
+  if [ -z "$out" ]; then
+    jq -n '[]'
+    return 0
+  fi
+  printf '%s\n' "$out" | jq -R -s '
+    [ splits("\n") | select(length > 0)
+      | capture("^(?<id>[^\t]*)\t(?<name>[^\t]*)\t(?<model>[^\t]*)\t(?<workdir>[^\t]*)\t(?<age>[^\t]*)\t(?<state>[^\t]*)$")
+      | {id:.id, name:.name, model:.model,
+         workdir:(.workdir | if . == "" then null else . end),
+         state:(.state // "unknown"),
+         age_seconds:(.age | if . == "unknown" then null else tonumber end),
+         endpoint:("parlay:" + .id),
+         source:"parlay-store"} ] | sort_by(.id)'
+}
+
 scout_report_lines() {
   local report id
   if [ ! -d "$DATA" ]; then
@@ -1528,6 +1553,8 @@ if [ "$OUTPUT_MODE" = secondmate-home-summary ]; then
 fi
 
 SCOUT_REPORTS_JSON=$(scout_report_lines)
+PARLAY_RECORDS_JSON=$(parlay_records_json) \
+  || { echo "fm-fleet-snapshot: parlay record inventory failed" >&2; exit 1; }
 MAIN_INVENTORY_JSON=$(main_inventory_json "$BACKLOG_JSON" "$TASKS_JSON") \
   || { echo "fm-fleet-snapshot: main inventory summary failed" >&2; exit 1; }
 SECONDMATE_CURRENT_JSON=$(secondmate_current_json "$TASKS_JSON") \
@@ -1546,6 +1573,7 @@ jq -n \
   --argjson backlog "$BACKLOG_JSON" \
   --argjson tasks "$TASKS_JSON" \
   --argjson main_inventory "$MAIN_INVENTORY_JSON" \
+  --argjson parlay_records "$PARLAY_RECORDS_JSON" \
   --argjson scout_reports "$SCOUT_REPORTS_JSON" \
   --argjson secondmate_current "$SECONDMATE_CURRENT_JSON" \
   --argjson secondmate_landed "$SECONDMATE_LANDED_JSON" \
@@ -1560,6 +1588,7 @@ jq -n \
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
      main_inventory:$main_inventory,
+     parlay_records:$parlay_records,
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),
      secondmate_current:$secondmate_current,
      secondmate_landed:$secondmate_landed,
