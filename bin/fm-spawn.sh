@@ -454,10 +454,14 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-cursor-lib.sh
+. "$SCRIPT_DIR/fm-cursor-lib.sh"
 # shellcheck source=bin/fm-firstturn-lib.sh
 . "$SCRIPT_DIR/fm-firstturn-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-project-dir-lib.sh
@@ -1535,7 +1539,17 @@ launch_template() {
     # does NOT suppress the interactive ghost text (verified empirically), so the env
     # var is the correct control. The dim-aware composer reader in fm-tmux-lib.sh is
     # the defense-in-depth backstop for any pane this flag cannot reach.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false __CLAUDEBIN__ --dangerously-skip-permissions __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    # Two independent controls disable claude's `/bug`/`/feedback` model-drafted
+    # feedback flow (the SendFeedback tool), deliberately layered so a fleet-launched
+    # agent never queues or submits a bug-report draft on the captain's behalf even
+    # under a managed Claude settings policy: CLAUDE_CODE_SEND_FEEDBACK=0 is read
+    # directly and is not subject to managed-settings precedence, while --settings
+    # '{"feedbackDrafts":"off"}' sets the documented settings key (Claude Code
+    # changelog 2.1.247) that a managed policy CAN override back on. Either control
+    # alone disables the feature; keep both so a managed override of one still
+    # leaves the other in force. Both are per-launch, scoped to this invocation only,
+    # and never touch the captain's global ~/.claude/settings.json.
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 __CLAUDEBIN__ --dangerously-skip-permissions --settings '\''{"feedbackDrafts":"off"}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -3819,8 +3833,22 @@ LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
+case "$HARNESS" in
+  pi|pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
+  cursor) LAUNCH=${LAUNCH//__CURSORBIN__/"$(shell_quote "$CURSOR_BIN")"} ;;
+  gemini) LAUNCH=${LAUNCH//__GEMINISETTINGS__/"$(shell_quote "$STATE_REAL/$ID.gemini-settings.json")"} ;;
+esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
 LAUNCH=${LAUNCH//__CLAUDEBIN__/$CLAUDEBIN}
+# A worker launched from inside another agent's runtime (Cursor, Gemini, Pi)
+# inherits that runtime's identity markers, which the worker's own harness
+# would otherwise read as its own. Clear the foreign markers for every
+# harness that does not deliberately set them (cursor sets its own above).
+case "$HARNESS" in
+  claude|codex|opencode|pi|pi-signed|grok|kimi|gemini|muse|rovo)
+    LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
+    ;;
+esac
 if [ -n "$ACCOUNT" ]; then
   sq_trust_dir=$(shell_quote "$WT")
   LAUNCH="CLAUDE_TRUST_DIR=$sq_trust_dir $LAUNCH"
@@ -4062,6 +4090,63 @@ if [ "$KIND" = secondmate ] && [ "${FM_SKIP_SECONDMATE_INHERIT:-0}" != 1 ]; then
       echo "CONFIG_REREAD: secondmate $ID: cleanup failed; pre-relaunch generations were force-cleared where possible (destination=$PROJ_ABS source=$FM_HOME)" >&2
     fi
   fi
+fi
+
+# This is the commit point: all endpoint and harness delivery that can reject
+# the spawn has succeeded. Re-read and transition while holding the same
+# per-task lock as metadata publication, then and only then report success.
+# BACKLOG_TRANSITION stays 0 here (no backlog preflight on this path yet), so
+# the transition call below is a no-op and this block only retires the fresh
+# provisional record into a committed one the EXIT trap must no longer roll
+# back. A future preflight that sets BACKLOG_TRANSITION=1 also arms the
+# In-flight move performed here under the meta lock.
+BACKLOG_TRANSITION=${BACKLOG_TRANSITION:-0}
+if [ "$SPAWN_META_LOCK_HELD" != 1 ]; then
+  SPAWN_META_LOCK=$(fm_meta_lock_path "$STATE/$ID.meta") || exit 1
+  fm_lock_acquire_wait "$SPAWN_META_LOCK"
+  SPAWN_META_LOCK_HELD=1
+fi
+SPAWN_DEFERRED_SIGNAL=
+if [ "$BACKLOG_TRANSITION" = 1 ]; then
+  trap 'SPAWN_DEFERRED_SIGNAL=HUP' HUP
+  trap 'SPAWN_DEFERRED_SIGNAL=INT' INT
+  trap 'SPAWN_DEFERRED_SIGNAL=TERM' TERM
+fi
+SPAWN_BACKLOG_COMMIT_STATUS=0
+if spawn_commit_backlog_transition; then
+  SPAWN_FRESH_COMMIT_PENDING=0
+else
+  SPAWN_BACKLOG_COMMIT_STATUS=$?
+  if spawn_commit_backlog_transition; then
+    SPAWN_BACKLOG_COMMIT_STATUS=0
+    SPAWN_FRESH_COMMIT_PENDING=0
+  fi
+fi
+if [ "$SPAWN_BACKLOG_COMMIT_STATUS" -ne 0 ]; then
+  if [ "$RELAUNCH" -eq 0 ]; then
+    if spawn_fresh_commit_rollback; then
+      echo "error: task $ID's backlog item could not be moved to In flight ($FM_BACKLOG_TRANSITION_ERROR); its record was removed so no worker is left that the backlog does not own - close out endpoint $T and local copy $WT by hand, then re-run the spawn" >&2
+    else
+      echo "error: task $ID's backlog item could not be moved to In flight ($FM_BACKLOG_TRANSITION_ERROR), and failed-dispatch cleanup is incomplete; the provisional record may remain at $STATE/$ID.meta - close out endpoint $T and local copy $WT by hand, then remove the record and busy state before retrying" >&2
+    fi
+  else
+    echo "error: task $ID was republished but its backlog item could not be moved to In flight ($FM_BACKLOG_TRANSITION_ERROR); fix the backlog and re-run the relaunch" >&2
+  fi
+fi
+trap - HUP INT TERM
+if [ "$SPAWN_BACKLOG_COMMIT_STATUS" -ne 0 ]; then
+  exit "$SPAWN_BACKLOG_COMMIT_STATUS"
+fi
+fm_lock_release "$SPAWN_META_LOCK"
+SPAWN_META_LOCK_HELD=0
+if [ -n "$SPAWN_DEFERRED_SIGNAL" ]; then
+  case "$SPAWN_DEFERRED_SIGNAL" in
+    HUP) SPAWN_DEFERRED_SIGNAL_STATUS=129 ;;
+    INT) SPAWN_DEFERRED_SIGNAL_STATUS=130 ;;
+    TERM) SPAWN_DEFERRED_SIGNAL_STATUS=143 ;;
+  esac
+  echo "error: spawn of $ID was interrupted after launch delivery began; its paired task record and In-flight backlog state were preserved" >&2
+  exit "$SPAWN_DEFERRED_SIGNAL_STATUS"
 fi
 
 # Best-effort Parlay chat-panel enrollment. Optional captain tooling, never

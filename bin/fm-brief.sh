@@ -140,6 +140,8 @@ esac
 . "$SCRIPT_DIR/fm-marker-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-project-dir-lib.sh
 . "$SCRIPT_DIR/fm-project-dir-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
@@ -565,8 +567,7 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 $PARLAY_SECTION
 
-# Task
-{TASK}
+$TASK_SECTION
 
 $HERDR_SECTION
 
@@ -706,8 +707,7 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 $PARLAY_SECTION
 
-# Task
-{TASK}
+$TASK_SECTION
 
 $HERDR_SECTION
 
