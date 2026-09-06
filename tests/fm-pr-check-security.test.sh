@@ -8,10 +8,13 @@ set -u
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-pr-lib.sh"
 # shellcheck source=/dev/null
+. "$ROOT/bin/fm-x-lib.sh"
+# shellcheck source=/dev/null
 . "$ROOT/bin/fm-check-lib.sh"
 
 PR_CHECK="$ROOT/bin/fm-pr-check.sh"
 PR_MERGE="$ROOT/bin/fm-pr-merge.sh"
+MIGRATE="$ROOT/bin/fm-pr-check-migrate.sh"
 POLL="$ROOT/bin/fm-pr-poll.sh"
 WATCH="$ROOT/bin/fm-watch.sh"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
@@ -22,6 +25,7 @@ REAL_CP=$(command -v cp)
 REAL_MV=$(command -v mv)
 REAL_STAT=$(command -v stat)
 REAL_CHMOD=$(command -v chmod)
+REAL_BASENAME=$(command -v basename)
 # The merge path reads a merge request's JSON with the real jq, and BASE_PATH is
 # deliberately restricted, so a case that needs jq exposes this one rather than
 # depending on the host keeping jq in one of those four directories.
@@ -60,79 +64,6 @@ state_snapshot() {
       fi
     done
   )
-}
-
-make_case() {
-  local name=$1 dir fakebin fake_root
-  dir="$TMP_ROOT/$name"
-  fakebin="$dir/fakebin"
-  fake_root="$dir/root"
-  mkdir -p "$dir/home/state" "$dir/home/data" "$dir/home/config" "$dir/wt" "$fakebin" "$fake_root/bin"
-  cat > "$fake_root/bin/fm-guard.sh" <<'SH'
-#!/usr/bin/env bash
-printf 'guard\n' >> "$FM_TEST_GUARD_LOG"
-SH
-  chmod +x "$fake_root/bin/fm-guard.sh"
-  cat > "$fakebin/gh" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
-case " $* " in
-  *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
-  *" api "*)
-    # Emulates gh's own --jq engine already filtering the reviews response to
-    # Bot-authored ids: emit the configured ids verbatim, one per line.
-    case " $* " in
-      *reviews*)
-        [ "${FM_TEST_GH_REVIEWS_FAIL:-0}" = 0 ] || exit 1
-        printf '%s' "${FM_TEST_GH_BOT_REVIEW_IDS:-}"
-        ;;
-    esac
-    ;;
-  *" state "*)
-    [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
-    [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
-    printf '%s\n' "${FM_TEST_GH_STATE:-OPEN}"
-    ;;
-esac
-SH
-  cat > "$fakebin/gh-axi" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
-exit "${FM_TEST_GH_AXI_RC:-0}"
-SH
-  # Plain glab, reproducing the real CLI's contract: its field output on stdout
-  # and exit 0 on success, and a non-zero exit with no stdout on any failure.
-  cat > "$fakebin/glab" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_TEST_GLAB_LOG"
-[ "${FM_TEST_GLAB_FAIL:-0}" = 0 ] || exit 1
-[ "${FM_TEST_GLAB_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GLAB_SLEEP"
-printf 'title:\tfixture merge request\nstate:\t%s\nauthor:\tsomeone\n' "${FM_TEST_GLAB_STATE:-opened}"
-SH
-  chmod +x "$fakebin/gh" "$fakebin/gh-axi" "$fakebin/glab"
-  : > "$dir/gh.log"
-  : > "$dir/gh-axi.log"
-  : > "$dir/glab.log"
-  : > "$dir/guard.log"
-  printf '%s\n' "$dir"
-}
-
-write_task_meta() {
-  local dir=$1 id=${2:-task-a}
-  fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" \
-    "endpoint_task_id=$id" \
-    "worktree=$dir/wt" \
-    "project=$dir/project" \
-    "kind=ship" \
-    "mode=no-mistakes"
-}
-
-write_poll_meta() {
-  local state=$1 id=$2 url=$3
-  fm_write_meta "$state/$id.meta" \
-    "window=fm-$id" \
-    "pr=$url"
 }
 
 write_ambiguous_poll() {
@@ -203,6 +134,7 @@ assert_valid_scan_marker() {
   [ "$(file_mode "$marker")" = 600 ] || fail "migration scan marker mode was not 0600"
   grep -qxF fm-pr-check-migration-scan-v1 "$marker" || fail "migration scan marker bytes were not exact"
   [ "$(awk 'END { print NR + 0 }' "$marker")" -eq 1 ] || fail "migration scan marker had extra records"
+}
 process_is_live_non_zombie() {
   local pid=$1 stat
   kill -0 "$pid" 2>/dev/null || return 1
@@ -303,6 +235,16 @@ case "${1:-} ${2:-}" in
 esac
 case " $* " in
   *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
+  *" api "*)
+    # Emulates gh's own --jq engine already filtering the reviews response to
+    # Bot-authored ids: emit the configured ids verbatim, one per line.
+    case " $* " in
+      *reviews*)
+        [ "${FM_TEST_GH_REVIEWS_FAIL:-0}" = 0 ] || exit 1
+        printf '%s' "${FM_TEST_GH_BOT_REVIEW_IDS:-}"
+        ;;
+    esac
+    ;;
   *" state "*)
     [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
     [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
@@ -1125,6 +1067,56 @@ test_migration_initializes_fresh_state() {
 
 test_private_artifact_paths_refuse_symlinks_and_directories() {
   local artifact kind dir state destination rc
+  for artifact in marker log quarantine; do
+    for kind in regular dangling directory; do
+      dir=$(make_case "migration-path-$artifact-$kind")
+      state="$dir/home/state"
+      case "$artifact" in
+        marker)
+          destination="$state/.pr-check-migration-v1"
+          ;;
+        log)
+          write_ambiguous_poll "$dir"
+          destination="$state/.pr-check-migration.log"
+          ;;
+        quarantine)
+          write_ambiguous_poll "$dir"
+          destination="$state/.pr-check-quarantine"
+          ;;
+      esac
+      make_private_symlink "$dir" "$destination" "$kind"
+      set +e
+      FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+      rc=$?
+      set -e
+      [ "$rc" -ne 0 ] || fail "migration accepted a symlinked private $artifact path"
+      assert_private_symlink_unchanged "$destination"
+      [ ! -e "$state/.pr-check-migration-v1" ] || [ -L "$state/.pr-check-migration-v1" ] \
+        || fail "failed private-path migration published a completion marker"
+    done
+  done
+
+  for artifact in marker log; do
+    dir=$(make_case "migration-path-$artifact-direct-directory")
+    state="$dir/home/state"
+    if [ "$artifact" = marker ]; then
+      destination="$state/.pr-check-migration-v1"
+    else
+      write_ambiguous_poll "$dir"
+      destination="$state/.pr-check-migration.log"
+    fi
+    mkdir "$destination"
+    set +e
+    FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "migration accepted a directory $artifact destination"
+    [ -d "$destination" ] || fail "migration replaced a directory $artifact destination"
+    [ -z "$(find "$destination" -mindepth 1 -maxdepth 1 -print)" ] || fail "migration wrote inside a directory $artifact destination"
+    [ ! -f "$state/.pr-check-migration-v1" ] || fail "failed directory-path migration published a marker"
+  done
+  pass "marker, diagnostic, and quarantine paths refuse symlinks and directories"
+}
 test_poll_publication_refuses_unsafe_destinations() {
   local artifact kind dir state destination
   for artifact in task-a.pr-poll task-a.pr-poll-registration task-a.check.sh; do
