@@ -71,6 +71,14 @@
 FM_BACKEND_HERDR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BACKEND_HERDR_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER=${FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER:-$FM_BACKEND_HERDR_ROOT/bin/backends/herdr-clear-agent-authority.py}
+
+# Herdr lifecycle polling must use the system sleep, not a PATH-resolved
+# wrapper that may be the local guard. Tests override this function to keep
+# timing assertions deterministic.
+fm_backend_herdr_system_sleep() {
+  /bin/sleep "$@"
+}
 
 # Shared composer-content classifier (empty|pending|unknown, and the fleet-wide
 # dead-shell-vs-agent-composer rule). Owned by bin/fm-composer-lib.sh, reused by
@@ -1165,7 +1173,7 @@ fm_backend_herdr_death_close_pane() {  # <session> <pane-id> <shell-pid>
   while [ "$attempt" -lt "$max_attempts" ]; do
     presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
     [ "$presence" = dead ] && return 0
-    sleep 0.05
+    fm_backend_herdr_system_sleep 0.05
     attempt=$((attempt + 1))
   done
   # SIGKILL escalation revalidates exact pane ownership, not just the pid: a
@@ -1179,7 +1187,7 @@ fm_backend_herdr_death_close_pane() {  # <session> <pane-id> <shell-pid>
   while [ "$attempt" -lt "$max_attempts" ]; do
     presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
     [ "$presence" = dead ] && return 0
-    sleep 0.05
+    fm_backend_herdr_system_sleep 0.05
     attempt=$((attempt + 1))
   done
   return 1
@@ -1232,8 +1240,70 @@ fm_backend_herdr_pane_idle_shell_pid() {  # <session> <pane-id>
     fi
     attempt=$((attempt + 1))
     [ "$attempt" -lt "$max_attempts" ] || return 1
-    sleep 0.1
+    fm_backend_herdr_system_sleep 0.1
   done
+}
+
+# fm_backend_herdr_pane_shell_foreground_pid: print the shell pid when Herdr's
+# exact pane process-info contains the recorded shell as its foreground
+# process group and no known agent executable. Herdr can report a short-lived
+# shell helper stack (or a helper such as find) as extra foreground rows, so
+# the stricter lone-process proof above is not suitable for lifecycle-authority
+# repair. A genuine verified agent is still excluded by its executable name or
+# command line; an unreadable pane or missing shell row refuses the repair.
+fm_backend_herdr_pane_shell_foreground_pid() {  # <session> <pane-id>
+  local attempt=0 max_attempts=${FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS:-10}
+  while :; do
+    if fm_backend_herdr_pane_shell_foreground_sample "$1" "$2"; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt "$max_attempts" ] || return 1
+    fm_backend_herdr_system_sleep 0.1
+  done
+}
+
+fm_backend_herdr_pane_shell_foreground_sample() {  # <session> <pane-id>
+  local session=$1 pane=$2 info shell_pid foreground_pgid rows pid name argv0 cmdline base found=0
+  info=$(fm_backend_herdr_cli "$session" pane process-info --pane "$pane" 2>/dev/null) || return 1
+  printf '%s' "$info" | jq -e --arg pane "$pane" '
+    .result.type == "pane_process_info"
+    and .result.process_info.pane_id == $pane
+  ' >/dev/null 2>&1 || return 1
+  shell_pid=$(printf '%s' "$info" | jq -er \
+    '.result.process_info.shell_pid | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
+  foreground_pgid=$(printf '%s' "$info" | jq -er \
+    '.result.process_info.foreground_process_group_id | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
+  [ "$foreground_pgid" = "$shell_pid" ] || return 1
+  rows=$(printf '%s' "$info" | jq -r '
+    .result.process_info.foreground_processes
+    | select(type == "array" and length > 0)[]
+    | [(.pid // ""), (.name // ""), (.argv0 // .argv[0] // ""), (.cmdline // "")]
+    | @tsv
+  ' 2>/dev/null) || return 1
+  [ -n "$rows" ] || return 1
+  while IFS=$'\t' read -r pid name argv0 cmdline; do
+    case "$pid:$name:$argv0" in *[!0-9A-Za-z._/-:]*|:*|*::) return 1 ;; esac
+    base=${name##*/}
+    argv0=${argv0#-}
+    argv0=${argv0##*/}
+    case "$base" in
+      sh|bash|zsh|dash|ksh|fish)
+        [ "$argv0" = "$base" ] || return 1
+        [ "$pid" = "$shell_pid" ] && found=$((found + 1))
+        ;;
+      claude|codex|opencode|pi|grok|kimi|muse)
+        return 1
+        ;;
+      *)
+        case "$cmdline" in
+          claude\ *|*/claude\ *|codex\ *|*/codex\ *|opencode\ *|*/opencode\ *|pi\ *|*/pi\ *|grok\ *|*/grok\ *|kimi\ *|*/kimi\ *|muse\ *|*/muse\ *) return 1 ;;
+        esac
+        ;;
+    esac
+  done <<< "$rows"
+  [ "$found" -eq 1 ] || return 1
+  printf '%s\n' "$shell_pid"
 }
 
 # fm_backend_herdr_pane_idle_shell_sample: one strict instantaneous
@@ -1499,7 +1569,7 @@ fm_backend_herdr_server_ensure() {  # <session>
   for i in $(seq 1 20); do
     running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
     [ "$running" = "true" ] && return 0
-    sleep 0.5
+    fm_backend_herdr_system_sleep 0.5
   done
   echo "error: herdr server for session '$session' did not report running within 10s" >&2
   return 1
@@ -1951,6 +2021,45 @@ fm_backend_herdr_pane_agent_state() {  # <session> <pane_id>
     working|idle|done|blocked) printf 'live' ;;
     *) printf 'unknown' ;;
   esac
+}
+
+# fm_backend_herdr_clear_agent_authority: remove the current pane's lifecycle
+# authority through Herdr's supported control API. This is deliberately not
+# pane.release-agent: Herdr ignores that operation for official lifecycle
+# sources, which is the stale OpenCode registration this repair addresses.
+# The exact pane is selected from the recorded target and the caller proves it
+# is a bare idle shell before invoking this function.
+fm_backend_herdr_clear_agent_authority() {  # <session> <pane_id>
+  local session=$1 pane_id=$2 socket
+  socket=$(fm_backend_herdr_socket_path "$session") || return 1
+  [ -n "$socket" ] || return 1
+  "$FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER" "$socket" "$pane_id" >/dev/null
+}
+
+# fm_backend_herdr_reconcile_stale_agent: clear a stale registration only when
+# the recorded Herdr pane is independently proved to be a bare idle shell.
+# shellcheck disable=SC2034 # the result is consumed by fm-control.sh
+# A live foreground agent never reaches the clear API. The result variable
+# lets the control plane distinguish "not stale" from a failed repair, so it
+# cannot fall through to typing an exit command into an ordinary shell.
+fm_backend_herdr_reconcile_stale_agent() {  # <target>
+  local target=$1 state
+  FM_BACKEND_HERDR_RECONCILE_RESULT=not-stale
+  fm_backend_herdr_parse_target "$target" || return 1
+  if ! fm_backend_herdr_pane_shell_foreground_pid "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" >/dev/null; then
+    return 1
+  fi
+  if ! fm_backend_herdr_clear_agent_authority "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE"; then
+    FM_BACKEND_HERDR_RECONCILE_RESULT=failed
+    return 1
+  fi
+  state=$(fm_backend_herdr_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
+  if [ "$state" = no-agent ]; then
+    FM_BACKEND_HERDR_RECONCILE_RESULT=repaired
+    return 0
+  fi
+  FM_BACKEND_HERDR_RECONCILE_RESULT=failed
+  return 1
 }
 
 # fm_backend_herdr_tab_is_husk: true (0) only for the two conservative husk
@@ -2975,7 +3084,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
   local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 i=0 verdict baseline confirm_sleep
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   fm_backend_herdr_send_literal "$target" "$text" || { printf 'send-failed'; return 0; }
-  sleep "$settle"
+  fm_backend_herdr_system_sleep "$settle"
   baseline=$(fm_backend_herdr_classify_submit_agent_status \
     "$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")")
   confirm_sleep=$(fm_backend_herdr_submit_confirm_budget "$sleep_s")
@@ -2985,7 +3094,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       verdict=$(fm_backend_herdr_wait_for_working "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
         "$confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
     else
-      sleep "$sleep_s"
+      fm_backend_herdr_system_sleep "$sleep_s"
       verdict=$(fm_backend_herdr_composer_state "$target")
     fi
     case "$verdict" in
@@ -3087,7 +3196,7 @@ fm_backend_herdr_kill() {  # <target>
         fi
         break
       fi
-      sleep "$lock_interval"
+      fm_backend_herdr_system_sleep "$lock_interval"
       attempt=$((attempt + 1))
     done
   fi
@@ -3285,7 +3394,7 @@ fm_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <p
   case "$interval" in ''|*[!0-9.]*) interval=0 ;; esac
   for ((i = 0; i < polls; i++)); do
     if [ "$polls" -eq 1 ] || [ "$i" -gt 0 ]; then
-      sleep "$interval"
+      fm_backend_herdr_system_sleep "$interval"
     fi
     raw=$(fm_backend_herdr_agent_status_raw "$session" "$pane_id")
     bs=$(fm_backend_herdr_classify_submit_agent_status "$raw")

@@ -158,7 +158,7 @@ fm_herdr_lab_cancel_provision() { # <pid>
   if kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid" 2>/dev/null || true
     while kill -0 "$pid" 2>/dev/null && [ "$attempt" -lt 10 ]; do
-      sleep 0.1
+      /bin/sleep 0.1
       attempt=$((attempt + 1))
     done
     if kill -0 "$pid" 2>/dev/null; then
@@ -209,7 +209,7 @@ fm_herdr_lab_provision() { # <session>
       }
       return 0
     fi
-    sleep 0.2
+    /bin/sleep 0.2
     attempt=$((attempt + 1))
   done
   fm_herdr_lab_cancel_provision "$server_pid"
@@ -270,7 +270,7 @@ fm_herdr_lab_teardown() { # <session>
     return
   fi
   fm_herdr_lab_stop "$name" >/dev/null 2>&1 || true
-  sleep 0.5
+  /bin/sleep 0.5
   fm_herdr_lab_refuse_if_default "$name" || return 1
   fm_herdr_lab_raw "$name" session delete "$name" --json >/dev/null 2>&1 || delete_status=$?
   sessions=$(fm_herdr_lab_session_list "$name" 2>/dev/null) || {

@@ -298,6 +298,9 @@ fm_control_harness_supported "$HARNESS" \
   || die "task $ID records harness '${RECORDED_HARNESS:-none}', which has no verified control mechanics; fm-control refuses to guess an interrupt key or exit command"
 
 fm_backend_validate "$BACKEND" || exit 1
+# Direct Herdr stale-registration reconciliation below needs the adapter
+# function in this shell, not only inside the state-read command substitution.
+fm_backend_source "$BACKEND" || exit 1
 
 # --- shared helpers ---------------------------------------------------------
 
@@ -323,7 +326,7 @@ wait_agent_state() {  # <timeout> <wanted>...
       fi
     done
     awk -v e="$elapsed" -v t="$timeout" 'BEGIN{exit !(e < t)}' || break
-    sleep "$POLL"
+    /bin/sleep "$POLL"
     elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
   done
   printf '%s' "$state"
@@ -353,7 +356,7 @@ send_interrupt_keys() {
     fm_backend_send_key "$BACKEND" "$T" "$key" "$LABEL" \
       || die "interrupt key $key was not delivered to task $ID on $BACKEND"
     i=$((i + 1))
-    [ "$i" -ge "$repeat" ] || sleep 0.2
+    [ "$i" -ge "$repeat" ] || /bin/sleep 0.2
   done
   [ -z "$clear" ] || fm_backend_send_key "$BACKEND" "$T" "$clear" "$LABEL" \
     || die "interrupt key $key reached task $ID, but $clear did not, so its composer still holds the cancelled prompt; clear it before the next lifecycle action"
@@ -385,7 +388,7 @@ interrupt_cancel_claim() {
       ?*) printf 'unconfirmed'; return 0 ;;
     esac
     awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
-    sleep "$POLL"
+    /bin/sleep "$POLL"
     elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
   done
   printf 'unconfirmed'
@@ -445,6 +448,23 @@ do_exit() {
     missing) die "task $ID's recorded endpoint is gone, so there is no agent to stop; reconcile the task before any further control action" ;;
     *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle command into an unattributed endpoint" ;;
   esac
+  # Herdr can retain an official lifecycle registration after OpenCode has
+  # returned to an ordinary shell. Prove that exact pane is a bare idle shell
+  # and clear only its stale authority before any exit text is sent; a genuine
+  # foreground agent never enters this repair path.
+  if [ "$BACKEND" = herdr ]; then
+    fm_backend_herdr_reconcile_stale_agent "$T" || true
+    case "${FM_BACKEND_HERDR_RECONCILE_RESULT:-not-stale}" in
+      repaired)
+        retire_busy_incarnation
+        printf 'stopped'
+        return 0
+        ;;
+      failed)
+        die "task $ID's Herdr pane is an idle shell with stale lifecycle authority, but that authority could not be cleared; refusing to type an exit command into the shell"
+        ;;
+    esac
+  fi
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
