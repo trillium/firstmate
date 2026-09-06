@@ -150,9 +150,11 @@ test_marked_slash_lookalikes_still_send() {
 
   # Only a body whose FIRST character is the slash can be a command. Prose that
   # merely contains or is indented before one is ordinary text and must still go.
+  # On the inbox plane that means the prose is recorded verbatim in the record;
+  # only the doorbell is typed.
   run_send "$fb" "$home" "$log" "fm-domain" "see /Users/x/log for the failure"; rc=$?
   expect_code 0 "$rc" "prose containing a path should still send"
-  got=$(cat "$log")
+  got=$(record_body "$home/state/domain.inbox/001.msg")
   case "$got" in
     *"see /Users/x/log for the failure") : ;;
     *) fail "prose containing a path was altered"$'\n'"$got" ;;
@@ -160,6 +162,11 @@ test_marked_slash_lookalikes_still_send() {
 
   run_send "$fb" "$home" "$log" "fm-domain" " /exit is what I typed"; rc=$?
   expect_code 0 "$rc" "leading-blank prose should still send"
+  got=$(record_body "$home/state/domain.inbox/002.msg")
+  case "$got" in
+    *" /exit is what I typed") : ;;
+    *) fail "leading-blank prose was altered"$'\n'"$got" ;;
+  esac
   pass "fm-send: only a leading-slash body is refused; slash-bearing prose is unaffected"
 }
 
@@ -218,11 +225,13 @@ test_marked_dollar_prose_and_noncodex_still_send() {
 
   # The refusal is codex-scoped: on claude a leading '$' only ever starts prose,
   # so even a skill-shaped '$no-mistakes' body must be delivered, not refused.
+  # Non-codex '$' text rides the inbox plane, so the body is asserted on the
+  # recorded steer, not the typed doorbell.
   home=$(setup_home dollar-claude)
   fm_write_secondmate_meta "$home/state/domain.meta" "$home" "sess:fm-domain" alpha claude
   run_send "$fb" "$home" "$log" "fm-domain" "\$no-mistakes"; rc=$?
   expect_code 0 "$rc" "a '\$no-mistakes' body to a non-codex secondmate should still send"
-  got=$(cat "$log")
+  got=$(record_body "$home/state/domain.inbox/001.msg")
   case "$got" in
     *"\$no-mistakes") : ;;
     *) fail "non-codex '\$no-mistakes' body was altered or dropped"$'\n'"$got" ;;
@@ -254,6 +263,7 @@ test_unmarked_targets_still_accept_slash_commands() {
   got=$(cat "$log")
   [ "$got" = "/exit" ] || fail "explicit-endpoint slash command was altered"$'\n'"$got"
   pass "fm-send: crewmate and explicit-endpoint slash commands are unaffected by the refusal"
+}
 # The exact enqueued text of one inbox record, read through the production
 # owner (bin/fm-task-inbox-lib.sh). Command substitution strips trailing
 # newlines, so byte-exact trailing assertions read the raw record instead.
