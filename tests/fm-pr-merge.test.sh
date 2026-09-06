@@ -205,6 +205,10 @@ add_gh_coderabbit_mock() {
   cat > "$case_dir/fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+case "${1:-} ${2:-}" in
+  "pr merge") printf 'merged:\n  number: %s\n  status: ok\n' "${3:-}" ;;
+  "pr view") printf 'pull_request:\n  number: %s\n  state: %s\n' "$3" "${FM_TEST_GH_MERGE_STATE:-merged}" ;;
+esac
 exit 0
 SH
   cat > "$case_dir/fakebin/gh" <<SH
@@ -241,6 +245,7 @@ fi
 exit 0
 SH
   chmod +x "$case_dir/fakebin/gh-axi" "$case_dir/fakebin/gh"
+}
 # gh mock that still answers fm-pr-check.sh's head lookup but cannot answer the
 # outcome read, so a merge call that returned success is followed by a live
 # state nothing can prove. Args: case_dir head_sha
@@ -872,7 +877,14 @@ case "${1:-} ${2:-}" in
     cat "$FM_TEST_GH_OUTCOME"
     exit 0
     ;;
-  api\ *) exit 1 ;;
+  # Only the branch-rules read is broken in this scenario: review-state reads
+  # must still answer (empty, i.e. no CodeRabbit artifacts) so the failure the
+  # test pins stays the unreadable rules response, not a review-state outage.
+  api\ *)
+    case "$*" in
+      *reviews*|*comments*) exit 0 ;;
+    esac
+    exit 1 ;;
 esac
 exit 0
 SH
@@ -939,7 +951,10 @@ SH
   : > "$case_dir/gh-axi.log"
 
   set +e
-  PATH="$ghless_path" run_pr_merge "$case_dir" task-x1 \
+  # No gh on this path, so the CodeRabbit review read cannot run: waive it
+  # deliberately (the documented FM_CODERABBIT_GATE=skip case) to pin the
+  # queue-unobservable refusal this scenario owns.
+  PATH="$ghless_path" FM_CODERABBIT_GATE=skip run_pr_merge "$case_dir" task-x1 \
     https://github.com/example/repo/pull/73 -- --auto --merge \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
@@ -1068,7 +1083,10 @@ test_github_without_gh_still_uses_gh_axi_merge() {
   : > "$case_dir/gh-axi.log"
 
   set +e
-  PATH="$ghless_path" run_pr_merge "$case_dir" task-x1 \
+  # No gh on this path, so the CodeRabbit review read cannot run: waive it
+  # deliberately (the documented FM_CODERABBIT_GATE=skip case) to pin the
+  # gh-axi fallback verification this scenario owns.
+  PATH="$ghless_path" FM_CODERABBIT_GATE=skip run_pr_merge "$case_dir" task-x1 \
     https://github.com/example/repo/pull/60 \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
@@ -1103,7 +1121,10 @@ SH
   : > "$case_dir/gh-axi.log"
 
   set +e
-  PATH="$ghless_path" run_pr_merge "$case_dir" task-x1 \
+  # No gh on this path, so the CodeRabbit review read cannot run: waive it
+  # deliberately (the documented FM_CODERABBIT_GATE=skip case) to pin the
+  # failed-fallback-read bookkeeping this scenario owns.
+  PATH="$ghless_path" FM_CODERABBIT_GATE=skip run_pr_merge "$case_dir" task-x1 \
     https://github.com/example/repo/pull/61 \
     > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
@@ -1533,6 +1554,10 @@ test_unarmable_poll_still_merges_and_reports() {
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   : > "$case_dir/gh-axi.log"
+  # No CodeRabbit artifacts in this scenario: an empty rules read means the
+  # review-state check finds nothing and passes the gate as absent, so the
+  # arming-blocked recording path below is what the test exercises.
+  : > "$case_dir/github-rules"
   # A private quarantine that is not a directory blocks the non-executing PR
   # check migration even in the --checks-safe mode fm-pr-check.sh uses, so the
   # poll cannot be armed while recording stays possible.
