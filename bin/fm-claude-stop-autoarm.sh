@@ -137,26 +137,56 @@ fi
 # --- single-flight owner claim ------------------------------------------------
 # Claude runs one background process per firing with no dedupe. Exactly one
 # owner foregrounds the arm and translates its close; every other firing exits
-# 0 so one watcher cycle maps to at most one exit-2 rewake.
-fm_lock_try_acquire "$OWNER_LOCK" || exit 0
+# 0 so one watcher cycle maps to at most one exit-2 rewake. A lock held by a
+# claim proven abandoned (dead, identity-mismatched, or stuck owner, or an
+# already-terminal ledger outcome) is reclaimed once so a lapsed cycle re-arms
+# instead of deferring to a finished owner forever; any other contention
+# still defers. The proof and its serialization live in bin/fm-wake-lib.sh.
+if ! fm_lock_try_acquire "$OWNER_LOCK"; then
+  fm_autoarm_release_abandoned "$STATE" "$GRACE" || exit 0
+  fm_lock_try_acquire "$OWNER_LOCK" || exit 0
+fi
+# A live open generation claim keeps the gate closed with no lock held: the
+# ledger alone defers a concurrent firing while its owner is alive,
+# identity-matched, and not stuck. Our own arming entries carry no identity
+# line, so this never defers to itself - only to a foreign open claim.
+if fm_autoarm_claim_open "$STATE" "$GRACE"; then
+  fm_lock_release "$OWNER_LOCK"
+  exit 0
+fi
 if ! fm_lock_set_role "$OWNER_LOCK" autoarm; then
   fm_lock_release "$OWNER_LOCK"
   exit 0
 fi
 trap 'fm_lock_release "$OWNER_LOCK"' EXIT
 
+# One firing owns one ledger generation: the arming write below takes the
+# next sequence, and every later outcome write of this firing reuses it, so a
+# firing never advances the ledger past its own successor. A superseded firing
+# must not write at all (its close belongs to the successor generation), so a
+# pinned outcome write re-verifies ownership first and silently skips when
+# another process owns the ledger now. Callers already gate on
+# autoarm_still_mine at the retry boundary and after each close; this is the
+# backstop for the writes past those gates.
+MY_EPOCH_GEN=
 write_epoch() {  # <outcome>
   local outcome=$1 seq tmp
-  seq=$(sed -n 's/^epoch=\([0-9][0-9]*\) .*/\1/p' "$EPOCH" 2>/dev/null || true)
-  case "$seq" in
-    ''|*[!0-9]*) seq=0 ;;
-  esac
-  seq=$((seq + 1))
+  if [ -n "$MY_EPOCH_GEN" ]; then
+    autoarm_still_mine || return 0
+    seq=$MY_EPOCH_GEN
+  else
+    seq=$(sed -n 's/^epoch=\([0-9][0-9]*\) .*/\1/p' "$EPOCH" 2>/dev/null || true)
+    case "$seq" in
+      ''|*[!0-9]*) seq=0 ;;
+    esac
+    seq=$((seq + 1))
+  fi
   tmp="$EPOCH.tmp.$$"
   printf 'epoch=%s owner_pid=%s outcome=%s updated_at=%s\n' \
     "$seq" "${BASHPID:-$$}" "$outcome" "$(date +%s)" > "$tmp" 2>/dev/null \
     && mv -f "$tmp" "$EPOCH" 2>/dev/null
   rm -f "$tmp" 2>/dev/null || true
+  [ -n "$MY_EPOCH_GEN" ] || MY_EPOCH_GEN=$seq
 }
 
 write_epoch arming
@@ -197,7 +227,25 @@ HEALTHY=0
 REARMS=0
 attempt=0
 
+# A superseded owner must go silent instead of arming, mutating shared state,
+# or emitting: the ledger's latest owner is no longer this process, so this
+# firing's close belongs to the successor generation now. Owner-pid comparison
+# (not generation) fits this hook's multi-write epoch pattern, where every own
+# write keeps this pid as owner: any other owner means a successor advanced
+# the ledger past us. Checked at every retry boundary and after every arm
+# close, before any side effect of the iteration.
+autoarm_still_mine() {
+  local me
+  me=${BASHPID:-$$}
+  fm_autoarm_ledger_read "$STATE" 2>/dev/null || return 1
+  [ -n "$FM_AUTOARM_OWNER" ] && [ "$FM_AUTOARM_OWNER" = "$me" ]
+}
+
 while :; do
+  if ! autoarm_still_mine; then
+    drop_output
+    exit 0
+  fi
   attempt=$((attempt + 1))
   OUT=$(mktemp "$STATE/.claude-autoarm-output.XXXXXX") || OUT=
   if [ -n "$OUT" ]; then
@@ -206,6 +254,12 @@ while :; do
   else
     "$SCRIPT_DIR/fm-watch-arm.sh" >/dev/null 2>&1
     RC=$?
+  fi
+  # Superseded while the arm ran: the close belongs to the successor's
+  # generation now. Same silence as the retry boundary above.
+  if ! autoarm_still_mine; then
+    drop_output
+    exit 0
   fi
 
   # AFK may have appeared mid-cycle: the daemon owns triage now, so suppress the
@@ -281,8 +335,24 @@ fi
 
 # A live successor genuinely survived the close: benign. Reset the failure
 # episode so a later genuine failure starts a fresh bounded progression.
+# Owner-mutex contention defers first: when another live process holds the
+# auto-arm owner lock, this firing is not the owner, so it must neither
+# delete that episode's state nor record a clean bill for it. A stale or
+# unreadable holder is not contention: the blocks lock inside the reset below
+# still guards the destructive step, exactly as before.
+autoarm_owner_contended() {
+  local lock pid cur
+  lock="$STATE/.claude-autoarm.lock"
+  [ -e "$lock" ] || [ -L "$lock" ] || return 1
+  pid=$(cat "$lock/pid" 2>/dev/null || true)
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  fm_current_pid cur || return 1
+  [ "$pid" != "$cur" ] || return 1
+  fm_pid_alive "$pid" || return 1
+  return 0
+}
 if [ "$HEALTHY" -eq 1 ]; then
-  if fm_failure_episode_reset "$STATE"; then
+  if ! autoarm_owner_contended && fm_failure_episode_reset "$STATE"; then
     write_epoch clean
     drop_output
     exit 0

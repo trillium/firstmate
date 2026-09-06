@@ -559,12 +559,17 @@ test_unverified_clean_close_exhausts_retries() {
   dir=$(make_primary_dir "$TMP_ROOT/unverified-clean")
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" clean
-  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a non-actionable close without a healthy watcher must fail closed"
-  assert_contains "$out" "automatic supervision mechanism is broken" "unverified close must report automatic failure"
-  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "unverified close must exhaust exactly two bounded attempts"
-  [ "$(epoch_outcome "$dir")" = failed ] || fail "epoch must record outcome=failed, got: $(epoch_outcome "$dir")"
-  pass "auto-arm: unverified clean close exhausts retries and fails closed"
+  # Fork semantics: an unverified quiet close re-arms on a bounded budget
+  # rather than failing fast, then reports lost continuity loudly. Bound the
+  # budget tight so the test stays fast while pinning exactly that shape.
+  export FM_AUTOARM_MAX_REARMS=1
+  out=$(run_autoarm "$dir" 2>&1); status=$?
+  unset FM_AUTOARM_MAX_REARMS
+  expect_code 2 "$status" "an unverified quiet close must fail closed, never exit 0 silently"
+  assert_contains "$out" "continuity LOST" "unverified close must report lost continuity"
+  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "unverified close must bound re-arms, saw $(wc -l < "$dir/state/arm-ran" | tr -d ' ') arms"
+  [ "$(epoch_outcome "$dir")" = rewake ] || fail "epoch must record outcome=rewake, got: $(epoch_outcome "$dir")"
+  pass "auto-arm: unverified clean close re-arms boundedly, then alarms instead of dying silently"
 }
 
 # The reported defect: a harness stop kills the arm and its watcher, the arm
