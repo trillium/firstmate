@@ -706,18 +706,6 @@ $held
 EOF
 }
 
-hash_file() {
-  local file=$1
-  [ -f "$file" ] || return 1
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$file" | awk '{print "sha256:" $1}'
-  elif command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$file" | awk '{print "sha256:" $1}'
-  else
-    cksum "$file" | awk '{print "cksum:" $1 ":" $2}'
-  fi
-}
-
 hash_file_sha256() {
   local file=$1 digest
   [ -f "$file" ] || return 1
