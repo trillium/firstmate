@@ -333,14 +333,21 @@ fi
 # without creating a repeated operator notice or manual-arm loop.
 if [ ! -e "$FAILURE_NOTICE" ]; then
   write_epoch failed
-  {
-    printf 'firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after %s bounded attempts, and no live watcher with a fresh beacon was verified.\n' "$attempt"
-    [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
-    printf 'Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.\n'
-  } >&2
-  : > "$FAILURE_NOTICE" 2>/dev/null || true
+  if : > "$FAILURE_NOTICE" 2>/dev/null; then
+    {
+      printf 'firstmate watcher auto-arm FAILED - the Stop-owned automatic supervision mechanism is broken after %s bounded attempts, and no live watcher with a fresh beacon was verified.\n' "$attempt"
+      [ -n "$OUT" ] && grep -E '^(watcher:|signal:|stale:|check:|heartbeat)' "$OUT" 2>/dev/null | head -8
+      printf 'Do not launch a manual background arm from this notice; investigate the automatic Stop hook and watcher startup before ending blind.\n'
+    } >&2
+    drop_output
+    exit 2
+  fi
+  # The notice could not be recorded, so delivering it now would risk a
+  # duplicate when a successor retries: refuse delivery (exit 0) and leave
+  # the failed epoch for the next run, which delivers exactly once after it
+  # commits the marker itself.
   drop_output
-  exit 2
+  exit 0
 fi
 write_epoch failed-suppressed
 drop_output

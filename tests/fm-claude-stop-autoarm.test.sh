@@ -495,6 +495,20 @@ test_failed_close_rewakes_with_failure_banner() {
 # asserts "adapter re-arm owns continuity" on that close, and for a Claude primary
 # this hook IS that adapter - so it must confirm the claim, not assume it.
 test_quiet_close_with_live_watcher_exits_silently() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/clean")
+  install_healthy_watcher_helper "$dir"
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" clean
+  FM_HOME="$dir" "$dir/bin/mk-healthy-watcher.sh"
+  out=$(run_autoarm "$dir" 2>/dev/null); status=$?
+  kill_fake_watcher "$dir"
+  expect_code 0 "$status" "a quiet arm close behind a live healthy watcher must not rewake"
+  [ -z "$out" ] || fail "quiet close behind a live watcher produced output: $out"
+  [ "$(epoch_outcome "$dir")" = clean ] || fail "epoch must record outcome=clean, got: $(epoch_outcome "$dir")"
+  [ "$(arm_run_count "$dir")" = 1 ] || fail "verified continuity must not re-arm, saw $(arm_run_count "$dir") arms"
+  pass "auto-arm: quiet close with a verified live watcher exits silently with a clean epoch"
+}
 test_failed_cycles_notify_once_and_keep_retrying() {
   local dir out1 out2 status1 status2
   dir=$(make_primary_dir "$TMP_ROOT/failed-dedup")
@@ -542,18 +556,15 @@ test_failure_notice_marker_write_refuses_delivery_and_retries() {
 
 test_unverified_clean_close_exhausts_retries() {
   local dir out status
-  dir=$(make_primary_dir "$TMP_ROOT/clean")
-  install_healthy_watcher_helper "$dir"
+  dir=$(make_primary_dir "$TMP_ROOT/unverified-clean")
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" clean
-  FM_HOME="$dir" "$dir/bin/mk-healthy-watcher.sh"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  kill_fake_watcher "$dir"
-  expect_code 0 "$status" "a quiet arm close behind a live healthy watcher must not rewake"
-  [ -z "$out" ] || fail "quiet close behind a live watcher produced output: $out"
-  [ "$(epoch_outcome "$dir")" = clean ] || fail "epoch must record outcome=clean, got: $(epoch_outcome "$dir")"
-  [ "$(arm_run_count "$dir")" = 1 ] || fail "verified continuity must not re-arm, saw $(arm_run_count "$dir") arms"
-  pass "auto-arm: quiet close with a verified live watcher exits silently with a clean epoch"
+  expect_code 2 "$status" "a non-actionable close without a healthy watcher must fail closed"
+  assert_contains "$out" "automatic supervision mechanism is broken" "unverified close must report automatic failure"
+  [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "unverified close must exhaust exactly two bounded attempts"
+  [ "$(epoch_outcome "$dir")" = failed ] || fail "epoch must record outcome=failed, got: $(epoch_outcome "$dir")"
+  pass "auto-arm: unverified clean close exhausts retries and fails closed"
 }
 
 # The reported defect: a harness stop kills the arm and its watcher, the arm
