@@ -38,12 +38,13 @@ It removes divergence entirely, but it requires binding Dolt past loopback and l
 
 Use option A, a Dolt remote on a private git remote that the captain designates, and keep the local store as the single write authority with sync as a durability and availability step.
 
-The destination is the captain's decision and has not been made, so no remote is configured.
+The destination is the captain's decision: since 2026-09-06 that is mini1, reached over Tailscale at the `mini1` Dolt remote, and the local store remains the single write authority with sync as a durability step.
 Adding a Dolt remote publishes the task store to that destination, and the store carries the fleet's own working notes, so firstmate does not choose where that lands.
-Until a destination is approved, the routine sync sweep reports that the store is single-machine only and does nothing else.
+The routine sync sweep pushes to the configured remote when it answers and names the single-machine posture out loud only when no remote is configured.
 
 The captain needs to answer one question: which git remote should hold the fleet's task data.
 A private repository the captain already owns is the expected answer, and a self-hosted or LAN-only Dolt remote is equally workable if publishing to a hosted forge is unwanted.
+The approved mini1 copy is kept healthy by [`bin/fm-beads-remote-backup.sh`](../bin/fm-beads-remote-backup.sh), which re-verifies and repairs the wiring (remote present, push works, permissions private) and is suitable for the routine sync sweep to call; that script's header owns its exact contract.
 
 ## Provisioning a machine that has no store
 
