@@ -42,8 +42,8 @@ The destination is the captain's decision: since 2026-09-06 that is mini1, reach
 Adding a Dolt remote publishes the task store to that destination, and the store carries the fleet's own working notes, so firstmate does not choose where that lands.
 The routine sync sweep pushes to the configured remote when it answers and names the single-machine posture out loud only when no remote is configured.
 
-The captain needs to answer one question: which git remote should hold the fleet's task data.
-A private repository the captain already owns is the expected answer, and a self-hosted or LAN-only Dolt remote is equally workable if publishing to a hosted forge is unwanted.
+The captain answered the one open question, which git remote should hold the fleet's task data, by designating mini1.
+A private repository the captain already owned was the expected hosted answer, and a self-hosted or LAN-only Dolt remote was the equally workable alternative where publishing to a hosted forge was unwanted.
 The approved mini1 copy is kept healthy by [`bin/fm-beads-remote-backup.sh`](../bin/fm-beads-remote-backup.sh), which re-verifies and repairs the wiring (remote present, push works, permissions private) and is suitable for the routine sync sweep to call; that script's header owns its exact contract.
 
 ## Provisioning a machine that has no store
@@ -55,5 +55,5 @@ A remote account that has never run beads has no store and often no `task` wrapp
 Provisioning always uses `bd bootstrap`, which is the non-destructive verb; `bd init --force` is never run against a store.
 Firstmate additionally refuses to bootstrap whenever the store already answers a read, because bootstrap's own detection inspects the `.beads/` directory and reports a healthy Dolt server-mode store as absent, which would create a fresh empty database beside the live one.
 
-Once a destination is approved, a machine provisioned this way inherits the fleet's history through that remote rather than starting an island store.
-Until then, a newly provisioned machine holds its own independent store, which is why the sync sweep names the single-machine posture out loud rather than passing silently.
+With a destination approved, a machine provisioned this way inherits the fleet's history through that remote rather than starting an island store.
+Before that decision, a newly provisioned machine held its own independent store, which is why the sync sweep names the single-machine posture out loud rather than passing silently.

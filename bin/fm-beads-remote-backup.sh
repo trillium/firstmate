@@ -83,6 +83,7 @@ for arg in "$@"; do
 done
 
 command -v "$TASK_BIN" >/dev/null 2>&1 || { say "missing: task CLI not found ($TASK_BIN)"; exit 1; }
+command -v "$CURL_BIN" >/dev/null 2>&1 || { say "missing: curl binary not found ($CURL_BIN)"; exit 1; }
 
 if ! "$TASK_BIN" sql "select 1" >/dev/null 2>&1; then
   say "unreachable: the local task store does not answer a read; repair the store before its backup"

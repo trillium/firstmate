@@ -25,6 +25,7 @@ cat > "$FAKEBIN/task" <<'SH'
 #!/usr/bin/env bash
 FIXDIR="${TASK_FIXTURE_DIR:?}"
 printf '%s\n' "$*" >> "$FIXDIR/argv.log"
+printf '%s\n' "$*" >> "$FIXDIR/argv.all.log"
 mode=$(cat "$FIXDIR/mode")
 if [ "$1" = "sql" ]; then
   q=$2
@@ -76,6 +77,7 @@ chmod +x "$FAKEBIN/curl"
 export TASK_FIXTURE_DIR="$TMP_ROOT/fixture/state"
 mkdir -p "$TASK_FIXTURE_DIR"
 export LOCAL_FIXTURE_HASH=$LOCAL_HASH REMOTE_FIXTURE_HASH=$LOCAL_HASH REMOTE_FIXTURE_URL=$REMOTE_URL
+: > "$TASK_FIXTURE_DIR/argv.all.log"
 
 set_fixture() {
   printf '%s' "$1" > "$TASK_FIXTURE_DIR/mode"
@@ -162,7 +164,7 @@ pass "--help exits 0"
 
 # --- safety contract: forbidden operations never appear -------------------------------
 for token in --force "bd init" "remote remove" "drop database"; do
-  grep -Fq -- "$token" "$TASK_FIXTURE_DIR/argv.log" \
+  grep -Fq -- "$token" "$TASK_FIXTURE_DIR/argv.all.log" \
     && fail "forbidden operation reached the task CLI: $token"
 done
 pass "no force-push, init, remote removal, or database drop in any scenario"
