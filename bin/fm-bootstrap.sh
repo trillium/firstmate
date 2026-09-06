@@ -1526,40 +1526,6 @@ detect_local_tools() {
   fi
 }
 
-detect_local_config() {
-  # Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
-  # default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the
-  # primary only; detached-HEAD worktrees and secondmate homes never trip it.
-  tangle_branch=$(fm_primary_tangle_branch "$FM_ROOT" 2>/dev/null || true)
-  if [ -n "$tangle_branch" ]; then
-    tangle_default=$(fm_default_branch "$FM_ROOT" 2>/dev/null || echo main)
-    if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" = 1 ] && [ "${FM_BOOTSTRAP_LOCKED:-0}" != 1 ]; then
-      echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - read-only session must leave restore work to the session holding the fleet lock"
-    else
-      echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
-    fi
-  fi
-  crew=
-  [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
-  if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != "default" ]; then
-    echo "BOOTSTRAP_INFO: crew harness override active: $crew"
-  fi
-  # A configured cursor crew harness needs a cursor executable present, and
-  # cursor ships under EITHER installed name. Resolution runs through the
-  # verified owner rather than a bare `command -v`, so a home that merely has
-  # some unrelated executable named `agent` on PATH is still reported missing
-  # instead of failing at the first spawn.
-  if [ "$crew" = cursor ] && ! fm_cursor_resolve_binary >/dev/null 2>&1; then
-    echo "MISSING_MANUAL: cursor-agent (instructions: $(manual_install_url cursor-agent))"
-  fi
-  crew_dispatch_validate
-  if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
-    && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
-    echo "BOOTSTRAP_INFO: tasks-axi available"
-  fi
-  detect_home_summary_publication
-}
-
 # This home's ledger publication is deliberately best-effort: every lifecycle
 # trigger calls it with --best-effort so a failure can never change the result
 # of a session start, a spawn, a teardown, or a watcher poll. That is correct,
@@ -1623,6 +1589,7 @@ detect_home_summary_publication() {
 # fleet_sync and others assign plain names like `start` without `local`, and
 # bash's dynamic scoping would let them overwrite a stamp held by a caller.
 local_phase && detect_local_tools
+local_phase && detect_home_summary_publication
 if network_phase; then
   __fm_timing_stamp=$(fm_timing_now_ms)
   gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
@@ -1651,6 +1618,14 @@ crew=
 [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
 if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != "default" ]; then
   echo "BOOTSTRAP_INFO: crew harness override active: $crew"
+fi
+# A configured cursor crew harness needs a cursor executable present, and
+# cursor ships under EITHER installed name. Resolution runs through the
+# verified owner rather than a bare `command -v`, so a home that merely has
+# some unrelated executable named `agent` on PATH is still reported missing
+# instead of failing at the first spawn.
+if [ "$crew" = cursor ] && ! fm_cursor_resolve_binary >/dev/null 2>&1; then
+  echo "MISSING_MANUAL: cursor-agent (instructions: $(manual_install_url cursor-agent))"
 fi
 # crew_dispatch_validate and the backlog-backend validation below emit local
 # diagnostics only, so they are gated on local_phase; the network-only deferred

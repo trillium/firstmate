@@ -535,8 +535,8 @@ worker_publish_result() { # <job-dir> <exit>
 }
 
 worker_run_with_timeout() { # <job-dir> <epoch-deadline> <timeout-seconds> <command> [args...]
-  local job=$1 deadline=$2 timeout=$3 group_file armed_file group_pid rc tmp now window soft_deadline next_heartbeat attempt
-  local timed_out=0 heartbeat_failed=0
+  local job=$1 deadline=$2 timeout=$3 group_file armed_file group_pid rc tmp now window soft_deadline next_check attempt
+  local timed_out=0 cancelled=0
   WORKER_PREEMPTED=0
   shift 3
   group_file="$job/.claim/group"
@@ -616,7 +616,7 @@ worker_run_with_timeout() { # <job-dir> <epoch-deadline> <timeout-seconds> <comm
     *) window=$((deadline - now)) ;;
   esac
   soft_deadline=$((SECONDS + window - 1))
-  next_heartbeat=$((SECONDS + 1))
+  next_check=$((SECONDS + 1))
   while worker_process_or_group_alive group "$group_pid"; do
     if [ "$SECONDS" -ge "$soft_deadline" ]; then
       # Validate this read before comparing it, for the same reason the gate
