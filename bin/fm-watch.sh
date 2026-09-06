@@ -588,8 +588,9 @@ handle_paused_stale() {  # <window> <task> <hash>
     date +%s > "$rf"
     wake "$reason"
   fi
+  memo_suffix=$(memo_cite_suffix stale "$win" "stale: $win")
   fm_memo_record stale "$win" "stale: $win" reconciled-idle || true
-  triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win$(memo_cite_suffix stale "$win" "stale: $win")"
+  triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win$memo_suffix"
 }
 
 clear_pause_state() {  # <window>
@@ -1449,8 +1450,9 @@ EOF
             if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
+              memo_suffix=$(memo_cite_suffix stale "$w" "stale: $w")
               fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
-              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w$(memo_cite_suffix stale "$w" "stale: $w")"
+              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w$memo_suffix"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
               printf '%s' "$h" > "$sf"
@@ -1490,8 +1492,9 @@ EOF
                 clear_pause_tracking "$w"
                 printf '%s' "$h" > "$sf"
                 date +%s > "$ssf"
+                memo_suffix=$(memo_cite_suffix stale "$w" "stale: $w")
                 fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
-                triage_log "absorbed non-terminal stale (provably working): $w$(memo_cite_suffix stale "$w" "stale: $w")"
+                triage_log "absorbed non-terminal stale (provably working): $w$memo_suffix"
                 ;;
               paused)
                 handle_paused_stale "$w" "$task" "$h"
@@ -1507,9 +1510,10 @@ EOF
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$w"
                          printf '%s' "$h" > "$sf"
-                         fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
+                         memo_suffix=$(memo_cite_suffix stale "$w" "stale: $w")
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf"
-                         triage_log "absorbed non-terminal stale (provably working): $w$(memo_cite_suffix stale "$w" "stale: $w")" ;;
+                         fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
+                         triage_log "absorbed non-terminal stale (provably working): $w$memo_suffix" ;;
                 *)       handle_paused_stale "$w" "$task" "$h" ;;
               esac
             else
@@ -1579,10 +1583,11 @@ EOF
       wake "heartbeat"
     else
       hb_payload=$(parlay_heartbeat_payload)
+      hb_memo_suffix=$(memo_cite_suffix heartbeat heartbeat "$hb_payload")
       fm_memo_record heartbeat heartbeat "$hb_payload" absorbed-benign || true
       touch "$STATE/.last-heartbeat"
       echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
-      triage_log "absorbed heartbeat (no captain-relevant change)$(memo_cite_suffix heartbeat heartbeat "$hb_payload")"
+      triage_log "absorbed heartbeat (no captain-relevant change)$hb_memo_suffix"
     fi
   fi
 
