@@ -55,6 +55,19 @@ jobs:
         # is the accurate statement and serves as a restore checklist. Do not weaken
         # tests to make them pass.
 
+  provenance:
+    name: Fork-feature provenance guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify registered fork features
+        run: |
+          set -u
+          bash provenance/check.sh
+        # Expected: this check will fail if a registered fork feature was deleted
+        # or its approved behavior changed. That failure is the accurate statement.
+        # Do not weaken the register to make it pass.
+
   # Deterministic proof that portable parallel shards + portable serial + Herdr
   # equal the complete tests/*.test.sh inventory with no missing or duplicates,
   # and that the portable serial CI shards partition that serial lane exactly.
