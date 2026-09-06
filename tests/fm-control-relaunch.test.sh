@@ -1274,7 +1274,63 @@ test_spawn_relaunch_refuses_contradicting_flags() {
   out=$(run_spawn "$dir" rl16 "$dir/proj" --relaunch); rc=$?
   expect_code 1 "$rc" "a project positional should be refused alongside --relaunch"
   assert_contains "$out" "takes the task id only" "the refusal should name the positional rule"
+  out=$(run_spawn "$dir" rl16 --relaunch --account 2); rc=$?
+  expect_code 1 "$rc" "--account should be refused alongside --relaunch"
+  assert_contains "$out" "recorded claude account" "the refusal should name the recorded account rule"
   pass "fm-spawn --relaunch: every identity axis comes from the record, and a contradicting flag refuses"
+}
+
+# A claude task's account= is its CREDENTIAL: account=N selects the config store
+# bin/claude-account.sh launches against. A relaunch that dropped it fell the
+# replacement agent back to the machine's default Claude account, which on an
+# org-restricted machine killed every relaunched worker at launch.
+test_spawn_relaunch_restores_the_recorded_claude_account() {
+  local dir out
+  dir=$(new_case spawnaccount rl22)
+  add_ship_task "$dir" rl22 claude
+  echo 'account=3' >> "$dir/home/state/rl22.meta"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl22 --relaunch --harness claude)
+  assert_contains "$out" "spawned rl22 harness=claude" "the relaunch should have launched"
+  [ "$(meta_field "$dir" rl22 account)" = 3 ] \
+    || fail "a relaunch must keep the recorded account, got '$(meta_field "$dir" rl22 account)'"
+  assert_grep "claude-account.sh' 3" "$dir/fake/literal" \
+    "the replacement should launch through claude-account.sh with the recorded account"
+  pass "fm-spawn --relaunch: the recorded claude account survives into the replacement's record and launch"
+}
+
+# The restore is guarded by an independent read of the record, so a record that
+# cannot yield the account it plainly carries refuses loudly instead of quietly
+# launching claude on the machine default.
+test_spawn_relaunch_refuses_an_account_that_did_not_survive_restore() {
+  local dir out rc
+  dir=$(new_case spawnaccountlost rl23)
+  add_ship_task "$dir" rl23 claude
+  printf 'account=3\naccount=\n' >> "$dir/home/state/rl23.meta"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl23 --relaunch --harness claude); rc=$?
+  expect_code 1 "$rc" "an account that did not survive the restore should refuse"
+  assert_contains "$out" "did not survive the relaunch restore" \
+    "the refusal should name the lost credential"
+  assert_no_grep 'claude-account.sh' "$dir/fake/literal" \
+    "nothing should have launched after the credential refusal"
+  pass "fm-spawn --relaunch: a recorded account that does not survive the restore refuses instead of launching"
+}
+
+# account= is claude-only, so moving the task onto another harness leaves the
+# credential behind rather than tripping the --account harness check.
+test_spawn_relaunch_leaves_the_account_behind_on_a_harness_switch() {
+  local dir out
+  dir=$(new_case spawnaccountswitch rl24)
+  add_ship_task "$dir" rl24 claude
+  echo 'account=3' >> "$dir/home/state/rl24.meta"
+  printf 'zsh' > "$dir/fake/command"
+  printf 'codex' > "$dir/fake/becomes"
+  out=$(run_spawn "$dir" rl24 --relaunch --harness codex --model gpt-5-codex)
+  assert_contains "$out" "spawned rl24 harness=codex" "the harness switch should have launched"
+  assert_no_grep '^account=' "$dir/home/state/rl24.meta" \
+    "a relaunch onto a non-claude harness should not carry the claude account"
+  pass "fm-spawn --relaunch: a harness switch leaves the claude-only account behind"
 }
 
 test_spawn_relaunch_refuses_an_unrecorded_task() {
@@ -1344,3 +1400,6 @@ test_spawn_relaunch_refuses_a_live_agent
 test_spawn_relaunch_refuses_contradicting_flags
 test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree
+test_spawn_relaunch_restores_the_recorded_claude_account
+test_spawn_relaunch_refuses_an_account_that_did_not_survive_restore
+test_spawn_relaunch_leaves_the_account_behind_on_a_harness_switch
