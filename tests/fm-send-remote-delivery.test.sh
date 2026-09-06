@@ -698,33 +698,33 @@ test_remote_send_budget_bounds_busy_lane() {
   pass "fm-send remote: the remote leg is budget-bounded and stays idempotent across the bound"
 }
 
-test_local_secondmate_pending_keeps_expectation_armed() {
-  local dir fb log home rc rec corr
+test_local_secondmate_slash_is_refused() {
+  local dir fb log home rc err
   dir="$TMP_ROOT/local-pending-expectation"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_home local-pending-expectation)
   fm_write_meta "$home/state/lsm.meta" \
     "window=sess:fm-lsm" "harness=claude" "kind=secondmate" "mode=secondmate" "home=$home/sm"
 
-  # A harness-native slash invocation keeps the typed plane for a LOCAL marked
-  # secondmate target, so this pins the kept armed-expectation semantics there.
+  # A harness-native slash invocation to a LOCAL marked secondmate target would
+  # reach the harness as marker-prefixed prose and never execute as a command,
+  # while a typed submit reported success (robots-u7gu). The fork refuses it
+  # loudly instead: no typing, no pending-reply residue, recovery guidance on
+  # stderr. Armed-expectation typed-plane semantics stay pinned by the
+  # explicit-target test above, which never carries the marker.
   : > "$log"
   rc=0
   env PATH="$fb:$PATH" FM_FAKE_TMUX_PENDING=1 \
     FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
-    "$SEND" lsm "/audit the ledger" >/dev/null 2>&1 || rc=$?
-  expect_code 3 "$rc" "an unconfirmed local secondmate submit must exit delivered-unconfirmed"
-  rec=$(pending_record "$home")
-  [ -n "$rec" ] \
-    || fail "the pending-reply expectation must survive an unconfirmed local secondmate send"
-  [ "$(fm_pending_reply_get "$rec" phase)" = awaiting_report ] \
-    || fail "the surviving expectation must stay armed, got $(fm_pending_reply_get "$rec" phase)"
-  # Armed means resolvable: the mate's correlated report still closes it.
-  corr=$(fm_pending_reply_get "$rec" corr_id)
-  printf 'done [corr=%s]: ledger clean\n' "$corr" > "$home/state/lsm.status"
-  fm_pending_reply_try_resolve "$home/state" "$corr" \
-    || fail "a correlated report must still resolve the preserved expectation"
-  pass "fm-send local: an unconfirmed secondmate send keeps its reply expectation armed"
+    "$SEND" lsm "/audit the ledger" >"$dir/out" 2>"$dir/err" || rc=$?
+  err=$(cat "$dir/err")
+  expect_code 1 "$rc" "a slash command to a local secondmate must be refused"
+  [ ! -s "$log" ] || fail "refused slash command still typed text into the composer"$'\n'"$(od -An -c "$log")"
+  assert_contains "$err" "/audit" "refusal should name the slash command"
+  assert_contains "$err" "fm-teardown.sh" "refusal should name the close path"
+  [ -z "$(pending_record "$home")" ] \
+    || fail "refused slash command left a pending-reply expectation behind"
+  pass "fm-send local: a marked secondmate slash is refused, never silently typed as prose"
 }
 
 test_local_pending_reports_delivered_unconfirmed() {
@@ -791,6 +791,6 @@ test_remote_transport_loss_preserves_expectation
 test_remote_send_budget_bounds_busy_lane
 test_local_pending_reports_delivered_unconfirmed
 test_local_pending_does_not_close_resolve_key
-test_local_secondmate_pending_keeps_expectation_armed
+test_local_secondmate_slash_is_refused
 
 echo "all fm-send-remote-delivery tests passed"
