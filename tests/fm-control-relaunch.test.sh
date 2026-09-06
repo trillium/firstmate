@@ -117,7 +117,8 @@ SH
   chmod +x "$fb/tmux"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
-exit 0
+printf 'bare sleep is forbidden in control/relaunch paths\n' >&2
+exit 97
 SH
   chmod +x "$fb/sleep"
 }
@@ -1171,12 +1172,12 @@ test_concurrent_relaunch_is_refused() {
     # shellcheck source=/dev/null
     . "$ROOT/bin/fm-wake-lib.sh"
     fm_lock_try_acquire "$lock" || exit 1
-    sleep 30
+    /bin/sleep 30
   ) &
   holder=$!
   i=0
   while [ ! -e "$lock" ] && [ "$i" -lt 100 ]; do
-    sleep 0.1
+    /bin/sleep 0.1
     i=$((i + 1))
   done
   [ -e "$lock" ] || { kill "$holder" 2>/dev/null; fail "could not stage a held control lock"; }
@@ -1201,11 +1202,11 @@ test_direct_spawn_relaunch_participates_in_the_lifecycle_lock() {
   (
     . "$ROOT/bin/fm-wake-lib.sh"
     fm_lock_try_acquire "$lock" || exit 1
-    sleep 30
+    /bin/sleep 30
   ) &
   holder=$!
   while [ ! -e "$lock" ] && [ "$i" -lt 100 ]; do
-    sleep 0.1
+    /bin/sleep 0.1
     i=$((i + 1))
   done
   [ -e "$lock" ] || fail "could not stage the lifecycle lock"
@@ -1228,11 +1229,11 @@ test_promotion_participates_in_the_lifecycle_lock_before_metadata_resolution() {
   (
     . "$ROOT/bin/fm-wake-lib.sh"
     fm_lock_try_acquire "$lock" || exit 1
-    sleep 30
+    /bin/sleep 30
   ) &
   holder=$!
   while [ ! -e "$lock" ] && [ "$i" -lt 100 ]; do
-    sleep 0.1
+    /bin/sleep 0.1
     i=$((i + 1))
   done
   [ -e "$lock" ] || fail "could not stage the promotion lifecycle lock"

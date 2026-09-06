@@ -1017,7 +1017,7 @@ spawn_herdr_presentation_order_lock_acquire() {
       HERDR_PRESENTATION_ORDER_LOCK_HELD=1
       return 0
     fi
-    sleep "$interval"
+    /bin/sleep "$interval"
     attempt=$((attempt + 1))
   done
   return 1
@@ -2477,7 +2477,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   for _ in $(seq 1 10); do
     relaunch_seen=$(spawn_current_path "$WT_TARGET" || true)
     [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ] || break
-    sleep 0.5
+    /bin/sleep 0.5
   done
   if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
     echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}', not its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
@@ -2557,7 +2557,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     else
       candidate=""
     fi
-    sleep 1
+    /bin/sleep 1
   done
   if [ -z "$WT" ]; then
     echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
@@ -3141,9 +3141,9 @@ if [ -n "$SPAWN_TRACEPARENT" ]; then
     LAUNCH="unset TRACEPARENT; $LAUNCH"
   fi
 fi
-sleep 0.3
+/bin/sleep 0.3
 spawn_send_literal "$T" "$LAUNCH"
-sleep 0.3
+/bin/sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   HERDR_PROJECTION_ABORT_CLEANUP=0
   spawn_herdr_presentation_order_lock_release
