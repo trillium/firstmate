@@ -38,8 +38,9 @@
 #                       X-mode artifact writes, fleet sync) also run only when
 #                       locked; the six network sweeps run in the deferred
 #                       stage rather than this synchronous bootstrap section.
-#   3. wake-drain     - mutates the durable wake queue, so it also only runs
-#                       when locked.
+#   3. wake-drain     - presents durable wakes and advances recovery handling
+#                       state, so it only runs when locked. The local bounded
+#                       inactive-outcome startup scan runs in the deferred worker.
 #   4. supervision-instructions - the one emitted operating block for the
 #                       detected primary harness, after the wake queue and
 #                       before the read-once contract and the digests.
@@ -83,11 +84,14 @@
 # call. The five that did - `gh auth status`, secondmate liveness, secondmate
 # convergence, pending remote handoff delivery, and the fleet-sync fetch - are
 # started as one detached bounded worker right after the lock (step 1) and
-# harvested at step 7 without ever blocking on it. bin/fm-startup-network.sh
-# owns that stage and its safety argument; bin/fm-bootstrap.sh remains the owner
-# of the sweeps themselves and still runs every one of them.
-# The digest is therefore composed from local reads and local subprocesses only,
-# and an unreachable host now delays a reported check rather than the startup.
+# harvested at step 7 without ever blocking on it. The bounded inactive-outcome
+# startup scan joins that worker because its local current-state reads can also
+# be slow. bin/fm-startup-network.sh owns that stage and its safety argument;
+# bin/fm-bootstrap.sh and bin/fm-inactive-reconcile.sh remain the owners of the
+# work itself and still run it.
+# The digest is therefore composed from bounded local reads and local
+# subprocesses only, while slow network or inactive-state reconciliation delays
+# a reported check rather than startup.
 # What this deliberately trades: on a slow network the digest prints "IN
 # PROGRESS" and names exactly which checks are not yet confirmed, instead of
 # waiting for them. It never reports an unconfirmed check as passed.
@@ -130,8 +134,8 @@
 # and all of which are safe to compute without verified lock ownership.
 # It deliberately skips the network-only GitHub-auth probe because a read-only
 # session has no dispatch, spawn, steer, or merge action for that verdict to gate.
-# Only projection cleanup, the six bootstrap mutating sweeps, and the
-# wake-queue drain are skipped.
+# Only projection cleanup, the six bootstrap mutating sweeps, and wake-queue
+# presentation are skipped.
 # The context and fleet-state digests
 # below are always read-only, so they run unconditionally in both modes.
 #
@@ -174,14 +178,16 @@
 # status log path, and AGENTS.md section 8 treats a status line as a wake EVENT
 # rather than current state - bin/fm-crew-state.sh owns current state.
 #
-# RUNTIME BOUND: the digest is now executed on a session-open hook (see
-# bin/fm-sessionstart-run.sh), which blocks session initialization while it
-# runs, so an unbounded digest is no longer merely slow - it can strand a whole
-# session behind one hung subprocess. Every remaining step is local, but local is
-# not the same as bounded: tool version probes, the backlog listing, and the
-# per-task endpoint reads are all unbounded subprocesses. So the whole digest
-# still runs as ONE bounded child of this script (FM_SESSION_START_TIMEOUT,
-# default 120s). The deferred network stage deliberately sits OUTSIDE that bound,
+# RUNTIME BOUND: the digest is now executed through a native session-open
+# adapter (see bin/fm-sessionstart-run.sh), which blocks either hook-driven
+# session initialization or Pi's first provider preflight while it runs, so an
+# unbounded digest is no longer merely slow - it can strand a whole session or
+# first turn behind one hung subprocess. Every remaining step is local, but
+# local is not the same as bounded: tool version probes, the backlog listing,
+# and the per-task endpoint reads are all unbounded subprocesses. So the whole
+# digest still runs as ONE bounded child of this script
+# (FM_SESSION_START_TIMEOUT, default 120s). The deferred network stage
+# deliberately sits OUTSIDE that bound,
 # in its own process group under its own aggregate deadline, so a truncated
 # digest neither waits for it nor orphans it unbounded. The
 # child writes the digest straight to this script's stdout, so everything it
@@ -193,7 +199,7 @@
 # Hosts without timeout, gtimeout, or perl use the shared pure-Bash watchdog, so
 # the digest never runs without the same hard bound and process-group cleanup.
 #
-# Usage: fm-session-start.sh [--reemit]
+# Usage: fm-session-start.sh [--reemit] [--source <source>]
 #   Prints the full ordered digest to stdout and always exits 0: this is a
 #   reporting command, not a gate. A lock refusal is reported as a loud
 #   banner inline, never a silent failure or a non-zero exit that would make
@@ -203,16 +209,29 @@
 #             only lost its context (a /clear or a compaction). Skip the
 #             mutating sweeps that startup already reconciled - the stale Herdr
 #             projection cleanup and bootstrap's six mutating sweeps (fleet
-#             sync, secondmate convergence and liveness, PR-check migration,
-#             pending remote handoff retry, X-mode artifact writes) - and
-#             re-emit the rest. The wake-queue drain is NOT skipped: queued
+#             sync, same-home backlog reconciliation, secondmate convergence and
+#             liveness, pending remote handoff retry, X-mode
+#             artifact writes) - and
+#             re-emit the rest. Wake-queue presentation is NOT skipped: queued
 #             records are this turn's work queue, they arrived after startup,
 #             and a session that owns the lock is exactly the session that must
-#             take them. Lock acquisition still runs, because ownership must be
-#             re-verified rather than assumed: fm-lock.sh already treats a lock
+#             handle and acknowledge them. Lock acquisition still runs, because
+#             ownership must be re-verified rather than assumed: fm-lock.sh already treats a lock
 #             this session's own harness holds as its own, so the re-emit
 #             proceeds, while a lock another live session took meanwhile still
 #             produces the ordinary read-only path.
+#
+#   --source  The native session-open source, supplied only by
+#             fm-sessionstart-run.sh. A genuine `startup` that owns the active
+#             session lock records AGENTS.md's SHA-256 baseline only after the
+#             digest completion record is published, keyed to that lock's
+#             harness pid. No resume, clear, reset, compact, or other rebuild
+#             creates or replaces it. Pi and pi-signed compaction are the only
+#             supported stale-cache rebuild pair: a missing baseline, a baseline
+#             for another harness pid, or a changed hash causes the complete
+#             current AGENTS.md to print before the bulky digest. The baseline
+#             remains immutable so every later drifted compaction refreshes
+#             again, while an equal baseline emits no instruction refresh.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -222,18 +241,31 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 COMPLETION_FILE="$STATE/.session-start-complete"
+AGENTS_BASELINE_FILE="$STATE/.session-start-agents-baseline"
 
 REEMIT=0
-for arg in "$@"; do
-  case "$arg" in
-    --reemit) REEMIT=1 ;;
+SESSION_SOURCE=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --reemit)
+      REEMIT=1
+      shift
+      ;;
+    --source)
+      SESSION_SOURCE=${2:-}
+      if [ "$#" -ge 2 ]; then shift 2; else shift; fi
+      ;;
+    --source=*)
+      SESSION_SOURCE=${1#--source=}
+      shift
+      ;;
     -h|--help)
       sed -n '2,/^set -u$/p' "$SCRIPT_DIR/fm-session-start.sh" | sed 's/^# \{0,1\}//; $d'
       exit 0
       ;;
     *)
-      printf 'fm-session-start: unknown argument: %s\n' "$arg" >&2
-      printf 'usage: fm-session-start.sh [--reemit]\n' >&2
+      printf 'fm-session-start: unknown argument: %s\n' "$1" >&2
+      printf 'usage: fm-session-start.sh [--reemit] [--source <source>]\n' >&2
       exit 2
       ;;
   esac
@@ -252,6 +284,8 @@ stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
 
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
   SESSION_START_BUDGET=${FM_SESSION_START_TIMEOUT:-120}
@@ -265,9 +299,25 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
     # is lost, so the child still runs bounded.
     SESSION_START_STAGE_FILE=/dev/null
   fi
-  fm_run_timed "$SESSION_START_BUDGET" \
-    env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
-    "$SCRIPT_DIR/fm-session-start.sh" "$@"
+  if [ "$REEMIT" -eq 1 ]; then
+    if [ -n "$SESSION_SOURCE" ]; then
+      fm_run_timed "$SESSION_START_BUDGET" \
+        env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
+        "$SCRIPT_DIR/fm-session-start.sh" --reemit --source "$SESSION_SOURCE"
+    else
+      fm_run_timed "$SESSION_START_BUDGET" \
+        env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
+        "$SCRIPT_DIR/fm-session-start.sh" --reemit
+    fi
+  elif [ -n "$SESSION_SOURCE" ]; then
+    fm_run_timed "$SESSION_START_BUDGET" \
+      env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
+      "$SCRIPT_DIR/fm-session-start.sh" --source "$SESSION_SOURCE"
+  else
+    fm_run_timed "$SESSION_START_BUDGET" \
+      env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
+      "$SCRIPT_DIR/fm-session-start.sh"
+  fi
   SESSION_START_RC=$?
   if [ "$SESSION_START_RC" -eq 124 ]; then
     SESSION_START_LAST_STAGE=$(cat "$SESSION_START_STAGE_FILE" 2>/dev/null) || SESSION_START_LAST_STAGE=
@@ -305,6 +355,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-beads-resilience-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-parlay-lib.sh
@@ -666,22 +718,89 @@ hash_file() {
   fi
 }
 
-pi_extension_loaded() {
-  local marker=$1 expected_version=$2 lock=$3 marker_version marker_pid lock_pid
-  [ -f "$marker" ] && [ -f "$lock" ] && [ -n "$expected_version" ] || return 1
-  marker_version=$(sed -n '1p' "$marker")
-  marker_pid=$(sed -n '2p' "$marker")
-  lock_pid=$(sed -n '1p' "$lock")
-  [ -n "$marker_pid" ] || return 1
-  [ "$marker_version" = "$expected_version" ] && [ "$marker_pid" = "$lock_pid" ]
+hash_file_sha256() {
+  local file=$1 digest
+  [ -f "$file" ] || return 1
+  if command -v shasum >/dev/null 2>&1; then
+    digest=$(shasum -a 256 "$file" 2>/dev/null | awk '
+      length($1) == 64 && $1 !~ /[^[:xdigit:]]/ { print "sha256:" $1; found=1; exit }
+      END { if (!found) exit 1 }
+    ') && [ -n "$digest" ] && { printf '%s\n' "$digest"; return 0; }
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest=$(sha256sum "$file" 2>/dev/null | awk '
+      length($1) == 64 && $1 !~ /[^[:xdigit:]]/ { print "sha256:" $1; found=1; exit }
+      END { if (!found) exit 1 }
+    ') && [ -n "$digest" ] && { printf '%s\n' "$digest"; return 0; }
+  fi
+  return 1
 }
+
+# The baseline describes instructions this true session started with, not the
+# most recently emitted instructions. It is intentionally immutable for this
+# lock owner: every later stale-context rebuild needs the current file again.
+write_agents_baseline() {  # <lock-pid> <agents-hash>
+  local lock_pid=$1 agents_hash=$2 tmp
+  [ -n "$lock_pid" ] && [ -n "$agents_hash" ] || return 1
+  tmp=$(mktemp "$STATE/.session-start-agents-baseline.XXXXXX" 2>/dev/null) || return 1
+  if printf '%s\n%s\n' "$lock_pid" "$agents_hash" > "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$AGENTS_BASELINE_FILE" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  return 1
+}
+
+agents_baseline_drifted() {  # <rebuilding-session-pid>
+  local lock_pid=$1 baseline_pid baseline_hash current_hash
+  [ -f "$AGENTS_BASELINE_FILE" ] && [ ! -L "$AGENTS_BASELINE_FILE" ] || return 0
+  baseline_pid=$(sed -n '1p' "$AGENTS_BASELINE_FILE" 2>/dev/null || true)
+  baseline_hash=$(sed -n '2p' "$AGENTS_BASELINE_FILE" 2>/dev/null || true)
+  current_hash=$(hash_file_sha256 "$FM_ROOT/AGENTS.md" 2>/dev/null || true)
+  [ -n "$current_hash" ] || return 0
+  [ "$baseline_pid" = "$lock_pid" ] && [ "$baseline_hash" = "$current_hash" ] && return 1
+  return 0
+}
+
+# Only run-tier source pairs with both a stale native instruction cache and a
+# working Firstmate delivery path arrive here. Claude fresh-reads on reset, and
+# Codex has no tracked interactive reset delivery path.
+agents_refresh_required() {  # <rebuilding-session-pid>
+  local lock_pid=$1
+  case "$PRIMARY_HARNESS:$SESSION_SOURCE" in
+    pi:compact|pi-signed:compact) ;;
+    *) return 1 ;;
+  esac
+  agents_baseline_drifted "$lock_pid"
+}
+
+print_agents_refresh_if_required() {  # <rebuilding-session-pid>
+  local lock_pid=$1
+  agents_refresh_required "$lock_pid" || return 0
+  section "CURRENT AGENTS.md - INSTRUCTION REFRESH"
+  if [ -f "$FM_ROOT/AGENTS.md" ]; then
+    cat <<'EOF'
+The complete on-disk AGENTS.md below supersedes the instruction copy this session
+started with. Apply it as the current Firstmate instruction contract.
+
+EOF
+    cat "$FM_ROOT/AGENTS.md"
+  else
+    printf 'The original AGENTS.md baseline no longer matches, but the current file is absent.\n'
+  fi
+}
+
+AGENTS_START_HASH=
+if [ "$REEMIT" -eq 0 ] && [ "$SESSION_SOURCE" = startup ]; then
+  AGENTS_START_HASH=$(hash_file_sha256 "$FM_ROOT/AGENTS.md" 2>/dev/null || true)
+fi
 
 if [ "$REEMIT" -eq 1 ]; then
   section "SESSION START (CONTEXT RE-EMIT) - $FM_HOME"
   printf 'This session already took the helm at its own startup and has only lost its\n'
   printf 'context. Lock ownership is re-verified and the durable records below are\n'
   printf 'reprinted, but the sweeps startup already reconciled - project clone refresh,\n'
-  printf 'secondmate convergence and liveness, PR-check migration, pending remote handoff\n'
+  printf 'secondmate convergence and liveness, pending remote handoff\n'
   printf 'retry, X-mode artifact writes, and stale Herdr child cleanup - are NOT repeated.\n'
   printf 'Queued wakes ARE still drained: they arrived after startup and are this turn work.\n'
 else
@@ -701,7 +820,7 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '%s\n' "$BAR"
     printf '●  READ-ONLY SESSION - FLEET LOCK OWNERSHIP WAS NOT VERIFIED\n'
     printf '●  %s\n' "$LOCK_OUT"
-    printf '●  Skipping every mutating step: PR-check migration, stale Herdr child cleanup,\n'
+    printf '●  Skipping every mutating step: stale Herdr child cleanup,\n'
     printf '●  secondmate convergence, secondmate liveness, pending remote handoff retry,\n'
     printf '●  X-mode artifacts, fleet sync, and wake-queue drain. Detect-only bootstrap\n'
     printf '●  diagnostics and the rest of this read-only-safe digest still ran below.\n'
@@ -710,14 +829,24 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '%s\n' "$BAR"
   }
 fi
+REBUILDING_SESSION_PID=$(fm_harness_ancestry_pid 2>/dev/null || true)
+print_agents_refresh_if_required "$REBUILDING_SESSION_PID"
+
 if [ "$READ_ONLY" -eq 0 ]; then
   if [ "$REEMIT" -eq 0 ]; then
     rm -f "$COMPLETION_FILE" 2>/dev/null || true
   fi
   fm_trace_context_session_start "$CONFIG" "$STATE/.trace-context-effective"
-  # Every network call this session start owes is launched HERE, detached and
-  # bounded, so it runs concurrently with the whole digest below instead of in
-  # front of it. Step 7 harvests whatever it has finished, without ever waiting.
+  # A full locked start publishes this home's current structured summary.
+  # Publication is side-band and best-effort, so it can never change the
+  # session-start result. A context re-emit is not another session start.
+  if [ "$REEMIT" -eq 0 ]; then
+    "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
+  fi
+  # Every network call and the potentially slow inactive-outcome startup scan
+  # are launched HERE, detached and bounded, so they run concurrently with the
+  # whole digest below instead of in front of it. Step 7 harvests whatever has
+  # finished, without ever waiting.
   # --reemit passes --locked 0 for the same reason it runs bootstrap detect-only:
   # this process already ran the mutating sweeps at its own startup, so only the
   # read-only GitHub-auth probe is owed. A read-only session starts nothing at
@@ -754,14 +883,18 @@ else
   printf '(silent - all good)\n'
 fi
 
-# --- 3. wake-drain -------------------------------------------------------
-# Drained records are this turn's first work queue, and the drain's separate
-# OPEN DECISIONS section remains actionable even when that queue is empty
-# (AGENTS.md sections 3 and 8).
+# --- 3. wake-drain ---------------------------------------------------------
+# The inactive-outcome startup scan runs in the deferred worker launched above,
+# where its potentially slow current-state reads cannot block this digest. It
+# publishes findings through the same durable queue drained here; the watcher's
+# separate 900-second cadence remains unchanged.
+# Presented records are this turn's first work queue and remain durable until
+# post-handling acknowledgement. The drain's separate OPEN DECISIONS section
+# remains actionable even when that queue is empty (AGENTS.md sections 3 and 8).
 # The drain also runs fm-guard.sh internally on the locked path, so the
 # tangle/watcher-liveness alarms land right here too, ahead of the bulk digest
 # below. The read-only path never touches the queue because it lacks mutation
-# authority, and another session may be actively draining it. It still runs
+# authority, and another session may be actively handling it. It still runs
 # fm-guard.sh directly with non-mutating advisory text, so the same alarms
 # surface without repair commands.
 stage wake-queue
@@ -773,6 +906,19 @@ if [ "$READ_ONLY" -eq 1 ]; then
   GUARD_OUT=$(FM_GUARD_READ_ONLY=1 "$SCRIPT_DIR/fm-guard.sh" 2>&1)
   [ -n "$GUARD_OUT" ] && printf '%s\n' "$GUARD_OUT"
 else
+  # Pi supervision-branch recovery, locked path only: clear leases whose
+  # supervising session died, and surface outcomes the branch stored durably
+  # that never reached main (docs/pi-supervision-branch.md). Gated to the
+  # pi/pi-signed primary so a non-Pi home runs neither step - homes on any
+  # other harness stay entirely untouched (captain-decided criterion).
+  if [ "$PRIMARY_HARNESS" = pi ] || [ "$PRIMARY_HARNESS" = pi-signed ]; then
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-lease.sh" sweep 2>/dev/null || true
+    BRANCH_REPLAY_OUT=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      "$SCRIPT_DIR/fm-branch-outcome.sh" startup-replay 2>&1) || BRANCH_REPLAY_OUT=
+    if [ -n "$BRANCH_REPLAY_OUT" ]; then
+      printf '%s\n' "$BRANCH_REPLAY_OUT"
+    fi
+  fi
   DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
   if [ -n "$DRAIN_OUT" ]; then
     printf '%s\n' "$DRAIN_OUT"
@@ -796,10 +942,10 @@ if [ "$PRIMARY_HARNESS" = pi ] || [ "$PRIMARY_HARNESS" = pi-signed ]; then
   PI_LOCK="$STATE/.lock"
   PI_RESTART_COMMAND=$PRIMARY_HARNESS
   [ "$PRIMARY_HARNESS" != pi ] || PI_RESTART_COMMAND='plain pi'
-  PI_WATCH_VERSION=$(hash_file "$PI_EXT" || printf '')
-  PI_TURNEND_VERSION=$(hash_file "$PI_TURNEND_EXT" || printf '')
-  if ! pi_extension_loaded "$PI_WATCH_MARKER" "$PI_WATCH_VERSION" "$PI_LOCK" \
-    || ! pi_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
+  PI_WATCH_VERSION=$(fm_pi_extension_version "$PI_EXT" || printf '')
+  PI_TURNEND_VERSION=$(fm_pi_extension_version "$PI_TURNEND_EXT" || printf '')
+  if ! fm_pi_extension_loaded "$PI_WATCH_MARKER" "$PI_WATCH_VERSION" "$PI_LOCK" \
+    || ! fm_pi_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
     printf 'PI_WATCH_EXTENSION: not loaded - approve Pi project trust once per clone, then restart %s so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project hooks are not trusted\n' "$PI_RESTART_COMMAND" "$PI_TURNEND_EXT" "$PI_EXT" "$PI_TURNEND_EXT" "$PI_EXT"
   fi
 fi
@@ -931,11 +1077,12 @@ if fm_pf_relay_active "$FM_HOME" \
   && { fm_pf_has_registrations "$STATE" || fm_pf_has_events "$STATE"; }; then
   PUBLIC_FOLLOWUP=$("$SCRIPT_DIR/fm-public-followup.sh" pending 2>/dev/null) || PUBLIC_FOLLOWUP=
   if [ -n "$PUBLIC_FOLLOWUP" ]; then
-    subsection "Public commitments awaiting delivery"
+    subsection "Public commitments"
     printf '%s\n' "$PUBLIC_FOLLOWUP"
-    printf '\nEach line is a public reply this home still owes. Reconcile terminal results with\n'
-    printf '%s/bin/fm-public-followup.sh consume, then deliver a ready one with\n' "$FM_ROOT"
-    printf '%s/bin/fm-public-followup.sh deliver <id>. Load fmx-respond for the procedure.\n' "$FM_ROOT"
+    printf '\nEach line is a public loop this home still holds: a reply still owed, or an open loop with nothing owed.\n'
+    printf 'Reconcile terminal results with %s/bin/fm-public-followup.sh consume, then deliver a ready one with\n' "$FM_ROOT"
+    printf '%s/bin/fm-public-followup.sh deliver <id>. Hand a delivered loop on with rechain, or close it with\n' "$FM_ROOT"
+    printf '%s/bin/fm-public-followup.sh retire <id> --reason "...". Load fmx-respond for the procedure.\n' "$FM_ROOT"
   fi
 fi
 
@@ -1024,6 +1171,7 @@ section near the top of it governs what may still be read from disk.
 EOF
 
 if [ "$READ_ONLY" -eq 0 ] && [ "$REEMIT" -eq 0 ]; then
+  COMPLETION_RECORDED=0
   COMPLETION_PID=$(cat "$STATE/.lock" 2>/dev/null || true)
   case "$COMPLETION_PID" in
     ''|*[!0-9]*) COMPLETION_PID= ;;
@@ -1032,10 +1180,15 @@ if [ "$READ_ONLY" -eq 0 ] && [ "$REEMIT" -eq 0 ]; then
   if [ -n "$COMPLETION_PID" ] && [ -n "$COMPLETION_TMP" ] \
     && printf '%s\n' "$COMPLETION_PID" > "$COMPLETION_TMP" 2>/dev/null \
     && mv -f "$COMPLETION_TMP" "$COMPLETION_FILE" 2>/dev/null; then
-    :
+    COMPLETION_RECORDED=1
   else
     [ -z "$COMPLETION_TMP" ] || rm -f "$COMPLETION_TMP" 2>/dev/null || true
     printf '\nSESSION_START_COMPLETION: not recorded - the next clear or compact will run a full startup.\n'
+  fi
+  if [ "$SESSION_SOURCE" = startup ] && [ "$COMPLETION_RECORDED" -eq 1 ] && [ -n "$AGENTS_START_HASH" ]; then
+    if ! write_agents_baseline "$COMPLETION_PID" "$AGENTS_START_HASH"; then
+      printf '\nSESSION_START_AGENTS_BASELINE: not recorded - a later supported rebuild will re-emit AGENTS.md.\n'
+    fi
   fi
 fi
 

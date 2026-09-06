@@ -1,14 +1,14 @@
 ---
 name: decision-hold-lifecycle
 description: >-
-  Agent-only policy for completing investigations and visual reviews without losing unresolved captain decisions.
-  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a decision, and when recording or routing the captain's answer.
+  Renamed pointer kept for in-flight briefs: the decisions concept collapsed into "a task held for the captain".
+  Load captain-hold-lifecycle instead; this stub only redirects and will be removed one release after the collapse.
 user-invocable: false
 metadata:
   internal: true
 ---
 
-# Durable unresolved-decision lifecycle
+# decision-hold-lifecycle (renamed)
 
 This skill is the single policy owner for unresolved captain decisions discovered by an investigation or visual review.
 

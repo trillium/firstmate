@@ -125,6 +125,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/captain-hold-lifecycle/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/coderabbit-pr-gate/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -165,6 +169,62 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/harness-adapters/references/common/control-and-recovery.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/common/dispatch.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/common/model-and-effort.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/common/primary-hooks.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/claude.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/codex.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/cursor.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/gemini.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/grok.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/kimi.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/muse.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/opencode.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/pi.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/rovo.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/process-event-sources/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -193,6 +253,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".greptile/rules.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "AGENTS.md",
       "audience": "agent-runtime"
     },
@@ -207,6 +271,10 @@
     {
       "path": "CONTRIBUTING.md",
       "audience": "maintainer-architecture"
+    },
+    {
+      "path": "GROK_BOT.md",
+      "audience": "public-product"
     },
     {
       "path": "README.md",
@@ -257,11 +325,15 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/decision-hold-lifecycle.md",
+      "path": "docs/captain-hold-lifecycle.md",
       "audience": "maintainer-architecture"
     },
     {
       "path": "docs/documentation-audiences.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/extension-bindings.md",
       "audience": "maintainer-architecture"
     },
     {
@@ -274,6 +346,18 @@
     },
     {
       "path": "docs/examples/herdr-spur.agents",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/process-event-extension/file-signal.mjs",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/process-event-extension/firstmate-extension.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/watched-tools.json",
       "audience": "operator-example"
     },
     {
@@ -305,8 +389,16 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/pi-supervision-branch.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/secondmate-parent-channel.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/scripts.md",
@@ -326,6 +418,10 @@
     },
     {
       "path": "docs/supervision-protocols/codex.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/supervision-protocols/cursor.md",
       "audience": "agent-runtime"
     },
     {
@@ -361,6 +457,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/lint-option-a.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/muse.md",
       "audience": "maintainer-verification"
     },
@@ -373,7 +473,15 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/rovo.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/runtime-backends.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/secondmate-parent-channel.md",
       "audience": "maintainer-verification"
     },
     {
@@ -387,6 +495,10 @@
     {
       "path": "docs/verification/trace-context.md",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/voice-relay.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/watcher-continuity.md",
@@ -479,6 +591,10 @@
     {
       "path": "tests/provenance/x-mode-relay/approved.txt",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/decision-hold-lifecycle.md",
+      "audience": "maintainer-architecture"
     }
   ]
 }

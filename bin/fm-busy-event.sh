@@ -97,6 +97,19 @@ REC=$(fm_busy_record_path "$STATE" "$ID")
 GEN_FILE=$(fm_busy_gen_path "$STATE" "$ID")
 LOCK="$REC.lock"
 
+# Portable mtime in epoch seconds. macOS (BSD) stat uses `-f <fmt>`; Linux (GNU)
+# stat uses `-c <fmt>`. Do NOT collapse this into `stat -f <fmt> ... || stat -c
+# <fmt> ...`: on GNU `-f` is *filesystem* stat, so it reads the format string as
+# a path, reports that on stderr, prints a partial filesystem dump ("  File:
+# ...") on stdout, and still exits 0 - the fallback never runs and the caller
+# gets a non-numeric token. Detect the platform once and pick the right form,
+# exactly as bin/fm-watch.sh does.
+if [ "$(uname)" = Darwin ]; then
+  lock_mtime() { stat -f %m "$1" 2>/dev/null; }
+else
+  lock_mtime() { stat -c %Y "$1" 2>/dev/null; }
+fi
+
 # Serialize writers. The lock protects seq advancement and the sidecar/record
 # pair; a holder that died mid-write is broken after FM_BUSY_LOCK_STALE_SECS.
 lock_acquire() {
@@ -116,6 +129,7 @@ lock_acquire() {
       # integer or nothing; $now still stands in when the lock is gone or
       # unreadable, which reads as age 0 (not stale), as before.
       mtime=$(fm_stat_mtime "$LOCK" 2>/dev/null) || mtime=$now
+      case "$mtime" in ''|*[!0-9]*) mtime=$now ;; esac
       age=$((now - mtime))
       if [ "$age" -ge "${FM_BUSY_LOCK_STALE_SECS:-5}" ]; then
         rmdir "$LOCK" 2>/dev/null || rm -rf "$LOCK" 2>/dev/null || true
