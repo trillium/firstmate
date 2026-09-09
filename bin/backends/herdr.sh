@@ -397,6 +397,187 @@ fm_backend_herdr_workspace_label() {
   printf '1M-FIRSTMATE'
 }
 
+# Visible pane naming convention (docs/herdr-backend.md "Visible pane naming").
+# Herdr pane labels are display-only: they never authorize lookup, adoption,
+# reuse, closure, task ownership, or endpoint selection. Tab labels (fm-<id>)
+# and workspace labels remain the only label-based task identity.
+# Owner panes carry the active harness plus role and crown, for example
+# "Pi Firstmate 👑" and "Pi TalonMate 👑". Subordinate worker
+# panes never use a crown; they carry the active harness plus their linked
+# task identifier, for example "Pi · task-d6376". The functions below
+# are pure except for the two that read or rename a live pane, and the
+# rename path preserves any captain-set label it does not recognize.
+# fm_backend_herdr_harness_display: map a verified harness adapter name to
+# its visible display word. pi-signed shares Pi's display. Unknown adapters
+# fall back to first-letter capitalization so a future adapter still gets a
+# stable label rather than an empty one.
+fm_backend_herdr_harness_display() {
+  local harness=${1:-}
+  case "$harness" in
+    pi|pi-signed) printf 'Pi' ;;
+    claude) printf 'Claude' ;;
+    codex) printf 'Codex' ;;
+    opencode) printf 'OpenCode' ;;
+    grok) printf 'Grok' ;;
+    kimi) printf 'Kimi' ;;
+    muse) printf 'Muse' ;;
+    '') return 1 ;;
+    *)
+      local first rest
+      first=$(printf '%s' "$harness" | cut -c1 | tr '[:lower:]' '[:upper:]')
+      rest=$(printf '%s' "$harness" | cut -c2- | tr '[:upper:]' '[:lower:]')
+      [ -n "$first" ] || return 1
+      printf '%s%s' "$first" "$rest"
+      ;;
+  esac
+}
+
+# fm_backend_herdr_harness_display_is_known: true when <display> is one of
+# the visible words fm_backend_herdr_harness_display emits for verified
+# adapters. Used to tell managed labels from captain-set ones.
+fm_backend_herdr_harness_display_is_known() {
+  case "${1:-}" in
+    Pi|Claude|Codex|OpenCode|Grok|Kimi|Muse) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# fm_backend_herdr_owner_role_for_id: map a mate id to its visible owner
+# role. Empty and firstmate resolve to Firstmate; talonmate and its common
+# separator spellings resolve to TalonMate; any other id Titlecases its
+# sanitized scope so a future secondmate still gets a stable distinct role.
+fm_backend_herdr_owner_role_for_id() {
+  local id=${1:-} lower scope lower_scope first rest
+  lower=$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')
+  case "$lower" in
+    ''|firstmate|1m-firstmate|2m-firstmate) printf 'Firstmate'; return 0 ;;
+    talonmate|talon-mate|talon_mate|2m-talonmate|2m-talon-mate) printf 'TalonMate'; return 0 ;;
+  esac
+  scope=$(fm_backend_herdr_mate_scope "$id")
+  lower_scope=$(printf '%s' "$scope" | tr '[:upper:]' '[:lower:]')
+  first=$(printf '%s' "$lower_scope" | cut -c1 | tr '[:lower:]' '[:upper:]')
+  rest=$(printf '%s' "$lower_scope" | cut -c2-)
+  [ -n "$first" ] || { printf 'Unknown'; return 0; }
+  printf '%s%s' "$first" "$rest"
+}
+
+# fm_backend_herdr_owner_role_for_home: visible owner role for <home>
+# (default FM_HOME). The primary home is Firstmate; a secondmate home
+# resolves through its marker id.
+fm_backend_herdr_owner_role_for_home() {
+  local home=${1:-$FM_HOME} marker="$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" id
+  [ -n "$home" ] || { printf 'Firstmate'; return 0; }
+  marker="$home/$FM_BACKEND_HERDR_SECONDMATE_MARKER"
+  if [ -f "$marker" ]; then
+    id=$(cat "$marker" 2>/dev/null)
+    id="${id#"${id%%[![:space:]]*}"}"
+    id="${id%"${id##*[![:space:]]}"}"
+    fm_backend_herdr_owner_role_for_id "$id"
+    return 0
+  fi
+  printf 'Firstmate'
+}
+
+# fm_backend_herdr_owner_pane_label: visible owner label for <harness>
+# <role>. Always ends with exactly one crown and never anything else.
+fm_backend_herdr_owner_pane_label() {
+  local harness=${1:-} role=${2:-} display
+  [ -n "$harness" ] && [ -n "$role" ] || return 1
+  case "$role" in
+    *"👑"*|*"·"*|*[[:space:]]*|*[!A-Za-z0-9-]*) return 1 ;;
+  esac
+  display=$(fm_backend_herdr_harness_display "$harness") || return 1
+  printf '%s %s 👑' "$display" "$role"
+}
+
+# fm_backend_herdr_worker_pane_label: visible worker label for <harness>
+# <task-id>. Never contains a crown by construction.
+fm_backend_herdr_worker_pane_label() {
+  local harness=${1:-} task=${2:-} display
+  [ -n "$harness" ] && [ -n "$task" ] || return 1
+  case "$task" in
+    *[[:space:]]*|*"👑"*|*"·"*) return 1 ;;
+  esac
+  display=$(fm_backend_herdr_harness_display "$harness") || return 1
+  printf '%s · %s' "$display" "$task"
+}
+
+# fm_backend_herdr_pane_label_is_managed: true when <label> matches a shape
+# firstmate itself manages, so ensure may rename it. A non-empty label that
+# matches nothing here is treated as captain-set and preserved. Legacy fm-*
+# pane labels count as managed so an old identity-mirroring pane can move to
+# the visible convention; tab labels are untouched either way.
+fm_backend_herdr_pane_label_is_managed() {
+  local label=${1:-} display body prefix suffix
+  [ -n "$label" ] || return 1
+  case "$label" in
+    fm-*) return 0 ;;
+  esac
+  for display in Pi Claude Codex OpenCode Grok Kimi Muse; do
+    case "$label" in
+      "$display Firstmate"|"$display Firstmate 👑"|"$display TalonMate"|"$display TalonMate 👑"|"$display · "*) return 0 ;;
+    esac
+  done
+  case "$label" in
+    *" 👑")
+      body=${label%" 👑"}
+      case "$body" in
+        *" "*" "*) return 1 ;;
+        *" "*)
+          prefix=${body%%" "*}
+          suffix=${body#*" "}
+          [ -n "$prefix" ] && [ -n "$suffix" ] || return 1
+          case "$suffix" in
+            *[[:space:]]*|*"·"*|*"👑"*) return 1 ;;
+          esac
+          fm_backend_herdr_harness_display_is_known "$prefix" || return 1
+          return 0
+          ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# fm_backend_herdr_pane_current_label: print the live pane's current label,
+# or nothing when the pane carries none. Fails when the pane cannot be read
+# exactly, so the caller never renames what it could not verify.
+fm_backend_herdr_pane_current_label() {
+  local session=${1:-} pane_id=${2:-} out echoed label
+  [ -n "$session" ] && [ -n "$pane_id" ] || return 1
+  out=$(fm_backend_herdr_cli "$session" pane get "$pane_id" 2>/dev/null) || return 1
+  echoed=$(printf '%s' "$out" | jq -r --arg pane "$pane_id" 'select(.result.pane.pane_id == $pane) | .result.pane.pane_id // empty' 2>/dev/null)
+  [ "$echoed" = "$pane_id" ] || return 1
+  label=$(printf '%s' "$out" | jq -r --arg pane "$pane_id" 'select(.result.pane.pane_id == $pane) | .result.pane.label // empty' 2>/dev/null) || return 1
+  printf '%s' "$label"
+}
+
+# fm_backend_herdr_ensure_pane_label: apply <desired> to <pane-id> in
+# <session> unless the live label is already desired or is a preserved
+# captain-set label. A rename never moves focus or placement; it only sets
+# display metadata. Returns 0 when the pane already reads desired or was
+# preserved, 0 after a successful rename, and 1 when the pane could not be
+# read or the rename failed. Callers treat 1 as best-effort (warn, continue)
+# so labeling can never fail a spawn or arrange step.
+fm_backend_herdr_ensure_pane_label() {
+  local session=${1:-} pane_id=${2:-} desired=${3:-} current
+  [ -n "$session" ] && [ -n "$pane_id" ] && [ -n "$desired" ] || return 1
+  current=$(fm_backend_herdr_pane_current_label "$session" "$pane_id") || {
+    echo "warning: herdr pane $pane_id in session '$session' could not be read; leaving its label unchanged" >&2
+    return 1
+  }
+  [ "$current" = "$desired" ] && return 0
+  if [ -n "$current" ] && ! fm_backend_herdr_pane_label_is_managed "$current"; then
+    return 0
+  fi
+  fm_backend_herdr_cli "$session" pane rename "$pane_id" "$desired" >/dev/null 2>&1 || {
+    echo "warning: herdr pane $pane_id in session '$session' could not be renamed; leaving its label unchanged" >&2
+    return 1
+  }
+  return 0
+}
+
 # fm_backend_herdr_cli: run `herdr <args...>` scoped to <session>, setting
 # BOTH the HERDR_SESSION env var AND appending a trailing `--session <name>`
 # CLI flag. Verified empirically (docs/herdr-backend.md "Session targeting: the
@@ -3491,15 +3672,22 @@ fm_backend_herdr_list_live() {  # <session>
 }
 
 # fm_backend_herdr_pane_verifies_task: verify that a recorded pane still exists and belongs to the given task.
-# Queries the live herdr pane to confirm its identity matches the expected task label (fm-<id>).
-# Returns 0 if verified, 1 otherwise. This is used to self-repair legacy metadata lacking endpoint_task_id.
+# Accepts the expected task label (fm-<id>) on either the live pane or its
+# parent tab: pane labels are display-only under the visible pane naming
+# convention and may read "Pi · <id>", while the tab keeps fm-<id> as the
+# label-based identity. Returns 0 if verified, 1 otherwise. This is used to
+# self-repair legacy metadata lacking endpoint_task_id.
 fm_backend_herdr_pane_verifies_task() {  # <session> <pane_id> <task_id>
-  local session=$1 pane_id=$2 task_id=$3 pane_info label
+  local session=$1 pane_id=$2 task_id=$3 pane_info label tab_id tab_info tab_label
   [ -n "$session" ] && [ -n "$pane_id" ] && [ -n "$task_id" ] || return 1
   pane_info=$(fm_backend_herdr_cli "$session" pane get "$pane_id" 2>/dev/null) || return 1
-  label=$(printf '%s' "$pane_info" | jq -r '.result.pane.label // empty' 2>/dev/null)
-  [ "$label" = "fm-$task_id" ] || return 1
-  return 0
+  label=$(printf '%s' "$pane_info" | jq -r --arg pane "$pane_id" 'select(.result.pane.pane_id == $pane) | .result.pane.label // empty' 2>/dev/null)
+  [ "$label" = "fm-$task_id" ] && return 0
+  tab_id=$(printf '%s' "$pane_info" | jq -r --arg pane "$pane_id" 'select(.result.pane.pane_id == $pane) | .result.pane.tab_id // empty' 2>/dev/null)
+  [ -n "$tab_id" ] || return 1
+  tab_info=$(fm_backend_herdr_cli "$session" tab get "$tab_id" 2>/dev/null) || return 1
+  tab_label=$(printf '%s' "$tab_info" | jq -r --arg tab "$tab_id" 'select(.result.tab.tab_id == $tab) | .result.tab.label // empty' 2>/dev/null)
+  [ "$tab_label" = "fm-$task_id" ]
 }
 
 # --- native event push: pane.agent_status_changed subscriber -----------------
