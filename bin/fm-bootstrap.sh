@@ -671,15 +671,23 @@ secondmate_liveness_sweep() {
   # Secondmate homes never contain kind=secondmate meta, so this is naturally a
   # primary-only no-op there. Mid-session liveness remains explicitly out of
   # scope and requires a separate periodic signal.
+  # A meta with a state/<id>.suspended record is a parked home: the sweep skips
+  # it entirely (loop guard above) so suspend and resume own the whole lifecycle
+  # of a parked secondmate.
   [ -d "$STATE" ] || return 0
   local meta id remote_host label __fm_timing_stamp
   SECONDMATE_RESPAWNED_IDS=""
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    # A suspended secondmate is parked by its parent's durable fm-control
+    # `suspend` record and is exempt from liveness probing and recovery until
+    # `resume` countermands the record: probing or respawning a parked home
+    # would fight the park.
+    [ -e "$STATE/$id.suspended" ] && continue
     grep -q '^kind=secondmate$' "$meta" 2>/dev/null || continue
     # Identity for the timing record is read here, in the loop, so the per-meta
     # body below keeps its single-exit-per-outcome shape.
-    id=$(basename "$meta" .meta)
     remote_host=$(fm_meta_get "$meta" remote_host)
     label=$id
     [ -z "$remote_host" ] || label="$id@$remote_host"

@@ -581,16 +581,16 @@ test_verb_allowlist_is_closed() {
   pass "fm-control: the verb list is closed - no raw keys, arbitrary text, or clear verb"
 }
 
-test_resume_is_refused_with_its_reason() {
+test_resume_without_parking_record_is_refused() {
   local dir out rc
   dir=$(new_case resume)
   add_task "$dir" t1 claude
   out=$(run_control "$dir" t1 resume); rc=$?
-  expect_code 2 "$rc" "resume should be refused"
+  expect_code 1 "$rc" "resume without a suspension record should be refused"
   assert_contains "$out" "not deterministic across the verified adapters" \
-    "the refusal should explain why resume is excluded"
+    "the refusal should explain why pane-session resume is excluded"
   assert_contains "$out" "relaunch" "the refusal should point at the deterministic alternative"
-  pass "fm-control: resume is refused with the determinism reason and the alternative"
+  pass "fm-control: resume restores a parked secondmate only, and points at relaunch otherwise"
 }
 
 test_relaunch_only_flags_are_rejected_on_other_verbs() {
@@ -878,7 +878,7 @@ test_record_bound_to_another_task_is_refused
 test_remote_secondmate_is_refused_by_placement
 test_interrupt_and_exit_lock_before_task_state_resolution
 test_verb_allowlist_is_closed
-test_resume_is_refused_with_its_reason
+test_resume_without_parking_record_is_refused
 test_relaunch_only_flags_are_rejected_on_other_verbs
 test_already_stopped_exit_is_idempotent
 test_missing_endpoint_refuses

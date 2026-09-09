@@ -94,6 +94,7 @@ projects/            cloned repos; gitignored; read-only except under hard rule 
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
+  <id>.suspended     parent-owned durable secondmate park record, written by fm-control `suspend` (docs/agent-control.md "Secondmate suspend and resume"); exempts the home from liveness recovery and watcher reclaim, removed by `resume` or by teardown
   <id>.grok-turnend-token   firstmate-owned grok hook registry token for the task; removed by teardown
   <id>.staleness-unfiled   written by fm-teardown.sh's --staleness-autoclose reclaim only when filing the triage bead failed, before <id>.meta is removed; records the preserved worktree, branch, and project so the location is never lost
   <id>.kimi-turnend-token   firstmate-owned Kimi hook registry token for the task; removed by teardown
@@ -318,7 +319,7 @@ A persistent secondmate is recorded in the secondmate registry and runtime state
 Steer a worker with short single-line messages through fail-closed `fm-send`; put long instructions in a file.
 When a steer answers an open keyed decision or blocker, pass `fm-send`'s `--resolve-key` so the answer itself closes that decision record at answer time, identically for local and remote workers (contract: `bin/fm-send.sh` header).
 `fm-send` is the data plane for text the worker should read; never use its key or text paths for interrupt, exit, or other lifecycle control, because routing-marked lifecycle text becomes chat the worker reasons about instead of executing.
-Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which owns the per-runtime mechanics, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](docs/agent-control.md)).
+Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which owns the per-runtime mechanics, verifies each action, and never tears down or discards anything; a persistent secondmate can additionally be parked with `suspend` and restored with `resume` (both secondmate-only and manual) ([`docs/agent-control.md`](docs/agent-control.md)).
 A secondmate's routed reply returns through status or a document pointer, not by firstmate peeking into its chat.
 For the parent-owned correlation, recovery, and escalation contract on marked secondmate requests, see `bin/fm-pending-reply-lib.sh`.
 Supervise all live work under section 8.

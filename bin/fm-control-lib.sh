@@ -18,7 +18,8 @@
 #
 #   1. Verb allowlist. There is no arbitrary-text and no generic raw-key entry
 #      point on the control plane; a caller either names an allowlisted verb or
-#      is refused.
+#      is refused. The verb surface comprises the three generic lifecycle verbs
+#      and the secondmate-specific suspend/resume park pair.
 #   2. Per-harness control mechanics: which key interrupts a running turn, how
 #      many times it must be sent, whether the composer needs clearing after
 #      that key, which adapter-owned cancellation acknowledgement is observable,
@@ -34,13 +35,23 @@
 #      stopped. A verb whose postcondition cannot be proven on the recorded
 #      backend is refused rather than performed blind.
 #
-# `resume` is deliberately NOT a verb. It is not deterministic across the
-# verified adapters: codex and grok resume only from a session id printed at
-# exit, opencode resumes the most recent session for the cwd with --continue,
-# and claude, pi, pi-signed, and kimi have no verified pane-resume contract at
-# all. `relaunch` covers the same need deterministically for every adapter,
-# because the brief on disk - not a harness-private session - is the durable
-# instruction.
+# `resume` is not an ordinary pane-session verb. Restoring a pane-session is
+# not deterministic across the verified adapters: codex and grok resume only
+# from a session id printed at exit, opencode resumes the most recent session
+# for the cwd with --continue, and claude, pi, pi-signed, and kimi have no
+# verified pane-resume contract at all. `relaunch` covers that need
+# deterministically for every adapter, because the brief on disk - not a
+# harness-private session - is the durable instruction.
+#
+# `suspend` and `resume` are the deterministic, parent-owned PARK verbs for a
+# persistent secondmate (kind=secondmate only). `suspend` stops the agent on a
+# positively classified endpoint and writes the durable record
+# state/<id>.suspended; `resume` restores that exact record, relaunching
+# through the seeded-home spawn path when the recorded endpoint is gone. A
+# suspended home is preserved byte-for-byte and is exempt from the session
+# liveness sweep and the watcher's idle recovery. `resume` is the only verb
+# that countermands the record, so it is the one that requires a recorded
+# entry rather than a live agent.
 
 # The complete control-plane verb allowlist, one per line.
 fm_control_verbs() {
@@ -48,14 +59,25 @@ fm_control_verbs() {
 interrupt
 exit
 relaunch
+suspend
+resume
 EOF
 }
 
 fm_control_verb_allowed() {  # <verb>
   case "${1-}" in
-    interrupt|exit|relaunch) return 0 ;;
+    interrupt|exit|relaunch|suspend|resume) return 0 ;;
   esac
   return 1
+}
+
+# The durable park record a persistent secondmate's suspend/resume round-trip
+# is bound to. Written by `suspend`, removed by `resume` or by retirement
+# teardown. A pure artifact-path table entry, like the rest of this file.
+fm_control_suspended_path() {  # <state-dir> <id>
+  local state=${1-} id=${2-}
+  [ -n "$state" ] && [ -n "$id" ] || return 1
+  printf '%s\n' "$state/$id.suspended"
 }
 
 # The harnesses whose control mechanics are verified. Mirrors AGENTS.md
