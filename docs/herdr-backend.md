@@ -76,6 +76,15 @@ A mate's workspace and its own live-agent tab are always labeled uppercase `<mat
 That helper sanitizes the id (uppercase, non-alphanumeric characters collapsed to a single `-`, leading/trailing `-` trimmed) and falls back to the literal scope `UNKNOWN` when the id is empty or sanitizes to nothing, so a malformed or missing marker never produces an empty label; every malformed marker shares that same `UNKNOWN` scope, so two malformed homes can still collide on `2M-UNKNOWN`.
 A crewmate spawned by any mate inherits that mate's placement but is never uppercase: its tab keeps the ordinary lowercase `fm-<id>` task label, so a mate and its subordinate crewmates are always visually distinct and never collide.
 
+## Visible pane naming
+
+Herdr pane labels are display-only and never decide placement, lookup, ownership, or cleanup.
+An owner pane shows the active harness plus its role and a crown, for example `Pi Firstmate 👑` and `Pi TalonMate 👑`.
+A subordinate worker pane never uses a crown and shows the active harness plus its linked task identifier, for example `Pi · task-d6376`.
+Firstmate applies these labels automatically when it creates a managed pane and when it arranges its own launcher pane during a spawn, and it preserves any captain-set pane label it does not recognize instead of overwriting it.
+Labeling never moves focus or placement and never changes the `fm-<id>` tab identity that recovery reads.
+The executable owner is `bin/backends/herdr.sh` (`fm_backend_herdr_ensure_pane_label` with the `fm_backend_herdr_owner_pane_label` and `fm_backend_herdr_worker_pane_label` constructors), wired in at `bin/fm-spawn.sh`'s herdr branch, with behavioral coverage in `tests/fm-backend-herdr-pane-labels.test.sh`.
+
 ## Presentation spaces
 
 Each new crewmate or scout is placed in a disposable one-task workspace by default, on Herdr 0.8.0 and newer.
