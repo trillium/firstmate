@@ -15,7 +15,7 @@ The failure repeated across harnesses and homes, and the workaround (remember to
 
 `bin/fm-control-lib.sh` is the single executable owner of three capability tables, with no side effects, so it can be read as a contract:
 
-- The **verb allowlist**: `interrupt`, `exit`, `relaunch`.
+- The **verb allowlist**: `interrupt`, `exit`, `relaunch`, plus the secondmate park pair `suspend` and `resume`.
   There is no arbitrary-text and no generic raw-key entry point.
   A caller either names an allowlisted verb or is refused.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.
@@ -33,6 +33,8 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. |
 | `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
+| `suspend` | Park a persistent secondmate: stop its agent on a positively classified endpoint and write a durable suspension record at `state/<id>.suspended`. The home is preserved byte-for-byte. Manual trigger only; there is no automatic suspension. | The agent is gone per the backend's recovery-grade classifier, the record proves the parked state (task, endpoint, worktree, head, dirty), and the status file carries a `suspended:` event. |
+| `resume` | Restore a parked secondmate: requires the durable suspension record it countermands, proves the recorded home is intact, relaunches through `bin/fm-spawn.sh <id> --secondmate` when the recorded endpoint is gone, and removes the record once the agent is confirmed alive. | The secondmate's agent is alive and the suspension record is gone. A task with no record is refused. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -47,13 +49,41 @@ The clear is refused before anything is sent when the recorded backend cannot de
 `exit` stops an agent and preserves everything else.
 Removing a worktree, closing an endpoint, or discarding work stays with [`bin/fm-teardown.sh`](../bin/fm-teardown.sh), which owns the landed-work test.
 
-**`resume` is not a verb.**
-It is not deterministic across the verified adapters: codex and grok resume only from a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, and kimi have no verified pane-resume contract.
-`relaunch` covers the same need on every adapter, because the brief on disk - not a harness-private session - is the durable instruction.
+**`resume` is not a pane-session verb.**
+Restoring a pane-session is not deterministic across the verified adapters: codex and grok resume only from a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, and kimi have no verified pane-resume contract.
+`relaunch` covers that need on every adapter, because the brief on disk - not a harness-private session - is the durable instruction.
+The `resume` verb exists only as the deterministic countermand of a durable suspension record for a persistent secondmate, described below.
+
+## Secondmate suspend and resume
+
+A persistent secondmate is provisioned to run until retired, and the session liveness sweep revives one whenever its endpoint proves dead or missing.
+When the captain wants a secondmate's home parked - proven, preserved, and exempt from that revival - the control plane offers an explicit park pair rather than a pile of lifetime workarounds:
+
+- **`suspend <task-id>`** is manual and secondmate-only (`kind=secondmate`).
+  Before stopping anything it proves the recorded home still exists, is a git worktree root, is marked `.fm-secondmate-home = <id>`, and has a readable HEAD and status, so a parked home is one a later resume can actually restore.
+  The agent is then stopped through the verified `exit` path (interrupting a busy turn first), and a durable record at `state/<id>.suspended` captures task, timestamp, backend, endpoint, worktree, kind, head, and dirty state.
+  An already-gone endpoint parks with `agent=no-agent` rather than being revived.
+  The status file carries a `suspended:` event.
+- While the record exists, the home is exempt from recovery: `fm-bootstrap.sh`'s session-start liveness sweep skips it, `fm-watch.sh` never probes or reclaims its pane, and `fm-supervise-daemon.sh` classifies its idle pane as `self` - parked by durable record, not a wedge.
+  The session-start fleet digest prints `endpoint: suspended` for it.
+- **`resume <task-id>`** is the only verb that countermands the record.
+  It refuses a task with no record, and refuses one that reads alive despite a record, because a live agent under a park record means something revived the home while parked and the contradiction must be resolved explicitly, not overridden.
+  With the recorded endpoint dead (cleared first, mirroring the liveness sweep's discipline) or missing, it relaunches through `bin/fm-spawn.sh <id> --secondmate`, re-resolves the exact endpoint from the published record, waits for a positively alive agent, then removes the suspension record and writes a `resumed:` event.
+  A failed relaunch retains the record so a later resume can try again.
+
+A suspended secondmate's retirement is ordinary retirement: `bin/fm-teardown.sh` removes the suspension record as part of the task's record cleanup.
+
+### Non-goals
+
+- Suspend is never automatic; there is no policy that parks a secondmate without an explicit `suspend`.
+- Suspend is not a crewmate verb: it is restricted to `kind=secondmate`.
+- Remote secondmates are refused by the control plane's target validation exactly as every other verb refuses them; a remotely placed home's park/resume belongs to the lifecycle tooling on its own host.
+- `resume` does not recreate a harness-private session; it relaunches the home the way every other respawn does.
 
 ## Transactional relaunch
 
-`relaunch` is the only verb that changes durable records, so it runs as a transaction with a journal at `state/<id>.control-relaunch`, the prior record preserved beside it, and a ship or scout's prior instructions preserved when a progress note is appended.
+`relaunch` is the only *transactional* verb, so it runs as a transaction with a journal at `state/<id>.control-relaunch`, the prior record preserved beside it, and a ship or scout's prior instructions preserved when a progress note is appended.
+`suspend` and `resume` are not transactions: each writes or removes its single park record, and both refuse rather than mutate a half-state.
 
 1. **Resolve the profile.**
    An explicit `--harness`, `--model`, or `--effort` wins.
@@ -96,6 +126,8 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
   Orca's terminal API exposes only an interrupt and an Enter, so it can deliver neither Escape nor Ctrl+U.
 - `exit` and `relaunch` require a backend with a recovery-grade agent-state classifier - tmux and herdr - because without one the "the agent stopped" postcondition cannot be proven.
   zellij, orca, and cmux are refused rather than reported as successful blind.
+- `suspend` is restricted to a persistent secondmate (`kind=secondmate`).
+- `resume` acts only on a durable suspension record: a task with no record is refused, and one that reads alive despite a record is a contradiction the operator must resolve, not a resume target.
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
 - `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free and its shell is sitting in the recorded worktree, so a replacement can never join a live agent or start outside the copy holding the work.
@@ -119,4 +151,5 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 - `tests/fm-control.test.sh` - the adapter contract for every verified harness, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, and rollback after a failed launch.
+- `tests/fm-control-suspend.test.sh` - the secondmate park pair: byte-identical suspend/resume round-trip of home, branch, worktree, record, and uncommitted changes, manual-only and secondmate-only enforcement, the liveness-sweep and watcher exemption, resume's relaunch fallback on a gone endpoint, and the record's removal at retirement.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.

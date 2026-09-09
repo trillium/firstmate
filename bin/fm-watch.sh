@@ -1326,8 +1326,14 @@ EOF
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
       clear_pause_tracking "$w"
     fi
-    if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
-      continue
+    if [ "$kind" = secondmate ]; then
+      # A suspended secondmate is parked by its parent's durable fm-control
+      # `suspend` record; its pane must not be probed for staleness at all,
+      # regardless of what the last status line says.
+      [ -e "$STATE/$task.suspended" ] && continue
+      # Idle or blocked secondmate agent panes are healthy by design, so a
+      # non-paused secondmate skips the stale loop exactly as before.
+      status_is_paused "$last" || continue
     fi
     tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
     h=$(printf '%s' "$tail40" | hash_pane)

@@ -7,6 +7,8 @@
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
 #                                         (--note <text> | --note-file <path>)
+#        fm-control.sh <task-id> suspend (--note <text> | --note-file <path>)
+#        fm-control.sh <task-id> resume  (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -51,15 +53,31 @@
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
 #
+#   suspend  Park a persistent secondmate (kind=secondmate): stop its agent on
+#            a positively classified endpoint and write a durable suspension
+#            record at state/<id>.suspended. The home is preserved byte-for-
+#            byte, and a suspended home is exempt from the session liveness
+#            sweep and the watcher's idle recovery. Manual trigger only; there
+#            is no automatic suspension.
+#   resume   Restore a parked secondmate: requires the durable suspension
+#            record it countermands, proves the recorded home is still intact,
+#            relaunches through the seeded-home spawn path
+#            (bin/fm-spawn.sh <id> --secondmate) when the recorded endpoint is
+#            gone, and removes the record once the agent is confirmed alive.
+#            Never a generic pane-session resume; a task with no suspension
+#            record is refused.
+#
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
 # endpoint, or discarding work stays with bin/fm-teardown.sh, which owns the
 # landed-work test.
 #
-# `resume` is not a verb: it is not deterministic across the verified adapters
-# (bin/fm-control-lib.sh's header owns that reasoning). `relaunch` covers the
-# same need for every adapter because the brief on disk, not a harness-private
-# session, is the durable instruction.
+# `resume` is not an ordinary pane-session verb: restoring a pane-session is
+# not deterministic across the verified adapters (bin/fm-control-lib.sh's
+# header owns that reasoning), and `relaunch` covers that need for every
+# adapter because the brief on disk - not a harness-private session - is the
+# durable instruction. The `resume` here is the deterministic countermand of a
+# durable suspension record for a persistent secondmate only.
 #
 # Targeting is EXACT: only a bare task id with a state/<id>.meta record in
 # THIS home is accepted, and the record must pass the shared endpoint-identity
@@ -82,6 +100,10 @@
 #     than reported as successful blind.
 #   - An ambiguous or unreadable endpoint state refuses; only a positively
 #     classified state acts.
+#   - `suspend` is restricted to a persistent secondmate (kind=secondmate).
+#   - `resume` acts only on a durable suspension record: a task with no record
+#     is refused, and one that reads alive despite a record is a contradiction
+#     the operator must resolve, not a resume target.
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -173,11 +195,7 @@ shift 2
 
 if ! fm_control_verb_allowed "$VERB"; then
   {
-    if [ "$VERB" = resume ]; then
-      echo "error: 'resume' is not a control verb: resuming an exited agent is not deterministic across the verified adapters (codex and grok need a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, and kimi have no verified pane-resume contract). Use 'relaunch', which carries the brief plus a progress note into a fresh agent on any adapter."
-    else
-      echo "error: '$VERB' is not a control verb"
-    fi
+    echo "error: '$VERB' is not a control verb"
     echo "allowed verbs:"
     fm_control_verbs | sed 's/^/  /'
   } >&2
@@ -233,9 +251,16 @@ done
 [ -z "$want_value" ] || die "--$want_value requires a value"
 
 if [ "$VERB" != relaunch ]; then
-  [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+  [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] \
+    || die "--harness, --model, and --effort apply to 'relaunch' only"
 fi
+case "$VERB" in
+  relaunch|suspend|resume) ;;
+  *)
+    [ "$NOTE_SET" = 0 ] \
+      || die "--note and --note-file apply to 'relaunch', 'suspend', and 'resume' only"
+    ;;
+esac
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
@@ -291,6 +316,7 @@ RECORDED_HARNESS=$(fm_meta_get "$META" harness)
 KIND=$(fm_meta_get "$META" kind)
 WT=$(fm_meta_get "$META" worktree)
 [ -n "$KIND" ] || KIND=ship
+SUSPEND_PATH=$(fm_control_suspended_path "$STATE" "$ID")
 
 HARNESS=$(fm_control_harness_family "$RECORDED_HARNESS") \
   || die "task $ID records harness '${RECORDED_HARNESS:-none}', which has no verified control mechanics; fm-control refuses to guess an interrupt key or exit command"
@@ -853,6 +879,110 @@ do_relaunch() {
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
+# --- secondmate suspend/resume ----------------------------------------------
+
+do_suspend() {
+  local state exit_result head dirty status_output marker wt_real wt_top wt_top_real note_suffix
+  require_state_verified_backend suspend
+  [ "$KIND" = secondmate ] \
+    || die "task $ID records kind '$KIND'; only a persistent secondmate can be suspended"
+  [ -e "$SUSPEND_PATH" ] \
+    && die "task $ID is already suspended (record at $SUSPEND_PATH); resume it before suspending again"
+  [ -n "$WT" ] || die "task $ID has no recorded home; refusing to suspend a home that a resume could not restore"
+  [ -d "$WT" ] || die "task $ID's recorded home $WT is missing; refusing to suspend a home that a resume could not restore"
+  wt_real=$(cd "$WT" 2>/dev/null && pwd -P) || die "task $ID's recorded home $WT cannot be resolved"
+  wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null) \
+    || die "task $ID's recorded home $WT is not a git worktree; refusing to suspend a checkout whose contents cannot be accounted for"
+  wt_top_real=$(cd "$wt_top" 2>/dev/null && pwd -P) || wt_top_real=$wt_top
+  [ "$wt_real" = "$wt_top_real" ] \
+    || die "task $ID's recorded home $WT is not a worktree root (root is $wt_top); refusing to suspend against an ambiguous checkout"
+  marker=$(cat "$WT/.fm-secondmate-home" 2>/dev/null || true)
+  [ "$marker" = "$ID" ] \
+    || die "task $ID's home $WT is not marked as its own seeded secondmate home (marker: ${marker:-none}); refusing to suspend"
+  head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) \
+    || die "task $ID's home HEAD cannot be inspected; refusing to suspend from an unreadable checkout"
+  status_output=$(git -C "$WT" status --porcelain 2>/dev/null) \
+    || die "task $ID's home status cannot be inspected; refusing to suspend without accounting for local changes"
+  if [ -n "$status_output" ]; then dirty=yes; else dirty=no; fi
+  state=$(agent_state)
+  case "$state" in
+    alive|dead)
+      # A busy agent is interrupted before the exit command inside do_exit, so
+      # parking an actively reasoning secondmate still stops cleanly.
+      exit_result=$(do_exit)
+      ;;
+    missing)
+      # The endpoint is already gone: nothing runs to park, but the durable
+      # record still stops the liveness sweep from reviving the home.
+      exit_result=no-agent
+      ;;
+    *)
+      die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to suspend an unattributed endpoint"
+      ;;
+  esac
+  if { echo "v1"
+       echo "task=$ID"
+       echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+       echo "backend=$BACKEND"
+       echo "endpoint=$T"
+       echo "worktree=$WT"
+       echo "kind=$KIND"
+       echo "worktree_head=$head"
+       echo "worktree_dirty=$dirty"
+       if [ -n "$NOTE" ]; then
+         echo "reason=$(printf '%s' "$NOTE" | tr '\n' ' ')"
+       fi
+     } > "$SUSPEND_PATH.tmp" && mv -f "$SUSPEND_PATH.tmp" "$SUSPEND_PATH"; then
+    :
+  else
+    die "could not write the durable suspension record for $ID"
+  fi
+  if [ -n "$NOTE" ]; then note_suffix=" reason=$NOTE"; else note_suffix=""; fi
+  printf 'suspended: secondmate %s parked on %s endpoint %s until resumption (agent=%s)%s\n' \
+    "$ID" "$BACKEND" "$T" "$exit_result" "$note_suffix" >> "$STATE/$ID.status"
+  echo "suspended $ID backend=$BACKEND endpoint=$T worktree=$WT agent=$exit_result recorded=$SUSPEND_PATH"
+}
+
+do_resume() {
+  local state out note_suffix
+  require_state_verified_backend resume
+  [ -f "$SUSPEND_PATH" ] \
+    || die "task $ID has no suspension record ($SUSPEND_PATH); 'resume' restores a parked secondmate only. Ordinary pane-session resume is not deterministic across the verified adapters (codex and grok resume only from a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, and kimi have no verified pane-resume contract), so 'relaunch' is the deterministic way to replace a running agent"
+  state=$(agent_state)
+  case "$state" in
+    alive)
+      die "task $ID runs an agent at $T despite its suspension record; something revived it while parked. Resolve the contradiction explicitly (retire it, or delete $SUSPEND_PATH to acknowledge the live agent) rather than resuming over it"
+      ;;
+    dead|missing) ;;
+    *)
+      die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to resume an unattributed endpoint"
+      ;;
+  esac
+  # Mirror the liveness sweep's recovery discipline: a confidently dead
+  # endpoint is cleared before the spawn so a same-named window can be
+  # recreated, while an authoritatively missing one needs no destructive
+  # pre-kill.
+  if [ "$state" = dead ]; then
+    fm_backend_kill "$BACKEND" "$T" 2>/dev/null || true
+  fi
+  if ! out=$(FM_SPAWN_NO_GUARD=1 "$SCRIPT_DIR/fm-spawn.sh" "$ID" --secondmate 2>&1); then
+    die "resume of $ID could not relaunch its secondmate; the suspension record is retained so a later resume can try again: ${out%%$'\n'*}"
+  fi
+  # The spawn arms the home in its recorded window; re-resolve the exact
+  # endpoint from the published record rather than trusting the parked one.
+  fm_backend_validate_task_endpoint "$META" "$ID" \
+    || die "resume of $ID relaunched its secondmate but its published record cannot be resolved; reconcile the launch"
+  T=$FM_BACKEND_VALIDATED_TARGET
+  state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
+    die "resumed $ID relaunched but its agent did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state'); the suspension record is retained so a later resume can try again"
+  }
+  rm -f "$SUSPEND_PATH"
+  if [ -n "$NOTE" ]; then note_suffix=" reason=$NOTE"; else note_suffix=""; fi
+  printf 'resumed: secondmate %s relaunched on %s endpoint %s (agent=alive)%s\n' \
+    "$ID" "$BACKEND" "$T" "$note_suffix" >> "$STATE/$ID.status"
+  echo "resumed $ID backend=$BACKEND endpoint=$T worktree=$WT"
+}
+
 # --- verbs ------------------------------------------------------------------
 
 case "$VERB" in
@@ -878,5 +1008,11 @@ case "$VERB" in
     ;;
   relaunch)
     do_relaunch
+    ;;
+  suspend)
+    do_suspend
+    ;;
+  resume)
+    do_resume
     ;;
 esac
