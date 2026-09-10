@@ -2036,16 +2036,63 @@ fm_backend_herdr_clear_agent_authority() {  # <session> <pane_id>
   "$FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER" "$socket" "$pane_id" >/dev/null
 }
 
-# fm_backend_herdr_reconcile_stale_agent: clear a stale registration only when
-# the recorded Herdr pane is independently proved to be a bare idle shell.
-# shellcheck disable=SC2034 # the result is consumed by fm-control.sh
-# A live foreground agent never reaches the clear API. The result variable
-# lets the control plane distinguish "not stale" from a failed repair, so it
-# cannot fall through to typing an exit command into an ordinary shell.
-fm_backend_herdr_reconcile_stale_agent() {  # <target>
-  local target=$1 state
-  FM_BACKEND_HERDR_RECONCILE_RESULT=not-stale
+# fm_backend_herdr_agent_status: print the raw lifecycle status Herdr reports
+# for the registration in target's pane (idle|working|blocked|done|unknown),
+# or unknown when nothing is registered or the response cannot be parsed. This
+# answers "what does Herdr SAY is registered", never "should firstmate act on
+# it": the classification lives in fm_backend_herdr_pane_agent_state.
+fm_backend_herdr_agent_status() {  # <target>
+  local target=$1 out code status
   fm_backend_herdr_parse_target "$target" || return 1
+  out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" agent get "$FM_BACKEND_HERDR_PANE" 2>&1)
+  code=$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)
+  [ -n "$code" ] && { printf 'unknown'; return 0; }
+  status=$(printf '%s' "$out" | jq -r '.result.agent.agent_status // empty' 2>/dev/null)
+  case "$status" in
+    idle|working|blocked|done) printf '%s' "$status" ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+# fm_backend_herdr_await_no_agent: bounded settle-wait confirming the pane's
+# registration actually cleared after pane.clear_agent_authority. Herdr's
+# official-lifecycle source is asynchronous on some builds, so a single
+# immediate re-read can misjudge a clearing registration as a persistent one
+# and hard-lock the exit path; the settle window reuses the idle-shell proof
+# cadence so a genuine stale registration converges to repaired instead.
+fm_backend_herdr_await_no_agent() {  # <session> <pane_id>
+  local attempt=0 max_attempts=${FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS:-10}
+  while :; do
+    if [ "$(fm_backend_herdr_pane_agent_state "$1" "$2")" = no-agent ]; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt "$max_attempts" ] || return 1
+    fm_backend_herdr_system_sleep 0.1
+  done
+}
+
+# fm_backend_herdr_reconcile_stale_agent: clear a stale registration only when
+# the recorded Herdr pane reports a terminal completion record (idle or done)
+# and is independently proved to be a bare idle shell, then confirm the
+# registration actually cleared. A working or blocked agent is real in-flight
+# work and is never a repair candidate. A live foreground agent never reaches
+# the clear API. The result variable lets the control plane distinguish "not
+# stale" from a failed repair, so it cannot fall through to typing an exit
+# command into an ordinary shell.
+# shellcheck disable=SC2034 # the result is consumed by fm-control.sh
+fm_backend_herdr_reconcile_stale_agent() {  # <target>
+  local target=$1 status
+  FM_BACKEND_HERDR_RECONCILE_RESULT=not-stale
+  # Parse here, in this shell: fm_backend_herdr_agent_status runs in a command
+  # substitution subshell, so the session/pane globals it stages would never
+  # reach the proof and clear calls below.
+  fm_backend_herdr_parse_target "$target" || return 1
+  status=$(fm_backend_herdr_agent_status "$target") || return 1
+  case "$status" in
+    idle|done) ;;
+    *) FM_BACKEND_HERDR_RECONCILE_RESULT=not-stale; return 1 ;;
+  esac
   if ! fm_backend_herdr_pane_shell_foreground_pid "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" >/dev/null; then
     return 1
   fi
@@ -2053,8 +2100,7 @@ fm_backend_herdr_reconcile_stale_agent() {  # <target>
     FM_BACKEND_HERDR_RECONCILE_RESULT=failed
     return 1
   fi
-  state=$(fm_backend_herdr_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
-  if [ "$state" = no-agent ]; then
+  if fm_backend_herdr_await_no_agent "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE"; then
     FM_BACKEND_HERDR_RECONCILE_RESULT=repaired
     return 0
   fi

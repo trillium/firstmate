@@ -3135,6 +3135,94 @@ test_current_path_reads_cwd() {
   pass "fm_backend_herdr_current_path: reads pane foreground_cwd (the live running process), not the frozen creation-time cwd"
 }
 
+# --- reconcile_stale_agent: done-over-bare-shell convergence (PR #151) -------
+
+reconcile_case() {  # <dir> <pane> -> writes the canned fixtures for a repair cycle:
+  # call 1 agent get (done), call 2 pane process-info (bare shell), call 3 pane
+  # get (present), call 4 agent get (agent_not_found, written by the caller).
+  local dir=$1 pane=$2 resp="$1/responses"
+  printf '%s\n' \
+    '{"result":{"agent":{"agent_status":"done"}}}' \
+    > "$resp/1.out"
+  printf '%s\n' \
+    '{"result":{"type":"pane_process_info","process_info":{"pane_id":"'"$pane"'","shell_pid":1001,"foreground_process_group_id":1001,"foreground_processes":[{"pid":1001,"name":"zsh","argv0":"zsh","cmdline":"zsh"}]}}}' \
+    > "$resp/2.out"
+  printf '%s\n' \
+    '{"result":{"pane":{"pane_id":"'"$pane"'"}}}' \
+    > "$resp/3.out"
+}
+
+test_agent_status_reads_raw_status() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/agent-status"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '{"result":{"agent":{"agent_status":"done"}}}\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_agent_status default:w1:p1' "$ROOT" )
+  [ "$out" = "done" ] || fail "raw agent_status=done should read done, got '$out'"
+  pass "fm_backend_herdr_agent_status: reads the raw lifecycle status (done)"
+}
+
+test_agent_status_unknown_on_generic_error() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/agent-status-err"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '{"error":{"code":"server_error"}}\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_agent_status default:w1:p1' "$ROOT" )
+  [ "$out" = unknown ] || fail "a non-artifact error code should read unknown, got '$out'"
+  pass "fm_backend_herdr_agent_status: generic error -> unknown"
+}
+
+test_reconcile_done_over_bare_shell_converges_to_dead() {
+  local dir log resp fb out pane
+  dir="$TMP_ROOT/reconcile-done"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  pane=w1:p1
+  reconcile_case "$dir" "$pane" || fail "reconcile fixture setup failed"
+  printf '%s\n' \
+    '{"error":{"code":"agent_not_found","message":"agent target w1:p1 not found"}}' \
+    > "$resp/4.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '
+      . "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_clear_agent_authority() { printf "clear:%s:%s\n" "$1" "$2" >> "$FM_HERDR_LOG"; }
+      fm_backend_herdr_system_sleep() { :; }
+      set +e
+      fm_backend_herdr_reconcile_stale_agent default:w1:p1
+      rc=$?
+      set -e
+      printf "%s:%s" "$rc" "$FM_BACKEND_HERDR_RECONCILE_RESULT"
+    ' "$ROOT" )
+  [ "$out" = "0:repaired" ] \
+    || fail "done-over-bare-shell should converge to repaired, got '$out'"
+  assert_contains "$(cat "$log")" $'\x1f''agent'$'\x1f''get' "reconcile did not probe the registration"
+  assert_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''process-info' "reconcile did not run the shell-foreground proof"
+  assert_contains "$(cat "$log")" 'clear:default:w1:p1' "reconcile did not clear authority on the proven bare shell"
+  pass "fm_backend_herdr_reconcile_stale_agent: done over a bare idle shell converges to dead"
+}
+
+test_reconcile_live_working_agent_is_never_repaired() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/reconcile-working"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '{"result":{"agent":{"agent_status":"working"}}}\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '
+      . "$0/bin/backends/herdr.sh"
+      set +e
+      fm_backend_herdr_reconcile_stale_agent default:w1:p1
+      rc=$?
+      set -e
+      printf "%s:%s" "$rc" "$FM_BACKEND_HERDR_RECONCILE_RESULT"
+    ' "$ROOT" )
+  [ "$out" = "1:not-stale" ] \
+    || fail "a live working agent must never be repaired, got '$out'"
+  assert_not_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''process-info' \
+    "a working agent must short-circuit before the shell-foreground proof"
+  pass "fm_backend_herdr_reconcile_stale_agent: a live working agent is never a repair candidate"
+}
+
 # --- busy_state (semantic agent state) ---------------------------------------
 
 test_busy_state_working_maps_to_busy() {
@@ -4519,6 +4607,10 @@ test_capture_preserves_pane_read_failure
 test_send_key_normalizes_and_targets_pane
 test_kill_is_best_effort
 test_current_path_reads_cwd
+test_agent_status_reads_raw_status
+test_agent_status_unknown_on_generic_error
+test_reconcile_done_over_bare_shell_converges_to_dead
+test_reconcile_live_working_agent_is_never_repaired
 test_busy_state_working_maps_to_busy
 test_busy_state_done_and_blocked_map_to_idle
 test_busy_state_unknown_on_no_agent
