@@ -367,7 +367,7 @@ fm_backend_target_of_meta() {  # <meta-file>
 # opaque runtime ids do not encode the task label. Legacy tmux records remain
 # valid only when their window name itself is exactly fm-<task-id>. Legacy
 # Herdr records lacking endpoint_task_id self-repair by appending it once the
-# live pane's label is confirmed to still read fm-<task-id>
+# live pane or its parent tab is confirmed to still read fm-<id>
 # (fm_backend_herdr_pane_verifies_task); otherwise they refuse without
 # mutation. Legacy Zellij and other non-tmux records still refuse outright.
 # On success, sets FM_BACKEND_VALIDATED_BACKEND and

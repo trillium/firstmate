@@ -2144,6 +2144,13 @@ case "$BACKEND" in
     WT_TARGET="$WID"
     ;;
   herdr)
+    # Save the launcher's own pane before any HERDR_PANE_ID assignment below
+    # shadows it. Only on a fresh spawn: a relaunch overwrote HERDR_PANE_ID
+    # with the relaunched task's recorded pane, which must never be arranged
+    # as an owner. Empty when this spawn runs outside herdr, in which case
+    # the owner-pane arrange step after creation is skipped.
+    HERDR_LABEL_LAUNCHER_PANE=
+    [ -n "${RELAUNCH_META:-}" ] || HERDR_LABEL_LAUNCHER_PANE=${HERDR_PANE_ID:-}
     # fm_backend_herdr_workspace_label resolves the target workspace from
     # FM_HOME. For every KIND except secondmate, this process's own FM_HOME is
     # already the right home (the primary spawning its own crewmate/scout, or
@@ -2315,6 +2322,38 @@ EOF
     if [ -z "$HERDR_TAB_ID" ] || [ -z "$HERDR_PANE_ID" ]; then
       echo "error: herdr did not return a tab/pane id for $HERDR_TASK_LABEL" >&2
       exit 1
+    fi
+    # Visible pane naming convention (docs/herdr-backend.md "Visible pane
+    # naming"). Display-only pane labels: the new pane gets the worker label
+    # carrying its launcher's agent plus task id (or the owner label for a
+    # --secondmate spawn) while the tab keeps fm-<id> as the task identity.
+    # A captain-set pane label is preserved. Every step is best-effort and
+    # only warns, so labeling can never fail a spawn and never moves focus
+    # or placement.
+    HERDR_LAUNCHER_ROLE=$(fm_backend_herdr_owner_role_for_home "$FM_HOME" 2>/dev/null || true)
+    case "$HARNESS" in
+      claude|codex|opencode|pi|pi-signed|grok|kimi|muse)
+        HERDR_DESIRED_PANE_LABEL=
+        if [ "$KIND" = secondmate ]; then
+          HERDR_DESIRED_PANE_LABEL=$(fm_backend_herdr_owner_pane_label "$HARNESS" "$(fm_backend_herdr_owner_role_for_home "$HERDR_LABEL_HOME" 2>/dev/null || true)" 2>/dev/null || true)
+        elif [ -n "${HERDR_LAUNCHER_ROLE:-}" ]; then
+          HERDR_DESIRED_PANE_LABEL=$(fm_backend_herdr_worker_pane_label "$HARNESS" "$HERDR_LAUNCHER_ROLE" "$ID" 2>/dev/null || true)
+        fi
+        if [ -n "${HERDR_DESIRED_PANE_LABEL:-}" ]; then
+          fm_backend_herdr_ensure_pane_label "$HERDR_SES" "$HERDR_PANE_ID" "$HERDR_DESIRED_PANE_LABEL" 2>/dev/null || echo "warning: herdr pane label for $ID could not be applied; leaving the current label" >&2
+        fi
+        ;;
+    esac
+    if [ -n "${HERDR_LABEL_LAUNCHER_PANE:-}" ] && [ "$HERDR_LABEL_LAUNCHER_PANE" != "$HERDR_PANE_ID" ] && [ -n "${HERDR_LAUNCHER_ROLE:-}" ]; then
+      HERDR_LAUNCHER_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || true)
+      case "$HERDR_LAUNCHER_HARNESS" in
+        claude|codex|opencode|pi|pi-signed|grok|kimi|muse)
+          HERDR_LAUNCHER_LABEL=$(fm_backend_herdr_owner_pane_label "$HERDR_LAUNCHER_HARNESS" "$HERDR_LAUNCHER_ROLE" 2>/dev/null || true)
+          if [ -n "${HERDR_LAUNCHER_LABEL:-}" ]; then
+            fm_backend_herdr_ensure_pane_label "$HERDR_SES" "$HERDR_LABEL_LAUNCHER_PANE" "$HERDR_LAUNCHER_LABEL" 2>/dev/null || echo "warning: herdr owner pane label could not be applied; leaving the current label" >&2
+          fi
+          ;;
+      esac
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
     ;;
