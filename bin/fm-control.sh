@@ -520,6 +520,22 @@ do_exit() {
   [ "$verdict" != send-failed ] \
     || die "the exit command could not be sent to task $ID on $BACKEND"
   state=$(wait_agent_state "$EXIT_WAIT" dead) || {
+    # A Herdr pane that still reports a terminal done record over a bare shell
+    # is spurious rather than live: Herdr's official-lifecycle status can
+    # survive the agent process's exit on some builds. Converge it instead of
+    # hard-stopping; the classification re-reads the LIVE pane, so a foreground
+    # agent is never repaired here.
+    if [ "$BACKEND" = herdr ] \
+       && [ "$(fm_backend_herdr_agent_status "$T" 2>/dev/null || printf unknown)" = "done" ]; then
+      fm_backend_herdr_reconcile_stale_agent "$T"
+      case "${FM_BACKEND_HERDR_RECONCILE_RESULT:-not-stale}" in
+        repaired)
+          retire_busy_incarnation
+          printf 'stopped'
+          return 0
+          ;;
+      esac
+    fi
     die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within ${EXIT_WAIT}s"
   }
   # The incarnation is over: retire its busy wiring so no stale record or
