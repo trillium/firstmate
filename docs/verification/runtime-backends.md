@@ -554,6 +554,24 @@ ok - real herdr: an agent that does not stop fails closed instead of being repor
 The registry read through `herdr pane report-agent` is the same source `fm_backend_herdr_agent_state` classifies, so registering and not registering an agent on a plain shell pane exercises exactly the gate every lifecycle verb depends on, with no real agent launched.
 That command is the guard that refreshes this record; run it after every Herdr upgrade rather than trusting the version above.
 
+The nested parent-shell recovery shape and the Pi/Luna launch path were reverified on 2026-09-10 with Herdr 0.9.0 and Pi 0.85.1:
+
+```sh
+FM_PI_HERDR_LUNA_LIVE_E2E=1 HERDR_LAB_HELPER=bin/fm-herdr-lab.sh \
+  tests/fm-pi-herdr-luna-live-e2e.test.sh
+```
+
+Observed output:
+
+```text
+ok - real named lab: Pi/Luna launch returned with a recorded Herdr pane
+ok - real named lab: Pi/Luna appeared visibly and processed the launch brief
+ok - real named lab: Pi/Luna remained available after processing its brief
+evidence: model=openai-codex/gpt-5.6-luna herdr=0.9.0 pane=<ephemeral> default-session=not-used
+```
+
+The proof uses the named lab helper for every Herdr call and does not test the captain's default session.
+
 ### Away-mode transport
 
 The Pi/Herdr return and injection path was reverified on Herdr 0.7.3 and Pi 0.80.7:
