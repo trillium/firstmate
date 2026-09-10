@@ -479,8 +479,8 @@ do_exit() {
   # and clear only its stale authority before any exit text is sent; a genuine
   # foreground agent never enters this repair path.
   if [ "$BACKEND" = herdr ]; then
-    fm_backend_herdr_reconcile_stale_agent "$T" || true
-    case "${FM_BACKEND_HERDR_RECONCILE_RESULT:-not-stale}" in
+    fm_backend_herdr_reconcile_stale_agent "$T" "$WT" || true
+    case "${FM_BACKEND_HERDR_RECONCILE_RESULT:-unsafe}" in
       repaired)
         retire_busy_incarnation
         printf 'stopped'
@@ -488,6 +488,9 @@ do_exit() {
         ;;
       failed)
         die "task $ID's Herdr pane is an idle shell with stale lifecycle authority, but that authority could not be cleared; refusing to type an exit command into the shell"
+        ;;
+      unsafe)
+        die "task $ID's Herdr pane is not a stable bare shell in its recorded task directory; refusing to type an exit command into an unattributed process"
         ;;
     esac
   fi

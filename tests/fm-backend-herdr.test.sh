@@ -1740,6 +1740,63 @@ test_idle_shell_proof_refuses_a_background_job_on_the_pane_terminal() {
   pass "herdr idle-shell proof: a job on the pane's own terminal, or an ambiguous shell row, still refuses"
 }
 
+foreground_shell_result() {  # <dir> <process-info> <task-dir> [polls]
+  local dir=$1 info=$2 task_dir=$3 polls=${4:-2}
+  mkdir -p "$dir" "$task_dir"
+  ROOT="$ROOT" FM_TEST_PROCESS_INFO="$info" FM_TEST_RESULT_LOG="$dir/result.log" \
+    FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS="$polls" bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    fm_backend_herdr_cli() {
+      printf "%s\n" "$FM_TEST_PROCESS_INFO"
+      printf "read\n" >> "$FM_TEST_RESULT_LOG"
+    }
+    if fm_backend_herdr_pane_shell_foreground_pid fmtest w2:p1 "$1" > "$FM_TEST_RESULT_LOG.pid"; then
+      printf "ok:%s:%s\n" "$FM_BACKEND_HERDR_FOREGROUND_RESULT" "$(cat "$FM_TEST_RESULT_LOG.pid")"
+    else
+      printf "refused:%s\n" "${FM_BACKEND_HERDR_FOREGROUND_RESULT:-unset}"
+    fi
+  ' _ "$task_dir"
+}
+
+test_foreground_shell_proof_accepts_nested_task_shell_only_after_stable_reads() {
+  local dir="$TMP_ROOT/foreground-nested" task_dir=/tmp/task-worktree info out
+  info=$(jq -cn --arg cwd "$task_dir" '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"/bin/zsh",argv:["/bin/zsh"],argv0:"zsh",cmdline:"-zsh",cwd:$cwd}]}}}')
+  out=$(foreground_shell_result "$dir" "$info" "$task_dir")
+  [ "$out" = "ok:shell:200" ] || fail "nested foreground shell was not accepted after stable reads: $out"
+  [ "$(wc -l < "$dir/result.log" | tr -d ' ')" -ge 2 ] \
+    || fail "nested foreground shell proof did not take repeated structured reads"
+  pass "herdr stale-authority proof: accepts a stable nested foreground shell with a distinct pane shell pid"
+}
+
+test_foreground_shell_proof_refuses_live_and_ambiguous_processes() {
+  local dir="$TMP_ROOT/foreground-refusals" task_dir=/tmp/task-worktree info out
+  info=$(jq -cn --arg cwd "$task_dir" '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"opencode",argv:["opencode"],argv0:"opencode",cmdline:"opencode",cwd:$cwd}]}}}')
+  out=$(foreground_shell_result "$dir/live" "$info" "$task_dir" 1)
+  [ "$out" = "refused:agent" ] || fail "a live agent was not refused by stale-authority proof: $out"
+  info=$(jq -cn --arg cwd "$task_dir" '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"python",argv:["python","job"],argv0:"python",cmdline:"python job",cwd:$cwd}]}}}')
+  out=$(foreground_shell_result "$dir/ambiguous" "$info" "$task_dir" 1)
+  [ "$out" = "refused:unsafe" ] || fail "an ambiguous foreground process was not refused: $out"
+  info=$(jq -cn --arg cwd /tmp/other-worktree '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"zsh",argv:["/bin/zsh"],argv0:"zsh",cmdline:"-zsh",cwd:$cwd}]}}}')
+  out=$(foreground_shell_result "$dir/mismatch" "$info" "$task_dir" 1)
+  [ "$out" = "refused:unsafe" ] || fail "a shell in a mismatched directory was accepted: $out"
+  pass "herdr stale-authority proof: live agents, ambiguous processes, and mismatched directories refuse"
+}
+
+test_reconcile_stale_agent_never_clears_live_agent() {
+  local dir="$TMP_ROOT/reconcile-live" task_dir="$TMP_ROOT/task-worktree" info out
+  mkdir -p "$task_dir"
+  info=$(jq -cn --arg cwd "$task_dir" '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"opencode",argv:["opencode"],argv0:"opencode",cmdline:"opencode",cwd:$cwd}]}}}')
+  out=$(ROOT="$ROOT" FM_TEST_PROCESS_INFO="$info" bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    fm_backend_herdr_cli() { printf "%s\n" "$FM_TEST_PROCESS_INFO"; }
+    fm_backend_herdr_clear_agent_authority() { printf cleared; return 0; }
+    fm_backend_herdr_reconcile_stale_agent fmtest:w2:p1 "$1"
+    printf ":%s" "${FM_BACKEND_HERDR_RECONCILE_RESULT:-unset}"
+  ' _ "$task_dir" 2>/dev/null || true)
+  [ "$out" = ":not-stale" ] || fail "live agent reconciliation did not refuse without clearing: $out"
+  pass "herdr stale-authority reconciliation: a genuine live agent never reaches the clear operation"
+}
+
 test_projection_close_plain_without_move_requires_structured_removal() {
   local dir log out status
   dir="$TMP_ROOT/close-plain-unconfirmed"; mkdir -p "$dir"
@@ -4474,6 +4531,9 @@ test_projection_close_emptying_last_workspace_needs_no_move
 test_projection_close_non_emptying_stays_plain_without_proof_or_move
 test_idle_shell_proof_converges_past_an_off_terminal_rc_helper
 test_idle_shell_proof_refuses_a_background_job_on_the_pane_terminal
+test_foreground_shell_proof_accepts_nested_task_shell_only_after_stable_reads
+test_foreground_shell_proof_refuses_live_and_ambiguous_processes
+test_reconcile_stale_agent_never_clears_live_agent
 test_projection_close_plain_without_move_requires_structured_removal
 test_projection_close_ambiguous_positions_fall_back_to_plain_close
 test_projection_close_move_failure_falls_back_to_plain_close
