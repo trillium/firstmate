@@ -1168,6 +1168,28 @@ crew_dispatch_validate() {
   fi
 }
 
+inbox_event_source_setup() {
+  # Primary-home inbox store-event source (task-z8sn4): the inbox watch file
+  # must wake this home through a live process-to-event tail, not merely
+  # exist as a subscription row. A secondmate is deliberately passive here
+  # because machine-wide source ownership would otherwise let a transient
+  # home steal the tail from the primary. Silent on success; an actionable
+  # line on failure. Never fails bootstrap.
+  if [ -e "$FM_HOME/.fm-secondmate-home" ] || [ -L "$FM_HOME/.fm-secondmate-home" ]; then
+    return 0
+  fi
+  watch=${INBOX_EVENTS_FILE:-$HOME/data/inbox/events.jsonl}
+  [ -f "$watch" ] && [ ! -L "$watch" ] || return 0
+  arm_out=$("$SCRIPT_DIR/fm-procevent-inbox.sh" arm "$watch" 2>&1) || {
+    echo "INBOX_WATCH: inbox store-event source could not be registered ($watch); store events will not wake this home until it is"
+    return 0
+  }
+  if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
+    echo "BOOTSTRAP_INFO: $(printf '%s' "$arm_out" | head -1)"
+  fi
+  return 0
+}
+
 startup_memory_budget_setup() {
   # Primary bootstrap owns default publication. A secondmate is deliberately
   # passive here because its setting must converge from the primary through the
@@ -1361,6 +1383,9 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   fi
   # x_mode_setup writes local Relay artifacts only and never leaves the machine.
   local_phase && x_mode_setup
+  # inbox_event_source_setup registers this home's live tail of the inbox
+  # watch file; the watcher's ordinary reconcile then owns and surfaces it.
+  local_phase && inbox_event_source_setup
   if network_phase && network_sweep_authorized 'project clone refresh'; then
     __fm_timing_stamp=$(fm_timing_now_ms)
     fleet_sync

@@ -85,6 +85,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-pending-reply-lib.sh` | Parent-owned secondmate pending-reply expectations, recovery, and keyed escalation lifecycle |
 | `fm-secondmate-report.sh` | Optional helper to append a correlated parent status or document-pointer report       |
 | `fm-procevent-remote-reply.sh` | Relay the remote-secondmate status stream through non-destructive process-event deltas |
+| `fm-procevent-inbox.sh` | Tail the inbox store watch file through non-destructive process-event batches so store events wake this home |
 | `fm-gate-refuse-lib.sh`  | Shared no-mistakes gate-context refusal for fleet lifecycle entrypoints               |
 | `fm-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
 | `fm-watch-cycle-lib.sh`  | Shared reader for the watcher lifecycle ledger: parses the last cycle row and classifies terminated vs. ended cycles for supervision-down banners |
