@@ -1,49 +1,39 @@
-First Mate MCP proof-of-concept findings (task-gluj4)
+First Mate MCP full-coverage findings (poc-full)
 
-## What was built
+## What changed
 
-`poc-mcp/fm_mcp_server.py` is a dependency-free stdio MCP server that exposes five typed tools over JSON-RPC.
+`poc-mcp/fm_mcp_server.py` grew from 5 PoC tools to 24 tools with no dependency beyond Python 3.
 
-`poc-mcp/test_client.py` is an external MCP client that handshakes, lists tools, and exercises every tool including all refusal paths.
+The 5 original tools (`fleet_snapshot`, `backlog`, `crew_state`, `status_tail`, `send_message`) are behavior-identical and their original checks still pass.
 
-All 17 client checks pass, and a scratch-home probe proved the positive read path plus the fail-closed steer path.
+19 new tools shell to the owning `bin/` scripts: 5 lifecycle verbs, `spawn_crew`, `scaffold_brief`, `promote_scout`, `teardown_crew`, `arm_pr_check`, `merge_pr`, `merge_local`, `decision_hold`, `decision_resolve`, `review_decision`, `relay_reply`, `relay_dismiss`, `relay_followup`, and the read-only `fleet_poll` convenience poller.
 
-## What the PoC proves
+`poc-mcp/AUTH.md` documents the four tiers: open reads, reversible steers, authority writes, and external sends.
 
-An external client can inspect First Mate semantically without screen-scraping panes or misreading the append-only status log.
+`poc-mcp/test_client.py` now runs 66 checks: the original 17 (with the tool-count assertion widened to subset) plus refusal-path coverage for every new tool.
 
-The typed boundary is enforceable in one place: ids are validated, paths are confined, text is capped and single-line, and slash commands never reach the composer.
+All 66 client checks pass, with sandbox-home isolation (`FM_HOME` pointed at a temp dir) for every side-effecting test.
 
-First Mate stays the implementation because every tool shells to the owning script instead of reimplementing its logic.
+## What full coverage now requires
 
-Fail-closed behavior survives the mapping: steering an unknown target returns a structured error with no side effects.
+Nothing is held back per the explicit owner order of 2026-09-13: Trillium authorizes each use or not.
 
-## Intentionally excluded from the PoC
+Every authority-bearing or externally visible tool takes an explicit `approval` argument starting with `I authorize` and refuses without it.
 
-Lifecycle verbs (interrupt, exit, relaunch, suspend, resume), spawn, brief, promote, and teardown are excluded as irreversible or worker-replacing.
+Reads stay open and `send_message` keeps its PoC validation (500-char single line, no slash commands).
 
-Merges, PR arming, decision-hold writes, review decisions, and all Relay sends are excluded as authority-bearing or externally visible.
+Teardown through MCP never passes `--force`, so discarding unlanded work still needs the captain directly.
 
-Proactive server-initiated wake streaming (roots, sampling, or subscriptions) is excluded because the PoC is request-response only.
+Merges, decisions, and Relay sends inherit the owning scripts' guards: merge authority, CodeRabbit gate, yolo posture, decision-hold lifecycle, and relay consent.
 
-Batch JSON-RPC, progress tokens, and cancellation are excluded as unneeded for five tools.
+The server inherits `FM_HOME` from its environment, so the launcher must pin it rather than passing it per call.
 
-## What full coverage would require
+## Residual risks
 
-A permission-tier model distinguishing home-visible reads, reversible steers, authority-bearing writes, and externally visible sends.
+Authority laundering remains the largest risk: a convenient tool can feel routine while the underlying action is destructive.
 
-Server-side pinning of `FM_HOME` plus per-client grants, so a client cannot repoint the server at another home through the environment.
+The mitigation is unchanged layering: the MCP schema narrows the flags, the server revalidates ids and approval, and the owning script still fails closed.
 
-Lifecycle and merge tools gated on the same authorities firstmate enforces today: yolo posture, merge authority, CodeRabbit gate, and relay consent.
+Relay tokens and merge authority live outside this layer, so a compromised MCP caller with approval strings could still send or land code.
 
-A wake-subscription transport if clients need push instead of polling `fleet_snapshot` on an interval.
-
-Conformance tests against a real MCP SDK client and a live crewmate steer in a lab home.
-
-## Risks and recommendation
-
-The largest risk is authority laundering, where a convenient tool lets a client do what firstmate policy would refuse.
-
-The mitigation is layering: the MCP schema narrows the flags, the server validates again, and the owning script still fails closed.
-
-Recommendation: keep this PoC local-only, rescope before any production wiring, and expand reads first with `bearings_snapshot` and `review_diff` next.
+Recommendation: keep this local-only on a pinned `FM_HOME`, treat approval strings as per-action captain consent, and rescope before any networked or multi-user wiring.
