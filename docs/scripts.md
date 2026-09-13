@@ -40,6 +40,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-brief-hooks.d/beads.sh` | Pre-brief extension: emit the Bead Receipt and Bead Closure sections for a `--beads` task |
 | `fm-bead-stamp.sh`       | Stamp a linked bead's dispatch and lifecycle state when a task is spawned with --beads or auto-linked under the beads backend |
 | `fm-ledger.sh`           | List or close likely-dropped beads: claimed, still open, and idle past a staleness window |
+| `fm-inbox-triage.sh`      | Route each inbox bead to exactly one project on evidence-only detectors, with an append-only JSONL decision trace |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `fm-herdr-session-cleanup.sh` | Retire stale restored-shell Herdr presentation children at locked session start |
 | `fm-herdr-spur.sh`       | Bridge external (non-firstmate-spawned) Herdr agent completions into firstmate's durable wake queue |
