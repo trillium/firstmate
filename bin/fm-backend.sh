@@ -54,6 +54,10 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BACKEND_DEFAULT_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
+# shellcheck source=bin/fm-stat-lib.sh
+# shellcheck disable=SC1091
+. "$FM_BACKEND_LIB_DIR/fm-stat-lib.sh"
+
 # Verified backend adapters. Extend only after a backend gets its own
 # bin/backends/<name>.sh and empirical verification, mirroring AGENTS.md
 # section 4's harness-verification discipline. herdr is EXPERIMENTAL (P2;
@@ -333,12 +337,68 @@ fm_backend_required_tool_available() {  # <backend> <tool>
 }
 
 # fm_meta_get: the LAST value of `key=` in <meta-file>, or empty (never
-# errors) if the file or key is absent. Mirrors the ad hoc `grep '^key=' |
-# tail -1 | cut -d= -f2-` snippet every fm-*.sh script used to repeat inline.
+# errors) if the file or key is absent. Lenient by design for informational
+# reads; every identity and endpoint read uses fm_meta_get_exact instead so a
+# duplicate key fails closed rather than letting readers disagree.
 fm_meta_get() {  # <meta-file> <key>
   local meta=$1 key=$2
   [ -f "$meta" ] || return 0
   grep "^$key=" "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
+# fm_meta_get_exact: the single exact-value meta accessor.
+# Prints the value only when <meta-file> holds exactly one non-empty `key=`
+# line. Returns 1 when the file is absent, the key is absent or duplicated, or
+# the value is empty. Identity and endpoint readers use this and nothing else,
+# so a duplicate key is a loud refusal instead of a first-match vs last-match
+# disagreement (robots-73la).
+fm_meta_get_exact() {  # <meta-file> <key>
+  local meta=$1 key=$2 count value
+  count=$(grep -c "^$key=" "$meta" 2>/dev/null || true)
+  [ "$count" -eq 1 ] || return 1
+  value=$(grep "^$key=" "$meta" | cut -d= -f2-)
+  [ -n "$value" ] || return 1
+  printf '%s' "$value"
+}
+
+# fm_meta_set: the single meta writer.
+# Atomically rewrites <meta-file> so it holds exactly one `key=value` line:
+# every prior `key=` line is dropped and the new line is appended, which makes
+# duplicate keys impossible no matter how often the writer runs. An empty or
+# absent value removes the key instead of writing an empty line, because
+# fm_meta_get_exact treats empty as unset. The rewrite preserves the file's
+# mode and takes the per-meta lock whenever fm-wake-lib.sh is loaded, so
+# callers that already hold that lock get the same atomic tmp-and-rename
+# either way. Returns 1 without touching the file when the key is not a
+# slug-safe name, when key or value spans lines, or when the meta file is
+# absent, a symlink, or otherwise unusable.
+fm_meta_set() {  # <meta-file> <key> [value]
+  local meta=$1 key=${2:-} value=${3:-} dir base tmp lock locked=0 mode
+  case "$key" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  if command -v fm_meta_lock_path >/dev/null 2>&1 && command -v fm_lock_acquire_wait >/dev/null 2>&1; then
+    lock=$(fm_meta_lock_path "$meta") || return 1
+    fm_lock_acquire_wait "$lock"
+    locked=1
+  fi
+  [ -f "$meta" ] && [ ! -L "$meta" ] || { [ "$locked" = 0 ] || fm_lock_release "$lock"; return 1; }
+  dir=${meta%/*}
+  base=${meta##*/}
+  [ "$dir" != "$meta" ] || dir=.
+  tmp=$(mktemp "$dir/.$base.fm-meta.XXXXXX") || { [ "$locked" = 0 ] || fm_lock_release "$lock"; return 1; }
+  mode=$(fm_stat_mode "$meta" 2>/dev/null) || mode=
+  if ! { grep -v "^${key}=" "$meta" || true; } > "$tmp"; then
+    rm -f "$tmp"; [ "$locked" = 0 ] || fm_lock_release "$lock"; return 1
+  fi
+  if [ -n "$value" ]; then
+    printf '%s=%s\n' "$key" "$value" >> "$tmp" || { rm -f "$tmp"; [ "$locked" = 0 ] || fm_lock_release "$lock"; return 1; }
+  fi
+  if [ -n "$mode" ]; then
+    chmod "$mode" "$tmp" || { rm -f "$tmp"; [ "$locked" = 0 ] || fm_lock_release "$lock"; return 1; }
+  fi
+  mv -f "$tmp" "$meta" || { rm -f "$tmp"; [ "$locked" = 0 ] || fm_lock_release "$lock"; return 1; }
+  [ "$locked" = 0 ] || fm_lock_release "$lock"
 }
 
 # fm_backend_of_meta: the backend recorded in <meta-file>, defaulting to
@@ -373,12 +433,7 @@ fm_backend_target_of_meta() {  # <meta-file>
 # On success, sets FM_BACKEND_VALIDATED_BACKEND and
 # FM_BACKEND_VALIDATED_TARGET. On failure, prints one refusal and returns 1.
 fm_backend_meta_exact_value() {  # <meta-file> <key>
-  local meta=$1 key=$2 count value
-  count=$(grep -c "^$key=" "$meta" 2>/dev/null || true)
-  [ "$count" -eq 1 ] || return 1
-  value=$(grep "^$key=" "$meta" | cut -d= -f2-)
-  [ -n "$value" ] || return 1
-  printf '%s' "$value"
+  fm_meta_get_exact "$1" "$2"
 }
 
 fm_backend_endpoint_atom_valid() {  # <value>
@@ -474,8 +529,8 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       else
         fm_backend_source herdr || return 1
         if fm_backend_herdr_pane_verifies_task "$recorded_session" "$pane" "$id" 2>/dev/null; then
-          echo "herdr endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
-          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+          echo "herdr endpoint self-repair: recording endpoint_task_id=$id in metadata for legacy task $id" >&2
+          fm_meta_set "$meta" endpoint_task_id "$id" || return 1
         else
           echo "REFUSED: legacy Herdr endpoint metadata for task $id lacks an exact task binding; pane verification failed or pane does not belong to this task; preserving task state." >&2
           return 1
@@ -498,8 +553,8 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       else
         fm_backend_source zellij || return 1
         if fm_backend_zellij_pane_verifies_task "$recorded_session" "$tab" "$pane" "$id" 2>/dev/null; then
-          echo "zellij endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
-          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+          echo "zellij endpoint self-repair: recording endpoint_task_id=$id in metadata for legacy task $id" >&2
+          fm_meta_set "$meta" endpoint_task_id "$id" || return 1
         else
           echo "REFUSED: legacy Zellij endpoint metadata for task $id lacks an exact task binding; pane verification failed or pane does not belong to this task; preserving task state." >&2
           return 1
@@ -552,8 +607,8 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
       else
         fm_backend_source cmux || return 1
         if fm_backend_cmux_surface_verifies_task "$workspace" "$surface" "$id" 2>/dev/null; then
-          echo "cmux endpoint self-repair: appending endpoint_task_id=$id to metadata for legacy task $id" >&2
-          printf 'endpoint_task_id=%s\n' "$id" >> "$meta" || return 1
+          echo "cmux endpoint self-repair: recording endpoint_task_id=$id in metadata for legacy task $id" >&2
+          fm_meta_set "$meta" endpoint_task_id "$id" || return 1
         else
           echo "REFUSED: legacy cmux endpoint metadata for task $id lacks an exact task binding; surface verification failed or surface does not belong to this task; preserving task state." >&2
           return 1

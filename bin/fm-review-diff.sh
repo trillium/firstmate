@@ -18,6 +18,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# shellcheck source=bin/fm-backend.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-backend.sh"
 "$FM_ROOT/bin/fm-guard.sh" || true
 
 usage() {
@@ -42,8 +45,8 @@ esac
 META="$STATE/$ID.meta"
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
 
-WT=$(grep '^worktree=' "$META" | cut -d= -f2-)
-PROJ=$(grep '^project=' "$META" | cut -d= -f2-)
+WT=$(fm_backend_meta_exact_value "$META" worktree 2>/dev/null || true)
+PROJ=$(fm_backend_meta_exact_value "$META" project 2>/dev/null || true)
 [ -n "$WT" ] || { echo "error: meta for task $ID is missing worktree=" >&2; exit 1; }
 [ -n "$PROJ" ] || { echo "error: meta for task $ID is missing project=" >&2; exit 1; }
 [ -d "$WT" ] || { echo "error: worktree for task $ID is missing: $WT" >&2; exit 1; }
@@ -122,8 +125,8 @@ resolve_pr_head() {
   return 1
 }
 
-PR_URL=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
-PR_HEAD_RECORDED=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
+PR_URL=$(fm_backend_meta_exact_value "$META" pr 2>/dev/null || true)
+PR_HEAD_RECORDED=$(fm_backend_meta_exact_value "$META" pr_head 2>/dev/null || true)
 COMPARE_REF=$BRANCH
 if [ -n "$PR_URL" ]; then
   if PR_HEAD=$(resolve_pr_head "$PR_URL" "$PR_HEAD_RECORDED"); then
