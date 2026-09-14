@@ -2030,7 +2030,7 @@ real_path_or_raw() {  # <path>
 # the owner description when $1 (a physical worktree path) is owned, and
 # nothing otherwise. The calling task's own records never count against it.
 spawn_worktree_owner() {  # <wt-real>
-  local wt=$1 home_real meta base owner raw
+  local wt=$1 home_real meta base owner raw claims
   home_real=
   if home_real=$(cd "$FM_HOME" 2>/dev/null && pwd -P); then
     if [ "$wt" = "$home_real" ]; then
@@ -2051,21 +2051,37 @@ spawn_worktree_owner() {  # <wt-real>
       [ -e "$meta" ] || continue
       base=$(basename "$meta" .meta)
       [ "$base" = "${ID:-}" ] && continue
+      claims=$(grep -E '^(worktree|home)=' "$meta" 2>/dev/null || true)
       while IFS= read -r raw || [ -n "$raw" ]; do
-        case "$raw" in
-          worktree=*|home=*) owner=${raw#*=} ;;
-          *) continue ;;
-        esac
+        owner=${raw#*=}
         [ -n "$owner" ] || continue
         owner=$(real_path_or_raw "$owner")
         if [ "$wt" = "$owner" ]; then
-          printf 'task %s (recorded in state/%s.meta)' "$base" "$base"
-          return 0
+          if spawn_worktree_owner_is_live "$meta"; then
+            printf 'task %s (recorded in state/%s.meta)' "$base" "$base"
+            return 0
+          fi
         fi
-      done < "$meta"
+      done <<EOF
+$claims
+EOF
     done
   fi
   return 1
+}
+
+# A recorded owner vetoes a worktree only while it is still live there. A
+# stale record (a session restart freed the slot, a harness fixture reuses one
+# fake worktree across spawns) must not veto a fresh allocation, so anything
+# but a positively alive endpoint fails open exactly as before this guard.
+spawn_worktree_owner_is_live() {  # <owner-meta>
+  local meta=$1 target backend state
+  target=$(grep '^window=' "$meta" 2>/dev/null | cut -d= -f2- | head -n 1)
+  [ -n "$target" ] || return 1
+  backend=$(grep '^backend=' "$meta" 2>/dev/null | cut -d= -f2- | head -n 1)
+  [ -n "$backend" ] || backend=tmux
+  state=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || true)
+  [ "$state" = alive ]
 }
 
 validate_spawn_worktree() {  # <source> <inspect-target>
