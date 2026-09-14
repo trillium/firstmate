@@ -12,8 +12,15 @@
 # detector scoring, reassignment analysis) always sees the original history.
 #
 # A create-project decision only edits the local registry file given by
-# --registry. It never publishes, migrates, or touches any other store; the
-# inbox and task stores are read (show/list) but never written by this tool.
+# --registry. It never publishes, migrates, or touches any other store.
+# Every decide also attaches a project:<slug> label to the inbox bead itself
+# via the inbox CLI, then re-reads the bead to verify the label landed, and
+# only then appends the trace line. Attach and trace are atomic: a failed
+# attach or verify never touches the trace, and a failed trace append rolls
+# the label back, so both land or the command fails loudly with neither
+# half-applied. Stale project:* labels are left untouched, never removed.
+# With --input (fixture mode) there is no live bead, so decide skips the
+# attach and verify steps and only appends the trace.
 #
 # Detector registry: every executable file directly under the detectors
 # directory is one detector, run in sorted filename order. A detector's I/O
@@ -43,6 +50,7 @@
 #
 # Feedback values: useful, irrelevant, misleading, false-positive, decisive.
 # --project may be given exactly once; a second one is an error, never a tie.
+# decide attaches project:<slug> to the live bead unless --input is given.
 #
 # Env:
 #   FM_INBOX_BIN               inbox CLI to read from (default: inbox)
@@ -173,6 +181,29 @@ registry_add_project() {
   fi
 }
 
+attach_project_label() {
+  local id=$1 slug=$2
+  "$BIN" update "$id" --add-label "project:$slug" >/dev/null 2>&1 \
+    || { echo "fm-inbox-triage: could not attach project:$slug to $id via $BIN" >&2; return 1; }
+}
+
+verify_project_label() {
+  local id=$1 slug=$2 want="project:$2" shown
+  shown=$("$BIN" show "$id" --json 2>/dev/null) \
+    || { echo "fm-inbox-triage: could not re-read $id to verify project:$slug" >&2; return 1; }
+  if printf '%s' "$shown" | jq -e --arg want "$want" \
+    'if type == "array" then .[0] else . end | (.labels // []) | index($want) != null' >/dev/null 2>&1; then
+    return 0
+  else
+    echo "fm-inbox-triage: verify failed: $id carries no '$want' label after attach" >&2
+    return 1
+  fi
+}
+
+detach_project_label() {
+  "$BIN" update "$1" --remove-label "project:$2" >/dev/null 2>&1 || true
+}
+
 cmd_decide() {
   need_jq
   local id=${1:-}
@@ -220,7 +251,17 @@ cmd_decide() {
     --arg reason "$reason" --argjson fb "$feedback_json" \
     '{v: 1, ts: $ts, actor: $actor, inbox_id: $id, input: $input, evidence: $ev,
       decision: {project: $proj, created: $created, reason: $reason}, feedback: $fb}') || exit 1
-  printf '%s\n' "$record" >> "$log" || { echo "fm-inbox-triage: could not append to $log" >&2; exit 1; }
+  local live=1
+  [ -n "$input" ] && live=0
+  if [ "$live" -eq 1 ]; then
+    attach_project_label "$id" "$project" || exit 1
+    verify_project_label "$id" "$project" || { detach_project_label "$id" "$project"; exit 1; }
+  fi
+  printf '%s\n' "$record" >> "$log" || {
+    echo "fm-inbox-triage: could not append to $log" >&2
+    if [ "$live" -eq 1 ]; then detach_project_label "$id" "$project"; fi
+    exit 1
+  }
   echo "triaged $id -> $project (trace: $log)"
 }
 
