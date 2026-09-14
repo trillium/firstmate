@@ -174,7 +174,9 @@
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
-#   git worktree root distinct from the primary project checkout.
+#   git worktree root distinct from the primary project checkout and unowned
+#   by any other home or task (validate_spawn_worktree plus its
+#   spawn_worktree_owner enumeration).
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -2019,8 +2021,55 @@ real_path_or_raw() {  # <path>
 # herdr-sm-spaces-k4). Both branches converge on the same $T ("target") string
 # that every downstream operation (send/capture/kill) already treats as opaque
 # per-backend routing (fm_backend_resolve_selector).
+# robots-n0kq ownership guard: a real, distinct worktree root is not proof it
+# is OURS. A persistently-wrong pane path (robots-otjv: a dead secondmate's
+# live home) passes the distinct-worktree check above, so ownership is
+# enumerated positively here from this home's own durable records - the
+# spawning home itself, live firstmate-home shape, and every other task's
+# recorded worktree/home - instead of blocklisting individual paths. Prints
+# the owner description when $1 (a physical worktree path) is owned, and
+# nothing otherwise. The calling task's own records never count against it.
+spawn_worktree_owner() {  # <wt-real>
+  local wt=$1 home_real meta base owner raw
+  home_real=
+  if home_real=$(cd "$FM_HOME" 2>/dev/null && pwd -P); then
+    if [ "$wt" = "$home_real" ]; then
+      printf 'this firstmate home (%s)' "$FM_HOME"
+      return 0
+    fi
+  fi
+  if [ -d "$wt/state" ] && [ -d "$wt/data" ] && [ -f "$wt/bin/fm-spawn.sh" ]; then
+    printf 'another firstmate home (%s)' "$wt"
+    return 0
+  fi
+  if [ -f "$wt/.fm-secondmate-home" ]; then
+    printf 'a secondmate home (%s)' "$wt"
+    return 0
+  fi
+  if [ -d "${STATE:-}" ]; then
+    for meta in "$STATE"/*.meta; do
+      [ -e "$meta" ] || continue
+      base=$(basename "$meta" .meta)
+      [ "$base" = "${ID:-}" ] && continue
+      while IFS= read -r raw || [ -n "$raw" ]; do
+        case "$raw" in
+          worktree=*|home=*) owner=${raw#*=} ;;
+          *) continue ;;
+        esac
+        [ -n "$owner" ] || continue
+        owner=$(real_path_or_raw "$owner")
+        if [ "$wt" = "$owner" ]; then
+          printf 'task %s (recorded in state/%s.meta)' "$base" "$base"
+          return 0
+        fi
+      done < "$meta"
+    done
+  fi
+  return 1
+}
+
 validate_spawn_worktree() {  # <source> <inspect-target>
-  local source=$1 inspect_target=$2 wt_real proj_real wt_top wt_top_real
+  local source=$1 inspect_target=$2 wt_real proj_real wt_top wt_top_real owner
   wt_real=
   if ! wt_real=$(cd "$WT" 2>/dev/null && pwd -P); then
     wt_real=
@@ -2033,6 +2082,10 @@ validate_spawn_worktree() {  # <source> <inspect-target>
   fi
   if [ -z "$wt_real" ] || [ -z "$wt_top_real" ] || [ "$wt_real" != "$wt_top_real" ] || [ "$wt_real" = "$proj_real" ]; then
     echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
+    exit 1
+  fi
+  if owner=$(spawn_worktree_owner "$wt_real"); then
+    echo "error: $source yielded $owner (resolved '$WT'); refusing to launch into a worktree owned by someone else. Inspect target $inspect_target" >&2
     exit 1
   fi
 }
