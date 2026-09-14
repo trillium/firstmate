@@ -126,4 +126,91 @@ jq -e 'select(.inbox_id == "inbox-neg" and .decision.created == true)' "$LOG" >/
   || fail "create-project did not record created=true in the trace"
 pass "create-project adds the slug to the local registry file only and marks the trace"
 
+# --- decide attaches the routing to the bead, atomically ----------------------
+
+FAKE_STATE="$TMP_ROOT/fake-inbox-state"
+mkdir -p "$FAKE_STATE"
+FAKEBIN=$(fm_fakebin "$TMP_ROOT/fake-inbox")
+cat > "$FAKEBIN/inbox" <<'SH'
+#!/usr/bin/env bash
+# stub inbox CLI: show/update only, backed by $FM_FAKE_INBOX_STATE/labels_<id>.
+set -u
+state="${FM_FAKE_INBOX_STATE:-/tmp/fm-fake-inbox-missing}"
+cmd=${1:-}
+[ -n "$cmd" ] || { echo "stub inbox: no command" >&2; exit 2; }
+shift
+id=""; add=""; remove=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --add-label) add=${2:-}; shift 2 ;;
+    --remove-label) remove=${2:-}; shift 2 ;;
+    --*) shift ;;
+    *) if [ -z "$id" ]; then id=$1; fi; shift ;;
+  esac
+done
+[ -n "$id" ] || { echo "stub inbox: no id" >&2; exit 2; }
+file="$state/labels_$id"
+case "$cmd" in
+  show)
+    labels_json="[]"
+    if [ "${FM_FAKE_INBOX_HIDE_LABELS:-0}" = 1 ]; then
+      labels_json="[]"
+    elif [ -f "$file" ]; then
+      labels_json=$(jq -R . "$file" | jq -s -c '.') || labels_json="[]"
+    fi
+    jq -c -n --arg id "$id" --argjson labels "$labels_json" \
+      '[{id: $id, title: "stub bead", description: "stub", labels: $labels, assignee: "", status: "open"}]'
+    ;;
+  update)
+    if [ -n "$add" ]; then
+      if [ "${FM_FAKE_INBOX_FAIL_WRITE:-0}" = 1 ]; then
+        echo "stub inbox: simulated write failure" >&2
+        exit 1
+      fi
+      touch "$file"
+      grep -Fxq "$add" "$file" 2>/dev/null || printf '%s\n' "$add" >> "$file"
+    fi
+    if [ -n "$remove" ] && [ -f "$file" ]; then
+      grep -Fxv "$remove" "$file" > "$file.tmp" || true
+      mv "$file.tmp" "$file"
+    fi
+    ;;
+  *) echo "stub inbox: unknown command $cmd" >&2; exit 2 ;;
+esac
+SH
+chmod +x "$FAKEBIN/inbox"
+
+ATTACH_LOG="$TMP_ROOT/attach-trace.jsonl"
+OUT=$(FM_INBOX_BIN="$FAKEBIN/inbox" FM_FAKE_INBOX_STATE="$FAKE_STATE" "$TRIAGE" decide inbox-stub1 --project parlay --reason 'stub attach' --registry "$REG" --trace-log "$ATTACH_LOG" --actor tester)
+printf '%s' "$OUT" | grep -Fq "triaged inbox-stub1 -> parlay" || fail "decide did not confirm the stub routing: $OUT"
+grep -Fxq "project:parlay" "$FAKE_STATE/labels_inbox-stub1" || fail "decide did not attach project:parlay to the bead"
+[ "$(wc -l < "$ATTACH_LOG" | tr -d ' ')" = 1 ] || fail "decide did not append exactly one trace line"
+jq -e 'select(.inbox_id == "inbox-stub1" and .decision.project == "parlay")' "$ATTACH_LOG" >/dev/null \
+  || fail "attach trace line missed the decision: $(cat "$ATTACH_LOG")"
+pass "decide attaches the project label to the bead and verifies before tracing"
+
+FAIL_LOG="$TMP_ROOT/attach-fail.jsonl"
+FM_INBOX_BIN="$FAKEBIN/inbox" FM_FAKE_INBOX_STATE="$FAKE_STATE" FM_FAKE_INBOX_FAIL_WRITE=1 \
+  "$TRIAGE" decide inbox-stub2 --project parlay --reason 'stub failure' --registry "$REG" --trace-log "$FAIL_LOG" >/dev/null 2>&1 \
+  && fail "decide with a failing bead write must fail"
+[ ! -f "$FAIL_LOG" ] || [ "$(wc -l < "$FAIL_LOG" | tr -d ' ')" = 0 ] || fail "a failed attach left an orphan trace claim: $(cat "$FAIL_LOG")"
+assert_absent "$FAKE_STATE/labels_inbox-stub2" "a failed attach left label state behind"
+pass "a failed bead write leaves no orphan trace claim"
+
+HIDE_LOG="$TMP_ROOT/attach-hide.jsonl"
+FM_INBOX_BIN="$FAKEBIN/inbox" FM_FAKE_INBOX_STATE="$FAKE_STATE" FM_FAKE_INBOX_HIDE_LABELS=1 \
+  "$TRIAGE" decide inbox-stub3 --project parlay --reason 'stub hidden' --registry "$REG" --trace-log "$HIDE_LOG" >/dev/null 2>&1 \
+  && fail "decide with an unverifiable attach must fail"
+[ ! -f "$HIDE_LOG" ] || [ "$(wc -l < "$HIDE_LOG" | tr -d ' ')" = 0 ] || fail "a failed verify left an orphan trace claim: $(cat "$HIDE_LOG")"
+grep -Fxq "project:parlay" "$FAKE_STATE/labels_inbox-stub3" 2>/dev/null \
+  && fail "a failed verify left the bead label behind without a trace"
+pass "a verify mismatch surfaces an error instead of silent success"
+
+FM_INBOX_BIN="$FAKEBIN/inbox" FM_FAKE_INBOX_STATE="$FAKE_STATE" \
+  "$TRIAGE" decide inbox-stub4 --project parlay --reason 'stub bad log' --registry "$REG" --trace-log "$TMP_ROOT/no-such-dir/trace.jsonl" >/dev/null 2>&1 \
+  && fail "decide with an unwritable trace log must fail"
+grep -Fxq "project:parlay" "$FAKE_STATE/labels_inbox-stub4" 2>/dev/null \
+  && fail "a failed trace append left the bead label behind without a trace"
+pass "a failed trace append rolls the bead label back"
+
 echo "# fm-inbox-triage.test.sh: all assertions passed"
