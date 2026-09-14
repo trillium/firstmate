@@ -130,6 +130,7 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 - `resume` acts only on a durable suspension record: a task with no record is refused, and one that reads alive despite a record is a contradiction the operator must resolve, not a resume target.
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
+  On Herdr, a stale registered agent is cleared only after repeated structured reads prove the exact pane contains one recognized bare foreground shell in the recorded worktree; a live agent is never cleared, and a mismatched process is never sent exit text.
 - `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free and its shell is sitting in the recorded worktree, so a replacement can never join a live agent or start outside the copy holding the work.
 
 ## Capability matrix
@@ -153,3 +154,4 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, and rollback after a failed launch.
 - `tests/fm-control-suspend.test.sh` - the secondmate park pair: byte-identical suspend/resume round-trip of home, branch, worktree, record, and uncommitted changes, manual-only and secondmate-only enforcement, the liveness-sweep and watcher exemption, resume's relaunch fallback on a gone endpoint, and the record's removal at retirement.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
+- `tests/fm-pi-herdr-luna-live-e2e.test.sh` - the opt-in real Pi/Luna launch proof against a named Herdr lab.

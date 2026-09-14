@@ -20,6 +20,10 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Herdr gives its server login shell to restored panes. Pin a shell without
+# operator startup helpers so the live nested-shell proof is deterministic.
+SHELL=/bin/bash
+export SHELL
 
 fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
@@ -124,8 +128,8 @@ fm_herdr_lab_cli "$SESSION" pane report-agent "$PANE_ID" \
 
 STATE=$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")
 [ "$STATE" = alive ] || fail "herdr should classify the stale registration as alive, got '$STATE'"
-fm_backend_herdr_pane_shell_foreground_pid "$SESSION" "$PANE_ID" >/dev/null \
-  || fail "the stale registration regression must see a shell foreground before relaunch: $(fm_herdr_lab_cli "$SESSION" pane process-info --pane "$PANE_ID" 2>&1)"
+fm_backend_herdr_pane_shell_foreground_pid "$SESSION" "$PANE_ID" "$WT" >/dev/null \
+  || fail "the stale registration regression must see a shell foreground in the task copy before relaunch: $(fm_herdr_lab_cli "$SESSION" pane process-info --pane "$PANE_ID" 2>&1)"
 
 OUT=$(run_control hsmoke relaunch --note "The previous OpenCode process returned to a shell while Herdr retained its lifecycle registration.") \
   || fail "relaunch should clear the stale shell registration and start OpenCode: $OUT"
@@ -139,7 +143,7 @@ pass "real herdr: relaunch clears a stale shell registration before starting Ope
 
 # The repair is deliberately narrower than an unconditional release: a real
 # foreground OpenCode process must not be treated as a stale shell.
-if fm_backend_herdr_reconcile_stale_agent "$SESSION:$PANE_ID"; then
+if fm_backend_herdr_reconcile_stale_agent "$SESSION:$PANE_ID" "$WT"; then
   fail "stale-agent reconciliation must refuse a genuinely live OpenCode process"
 fi
 [ "${FM_BACKEND_HERDR_RECONCILE_RESULT:-}" = not-stale ] \

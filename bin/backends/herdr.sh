@@ -1244,18 +1244,35 @@ fm_backend_herdr_pane_idle_shell_pid() {  # <session> <pane-id>
   done
 }
 
-# fm_backend_herdr_pane_shell_foreground_pid: print the shell pid when Herdr's
-# exact pane process-info contains the recorded shell as its foreground
-# process group and no known agent executable. Herdr can report a short-lived
-# shell helper stack (or a helper such as find) as extra foreground rows, so
-# the stricter lone-process proof above is not suitable for lifecycle-authority
-# repair. A genuine verified agent is still excluded by its executable name or
-# command line; an unreadable pane or missing shell row refuses the repair.
-fm_backend_herdr_pane_shell_foreground_pid() {  # <session> <pane-id>
+# fm_backend_herdr_pane_shell_foreground_pid: print the pid of a stable,
+# recognized bare foreground shell in the recorded task directory. This proof
+# is intentionally separate from fm_backend_herdr_pane_idle_shell_pid: the
+# pane's shell_pid identifies the original pane shell, but Herdr can report a
+# nested foreground shell with a different pid after an agent returns to an
+# ordinary prompt. A genuine verified agent sets the result to `agent`, while
+# every unknown, mismatched, or unreadable process sets it to `unsafe`.
+# <task-dir> is mandatory because a recognized shell in another directory is
+# not authority for this task's pane. Two consecutive valid samples must name
+# the same foreground shell pid before lifecycle authority may be cleared.
+fm_backend_herdr_pane_shell_foreground_pid() {  # <session> <pane-id> <task-dir>
   local attempt=0 max_attempts=${FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS:-10}
+  local previous='' current=''
+  FM_BACKEND_HERDR_FOREGROUND_RESULT=unsafe
+  [ -n "${3:-}" ] || return 1
   while :; do
-    if fm_backend_herdr_pane_shell_foreground_sample "$1" "$2"; then
-      return 0
+    if fm_backend_herdr_pane_shell_foreground_sample "$1" "$2" "$3" >/dev/null; then
+      current=$FM_BACKEND_HERDR_FOREGROUND_SHELL_PID
+      if [ -n "$previous" ] && [ "$current" = "$previous" ]; then
+        FM_BACKEND_HERDR_FOREGROUND_RESULT=shell
+        printf '%s\n' "$current"
+        return 0
+      fi
+      previous=$current
+    else
+      case "${FM_BACKEND_HERDR_FOREGROUND_RESULT:-unsafe}" in
+        agent) return 1 ;;
+      esac
+      previous=
     fi
     attempt=$((attempt + 1))
     [ "$attempt" -lt "$max_attempts" ] || return 1
@@ -1263,47 +1280,68 @@ fm_backend_herdr_pane_shell_foreground_pid() {  # <session> <pane-id>
   done
 }
 
-fm_backend_herdr_pane_shell_foreground_sample() {  # <session> <pane-id>
-  local session=$1 pane=$2 info shell_pid foreground_pgid rows pid name argv0 cmdline base found=0
+fm_backend_herdr_pane_shell_foreground_sample() {  # <session> <pane-id> <task-dir>
+  local session=$1 pane=$2 task_dir=$3 canonical_task_dir info foreground_pgid rows
+  local pid name argv0 cmdline cwd base shell_count=0 agent_count=0 unsafe_count=0
+  FM_BACKEND_HERDR_FOREGROUND_RESULT=unsafe
+  [ -n "$task_dir" ] || return 1
+  canonical_task_dir=$(cd "$task_dir" 2>/dev/null && pwd -P) || return 1
   info=$(fm_backend_herdr_cli "$session" pane process-info --pane "$pane" 2>/dev/null) || return 1
   printf '%s' "$info" | jq -e --arg pane "$pane" '
     .result.type == "pane_process_info"
     and .result.process_info.pane_id == $pane
   ' >/dev/null 2>&1 || return 1
-  shell_pid=$(printf '%s' "$info" | jq -er \
-    '.result.process_info.shell_pid | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
+  printf '%s' "$info" | jq -e \
+    '.result.process_info.shell_pid | select(type == "number" and . > 1) | floor' \
+    >/dev/null 2>&1 || return 1
   foreground_pgid=$(printf '%s' "$info" | jq -er \
     '.result.process_info.foreground_process_group_id | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
-  [ "$foreground_pgid" = "$shell_pid" ] || return 1
-  rows=$(printf '%s' "$info" | jq -r '
+  rows=$(printf '%s' "$info" | jq -r --arg task_dir "$task_dir" '
     .result.process_info.foreground_processes
     | select(type == "array" and length > 0)[]
-    | [(.pid // ""), (.name // ""), (.argv0 // .argv[0] // ""), (.cmdline // "")]
+    | [(.pid // ""), (.name // ""), (.argv0 // .argv[0] // ""), (.cmdline // ""), (.cwd // "")]
     | @tsv
   ' 2>/dev/null) || return 1
   [ -n "$rows" ] || return 1
-  while IFS=$'\t' read -r pid name argv0 cmdline; do
+  while IFS=$'\t' read -r pid name argv0 cmdline cwd; do
     case "$pid:$name:$argv0" in *[!0-9A-Za-z._/-:]*|:*|*::) return 1 ;; esac
+    # Herdr reports physical cwd paths, while metadata can preserve a
+    # symlinked spelling such as macOS /var for /private/var.
+    cwd=$(cd "$cwd" 2>/dev/null && pwd -P) \
+      || { unsafe_count=$((unsafe_count + 1)); continue; }
+    [ "$cwd" = "$canonical_task_dir" ] || { unsafe_count=$((unsafe_count + 1)); continue; }
     base=${name##*/}
     argv0=${argv0#-}
     argv0=${argv0##*/}
     case "$base" in
       sh|bash|zsh|dash|ksh|fish)
-        [ "$argv0" = "$base" ] || return 1
-        [ "$pid" = "$shell_pid" ] && found=$((found + 1))
+        if [ "$argv0" = "$base" ]; then
+          shell_count=$((shell_count + 1))
+          FM_BACKEND_HERDR_FOREGROUND_SHELL_PID=$pid
+        else
+          unsafe_count=$((unsafe_count + 1))
+        fi
         ;;
       claude|codex|opencode|pi|grok|kimi|muse)
-        return 1
+        agent_count=$((agent_count + 1))
         ;;
       *)
         case "$cmdline" in
-          claude\ *|*/claude\ *|codex\ *|*/codex\ *|opencode\ *|*/opencode\ *|pi\ *|*/pi\ *|grok\ *|*/grok\ *|kimi\ *|*/kimi\ *|muse\ *|*/muse\ *) return 1 ;;
+          claude\ *|*/claude\ *|codex\ *|*/codex\ *|opencode\ *|*/opencode\ *|pi\ *|*/pi\ *|grok\ *|*/grok\ *|kimi\ *|*/kimi\ *|muse\ *|*/muse\ *) agent_count=$((agent_count + 1)) ;;
+          *) unsafe_count=$((unsafe_count + 1)) ;;
         esac
         ;;
     esac
   done <<< "$rows"
-  [ "$found" -eq 1 ] || return 1
-  printf '%s\n' "$shell_pid"
+  if [ "$agent_count" -gt 0 ] && [ "$unsafe_count" -eq 0 ]; then
+    FM_BACKEND_HERDR_FOREGROUND_RESULT=agent
+    return 1
+  fi
+  if [ "$unsafe_count" -ne 0 ] || [ "$agent_count" -ne 0 ] || [ "$shell_count" -ne 1 ]; then
+    return 1
+  fi
+  [ "$foreground_pgid" = "${FM_BACKEND_HERDR_FOREGROUND_SHELL_PID:-}" ] || return 1
+  printf '%s\n' "$FM_BACKEND_HERDR_FOREGROUND_SHELL_PID"
 }
 
 # fm_backend_herdr_pane_idle_shell_sample: one strict instantaneous
@@ -2028,7 +2066,8 @@ fm_backend_herdr_pane_agent_state() {  # <session> <pane_id>
 # pane.release-agent: Herdr ignores that operation for official lifecycle
 # sources, which is the stale OpenCode registration this repair addresses.
 # The exact pane is selected from the recorded target and the caller proves it
-# is a bare idle shell before invoking this function.
+# is a stable bare foreground shell in the recorded task directory before
+# invoking this function.
 fm_backend_herdr_clear_agent_authority() {  # <session> <pane_id>
   local session=$1 pane_id=$2 socket
   socket=$(fm_backend_herdr_socket_path "$session") || return 1
@@ -2037,16 +2076,20 @@ fm_backend_herdr_clear_agent_authority() {  # <session> <pane_id>
 }
 
 # fm_backend_herdr_reconcile_stale_agent: clear a stale registration only when
-# the recorded Herdr pane is independently proved to be a bare idle shell.
+# the recorded Herdr pane is independently proved to be a stable bare
+# foreground shell in the recorded task directory.
 # shellcheck disable=SC2034 # the result is consumed by fm-control.sh
-# A live foreground agent never reaches the clear API. The result variable
-# lets the control plane distinguish "not stale" from a failed repair, so it
-# cannot fall through to typing an exit command into an ordinary shell.
-fm_backend_herdr_reconcile_stale_agent() {  # <target>
-  local target=$1 state
-  FM_BACKEND_HERDR_RECONCILE_RESULT=not-stale
+# A live foreground agent is reported as not-stale and never reaches the clear
+# API. An unexpected or mismatched process is unsafe and must not fall through
+# to typing an exit command into an ordinary shell.
+fm_backend_herdr_reconcile_stale_agent() {  # <target> <task-dir>
+  local target=$1 task_dir=${2:-} state
+  FM_BACKEND_HERDR_RECONCILE_RESULT=unsafe
   fm_backend_herdr_parse_target "$target" || return 1
-  if ! fm_backend_herdr_pane_shell_foreground_pid "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" >/dev/null; then
+  if ! fm_backend_herdr_pane_shell_foreground_pid \
+      "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" "$task_dir" >/dev/null; then
+    [ "${FM_BACKEND_HERDR_FOREGROUND_RESULT:-unsafe}" = agent ] \
+      && FM_BACKEND_HERDR_RECONCILE_RESULT=not-stale
     return 1
   fi
   if ! fm_backend_herdr_clear_agent_authority "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE"; then
