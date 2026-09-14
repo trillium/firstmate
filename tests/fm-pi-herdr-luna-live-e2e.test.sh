@@ -23,7 +23,8 @@ done
 # The server passes its login shell to each new pane. Avoid operator startup
 # helpers so the process proof below observes the worker pane itself.
 SHELL=/bin/bash
-export SHELL FM_SPAWN_SKIP_PARLAY=1
+export SHELL
+export FM_SPAWN_SKIP_PARLAY=1
 unset HERDR_ENV HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH HERDR_SESSION
 
 TMP_ROOT=$(mktemp -d "$(cd "${TMPDIR:-/tmp}" && pwd -P)/fm-pi-herdr-luna.XXXXXX")
@@ -89,12 +90,14 @@ EOF
 
 OUT="$TMP_ROOT/spawn.out"
 ERR="$TMP_ROOT/spawn.err"
-PATH="$FAKEBIN:$ORIGINAL_PATH" HERDR_LAB_SESSION="$HERDR_LAB_SESSION" \
-  HERDR_SESSION="$HERDR_LAB_SESSION" FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" FM_SPAWN_NO_GUARD=1 \
-  FM_SPAWN_FIRSTTURN=on \
-  "$ROOT/bin/fm-spawn.sh" pi-luna "$PROJECT" --mode direct-PR --yolo off \
-    --backend herdr --harness pi --model openai-codex/gpt-5.6-luna --effort low \
-    >"$OUT" 2>"$ERR" || fail "Pi/Luna spawn failed: $(cat "$OUT") $(cat "$ERR")"
+export PATH="$FAKEBIN:$ORIGINAL_PATH" HERDR_SESSION="$HERDR_LAB_SESSION"
+export FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" FM_SPAWN_NO_GUARD=1
+export FM_SPAWN_FIRSTTURN=on
+"$ROOT/bin/fm-spawn.sh" pi-luna "$PROJECT" --mode direct-PR --yolo off \
+  --backend herdr --harness pi --model openai-codex/gpt-5.6-luna --effort low \
+  >"$OUT" 2>"$ERR" || fail "Pi/Luna spawn failed: $(cat "$OUT") $(cat "$ERR")"
+export PATH="$ORIGINAL_PATH"
+unset HERDR_SESSION
 
 META="$HOME_DIR/state/pi-luna.meta"
 [ -f "$META" ] || fail 'Pi/Luna spawn did not publish task metadata'
