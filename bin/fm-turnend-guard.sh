@@ -28,6 +28,19 @@
 # primary checkout - the main home or a genuinely marked secondmate home - and
 # stay a silent, fast no-op inside child task worktrees.
 #
+# Being IN a primary checkout is not the same as BEING the primary session, so
+# the checkout scope above is only half the gate. Any agent launched with its
+# cwd set to the primary checkout - a parlay-spawned scout, a captain-run helper
+# session, a read-only investigation that never needed a worktree - loads these
+# same tracked hook files and would otherwise get the repair banner on every
+# turn end. That banner instructs its reader to arm fleet supervision, which is
+# a fleet mutation reserved for the session holding this home's session lock
+# (AGENTS.md sections 3 and 8): a compliant crewmate would arm a SECOND watcher
+# and contend with the captain's real primary, and a non-compliant one just eats
+# a false alarm every turn. So the guard additionally requires the same identity
+# proof the Stop auto-arm already requires - this process's harness ancestor is
+# the pid recorded in state/.lock - and stays silent otherwise.
+#
 # Loop-guard, codex/Grok (default) mode: never block twice in the same turn.
 # Codex uses stop_hook_active and Grok uses stopHookActive; typed camel-case
 # takes precedence when both spellings are present. A true value means the
@@ -86,6 +99,8 @@ done
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
 # shellcheck source=bin/fm-primary-scope-lib.sh
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 # Read the whole turn-end hook payload once; never block on unreadable/absent
 # stdin.
@@ -123,6 +138,45 @@ fi
 # checkout has the two equal. Child worktrees never carry the gitignored marker,
 # so this exempts them while guarding every real secondmate home.
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
+
+# --- scope precisely to this home's PRIMARY SESSION -------------------------
+# The checkout test above cannot tell the primary session apart from any other
+# agent whose cwd happens to be that checkout, because both load the same
+# tracked hook files. Require the identity proof shared with the Claude Stop
+# auto-arm (bin/fm-session-lock-lib.sh): this process's harness ancestor must be
+# the pid recorded in the effective state dir's .lock.
+#
+# Everything else stays SILENT rather than blocking, because every one of those
+# states describes a session with no authority to perform the repair the banner
+# demands:
+#   - a lock held by another live harness: this is a crewmate, scout, or helper
+#     session inside the primary checkout, and the real primary is guarded by
+#     its own turn ends;
+#   - a missing, malformed, or dead-owner lock: no session has yet proven itself
+#     this home's primary, and a lock-refused session must not repair
+#     supervision (AGENTS.md section 3);
+#   - an unresolvable harness ancestry: uncertainty, which this guard has always
+#     resolved by failing open rather than nagging.
+# The genuine-primary blind spot this leaves is bounded in exactly one case.
+# bin/fm-session-start.sh acquires the lock as its very first step, so a primary
+# that goes on to hold the lock is unguarded for at most that opening turn.
+# Beyond that, the silence is one turn wide only on Claude, and only when the
+# recorded .lock owner is numeric but dead, the home is not AFK, and there is
+# supervision need: that is the sole path reaching the stale-lock reclaim in
+# bin/fm-claude-stop-autoarm.sh, the fleet's only reclaim mechanism. Three other
+# cases leave EVERY harness including Claude silent for the rest of the session,
+# because the auto-arm exits before that reclaim:
+#   - an absent or malformed .lock, which is what bin/fm-lock.sh leaves when it
+#     fails on an unwritable state dir or unresolvable ancestry and
+#     bin/fm-session-start.sh records READ_ONLY and continues;
+#   - a live foreign owner, i.e. another session took the lock first;
+#   - an AFK home, where the auto-arm exits at its AFK gate while this guard
+#     still blocks in AFK mode with an AFK-flavored reason.
+# Codex, OpenCode, Pi, and Grok register no Stop auto-arm at all, so for them a
+# primary that never holds the lock is silent for the rest of that session in
+# every one of these cases. That is an accepted limitation of scoping this guard
+# to the lock-owning session.
+fm_session_lock_owned_by_self "$STATE" || exit 0
 
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/fm-wake-lib.sh

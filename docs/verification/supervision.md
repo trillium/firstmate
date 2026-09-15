@@ -188,6 +188,11 @@ The direct and passive mechanisms were validated across all five harnesses on 20
 | Pi | 0.80.5 | Passive `agent_settled` callback | Exactly one guard follow-up ran for an unhealthy cycle, with no recursion across tool turns. |
 | Grok | 0.2.112 native and 0.2.73 pre-native | Running-payload adaptive `Stop` | Native false-to-true continuation stayed in one process with two model turns and zero resume launches; the field-absent pre-native process launched exactly one guarded resume. |
 
+Those five rows predate the session-lock identity precondition the guard now applies, so they are conditional on the turn-end hook running inside the lock-owning session.
+`fm_harness_ancestry_pid()` resolving identically from a turn-end hook context and from the tool-call context that recorded `state/.lock` has only been verified live for Claude.
+The ancestry walk is asymmetric: claude-named matches extend to the outermost contiguous match, while Codex, OpenCode, Pi, and Grok stop at the innermost match.
+So a nested harness-named process on those four would return the inner pid, fail the comparison, and silently disable the guard; that shape has not been measured live on them.
+
 The Grok adaptive matrix ran on 2026-07-28 with separate scratch repositories and homes, dedicated tmux sockets, one target plus one control window, ambient tmux variables removed, and a socket-bound wrapper first in `PATH`.
 
 ```sh
