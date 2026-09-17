@@ -114,6 +114,30 @@ assert_grep '"id":"inbox-rt3"' "$TMP_ROOT/next.out" "only unhandled lines follow
   || fail "source alone moved the cursor; only handling may advance it"
 pass "one batch yields one normalized wake, acknowledges, and never re-emits"
 
+# --- independent supervision: --once arms and starts with no watcher ----------
+H4="$TMP_ROOT/h4"; new_home "$H4"
+W4="$TMP_ROOT/w4.jsonl"; new_watch "$W4"
+# NOTE: no watcher runs in H4. Ever. The supervisor is the only supervision.
+INBOX_EVENTS_FILE="$W4" FM_HOME="$H4" "$ROOT/bin/fm-inbox-watch-supervise.sh" --once >/dev/null 2>&1 \
+  || fail "supervise --once failed on an unconfigured home"
+SID4=$(INBOX_EVENTS_FILE="$W4" FM_HOME="$H4" "$ROOT/bin/fm-procevent-inbox.sh" source-id "$W4")
+[ -f "$H4/state/procevent/$SID4.source" ] \
+  || fail "supervise --once did not register the source"
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/$SID4.claim" \
+  || fail "supervise --once did not start a runner"
+printf '{"id":"inbox-alone"}\n' >> "$W4"
+wait_for "$H4/state/procevent-inbox/$SID4.1.result" \
+  || fail "the unsupervised-by-watcher tail captured nothing"
+payload=""
+for _ in $(seq 1 100); do
+  payload=$(awk -F '\t' '{print $5}' "$H4/state/.wake-queue" 2>/dev/null)
+  case "$payload" in *"procevent inbox $SID4 1"*) break ;; esac
+  sleep 0.1
+done
+assert_contains "$payload" "procevent inbox $SID4 1" "the independent tail publishes the wake with no watcher"
+FM_HOME="$H4" "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
+pass "independent supervision arms, runs, and wakes with no watcher"
+
 # --- reconcile arms an inbox source with no live owner -------------------------
 H3="$TMP_ROOT/h3"; new_home "$H3"
 W3="$TMP_ROOT/w3.jsonl"; new_watch "$W3"
