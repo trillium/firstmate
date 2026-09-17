@@ -2581,6 +2581,17 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   validate_spawn_worktree "treehouse get" "$T"
 fi
 
+# Crew git identity: every firstmate-launched crew worktree commits as the
+# captain's GitHub identity, never a personal Gmail address.
+# Local-only config in the isolated worktree, so global config and the
+# captain's own checkouts are untouched; user.name is left as-is.
+if [ "$KIND" != secondmate ]; then
+  git -C "$WT" config user.email "5898009+trillium@users.noreply.github.com" || {
+    echo "error: could not set crew git identity in '$WT'" >&2
+    exit 1
+  }
+fi
+
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't
 # create GOTMPDIR, so mkdir before it is used; fm-teardown removes the whole root.
 # Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task temp can live alongside
