@@ -72,10 +72,11 @@ SH
   # ownership are sourced by teardown.
   ln -s "$ROOT/bin/fm-control-lib.sh" "$fake/bin/fm-control-lib.sh"
   ln -s "$ROOT/bin/fm-classify-lib.sh" "$fake/bin/fm-classify-lib.sh"
-  # fm-timeout-lib.sh: the shared hard bound fm-classify-lib.sh sources for the
-  # wedge detector's bounded worktree write probe.
-  ln -s "$ROOT/bin/fm-timeout-lib.sh" "$fake/bin/fm-timeout-lib.sh"
   ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
+  # fm-stat-lib.sh: reached only via the siblings above, each resolving it from
+  # its own BASH_SOURCE inside this fake bin/.
+  ln -s "$ROOT/bin/fm-stat-lib.sh" "$fake/bin/fm-stat-lib.sh"
+  ln -s "$ROOT/bin/fm-beads-resilience-lib.sh" "$fake/bin/fm-beads-resilience-lib.sh"
   # fm-gate-refuse-lib.sh: teardown sources it before any fleet mutation.
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
@@ -177,10 +178,11 @@ SH
   ln -s "$ROOT/bin/fm-lease-lib.sh" "$fake/bin/fm-lease-lib.sh"
   ln -s "$ROOT/bin/fm-control-lib.sh" "$fake/bin/fm-control-lib.sh"
   ln -s "$ROOT/bin/fm-classify-lib.sh" "$fake/bin/fm-classify-lib.sh"
-  # fm-timeout-lib.sh: the shared hard bound fm-classify-lib.sh sources for the
-  # wedge detector's bounded worktree write probe.
-  ln -s "$ROOT/bin/fm-timeout-lib.sh" "$fake/bin/fm-timeout-lib.sh"
   ln -s "$ROOT/bin/fm-wake-lib.sh" "$fake/bin/fm-wake-lib.sh"
+  # fm-stat-lib.sh: reached only via the siblings above, each resolving it from
+  # its own BASH_SOURCE inside this fake bin/.
+  ln -s "$ROOT/bin/fm-stat-lib.sh" "$fake/bin/fm-stat-lib.sh"
+  ln -s "$ROOT/bin/fm-beads-resilience-lib.sh" "$fake/bin/fm-beads-resilience-lib.sh"
   # fm-gate-refuse-lib.sh: teardown sources it before any fleet mutation.
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.

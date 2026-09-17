@@ -1199,9 +1199,21 @@ elif [ "$FORCE" != "--force" ] && fm_pf_relay_active "$FM_HOME"; then
   PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
 fi
 
-# Default-branch resolution and the landing predicate live in bin/fm-landed-lib.sh
-# (single owner). This wrapper binds teardown's own $PROJ; see fm_landed_default_branch.
-default_branch() { fm_landed_default_branch "$PROJ"; }
+default_branch() {
+  local ref branch
+  ref=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ -n "$ref" ]; then
+    echo "${ref#origin/}"
+    return 0
+  fi
+  for branch in main master; do
+    if git -C "$PROJ" show-ref --verify --quiet "refs/heads/$branch"; then
+      echo "$branch"
+      return 0
+    fi
+  done
+  return 1
+}
 
 meta_value() {
   local meta=$1 key=$2
@@ -1367,7 +1379,17 @@ staleness_worktree_summary() {
   unpushed=$(git -C "$wt" log --oneline HEAD --not --remotes -- 2>/dev/null | head -20)
   printf 'uncommitted changes:\n%s\nunpushed commits:\n%s' "${dirty:-<none>}" "${unpushed:-<none>}"
 }
-
+# Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
+# single match and returns 0; returns non-zero on no match or any lookup failure,
+# so the caller treats it as "no PR found" (fail-safe).
+pr_number_from_branch() {
+  local branch=$1 out n
+  [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
+  out=$( cd "$WT" && gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null ) || return 1
+  n=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\),.*/\1/p' | head -1)
+  [ -n "$n" ] || return 1
+  printf '%s' "$n"
+}
 pr_number_from_target() {
   local target=$1 n
   case "$target" in
@@ -1483,6 +1505,42 @@ content_in_default() {
     ref="refs/heads/$name"
   else
     return 1
+  fi
+  default_tree=$(git -C "$WT" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
+  [ -n "$default_tree" ] || return 1
+  merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
+  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
+  [ "$merged_tree" = "$default_tree" ]
+}
+# Has the worktree's committed work actually LANDED, though its commits are not
+# reachable from any remote-tracking branch? True when a merged PR proves the
+# current local work is contained in the PR head, OR the content is already in the
+# default branch (fallback, which also covers the no-PR and gh-error paths). False
+# only for genuinely unlanded work.
+work_is_landed() {
+  local branch=$1
+  pr_is_merged "$branch" && return 0
+  content_in_default
+}
+staleness_chat_only_teardown() {
+  local harness purpose summary bead_out
+  fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+  remove_grok_turnend_auth "$STATE" "$ID"
+  remove_kimi_turnend_auth "$STATE" "$ID"
+  deregister_parlay_agent "$STATE" "$ID"
+  fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
+  remove_pr_poll_artifacts "$STATE" "$ID" || true
+  retire_busy_state "$STATE" "$ID" "$BUSY_GEN" || true
+  harness=$(meta_value "$META" harness)
+  purpose=""
+  if [ -f "$DATA/$ID/brief.md" ]; then
+    purpose=$(awk '/^# Task/{f=1;next} f && NF {print; exit}' "$DATA/$ID/brief.md" 2>/dev/null || true)
+  fi
+  summary=$(staleness_worktree_summary "$WT")
+  bead_out=$("$SCRIPT_DIR/fm-staleness-file.sh" "$ID" "$purpose" "$WT" "$STALENESS_BRANCH" "$PROJ" "${harness:-unknown}" "$STALENESS_IDLE_SINCE" "$summary" 2>&1) || true
+  [ -z "$bead_out" ] || printf '%s\n' "$bead_out"
+  if ! printf '%s\n' "$bead_out" | grep -q '^filed staleness bead '; then
+    printf 'task: %s\npurpose: %s\nworktree: %s\nbranch: %s\nproject: %s\nharness: %s\nidle since: %s\n' "$ID" "${purpose:-unknown}" "$WT" "${STALENESS_BRANCH:-unknown}" "${PROJ:-unknown}" "${harness:-unknown}" "$STALENESS_IDLE_SINCE" > "$STATE/$ID.staleness-unfiled"
   fi
   rm -f "$STATE/$ID.status" "$STATE/$ID.turn-ended" "$STATE/$ID.meta" \
     "$STATE/$ID.grok-turnend-token" "$STATE/$ID.kimi-turnend-token"

@@ -178,6 +178,17 @@ LIST_SCHEDULED=0
 LIST_FAMILIES=0
 LIST_CONCURRENT_SAFE_FAMILIES=0
 LIST_LANES=0
+LIST_RUNS=0
+STOP_REQUESTED=0
+STOP_RUN_ID=
+# Where executing runs register their identity so a concurrent agent can stop
+# one exactly instead of pattern-matching a shared command line. Per-user by
+# default because TMPDIR is per-user on macOS; FM_TEST_RUN_REGISTRY overrides it
+# for tests and for anyone deliberately partitioning runs further.
+RUN_REGISTRY="${FM_TEST_RUN_REGISTRY:-${TMPDIR:-/tmp}/fm-test-run-registry}"
+# Seconds to wait for a signalled run to write its terminator and exit before
+# escalating to SIGKILL on whatever is left.
+STOP_GRACE_SECONDS="${FM_TEST_RUN_STOP_GRACE:-10}"
 CHECK_COVERAGE=0
 AGGREGATE_OUT=
 FAMILY=
@@ -2681,7 +2692,18 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   fi
   return "$rc"
 }
-
+# Ambient firstmate environment that a test script must never inherit. A live
+# session exports FM_HOME (and friends) into every command it runs, so a suite
+# launched from inside firstmate would otherwise resolve real paths.
+FM_TEST_AMBIENT_ENV=(
+  FM_HOME
+  FM_STATE_OVERRIDE
+  FM_DATA_OVERRIDE
+  FM_ROOT_OVERRIDE
+  FM_PROJECTS_OVERRIDE
+  FM_CONFIG_OVERRIDE
+  FM_BACKEND
+)
 run_one_serial() {
   local script=$1
   local base family expected out begin_iso begin_ms end_ms end_iso duration rc
