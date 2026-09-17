@@ -2,15 +2,19 @@
 # tests/fm-remote-doctor.test.sh - the remote second-mate readiness gate.
 #
 # Drives the real bin/fm-remote-doctor.sh against a controlled account fixture:
-# a private HOME, a fake launchctl backed by state files, a fake herdr CLI, and
-# a fake uname that selects the platform under test. Nothing here touches the
-# runner's own launch agents, login session, or herdr server.
+# a private HOME, a fake launchctl backed by state files, a fake herdr CLI, a
+# fake lsof that names a real holder process as the fm-remote socket owner, and
+# a fake uname that selects the platform under test. The holders are real
+# non-platform processes (jq blocked on a fifo) whose environment carries the
+# birth markers bin/fm-remote-herdr-owner-lib.sh reads, so the Aqua-versus-SSH
+# verdict is exercised for real. Nothing here touches the runner's own launch
+# agents, login session, or herdr server.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (the herdr adapter parses its JSON)"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "skip: python3 not found (plistlib parses the owned launch-agent contract)"; exit 0; }
 
 TMP_ROOT=$(fm_test_tmproot fm-remote-doctor)
 LABEL=dev.firstmate.herdr.fm-remote
@@ -20,7 +24,9 @@ TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 JOB_LABEL=dev.firstmate.remote-job
 CASE_N=0
 DOCTOR_WORKER_PID=
-trap 'if [ -n "$DOCTOR_WORKER_PID" ]; then kill "$DOCTOR_WORKER_PID" 2>/dev/null || true; fi; fm_test_cleanup || true' EXIT
+HOLDER_PIDS=()
+trap 'if [ -n "$DOCTOR_WORKER_PID" ]; then kill "$DOCTOR_WORKER_PID" 2>/dev/null || true; fi; if [ "${#HOLDER_PIDS[@]}" -gt 0 ]; then kill "${HOLDER_PIDS[@]}" 2>/dev/null || true; fi; fm_test_cleanup || true' EXIT
+GUARD="$ROOT/bin/fm-remote-herdr-guard.sh"
 
 # A fixture must be able to present a host with NO herdr, so the doctor never
 # sees the runner's own PATH. Only the two required tools are re-exposed, by
@@ -31,16 +37,47 @@ ln -sf "$(command -v git)" "$TOOLS/git"
 ln -sf "$(command -v jq)" "$TOOLS/jq"
 BASE_PATH="$TOOLS:/usr/bin:/bin:/usr/sbin:/sbin"
 
-# new_case <Darwin|Linux> [with-herdr] [gui]
+# Real socket-owner holders for the Darwin birth check: jq blocked on a fifo
+# this test keeps open, with exactly the marker environment each birth needs.
+JQ=$(command -v jq)
+HOLDER_FD=5
+hold() { # <marker-env...> -> HOLDER_PID
+  local fifo="$TMP_ROOT/holder-$HOLDER_FD.fifo"
+  mkfifo "$fifo"
+  env -i "$@" "$JQ" . "$fifo" &
+  HOLDER_PID=$!
+  HOLDER_PIDS+=("$HOLDER_PID")
+  eval "exec ${HOLDER_FD}>\"\$fifo\""
+  HOLDER_FD=$((HOLDER_FD + 1))
+}
+hold XPC_SERVICE_NAME=dev.firstmate.herdr.fm-remote
+AQUA_HOLDER_PID=$HOLDER_PID
+hold XPC_SERVICE_NAME=dev.firstmate.herdr.fm-remote
+BACKGROUND_HOLDER_PID=$HOLDER_PID
+hold XPC_SERVICE_NAME=0
+XPC_ZERO_HOLDER_PID=$HOLDER_PID
+hold FM_REMOTE_JOB_ACTIVE=1
+WORKER_HOLDER_PID=$HOLDER_PID
+hold SSH_CONNECTION='100.102.217.78 51234 100.100.1.2 22' SSH_CLIENT='100.102.217.78 51234 22'
+SSH_HOLDER_PID=$HOLDER_PID
+
+# new_case <Darwin|Linux> [with-herdr] [gui] [login-shell]
 # Builds one isolated account fixture and points the module-level CASE_*
 # variables at it. "with-herdr" installs the fake herdr CLI; "gui" makes the
-# fake launchctl report an existing Aqua login session.
+# fake launchctl report an existing Aqua login session. login-shell is the
+# Directory Services UserShell the fake dscl reports (default /bin/sh so the
+# fixture is portable to hosts without /bin/zsh).
 new_case() {
   local platform=$1 want_herdr=${2:-with-herdr} want_gui=${3:-gui}
   unset CASE_REMOTE_JOB_ACTIVE
   unset CASE_PLATFORM_OVERRIDE
-  unset CASE_PATH
+  unset CASE_DSCL_FAIL
+  unset CASE_DSCL_HANG
+  unset CASE_SECOND_LOGIN_SHELL
+  unset CASE_ENV_SHELL
+  unset CASE_RESOLVE_DSCL
   CASE_N=$((CASE_N + 1))
+  CASE_LOGIN_SHELL=${4:-/bin/sh}
   CASE_DIR="$TMP_ROOT/case$CASE_N"
   CASE_BIN="$CASE_DIR/bin"
   CASE_HOME="$CASE_DIR/home"
@@ -73,6 +110,10 @@ loaded="$FM_FAKE_STATE/loaded-$label"
 case "${1:-}" in
   print)
     case "$domain" in
+      user/*/*)
+        [ -f "$FM_FAKE_STATE/user-loaded-$label" ] || exit 113
+        cat "$FM_FAKE_STATE/user-loaded-$label"
+        ;;
       */dev.firstmate.herdr.fm-remote)
         [ -f "$loaded" ] || exit 113
         cat "$loaded"
@@ -115,18 +156,24 @@ EOF
       *)
         cat > "$loaded" <<EOF
 path = $FM_FAKE_PLIST
-program = $FM_FAKE_HERDR_BIN
+program = $FM_FAKE_LOGIN_SHELL
 arguments = {
-	$FM_FAKE_HERDR_BIN
-	server
-	--session
-	fm-remote
+	$FM_FAKE_LOGIN_SHELL
+	-l
+	-c
+	exec '$FM_FAKE_GUARD' '$FM_FAKE_HERDR_BIN' 'fm-remote'
 }
 stdout path = $FM_FAKE_LAUNCH_AGENT_LOG
 stderr path = $FM_FAKE_LAUNCH_AGENT_LOG
-properties = keepalive | runatload | inferred program
+semaphores = {
+	successful exit => 0
+}
+properties = runatload | inferred program
 EOF
-        [ -f "$FM_FAKE_STATE/bootstrap-does-not-start" ] || printf 'true\n' > "$FM_FAKE_HERDR_RUNNING"
+        if [ ! -f "$FM_FAKE_STATE/bootstrap-does-not-start" ]; then
+          printf 'true\n' > "$FM_FAKE_HERDR_RUNNING"
+          printf '%s\n' "$FM_FAKE_AQUA_PID" > "$FM_FAKE_STATE/socket-owner"
+        fi
         ;;
     esac
     exit 0
@@ -136,6 +183,9 @@ EOF
     case "$label" in
       dev.firstmate.remote-job) : ;;
       *)
+        # The real job execs the guard, which stops a foreign server and
+        # becomes the Aqua-born owner; the fixture models that outcome.
+        printf '%s\n' "$FM_FAKE_AQUA_PID" > "$FM_FAKE_STATE/socket-owner"
         if [ -f "$FM_FAKE_STATE/kickstart-delay" ]; then
           cp "$FM_FAKE_STATE/kickstart-delay" "$FM_FAKE_STATE/herdr-delay"
         else
@@ -161,6 +211,37 @@ SH
     chmod +x "$CASE_BIN/$forbidden"
   done
 
+  # The socket owner the birth check sees: the pid in socket-owner, or the
+  # Aqua holder when a case never chose one.
+  cat > "$CASE_BIN/lsof" <<'SH'
+#!/usr/bin/env bash
+pid=$(cat "$FM_FAKE_STATE/socket-owner" 2>/dev/null || printf '%s' "$FM_FAKE_AQUA_PID")
+[ -n "$pid" ] || exit 0
+printf 'p%s\n' "$pid"
+printf 'n%s\n' "$FM_FAKE_HERDR_SOCKET"
+SH
+  chmod +x "$CASE_BIN/lsof"
+
+  cat > "$CASE_BIN/dscl" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ "${FM_FAKE_DSCL_FAIL:-0}" != 1 ] || exit 1
+[ "${FM_FAKE_DSCL_HANG:-0}" != 1 ] || exec /bin/sleep 30
+if [ "${1:-}" = . ] && [ "${2:-}" = -read ] && [ "${4:-}" = UserShell ]; then
+  count_file="$FM_FAKE_STATE/dscl-count"
+  count=$(cat "$count_file" 2>/dev/null || printf 0)
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$count_file"
+  shell=${FM_FAKE_LOGIN_SHELL:-/bin/sh}
+  if [ "$count" -gt 1 ] && [ -n "${FM_FAKE_SECOND_LOGIN_SHELL:-}" ]; then
+    shell=$FM_FAKE_SECOND_LOGIN_SHELL
+  fi
+  printf 'UserShell: %s\n' "$shell"
+  exit 0
+fi
+exit 1
+SH
+
   if [ "$want_herdr" = with-herdr ]; then
     cat > "$CASE_BIN/herdr" <<'SH'
 #!/usr/bin/env bash
@@ -179,7 +260,7 @@ case "${1:-} ${2:-}" in
         running=true
       fi
     fi
-    printf '{"client":{"version":"0.7.5","protocol":16},"server":{"running":%s}}\n' "$running"
+    printf '{"client":{"version":"0.7.5","protocol":16},"server":{"running":%s,"socket":"%s"}}\n' "$running" "$FM_FAKE_HERDR_SOCKET"
     ;;
   "server "*|"server ")
     printf 'true\n' > "$FM_FAKE_HERDR_RUNNING"
@@ -205,7 +286,7 @@ SH
 #!/usr/bin/env bash
 exit 0
 SH
-  chmod +x "$CASE_BIN/uname" "$CASE_BIN/launchctl" "$CASE_BIN/tasks-axi" "$CASE_BIN/treehouse" "$CASE_BIN/claude"
+  chmod +x "$CASE_BIN/uname" "$CASE_BIN/launchctl" "$CASE_BIN/dscl" "$CASE_BIN/tasks-axi" "$CASE_BIN/treehouse" "$CASE_BIN/claude"
   cat > "$CASE_BIN/sleep" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -228,10 +309,19 @@ doctor() {
     FM_FAKE_FORBIDDEN_LOG="$CASE_FORBIDDEN_LOG" \
     FM_FAKE_HERDR_RUNNING="$CASE_HERDR_RUNNING" \
     FM_FAKE_HERDR_BIN="$CASE_BIN/herdr" \
+    FM_FAKE_HERDR_SOCKET="$CASE_STATE/herdr.sock" \
+    FM_FAKE_GUARD="$GUARD" \
+    FM_FAKE_AQUA_PID="$AQUA_HOLDER_PID" \
     FM_FAKE_PLIST="$CASE_PLIST" \
     FM_FAKE_JOB_PLIST="$CASE_JOB_PLIST" \
     FM_FAKE_JOB_WORKER="$ROOT/bin/fm-remote-job-worker.sh" \
     FM_FAKE_LAUNCH_AGENT_LOG="$CASE_HOME/Library/Logs/$LABEL.log" \
+    FM_FAKE_LOGIN_SHELL="${CASE_LOGIN_SHELL:-/bin/sh}" \
+    FM_FAKE_SECOND_LOGIN_SHELL="${CASE_SECOND_LOGIN_SHELL:-}" \
+    FM_FAKE_DSCL_FAIL="${CASE_DSCL_FAIL:-0}" \
+    FM_FAKE_DSCL_HANG="${CASE_DSCL_HANG:-0}" \
+    FM_LAUNCH_AGENT_SHELL="$([ "${CASE_RESOLVE_DSCL:-0}" = 1 ] || printf '%s' "$CASE_LOGIN_SHELL")" \
+    SHELL="${CASE_ENV_SHELL-${SHELL-}}" \
     FM_REMOTE_JOB_PLATFORM_OVERRIDE="${CASE_PLATFORM_OVERRIDE-}" \
     FM_REMOTE_JOB_ACTIVE="${CASE_REMOTE_JOB_ACTIVE-1}" \
     "$ROOT/bin/fm-remote-doctor.sh" "$@" 2>&1
@@ -240,21 +330,61 @@ doctor() {
   set -e
 }
 
-write_loaded_contract() { # <herdr-path> [properties]
-  local herdr_bin=$1 properties=${2:-'keepalive | runatload | inferred program'}
+write_loaded_contract() { # <herdr-path> [properties] [exec-command]
+  local herdr_bin=$1 properties=${2:-'runatload | inferred program'} exec_cmd
+  exec_cmd=${3:-"exec '$GUARD' '$herdr_bin' 'fm-remote'"}
   cat > "$CASE_STATE/loaded-$LABEL" <<EOF
 path = $CASE_PLIST
-program = $herdr_bin
+program = $CASE_LOGIN_SHELL
 arguments = {
-	$herdr_bin
-	server
-	--session
-	fm-remote
+	$CASE_LOGIN_SHELL
+	-l
+	-c
+	$exec_cmd
 }
 stdout path = $CASE_HOME/Library/Logs/$LABEL.log
 stderr path = $CASE_HOME/Library/Logs/$LABEL.log
+semaphores = {
+	successful exit => 0
+}
 properties = $properties
 EOF
+}
+
+# Parse the doctor's owned launch-agent plist and assert the login-shell
+# argv contract. The plist is Firstmate's output, so semantic structure is
+# in bounds; never match the XML source as a substring.
+plist_value() { # <plist> <key>
+  python3 -c 'import plistlib,sys; value=plistlib.load(open(sys.argv[1], "rb"))[sys.argv[2]]; print(value)' "$1" "$2"
+}
+
+plist_first_value() { # <plist> <array-key>
+  python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb"))[sys.argv[2]][0])' "$1" "$2"
+}
+
+assert_herdr_launch_agent_contract() { # <plist> <herdr-bin> [login-shell]
+  local plist=$1 herdr_bin=$2 expected_shell=${3:-$CASE_LOGIN_SHELL} json argv0 argv1 argv2 cmd
+  json=$(python3 -c 'import json,plistlib,sys; print(json.dumps(plistlib.load(open(sys.argv[1], "rb"))))' "$plist") \
+    || fail "could not parse $plist as a plist"
+  argv0=$(printf '%s' "$json" | jq -r '.ProgramArguments[0]')
+  argv1=$(printf '%s' "$json" | jq -r '.ProgramArguments[1]')
+  argv2=$(printf '%s' "$json" | jq -r '.ProgramArguments[2]')
+  cmd=$(printf '%s' "$json" | jq -r '.ProgramArguments[3]')
+  [ "$argv0" = "$expected_shell" ] || fail "ProgramArguments[0] is $argv0, not the resolved login shell $expected_shell"
+  [ "$argv1" = -l ] || fail "ProgramArguments[1] is $argv1, not -l"
+  [ "$argv2" = -c ] || fail "ProgramArguments[2] is $argv2, not -c"
+  [ "$cmd" = "exec '$GUARD' '$herdr_bin' 'fm-remote'" ] \
+    || fail "ProgramArguments[3] is not exec of the guard with $herdr_bin for session fm-remote: $cmd"
+  [ "$(printf '%s' "$json" | jq -r '.LimitLoadToSessionType')" = Aqua ] \
+    || fail "LimitLoadToSessionType is not Aqua"
+  [ "$(printf '%s' "$json" | jq -r '.RunAtLoad')" = true ] \
+    || fail "RunAtLoad is not true"
+  [ "$(printf '%s' "$json" | jq -r '.KeepAlive.SuccessfulExit')" = false ] \
+    || fail "KeepAlive is not {SuccessfulExit=false}: $(printf '%s' "$json" | jq -c '.KeepAlive')"
+  [ "$(printf '%s' "$json" | jq -r '.ThrottleInterval')" = 10 ] \
+    || fail "ThrottleInterval is not 10"
+  [ "$(printf '%s' "$json" | jq -r '.Label')" = "$LABEL" ] \
+    || fail "Label is not $LABEL"
 }
 
 assert_no_dangerous_calls() { # <msg>
@@ -329,14 +459,14 @@ assert_contains "$DOCTOR_OUT" 'check remote-job-worker=ok:' "--fix did not insta
 assert_contains "$DOCTOR_OUT" 'check remote-job-worker-loaded=ok:' "--fix did not load the remote job worker"
 assert_present "$CASE_PLIST" "--fix reported success without writing the plist"
 assert_present "$CASE_JOB_PLIST" "--fix reported success without writing the remote job worker plist"
-assert_grep '<string>Aqua</string>' "$CASE_PLIST" "the written plist is not Aqua-scoped"
-assert_grep "<string>$LABEL</string>" "$CASE_PLIST" "the written plist does not carry the Firstmate label"
-assert_grep '<string>server</string>' "$CASE_PLIST" "the written plist does not run a herdr server"
-assert_grep '<string>fm-remote</string>' "$CASE_PLIST" "the written plist does not pin the remote-secondmate session"
-assert_no_grep '<string>default</string>' "$CASE_PLIST" "the written plist pins the interactive default session"
-assert_grep "<string>$JOB_LABEL</string>" "$CASE_JOB_PLIST" "the worker plist does not carry the Firstmate label"
-assert_grep '<string>Aqua</string>' "$CASE_JOB_PLIST" "the worker plist is not Aqua-scoped"
-assert_grep "$ROOT/bin/fm-remote-job-worker.sh" "$CASE_JOB_PLIST" "the worker plist does not use the configured code root"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr"
+[ "$(plist_value "$CASE_JOB_PLIST" Label)" = "$JOB_LABEL" ] \
+  || fail "the worker plist does not carry the Firstmate label"
+[ "$(plist_value "$CASE_JOB_PLIST" LimitLoadToSessionType)" = Aqua ] \
+  || fail "the worker plist is not Aqua-scoped"
+[ "$(plist_first_value "$CASE_JOB_PLIST" ProgramArguments)" = "$ROOT/bin/fm-remote-job-worker.sh" ] \
+  || fail "the worker plist does not use the configured code root"
+assert_absent "$CASE_STATE/dscl-count" "the injected login shell still consulted Directory Services"
 assert_grep "gui/$(id -u)" "$CASE_LAUNCHCTL_LOG" "the launch agent was not bootstrapped into the GUI domain"
 cmp -s "$CASE_STATE/interactive-before.plist" "$CASE_INTERACTIVE_PLIST" \
   || fail "the fm-remote repair rewrote the interactive default launch agent"
@@ -379,7 +509,7 @@ cat > "$CASE_PLIST" <<XML
 </dict>
 </plist>
 XML
-write_loaded_contract /obsolete/bin/herdr 'runatload | inferred program'
+write_loaded_contract /obsolete/bin/herdr 'keepalive | runatload | inferred program' "exec '/obsolete/bin/herdr' server --session 'fm-remote'"
 printf 'true\n' > "$CASE_HERDR_RUNNING"
 doctor
 expect_code 1 "$DOCTOR_RC" "a stale launch-agent contract was reported ready"
@@ -390,10 +520,7 @@ assert_contains "$DOCTOR_OUT" 'check herdr-server=ok:' "the running fixture was 
 doctor --fix
 expect_code 0 "$DOCTOR_RC" "--fix did not repair launch-agent contract drift"
 assert_contains "$DOCTOR_OUT" 'check launchagent=ok:' "the repaired launch-agent contract was not confirmed"
-assert_grep "<string>$CASE_BIN/herdr</string>" "$CASE_PLIST" "the repaired launch agent does not use the resolved herdr path"
-assert_grep '<key>RunAtLoad</key>' "$CASE_PLIST" "the repaired launch agent does not start at login"
-assert_grep '<key>KeepAlive</key>' "$CASE_PLIST" "the repaired launch agent is not kept alive"
-assert_no_grep '/obsolete/bin/herdr' "$CASE_PLIST" "the obsolete herdr path survived repair"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr"
 pass "a loaded and running launch agent must match the complete owned contract"
 
 # --- failed replacement cannot hide a stale loaded launch-agent contract -----
@@ -418,7 +545,7 @@ cat > "$CASE_PLIST" <<XML
 </dict>
 </plist>
 XML
-write_loaded_contract /obsolete/bin/herdr 'runatload | inferred program'
+write_loaded_contract /obsolete/bin/herdr 'keepalive | runatload | inferred program' "exec '/obsolete/bin/herdr' server --session 'fm-remote'"
 printf 'true\n' > "$CASE_HERDR_RUNNING"
 touch "$CASE_STATE/bootout-fail"
 doctor --fix
@@ -458,7 +585,7 @@ doctor --fix
 expect_code 0 "$DOCTOR_RC" "--fix could not re-scope an existing launch agent"
 assert_contains "$DOCTOR_OUT" 'check launchagent-scope=ok: LimitLoadToSessionType=Aqua' \
   "--fix did not re-scope the launch agent to Aqua"
-assert_no_grep 'Background' "$CASE_PLIST" "the Background session scope survived the repair"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr"
 pass "a launch agent outside the Aqua session scope is rewritten in place"
 
 # --- launchd start failures are reported and delayed readiness is awaited ----
@@ -484,6 +611,72 @@ assert_contains "$DOCTOR_OUT" 'check herdr-server=ok:' "delayed launchd startup 
 assert_absent "$CASE_STATE/herdr-delay" "the readiness poll stopped before the delayed server became reachable"
 pass "launchd failures are reported and delayed server readiness is awaited"
 
+# --- a running session served outside the Aqua login session is not ready ---
+
+new_case Darwin with-herdr gui
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "the Aqua-owner fixture could not be initialized"
+assert_contains "$DOCTOR_OUT" "check herdr-server=ok: session fm-remote is running in the Aqua login session (pid $AQUA_HOLDER_PID, launchd)" \
+  "a launchd-born owner was not reported with its pid and birth"
+
+printf '%s\n' "$BACKGROUND_HOLDER_PID" > "$CASE_STATE/socket-owner"
+printf 'background job\n' > "$CASE_STATE/user-loaded-$LABEL"
+doctor
+expect_code 1 "$DOCTOR_RC" "a label loaded in the user domain was reported Aqua-born"
+assert_contains "$DOCTOR_OUT" "check herdr-server=fixable: session fm-remote is served by pid $BACKGROUND_HOLDER_PID born outside the Aqua login session (unknown)" \
+  "the user-domain owner was not tagged fixable"
+rm -f "$CASE_STATE/user-loaded-$LABEL"
+
+printf '%s\n' "$XPC_ZERO_HOLDER_PID" > "$CASE_STATE/socket-owner"
+doctor
+expect_code 1 "$DOCTOR_RC" "an XPC_SERVICE_NAME=0 owner was reported Aqua-born"
+assert_contains "$DOCTOR_OUT" "check herdr-server=fixable: session fm-remote is served by pid $XPC_ZERO_HOLDER_PID born outside the Aqua login session (unknown)" \
+  "the inherited XPC marker was not tagged fixable"
+
+printf '%s\n' "$WORKER_HOLDER_PID" > "$CASE_STATE/socket-owner"
+doctor
+expect_code 0 "$DOCTOR_RC" "the gui-only remote-job worker owner was not reported ready"
+assert_contains "$DOCTOR_OUT" "check herdr-server=ok: session fm-remote is running in the Aqua login session (pid $WORKER_HOLDER_PID, worker)" \
+  "the gui-only worker was not recognized"
+
+printf '%s\n' "$SSH_HOLDER_PID" > "$CASE_STATE/socket-owner"
+: > "$CASE_LAUNCHCTL_LOG"
+doctor
+expect_code 1 "$DOCTOR_RC" "a session served by an SSH-born server was reported ready"
+assert_contains "$DOCTOR_OUT" "check herdr-server=fixable: session fm-remote is served by pid $SSH_HOLDER_PID born outside the Aqua login session (ssh)" \
+  "an SSH-born owner was not tagged fixable with its pid and birth"
+assert_contains "$DOCTOR_OUT" 'cannot reach the login keychain' "the consequence of the foreign birth was not named"
+assert_contains "$DOCTOR_OUT" 'action: herdr-server:' "the foreign-birth gap came with no operator action"
+assert_contains "$DOCTOR_OUT" 'check launchagent-loaded=ok:' "a healthy loaded contract was blamed for the foreign server"
+[ ! -s "$CASE_LAUNCHCTL_LOG" ] || assert_not_contains "$(cat "$CASE_LAUNCHCTL_LOG")" kickstart \
+  "a read-only doctor run restarted the launch agent"
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix did not hand the session back to the launch agent"
+assert_contains "$DOCTOR_OUT" 'fix herdr-server=applied:' "--fix did not report the takeover through the launch agent"
+assert_grep "kickstart -k gui/$(id -u)/$LABEL" "$CASE_LAUNCHCTL_LOG" "the takeover did not go through launchd"
+assert_contains "$DOCTOR_OUT" "check herdr-server=ok: session fm-remote is running in the Aqua login session (pid $AQUA_HOLDER_PID, launchd)" \
+  "the launch-agent-owned server was not confirmed after the takeover"
+assert_no_dangerous_calls "the takeover reached for auto-login, FileVault, or the keychain"
+
+# A RunAtLoad job also runs at bootstrap; hold that back so the takeover
+# depends on the kickstart that is about to fail.
+printf '%s\n' "$SSH_HOLDER_PID" > "$CASE_STATE/socket-owner"
+touch "$CASE_STATE/kickstart-fail" "$CASE_STATE/bootstrap-does-not-start"
+doctor --fix
+expect_code 1 "$DOCTOR_RC" "a failed takeover was reported ready"
+assert_contains "$DOCTOR_OUT" 'fix herdr-server=failed: launchctl kickstart' "the failed takeover was not reported"
+assert_contains "$DOCTOR_OUT" "check herdr-server=fixable: session fm-remote is served by pid $SSH_HOLDER_PID" \
+  "a still-foreign server was reported ready after a failed takeover"
+rm -f "$CASE_STATE/kickstart-fail" "$CASE_STATE/bootstrap-does-not-start"
+
+rm -f "$CASE_STATE/socket-owner"
+: > "$CASE_STATE/socket-owner"
+doctor
+expect_code 1 "$DOCTOR_RC" "a session with no provable owner was reported ready"
+assert_contains "$DOCTOR_OUT" 'check herdr-server=fixable: session fm-remote is running but no herdr process can be shown to own its socket' \
+  "an unprovable owner was not tagged fixable"
+pass "a session served outside the Aqua login session is fixable and --fix retakes it through launchd"
+
 # --- no GUI login session: every dependent gap stays human -------------------
 
 new_case Darwin with-herdr no-gui
@@ -502,6 +695,75 @@ assert_contains "$DOCTOR_OUT" 'error: this host is not ready for a remote second
   "a remaining human gap did not fail the readiness verdict"
 assert_no_dangerous_calls "the doctor tried to create a login session by force"
 pass "human gaps are reported with their operator step and never claimed as fixed"
+
+# --- a non-zsh login shell is rendered with separate -l and -c --------------
+
+new_case Darwin with-herdr gui /bin/bash
+CASE_RESOLVE_DSCL=1
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix left a bash-login-shell host unready"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr" /bin/bash
+pass "a bash Directory Services login shell is rendered with -l -c"
+
+new_case Darwin with-herdr gui
+CASE_LOGIN_SHELL="$CASE_DIR/My Shell/fish&dev"
+mkdir -p "$(dirname "$CASE_LOGIN_SHELL")"
+printf '#!/bin/sh\nexit 0\n' > "$CASE_LOGIN_SHELL"
+chmod +x "$CASE_LOGIN_SHELL"
+CASE_RESOLVE_DSCL=1
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix rejected a valid custom Directory Services shell"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr" "$CASE_LOGIN_SHELL"
+pass "custom Directory Services shell paths remain valid plist arguments"
+
+# --- shell resolution falls back to an executable environment shell, then sh -
+
+new_case Darwin with-herdr gui /bin/bash
+CASE_RESOLVE_DSCL=1
+CASE_DSCL_FAIL=1
+CASE_ENV_SHELL=/bin/bash
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix rejected an executable SHELL fallback"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr" /bin/bash
+
+new_case Darwin with-herdr gui /bin/sh
+CASE_RESOLVE_DSCL=1
+CASE_DSCL_FAIL=1
+CASE_ENV_SHELL="$CASE_DIR/not-a-shell"
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix rejected the POSIX shell fallback"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr" /bin/sh
+
+new_case Darwin with-herdr gui /bin/sh
+CASE_RESOLVE_DSCL=1
+CASE_DSCL_HANG=1
+CASE_ENV_SHELL=/bin/sh
+SECONDS=0
+doctor --fix
+elapsed=$SECONDS
+expect_code 0 "$DOCTOR_RC" "--fix did not fall back after a stalled Directory Services lookup"
+[ "$elapsed" -lt 10 ] || fail "a stalled Directory Services lookup blocked doctor for ${elapsed}s"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr" /bin/sh
+pass "shell resolution bounds Directory Services and uses executable SHELL and POSIX fallbacks"
+
+# --- one shell resolution is shared by render, validation, and reporting ----
+
+new_case Darwin with-herdr gui /bin/sh
+CASE_RESOLVE_DSCL=1
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "initial repair did not install a healthy login-shell agent"
+assert_herdr_launch_agent_contract "$CASE_PLIST" "$CASE_BIN/herdr" /bin/sh
+: > "$CASE_LAUNCHCTL_LOG"
+rm -f "$CASE_STATE/dscl-count"
+CASE_SECOND_LOGIN_SHELL=/bin/bash
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "repeated repair drifted when a second shell lookup would differ"
+assert_contains "$DOCTOR_OUT" 'check launchagent=ok:' "the installed login-shell plist was reported as drifted"
+assert_contains "$DOCTOR_OUT" 'check launchagent-loaded=ok:' "the loaded login-shell agent was reported as drifted"
+[ "$(cat "$CASE_STATE/dscl-count")" = 1 ] || fail "doctor resolved the account login shell more than once"
+assert_no_grep '^bootout\|^bootstrap\|^kickstart' "$CASE_LAUNCHCTL_LOG" \
+  "repeated repair reloaded an already healthy login-shell agent"
+pass "repeated repair reuses one resolved login shell and remains a no-op"
 
 # --- linux has no launch agent, and --fix starts the server directly ---------
 
@@ -627,291 +889,3 @@ assert_contains "$DOCTOR_OUT" 'check entrypoint-link=human:' "an operator-owned 
 unset FM_ROOT_OVERRIDE
 pass "the entrypoint symlink is recreated when absent and never overwritten when operator-owned"
 
-# --- the beads store check is gated on the home's own backlog backend --------
-#
-# add_beads_bd <dir> <log>: a fake `bd` that refuses to answer unless something
-# pinned BEADS_DIR for it, which is exactly how the real bd behaves when the
-# `task` wrapper is missing - it auto-discovers from the working directory,
-# finds nothing, and fails. `bootstrap` provisions the pinned store.
-add_beads_bd() {
-  local dir=$1 log=$2
-  cat > "$dir/bd" <<SH
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$log"
-store=\${BEADS_DIR:-}
-[ -n "\$store" ] || exit 3
-case "\${1:-}" in
-  list)
-    [ -f "\$store/provisioned" ] || exit 1
-    printf '[]\n'
-    ;;
-  bootstrap)
-    mkdir -p "\$store"
-    : > "\$store/provisioned"
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$dir/bd"
-}
-
-new_case Darwin with-herdr gui
-doctor
-assert_contains "$DOCTOR_OUT" 'check beads-store=skip:' \
-  "a home that does not select the beads backend was still checked for a store"
-doctor --fix
-assert_absent "$CASE_HOME/.local/bin/task" \
-  "--fix provisioned a task wrapper for a home that does not use the beads backend"
-pass "the beads store check skips a home whose backlog backend is not beads"
-
-# --- beads selected with no bd binary is advisory, never a readiness gap -----
-#
-# A task-store gap says nothing about whether this host can start and supervise
-# an agent, and --fix cannot close this one at all because the doctor installs
-# no packages. Gating on it would make bin/fm-remote-readiness-lib.sh refuse
-# every seed, launch, and liveness relaunch on a host whose route works today.
-
-new_case Darwin with-herdr gui
-mkdir -p "$CASE_PROJECT_HOME/config"
-printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
-doctor
-assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
-  "a host with no bd binary was not tagged as an advisory gap"
-assert_not_contains "$DOCTOR_OUT" 'check beads-store=human:' \
-  "the missing bd binary was still recorded as a gating human gap"
-assert_contains "$DOCTOR_OUT" 'action: beads-store:' \
-  "an advisory gap came with no operator action"
-
-# --fix closes every OTHER gap on this fixture, so what remains afterwards is
-# the store gap alone. That is the case that matters: the host can start and
-# supervise an agent, so the readiness verdict must be ready.
-doctor --fix
-expect_code 0 "$DOCTOR_RC" "--fix reported an agent-ready host as unready over its task store"
-assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
-  "--fix stopped reporting the missing bd binary"
-assert_not_contains "$DOCTOR_OUT" 'fix beads-store=applied' \
-  "--fix claimed to have installed beads"
-assert_absent "$CASE_HOME/.local/bin/task" \
-  "--fix wrote a task wrapper with no bd binary to point it at"
-doctor
-expect_code 0 "$DOCTOR_RC" "a missing beads store blocked a host that is otherwise ready"
-assert_contains "$DOCTOR_OUT" 'ok: remote second-mate readiness confirmed on this host' \
-  "the readiness verdict was withheld over a task-store gap"
-assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
-  "the still-open store gap stopped being reported once it was advisory"
-assert_not_contains "$DOCTOR_OUT" 'repairable-advisory: beads-store' \
-  "a gap no repair can close still asked the readiness gate to run a repair pass"
-pass "a host with no bd binary is an advisory gap that neither --fix nor readiness pretends to close"
-
-# --- bd present but unpinned is fixable, and --fix provisions the store ------
-
-new_case Darwin with-herdr gui
-mkdir -p "$CASE_PROJECT_HOME/config"
-printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
-BD_LOG="$CASE_STATE/bd.log"
-: > "$BD_LOG"
-add_beads_bd "$CASE_BIN" "$BD_LOG"
-doctor
-assert_contains "$DOCTOR_OUT" 'check beads-store=fixable:' \
-  "a resolvable bd with no working task CLI was not tagged fixable"
-assert_absent "$CASE_HOME/.local/bin/task" \
-  "a read-only doctor run wrote a task wrapper"
-assert_absent "$CASE_HOME/data/tasks/.beads/provisioned" \
-  "a read-only doctor run provisioned a store"
-assert_not_contains "$(cat "$BD_LOG")" bootstrap \
-  "a read-only doctor run bootstrapped a store"
-
-doctor --fix
-expect_code 0 "$DOCTOR_RC" "--fix left a provisionable host unready"
-assert_contains "$DOCTOR_OUT" 'fix beads-store=applied:' \
-  "--fix did not report provisioning the store"
-assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
-  "--fix did not re-check the provisioned store"
-assert_present "$CASE_HOME/.local/bin/task" "--fix did not write the task wrapper"
-assert_contains "$(cat "$CASE_HOME/.local/bin/task")" 'BEADS_DIR' \
-  "the task wrapper does not pin BEADS_DIR"
-assert_contains "$(cat "$BD_LOG")" bootstrap \
-  "--fix did not provision the store with the bootstrap verb"
-assert_not_contains "$(cat "$BD_LOG")" 'init' \
-  "--fix reached for a destructive init instead of bootstrap"
-assert_no_dangerous_calls "the doctor reached for auto-login, FileVault, or the keychain"
-pass "an unpinned bd is a fixable gap and --fix wraps it and provisions the store non-destructively"
-
-# --- a second --fix is a no-op that never bootstraps over the live store -----
-
-doctor --fix
-expect_code 0 "$DOCTOR_RC" "a second --fix reported a healthy host as unready"
-assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
-  "the already-provisioned store was not reported healthy"
-[ "$(grep -c bootstrap "$BD_LOG")" = 1 ] \
-  || fail "--fix bootstrapped again over a store that already answers"
-pass "a repeat --fix leaves a working store alone and never bootstraps over it"
-
-# --- a repairable store gap is non-gating, but still asks to be repaired -----
-#
-# Continues the fixture above, which --fix has just left fully ready: dropping
-# the wrapper reopens the store gap and nothing else, so the readiness verdict
-# must still be ready. Otherwise every seed, launch, and liveness relaunch on a
-# working route would refuse over a task store the agent runtime never touches.
-# Not gating is not the same as not repairing, though, so this run must also
-# publish the line the readiness gate repairs on: a host whose only gap is the
-# one --fix can close would otherwise keep that gap for as long as it stays
-# healthy in every other way.
-
-rm -f "$CASE_HOME/.local/bin/task"
-doctor
-expect_code 0 "$DOCTOR_RC" "a repairable store gap blocked a host that can start and supervise an agent"
-assert_contains "$DOCTOR_OUT" 'check beads-store=fixable:' \
-  "the reopened store gap was not reported at all"
-assert_contains "$DOCTOR_OUT" 'ok: remote second-mate readiness confirmed on this host' \
-  "the readiness verdict was withheld over a repairable task-store gap"
-assert_contains "$DOCTOR_OUT" 'repairable-advisory: beads-store' \
-  "a non-gating gap --fix can close never asked the readiness gate to repair it"
-pass "a repairable store gap is reported and asks for repair without withholding readiness"
-
-# --- the store resolves through ~/.local/bin even when PATH omits it ---------
-#
-# ~/.local/bin is where this check publishes the wrapper and is always on the
-# remote runtime PATH, but a plain-SSH invocation of the doctor routinely
-# inherits a PATH without it - the same hole the bd probe already works around.
-# Resolving `task` through the bare invoking PATH would make --fix fail to see
-# the wrapper it just wrote and report a store it did provision as broken.
-
-new_case Darwin with-herdr gui
-mkdir -p "$CASE_PROJECT_HOME/config"
-printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
-BD_LOG="$CASE_STATE/bd.log"
-: > "$BD_LOG"
-add_beads_bd "$CASE_BIN" "$BD_LOG"
-CASE_PATH="$CASE_BIN:$BASE_PATH"
-
-doctor --fix
-assert_contains "$DOCTOR_OUT" 'fix beads-store=applied:' \
-  "--fix did not publish the wrapper when ~/.local/bin was off PATH"
-assert_not_contains "$DOCTOR_OUT" 'fix beads-store=failed:' \
-  "--fix could not see the wrapper it had just written"
-assert_contains "$(cat "$BD_LOG")" bootstrap \
-  "--fix skipped provisioning because the fresh wrapper did not resolve"
-assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
-  "a store provisioned behind ~/.local/bin was still reported unreachable"
-
-doctor
-expect_code 0 "$DOCTOR_RC" "a healthy store behind ~/.local/bin left the host unready"
-assert_contains "$DOCTOR_OUT" 'check beads-store=ok:' \
-  "a read-only run could not see a healthy store through ~/.local/bin"
-pass "the beads store resolves through ~/.local/bin even when the invoking PATH omits it"
-
-# --- an operator-owned task wrapper is never overwritten, and never repairable
-#
-# The repair refuses this wrapper by policy, so calling the gap repairable would
-# make the readiness gate pay a repair pass and a re-check on every seed, launch,
-# and liveness relaunch for a condition that can never converge. It is therefore
-# classified informational: still reported, still non-gating, still never
-# overwritten, but never advertised to the gate as something a repair can close.
-
-new_case Darwin with-herdr gui
-mkdir -p "$CASE_PROJECT_HOME/config" "$CASE_HOME/.local/bin"
-printf 'beads\n' > "$CASE_PROJECT_HOME/config/backlog-backend"
-BD_LOG="$CASE_STATE/bd.log"
-: > "$BD_LOG"
-add_beads_bd "$CASE_BIN" "$BD_LOG"
-printf '#!/usr/bin/env bash\n# operator wrapper\nexit 1\n' > "$CASE_HOME/.local/bin/task"
-chmod +x "$CASE_HOME/.local/bin/task"
-
-doctor --fix
-assert_not_contains "$DOCTOR_OUT" 'fix beads-store=' \
-  "--fix attempted a repair it is forbidden to complete"
-assert_contains "$(cat "$CASE_HOME/.local/bin/task")" 'operator wrapper' \
-  "--fix overwrote a task wrapper it did not create"
-assert_not_contains "$(cat "$BD_LOG")" bootstrap \
-  "--fix bootstrapped a store behind an operator-owned wrapper it could not verify"
-
-doctor
-expect_code 0 "$DOCTOR_RC" \
-  "an operator-owned task wrapper withheld the verdict on an otherwise ready host"
-assert_contains "$DOCTOR_OUT" 'check beads-store=info:' \
-  "a store gap the repair refuses by policy was not reported informational"
-assert_not_contains "$DOCTOR_OUT" 'check beads-store=fixable:' \
-  "a gap fix_beads_store always refuses was still advertised as fixable"
-assert_not_contains "$DOCTOR_OUT" 'repairable-advisory: beads-store' \
-  "an unrepairable wrapper still asked the readiness gate to run a repair pass"
-assert_contains "$DOCTOR_OUT" 'action: beads-store:' \
-  "the informational wrapper gap came with no operator action"
-pass "an operator-owned task wrapper is informational and never overwritten, repaired, or re-tried"
-
-# --- the readiness gate repairs a non-gating gap it does not gate on ---------
-#
-# The doctor deliberately exits 0 over a store gap, and the gate used to run its
-# --fix pass only on a non-zero read-only run. Together that made the automatic
-# provisioning path reachable solely on hosts broken in some OTHER way: a host
-# whose only gap was the one --fix closes would keep it forever. The gate now
-# repairs on the doctor's `repairable-advisory:` line as well, which is what
-# these three cases fix in place. bin/fm-remote-doctor.sh above is the real
-# publisher of that line; the stub here only replays it so the gate's own
-# sequencing is what gets exercised.
-
-# shellcheck source=bin/fm-remote-readiness-lib.sh
-. "$ROOT/bin/fm-remote-readiness-lib.sh"
-
-RG_BIN="$TMP_ROOT/readiness/bin"
-export FM_RG_STATE="$TMP_ROOT/readiness/state"
-export FM_RG_LOG="$FM_RG_STATE/fm-on.log"
-mkdir -p "$RG_BIN" "$FM_RG_STATE"
-cat > "$RG_BIN/fm-on.sh" <<'SH'
-#!/usr/bin/env bash
-set -u
-printf '%s\n' "$*" >> "$FM_RG_LOG"
-case " $* " in
-  *' --fix '*)
-    [ -f "$FM_RG_STATE/fix-fails" ] || touch "$FM_RG_STATE/repaired"
-    printf 'fix beads-store=applied: wrote the task wrapper\n'
-    exit 0
-    ;;
-esac
-if [ ! -f "$FM_RG_STATE/advisory" ] || [ -f "$FM_RG_STATE/repaired" ]; then
-  printf 'check beads-store=ok: the task CLI answers a read\n'
-  printf 'ok: remote second-mate readiness confirmed on this host\n'
-  exit 0
-fi
-printf 'check beads-store=fixable: bd resolves but the task CLI does not answer\n'
-printf 'action: beads-store: rerun with --fix\n'
-printf 'repairable-advisory: beads-store\n'
-printf 'ok: remote second-mate readiness confirmed on this host\n'
-exit 0
-SH
-chmod +x "$RG_BIN/fm-on.sh"
-
-# rg_reset [advisory] [fix-fails]: start a fresh readiness fixture.
-rg_reset() {
-  rm -f "$FM_RG_STATE"/*
-  : > "$FM_RG_LOG"
-  for marker in "$@"; do touch "$FM_RG_STATE/$marker"; done
-}
-
-rg_reset advisory
-RG_RC=0
-fm_remote_readiness_ensure "$RG_BIN" sm-advisory || RG_RC=$?
-expect_code 0 "$RG_RC" "a host whose only gap does not gate readiness was reported unready"
-[ "$(wc -l < "$FM_RG_LOG" | tr -d ' ')" = 3 ] \
-  || fail "the gate did not run check, repair, re-check over a repairable advisory: $(cat "$FM_RG_LOG")"
-assert_contains "$(sed -n 2p "$FM_RG_LOG")" '--fix' \
-  "the gate skipped its repair pass because the read-only run had already exited 0"
-assert_not_contains "$FM_REMOTE_READINESS_OUT" 'repairable-advisory:' \
-  "the gate reported a verdict that still carried the gap its repair pass closed"
-pass "the readiness gate repairs a non-gating gap the doctor exits 0 over"
-
-rg_reset
-RG_RC=0
-fm_remote_readiness_ensure "$RG_BIN" sm-clean || RG_RC=$?
-expect_code 0 "$RG_RC" "a fully healthy host was reported unready"
-[ "$(wc -l < "$FM_RG_LOG" | tr -d ' ')" = 1 ] \
-  || fail "the gate ran a repair pass on a host with nothing to repair: $(cat "$FM_RG_LOG")"
-pass "the readiness gate still runs no repair pass on a host with nothing to repair"
-
-rg_reset advisory fix-fails
-RG_RC=0
-fm_remote_readiness_ensure "$RG_BIN" sm-unrepaired || RG_RC=$?
-expect_code 0 "$RG_RC" "a failed repair of a non-gating gap withheld the readiness verdict"
-assert_contains "$FM_REMOTE_READINESS_OUT" 'repairable-advisory: beads-store' \
-  "the still-open gap stopped being reported once the repair failed"
-pass "a non-gating gap that repair could not close still never withholds readiness"

@@ -1,332 +1,79 @@
 # shellcheck shell=bash
-# fm-landed-lib.sh - single owner of the "has this work LANDED" predicate.
+# Shared "what belongs in Recently Landed" rule.
+# Usage: . bin/fm-landed-lib.sh; splice "$FM_LANDED_JQ_DEFS" ahead of a jq
+# program, then select backlog rows with `landed_record`.
 #
-# Why this is its own library: the predicate used to live inside
-# bin/fm-teardown.sh, a mutating script a side-effect-free reader (like
-# bin/fm-crew-state.sh) must not source. The extraction to this pure,
-# function-only library is the earliest shared boundary: sourcing it defines
-# functions and performs no other work, so any reader can load it safely.
-# bin/fm-teardown.sh sources it and binds its own globals through thin wrappers;
-# bin/fm-crew-state.sh sources it to answer the same question its closed-bead
-# gate asks (is a closed bead completion evidence, or did the work never land).
+# ONE OWNER for the landed selector. Recently Landed is assembled from two
+# separate jq programs - bin/fm-bearings-snapshot.sh projects this home's own
+# Done rows, and bin/fm-fleet-snapshot.sh projects each secondmate home's Done
+# rows into the roll-up that the same section merges in. Both answer the one
+# question "is this closed row a delivery the captain should see", so the rule
+# lives here and neither program restates it.
 #
-# "Landed" means the worktree's committed work is reachable from a remote, OR -
-# for a normal ship task whose commits are not so reachable - its PR is merged and
-# GitHub reports a PR head that contains the current local work, or its content is
-# already present in the up-to-date default branch. This recognizes the common
-# squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
-# on a remote yet the change is fully in main.
+# A closed row is never actively held: tasks-axi clears the held flag when a
+# task closes, but a non-release answer keeps hold-kind and the hold reason.
+# Merge approval removes those annotations through the release contract before
+# cleanup records the merged PR or local-only landing, so either artifact on a
+# Done captain-hold row is not a delivery. A scout's recorded report is its
+# delivery regardless of release state or other links in its title.
 #
-# Nothing here touches the index, the working tree, HEAD, or any local branch, so
-# no reader can be left with a changed checkout. Its writes are confined to the
-# object store, plus the one remote-tracking ref (and FETCH_HEAD) a fetch updates,
-# and they only ever ADD objects. There are FOUR of them, not just the fetches.
-# TWO ARE FETCHES, each a read of the remote teardown already performed:
-# fm_landed_content_in_default fetches the default branch so the content comparison
-# runs against an up-to-date one, and fm_landed_ensure_commit_object fetches
-# refs/pull/<n>/head when a merged PR's head commit is not present locally, the
-# ordinary squash-merge-then-delete-branch case. THE OTHER TWO ARE PURELY LOCAL:
-# fm_landed_squash_merged_pr_contains_work and fm_landed_content_in_default each run
-# `git merge-tree --write-tree`, which by definition stores the merged tree objects
-# it computes. Each probe fails closed: any lookup, fetch, or git operation that
-# cannot answer returns non-zero, which the caller treats as unlanded rather than
-# guessing.
+# The distinction that decides the section is delivery: Recently Landed is
+# merged PRs, completed scouts, and finished local-only merges. A closed row
+# whose artifact matches its merged or done completion verb is a delivery only
+# when it retains no captain-question provenance. A retained scout is identified
+# by its kind and recorded report because its title links do not change what it
+# delivers. A captain question remains kind captain when it closes, so it is
+# never rendered as shipped work even when its text names an artifact.
+# A local-only completion is a delivery whether or not its row carries a kind.
+# The retained hold-kind alone keeps answered calls out of the section.
+# Merged PRs and reported scouts remain distinct.
 #
-# Setting FM_LANDED_NET_TIMEOUT opts the caller into a STRICTER POSTURE with two
-# halves that travel together, because a caller that cannot afford to wait also
-# cannot afford to be asked a question: a single overall bound on the predicate's
-# remote work, and a never-prompt guarantee on the two fetches (they run under
-# GIT_TERMINAL_PROMPT=0 and GIT_ASKPASS=true, so a missing credential fails fast
-# into the unlanded fail-safe instead of blocking on a terminal read).
-#
-# The DEFAULT path - no FM_LANDED_NET_TIMEOUT - is unbounded and may prompt, which
-# is bin/fm-teardown.sh's historic behavior, preserved deliberately: teardown asks
-# this question once, interactively, at a gate that REFUSES to remove a worktree,
-# so waiting out a slow remote (or letting an operator answer a credential prompt)
-# is far cheaper than refusing a teardown - or filing a staleness triage bead - for
-# work that actually landed. A future caller that says nothing inherits that same
-# safe semantics rather than a posture meant for the watcher.
-#
-# When the bound IS requested, fm_work_is_landed opens ONE deadline that every
-# remote leg shares (the two fetches, `gh pr view`, `gh-axi pr list`), so the whole
-# predicate's remote work costs at most FM_LANDED_NET_TIMEOUT seconds however many
-# legs it runs, rather than that bound once per leg. bin/fm-crew-state.sh is the
-# caller that opts in, at 10 seconds (its own FM_CREW_STATE_LANDED_TIMEOUT,
-# matching FM_CREW_STATE_NM_TIMEOUT), because its closed-bead gate runs on every
-# supervision poll and an unreachable remote or a blocking credential helper must
-# not stall the watcher. A deadline that expires exits non-zero, which lands in the
-# same fail-closed direction as any other probe that cannot answer.
-#
-# Functions take the worktree dir and (where needed) the project dir explicitly;
-# no function depends on ambient globals, so the same code serves teardown,
-# crew-state, and any future reader with a different variable naming scheme.
-#
-#   fm_landed_bound_seconds                           -> the opt-in bound, if any
-#   fm_landed_run_leg <command...>                    -> a remote leg, bounded on opt-in
-#   fm_landed_run_fetch_leg <command...>              -> a fetch leg, also never-prompt on opt-in
-#   fm_work_is_landed <wt> <proj> <branch> [pr_url]   -> 0 landed, 1 not landed
-#   fm_landed_pr_is_merged <wt> <branch> [pr_url]
-#   fm_landed_content_in_default <wt> <proj>
-#   fm_landed_default_branch <proj>
-#   fm_landed_pr_number_from_branch <wt> <branch>
-#   fm_landed_pr_number_from_target <target>
-#   fm_landed_ensure_commit_object <wt> <target> <commit>
-#   fm_landed_patch_id_for_commit <wt> <commit>
-#   fm_landed_unpushed_patches_are_in_pr_head <wt> <pr_head>
-#   fm_landed_squash_merged_pr_contains_work <wt> <pr_head>
+# The backlog-selection compatibility fallback keeps a structured Done row
+# whose three parsed artifact fields are absent when it does not retain
+# hold-kind captain.
+# That preserves kindless rows closed before artifact-aware selection without
+# admitting answered captain calls or explicit reportless scouts.
+# Already-selected v1 secondmate landed rows may omit kind. For those rows,
+# landed_artifact preserves a report_path with a reported completion; this
+# display compatibility does not admit kindless reports from raw backlog rows.
+# tests/fm-bearings-snapshot.test.sh covers both fresh and cached v1 summaries.
 
-# The bound, in seconds, a caller opted into through FM_LANDED_NET_TIMEOUT. An
-# unset or empty value means no bound was requested, and returns non-zero. A
-# requested but non-numeric or zero value falls back to 10 rather than to
-# unbounded, because the caller did ask for a bound and `timeout 0` would disable
-# the deadline instead of tightening it.
-fm_landed_bound_seconds() {
-  local bound=${FM_LANDED_NET_TIMEOUT:-}
-  [ -n "$bound" ] || return 1
-  case "$bound" in *[!0-9]*) bound=10 ;; esac
-  [ "$bound" -gt 0 ] || bound=10
-  printf '%s' "$bound"
-}
-
-# Run one fetching leg, which is a remote leg that additionally must never stop to
-# ASK for anything when the caller opted into the strict posture. Both halves hang
-# off that one opt-in: without it the fetch runs exactly as it did before this
-# library existed, free to prompt on the terminal and to take as long as it takes,
-# which is what bin/fm-teardown.sh's interactive gate depends on. With it the fetch
-# is bounded AND non-interactive, so a missing credential fails fast into the same
-# unlanded fail-safe a timeout produces rather than blocking a supervision read on
-# a terminal that may have nobody in front of it.
-fm_landed_run_fetch_leg() {  # <command...>
-  if fm_landed_bound_seconds >/dev/null; then
-    fm_landed_run_leg env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true "$@"
-    return $?
-  fi
-  fm_landed_run_leg "$@"
-}
-
-# Run one remote-touching leg: hard-bounded when a bound was requested, plainly
-# otherwise.
-#
-# With no bound requested the command simply runs, engaging none of the machinery
-# below, which is what keeps the default path identical to the predicate's
-# pre-extraction behavior in bin/fm-teardown.sh. With a bound requested, this
-# spends only the time left on the deadline fm_work_is_landed opened, so a
-# predicate that runs three remote legs still costs at most the one bound in total
-# instead of three of them back to back. An already-expired deadline returns 124
-# without running the command at all, the same status a bound that fires produces.
-#
-# bin/fm-timeout-lib.sh is loaded LAZILY, and only here: sourcing THIS library must
-# stay side-effect free for the readers it exists to serve, and a caller that never
-# requests a bound (or never reaches a network leg) must not pay for a library it
-# never calls. When a bound WAS requested and that sibling is absent the bound
-# cannot be honoured, so this returns non-zero without running the command - the
-# same fail-closed direction every other probe takes. fm_run_timed itself needs no
-# `timeout` binary: fm-timeout-lib.sh owns the coreutils/BSD/perl/bash mechanism
-# selection.
-fm_landed_run_leg() {  # <command...>
-  local bound remaining lib_dir
-  if ! bound=$(fm_landed_bound_seconds); then
-    "$@"
-    return $?
-  fi
-  if [ -n "${FM_LANDED_DEADLINE:-}" ]; then
-    remaining=$(( FM_LANDED_DEADLINE - $(date +%s) ))
-    if [ "$remaining" -le 0 ]; then
-      return 124
-    fi
-    if [ "$remaining" -lt "$bound" ]; then
-      bound=$remaining
-    fi
-  fi
-  if ! declare -f fm_run_timed >/dev/null 2>&1; then
-    lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return 1
-    [ -f "$lib_dir/fm-timeout-lib.sh" ] || return 1
-    # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
-    . "$lib_dir/fm-timeout-lib.sh"
-  fi
-  fm_run_timed "$bound" "$@"
-}
-
-# Resolve the default branch name for a project checkout: the remote HEAD symbolic
-# ref when present, else a local main/master branch. Non-zero when neither exists.
-fm_landed_default_branch() {  # <proj>
-  local proj=$1 ref branch
-  ref=$(git -C "$proj" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  if [ -n "$ref" ]; then
-    echo "${ref#origin/}"
-    return 0
-  fi
-  for branch in main master; do
-    if git -C "$proj" show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "$branch"
-      return 0
-    fi
-  done
-  return 1
-}
-
-# Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
-# single match and returns 0; returns non-zero on no match or any lookup failure,
-# so the caller treats it as "no PR found" (fail-safe).
-fm_landed_pr_number_from_branch() {  # <wt> <branch>
-  local wt=$1 branch=$2 out n
-  [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
-  out=$( cd "$wt" && fm_landed_run_leg gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null ) || return 1
-  n=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\),.*/\1/p' | head -1)
-  [ -n "$n" ] || return 1
-  printf '%s' "$n"
-}
-
-# Extract a PR number from a PR URL or bare number. Pure string parse, no git.
-fm_landed_pr_number_from_target() {  # <target>
-  local target=$1 n
-  case "$target" in
-    '' ) return 1 ;;
-    *"/pull/"*)
-      n=${target##*/pull/}
-      n=${n%%[!0-9]*}
-      ;;
-    [0-9]*)
-      n=${target%%[!0-9]*}
-      ;;
-    *) return 1 ;;
-  esac
-  [ -n "$n" ] || return 1
-  printf '%s' "$n"
-}
-
-# Make sure a commit object exists locally, fetching the PR head ref when it does
-# not (e.g. the head branch was deleted after a squash merge).
-fm_landed_ensure_commit_object() {  # <wt> <target> <commit>
-  local wt=$1 target=$2 commit=$3 n
-  git -C "$wt" cat-file -e "$commit^{commit}" 2>/dev/null && return 0
-  n=$(fm_landed_pr_number_from_target "$target") || return 1
-  git -C "$wt" remote get-url origin >/dev/null 2>&1 || return 1
-  fm_landed_run_fetch_leg \
-    git -C "$wt" fetch --quiet origin "refs/pull/$n/head" >/dev/null 2>&1 || return 1
-  git -C "$wt" cat-file -e "$commit^{commit}" 2>/dev/null
-}
-
-fm_landed_patch_id_for_commit() {  # <wt> <commit>
-  local wt=$1 commit=$2
-  git -C "$wt" show --pretty=medium --no-ext-diff "$commit" 2>/dev/null \
-    | git patch-id --stable 2>/dev/null \
-    | awk 'NR == 1 { print $1 }'
-}
-
-# True when every unpushed local commit's patch-id appears in the merged PR head,
-# i.e. the local work was replayed (rather than the original commits reachable).
-fm_landed_unpushed_patches_are_in_pr_head() {  # <wt> <pr_head>
-  local wt=$1 pr_head=$2 current base pr_patch_ids commit patch_id unpushed
-  current=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null) || return 1
-  base=$(git -C "$wt" merge-base "$current" "$pr_head" 2>/dev/null) || return 1
-  pr_patch_ids=$(
-    git -C "$wt" log --format=%H "$base..$pr_head" -- 2>/dev/null \
-      | while IFS= read -r commit; do
-          fm_landed_patch_id_for_commit "$wt" "$commit"
-        done \
-      | sed '/^$/d' \
-      | sort -u
-  ) || return 1
-  [ -n "$pr_patch_ids" ] || return 1
-  unpushed=$(git -C "$wt" log --format=%H HEAD --not --remotes -- 2>/dev/null) || return 1
-  [ -n "$unpushed" ] || return 1
-  while IFS= read -r commit; do
-    [ -n "$commit" ] || continue
-    patch_id=$(fm_landed_patch_id_for_commit "$wt" "$commit") || return 1
-    [ -n "$patch_id" ] || return 1
-    printf '%s\n' "$pr_patch_ids" | grep -qxF "$patch_id" || return 1
-  done <<EOF
-$unpushed
-EOF
-}
-
-# True when 3-way merging the PR head with HEAD yields the PR head's tree, i.e. the
-# squash-merged PR already contains the worktree's content.
-fm_landed_squash_merged_pr_contains_work() {  # <wt> <pr_head>
-  local wt=$1 pr_head=$2 pr_tree merged_tree
-  pr_tree=$(git -C "$wt" rev-parse --quiet --verify "$pr_head^{tree}" 2>/dev/null) || return 1
-  [ -n "$pr_tree" ] || return 1
-  merged_tree=$(git -C "$wt" merge-tree --write-tree "$pr_head" HEAD 2>/dev/null) || return 1
-  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
-  [ "$merged_tree" = "$pr_tree" ]
-}
-
-# Is the worktree's PR merged for local work contained in that PR? Resolves the
-# PR from the recorded pr= URL first, then from the branch name, and asks GitHub
-# for both the PR state and head. Returns non-zero when the PR is not merged, the
-# current work is not contained in the PR head, no PR is found, or any gh error
-# occurs - the caller then falls back to the content check.
-fm_landed_pr_is_merged() {  # <wt> <branch> [pr_url]
-  local wt=$1 branch=$2 pr_url=${3:-} target view state head current
-  if [ -n "$pr_url" ]; then
-    target=$pr_url
-  else
-    target=$(fm_landed_pr_number_from_branch "$wt" "$branch") || return 1
-  fi
-  [ -n "$target" ] || return 1
-  view=$(cd "$wt" && fm_landed_run_leg gh pr view "$target" \
-    --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
-  state=${view%%$'\t'*}
-  head=${view#*$'\t'}
-  [ "$state" != "$view" ] || return 1
-  case "$state" in
-    MERGED|merged) ;;
-    *) return 1 ;;
-  esac
-  [ -n "$head" ] || return 1
-  fm_landed_ensure_commit_object "$wt" "$target" "$head" || return 1
-  current=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null) || return 1
-  git -C "$wt" merge-base --is-ancestor "$current" "$head" 2>/dev/null && return 0
-  fm_landed_unpushed_patches_are_in_pr_head "$wt" "$head" && return 0
-  fm_landed_squash_merged_pr_contains_work "$wt" "$head"
-}
-
-# Is the branch's content already present in the up-to-date default branch? Fetches
-# first, then 3-way merges the default branch with HEAD: when HEAD introduces nothing
-# the default branch does not already contain (e.g. its change landed via squash) the
-# merged tree equals the default branch's tree. This isolates branch-only changes, so
-# unrelated commits the default branch gained past the merge-base do not count as
-# "added". Returns non-zero when inconclusive (no default ref, or a merge conflict),
-# so the caller refuses rather than guesses.
-fm_landed_content_in_default() {  # <wt> <proj>
-  local wt=$1 proj=$2 name ref default_tree merged_tree
-  name=$(fm_landed_default_branch "$proj") || return 1
-  if git -C "$wt" remote get-url origin >/dev/null 2>&1; then
-    fm_landed_run_fetch_leg \
-      git -C "$wt" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
-    ref="refs/remotes/origin/$name"
-  elif git -C "$wt" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
-    ref="refs/heads/$name"
-  else
-    return 1
-  fi
-  default_tree=$(git -C "$wt" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
-  [ -n "$default_tree" ] || return 1
-  merged_tree=$(git -C "$wt" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
-  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
-  [ "$merged_tree" = "$default_tree" ]
-}
-
-# Has the worktree's committed work actually LANDED, though its commits are not
-# reachable from any remote-tracking branch? True when a merged PR proves the
-# current local work is contained in the PR head, OR the content is already in the
-# default branch (fallback, which also covers the no-PR and gh-error paths). False
-# only for genuinely unlanded work.
-#
-# This is where the ONE deadline every remote leg below shares is opened, but ONLY
-# when a caller asked for a bound; with none requested no deadline exists and every
-# leg runs unbounded. `local` is what scopes it: the deadline reaches the helpers
-# through dynamic scope and is restored automatically on return, and it is reset
-# rather than inherited, so an unbounded call never picks up a bounded caller's
-# leftover deadline.
-fm_work_is_landed() {  # <wt> <proj> <branch> [pr_url]
-  local wt=$1 proj=$2 branch=$3 pr_url=${4:-} bound
-  # shellcheck disable=SC2034  # Read by fm_landed_run_leg through dynamic scope.
-  local FM_LANDED_DEADLINE=
-  if bound=$(fm_landed_bound_seconds); then
-    FM_LANDED_DEADLINE=$(( $(date +%s) + bound ))
-  fi
-  fm_landed_pr_is_merged "$wt" "$branch" "$pr_url" && return 0
-  fm_landed_content_in_default "$wt" "$proj"
-}
+# shellcheck disable=SC2034 # Output global, read by the sourcing caller.
+FM_LANDED_JQ_DEFS='
+  def scout_report:
+    .kind == "scout"
+    and (.report_path // null) != null;
+  def landed_artifact:
+    if scout_report or (.kind == null and .completion.verb == "reported") then (.report_path // null)
+    elif .completion.verb == "merged" then (.pr_url // null)
+    elif .completion.verb == "done" then (.local_note // null)
+    else null
+    end;
+  # The kind-is-not-scout guards below and in the fallback are LOAD-BEARING:
+  # they keep an explicit scout that recorded no report out of Recently Landed.
+  # Without them such a row has none of the three artifacts, satisfies the
+  # compatibility fallback and renders as shipped work with an empty artifact.
+  # Pinned by tests/fm-captain-hold-lifecycle.test.sh on "released, retained, or
+  # rejected deliveries were misclassified".
+  def landed_delivery:
+    scout_report
+    or (.kind != "scout"
+      and .kind != "captain"
+      and .hold_kind != "captain"
+      and .completion.verb == "merged"
+      and (.pr_url // null) != null)
+    or (.kind != "scout"
+      and .kind != "captain"
+      and .hold_kind != "captain"
+      and .completion.verb == "done"
+      and (.local_note // null) != null);
+  def landed_record:
+    .state == "done" and .structured
+    and (landed_delivery
+      or (.kind != "scout"
+        and .kind != "captain"
+        and .hold_kind != "captain"
+        and (.pr_url // null) == null
+        and (.report_path // null) == null
+        and (.local_note // null) == null));
+'

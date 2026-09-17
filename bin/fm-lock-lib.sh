@@ -29,25 +29,13 @@ fm_lock_log() {
   echo "${FM_LOCK_LOG_PREFIX:-fm-lock}: $*" >&2
 }
 
-# fm_lsof_bin: prints a usable lsof to stdout, non-zero when the host has none.
-#
-# Resolution is deliberately NOT PATH-only. On macOS lsof ships solely as
-# /usr/sbin/lsof - there is no /usr/bin/lsof and Homebrew installs none - so any
-# session whose PATH omits /usr/sbin (agent shells routinely have exactly
-# ~/.local/bin:~/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin) read as
-# "this host has no lsof" and silently took the degraded path: teardown stopped
-# reaping processes leaked under the task worktree - the exact incident the
-# reaper exists for - and every git lock read as live (robots-8d5r).
-#
-# PATH still wins when it has one, so a package-manager lsof or a test stub is
-# unaffected; the standard system locations are only a fallback.
-# FM_LSOF_FALLBACK_DIRS (space-separated; set it empty to disable the fallback)
-# overrides those locations so tests can model a host with no lsof anywhere.
-fm_lsof_bin() {
-  local dir resolved
-  if resolved=$(command -v lsof 2>/dev/null) && [ -n "$resolved" ]; then
-    printf '%s\n' "$resolved"
-    return 0
+# Portable mtime in epoch seconds. Kept self-contained so this leaf lib drags in
+# no wake-queue machinery when a caller only needs the staleness proof.
+fm_lock_path_mtime() {
+  if [ "$(uname)" = Darwin ]; then
+    /usr/bin/stat -f %m "$1" 2>/dev/null
+  else
+    stat -c %Y "$1" 2>/dev/null
   fi
   # shellcheck disable=SC2086 # deliberate split: the override is a directory list
   for dir in ${FM_LSOF_FALLBACK_DIRS-/usr/sbin /sbin}; do

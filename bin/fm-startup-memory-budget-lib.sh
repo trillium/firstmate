@@ -30,7 +30,11 @@ fm_startup_memory_budget_fail() {
 # wrong answer here makes the hardlink-safety check unreadable, so a legitimate
 # config directory is rejected.
 fm_startup_memory_budget_link_count() {
-  fm_stat_links "$1"
+  if [ "$(uname)" = Darwin ]; then
+    /usr/bin/stat -f %l "$1" 2>/dev/null
+  else
+    stat -c %h "$1" 2>/dev/null
+  fi
 }
 
 fm_startup_memory_budget_config_dir_safe() {

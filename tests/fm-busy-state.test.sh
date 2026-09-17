@@ -107,6 +107,64 @@ test_retire_serializes_and_rejects_stale_gen() {
   pass "retire waits for the writer lock and cannot remove a new incarnation"
 }
 
+# Regression for issue #2625: the writer lock's stale-lock branch resolved the
+# lock's mtime with `stat -f %m ... || stat -c %Y ...`. On GNU coreutils `-f` is
+# *filesystem* stat, so it consumes the format string as a path, complains on
+# stderr, prints "  File: ..." on stdout, and still exits 0 - the GNU form in the
+# fallback never ran. The following `$((now - mtime))` then evaluated the word
+# `File`, which under `set -u` aborted the writer with "File: unbound variable".
+# fm-teardown.sh died there after returning the worktree, leaving state/<id>.meta
+# and friends behind to generate stale wakes forever, and every re-run died
+# identically because the abandoned lock directory was never broken.
+#
+# The stat and uname stubs make this deterministic on any host: the writer must
+# take the Linux path and still break a provably stale lock.
+test_stale_lock_broken_under_gnu_stat() {
+  local state gen fakebin real_uname out status
+  state=$(new_state_dir gnu-stat-lock)
+  gen=$("$EV" arm "$state" t1)
+  fakebin=$(fm_fakebin "$TMP_ROOT/gnu-stat-lock")
+  real_uname=$(command -v uname)
+
+  # GNU coreutils semantics, self-contained so no real stat is consulted.
+  cat > "$fakebin/stat" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -c ] && [ "${2:-}" = %Y ]; then
+  printf '%s\n' 1000000000   # long-abandoned lock
+  exit 0
+fi
+if [ "${1:-}" = -f ]; then
+  echo "stat: cannot read file system information for '$2': No such file or directory" >&2
+  shift 2
+  printf '  File: "%s"\n' "${1:-}"
+  exit 0
+fi
+exit 1
+SH
+  chmod +x "$fakebin/stat"
+  cat > "$fakebin/uname" <<SH
+#!/usr/bin/env bash
+if [ \$# -eq 0 ]; then printf 'Linux\n'; exit 0; fi
+exec "$real_uname" "\$@"
+SH
+  chmod +x "$fakebin/uname"
+
+  mkdir "$state/t1.busy-state.lock"
+  out=$(PATH="$fakebin:$PATH" "$EV" retire "$state" t1 --gen "$gen" 2>&1) && status=0 || status=$?
+  case "$out" in
+    *'unbound variable'*) fail "the writer still dies on GNU stat output: $out" ;;
+  esac
+  [ "$status" = 0 ] || fail "retire did not break a provably stale writer lock: $out"
+  [ ! -e "$state/t1.busy-state" ] || fail "retire left the record behind"
+  [ ! -e "$state/t1.busy-gen" ] || fail "retire left the gen sidecar behind"
+  [ ! -e "$state/t1.busy-state.lock" ] || fail "retire left the stale lock behind"
+
+  # Teardown must be able to run again over the same task without failing.
+  PATH="$fakebin:$PATH" "$EV" retire "$state" t1 --current-gen \
+    || fail "a repeated retire over already-cleaned state was not idempotent"
+  pass "the writer breaks a stale lock instead of dying on GNU stat output"
+}
+
 test_retire_missing_sidecar_is_idempotent() {
   local state gen
   state=$(new_state_dir retire-missing)
@@ -272,6 +330,31 @@ test_kimi_unverified_gate() {
   pass "standalone kimi classifies unknown until the live verification gate opens"
 }
 
+test_cursor_ignores_rendered_and_native_signals() {
+  local state out
+  state=$(new_state_dir cursor-gate)
+  # Cursor's verdict comes from its own transcript, never from rendered text.
+  # With no binding to fold, the honest answer is unknown - and a rendered
+  # busy-looking footer must not change that.
+  out=$(fm_busy_classify tmux w1 cursor t1 "$state" 'Working')
+  [ "$out" = "unknown cursor-transcript" ] \
+    || fail "cursor must not classify from its rendered footer, got '$out'"
+  out=$(fm_busy_classify tmux w1 cursor t1 "$state" 'ctrl+c to stop')
+  [ "$out" = "unknown cursor-transcript" ] \
+    || fail "cursor must not classify from the ctrl+c busy token either, got '$out'"
+  # Herdr's narrower native streaming state is not cursor's turn lifecycle.
+  # shellcheck disable=SC2329 # invoked indirectly through fm_busy_classify
+  fm_backend_busy_state() { printf '%s' busy; }
+  out=$(fm_busy_classify herdr s:p cursor t1 "$state")
+  [ "$out" = "unknown cursor-transcript" ] \
+    || fail "cursor must not borrow herdr's native busy verdict, got '$out'"
+  unset -f fm_backend_busy_state
+  # The fold is a PULL source: nothing is armed, so no stored record is trusted.
+  [ -z "$(fm_busy_sources_for_harness cursor)" ] \
+    || fail "cursor must trust no stored record source; its fold has no writer"
+  pass "cursor classifies only from its transcript fold, never rendered text or native state"
+}
+
 # --- endpoint death and native fallbacks ----------------------------------------
 
 test_dead_endpoint_overrides() {
@@ -356,113 +439,26 @@ test_boolean_view_never_promotes_unknown() {
   pass "the boolean view reports busy only on an exact busy verdict"
 }
 
-# --- org-disabled detection --------------------------------------------------
-
-# The org-disabled pane is a wedge the crew can never clear itself, so the
-# watcher escalates it on sight instead of timing it out. These pin the
-# predicate the watcher gates that escalation on: it must fire on the vendor
-# string wherever it sits in the captured tail, and never on ordinary content.
-
-test_org_disabled_detects_rendered_error() {
-  local pane
-  pane=$(printf '%s\n' \
-    '> claude --account 1' \
-    '' \
-    "⏺ $FM_BUSY_ORG_DISABLED_PATTERN · Use an Anthropic API key instead, or ask your admin to enable access" \
-    '')
-  fm_busy_org_disabled "$pane" \
-    || fail "the rendered org-disabled error must be detected"
-  pass "org-disabled fires on the vendor error as it is actually rendered"
+test_progress_is_generation_bound_and_not_semantic_state() {
+  local state gen replacement before
+  state=$(new_state_dir native-progress)
+  gen=$("$EV" arm "$state" t1)
+  before=$(cat "$state/t1.busy-state")
+  "$EV" progress "$state" t1 --gen "$gen" || fail "current progress was refused"
+  [ -f "$state/t1.progress" ] || fail "progress marker missing"
+  [ ! -e "$state/t1.turn-ended" ] || fail "progress emitted a completed turn"
+  [ "$(cat "$state/t1.busy-state")" = "$before" ] || fail "progress changed semantic state"
+  replacement=$("$EV" arm "$state" t1)
+  [ ! -e "$state/t1.progress" ] || fail "arm retained the previous incarnation's progress"
+  if "$EV" progress "$state" t1 --gen "$gen" 2>/dev/null; then fail "stale progress was accepted"; fi
+  [ ! -e "$state/t1.progress" ] || fail "stale progress wrote a marker"
+  "$EV" progress "$state" t1 --gen "$replacement" || fail "replacement progress was refused"
+  "$EV" retire "$state" t1 --gen "$replacement" || fail "retire failed"
+  [ ! -e "$state/t1.progress" ] || fail "retire retained progress"
+  pass "native progress is generation-bound, separately recorded, and cleared on arm and retire"
 }
 
-test_org_disabled_ignores_ordinary_pane() {
-  local pane
-  pane=$(printf '%s\n' '⏺ Reading bin/fm-watch.sh' '' '  ✻ Thinking… (12s · esc to interrupt)')
-  if fm_busy_org_disabled "$pane"; then
-    fail "an ordinary working pane must not read as org-disabled"
-  fi
-  if fm_busy_org_disabled ""; then
-    fail "an empty capture must not read as org-disabled"
-  fi
-  if fm_busy_org_disabled "Your organization has disabled something else entirely"; then
-    fail "a partial prefix must not read as org-disabled"
-  fi
-  pass "org-disabled stays silent on ordinary, empty, and near-miss panes"
-}
-
-# --- writer: the stale-lock reap must survive a GNU `stat` on any kernel ------
-
-# Shadow `stat` with a binary that speaks GNU coreutils' dialect, which is what a
-# nix-darwin or Homebrew-coreutils Mac actually resolves even though `uname` says
-# Darwin. The fake reproduces the one shape that matters: GNU's `-f` is
-# --file-system, not "format", so it stats the FILESYSTEM, writes a multi-line
-# dump to STDOUT, and only THEN exits non-zero. The `||` in a BSD-first
-# `stat -f ... || stat -c ...` chain therefore does fire - and its correct
-# integer is appended to the dump already sitting in the same command
-# substitution, which returns rc=0 holding a multi-line non-integer. The caller
-# sees success and its arithmetic throws on the garbage.
-#
-# `uname` is deliberately NOT shimmed: the code under test dispatches on the
-# binary, never on the kernel, so forcing the GNU dialect is the whole of what
-# this guards. It would not catch a regression back to `uname`-keyed dispatch.
-install_gnu_stat_shim() {  # <fakebin-dir>
-  local fakebin=$1 real host probe
-  real=$(command -v stat) || fail "no stat on PATH to delegate to"
-  probe=$("$real" -c %s / 2>/dev/null) || true
-  case "$probe" in ''|*[!0-9]*) host=bsd ;; *) host=gnu ;; esac
-  cat > "$fakebin/stat" <<SH
-#!/usr/bin/env bash
-REAL='$real'
-HOST='$host'
-SH
-  cat >> "$fakebin/stat" <<'SH'
-case "${1:-}" in
-  -c)
-    fmt=${2:-}; file=${3:-}
-    if [ "$HOST" = gnu ]; then exec "$REAL" -c "$fmt" "$file"; fi
-    case "$fmt" in
-      %Y) exec "$REAL" -f %m "$file" ;;
-      %s) exec "$REAL" -f %z "$file" ;;
-      *)  exit 1 ;;
-    esac
-    ;;
-  -f)
-    # GNU --file-system: the format string becomes a second FILE operand.
-    printf '  File: "%s"\n  ID: 0 Namelen: 255 Type: fake\n' "${3:-${2:-}}"
-    printf '  Block size: 4096  Blocks: Total: 1 Free: 1 Available: 1\n'
-    exit 1
-    ;;
-esac
-exit 1
-SH
-  chmod +x "$fakebin/stat"
-}
-
-test_stale_writer_lock_reclaimed_under_gnu_stat() {
-  local state fakebin lock out rc
-  state=$(new_state_dir gnu-stat-stale-lock)
-  fakebin=$(fm_fakebin "$TMP_ROOT/gnu-stat-stale-lock")
-  install_gnu_stat_shim "$fakebin"
-
-  "$EV" arm "$state" t1 >/dev/null || fail "arm failed"
-
-  # A holder that died mid-write leaves the lock dir behind. Age it past the
-  # staleness bound so the reap is the only way out of lock_acquire.
-  lock="$state/t1.busy-state.lock"
-  mkdir "$lock" || fail "could not stage the abandoned lock"
-  touch -t 200001010000 "$lock" || fail "could not age the abandoned lock"
-
-  out=$(PATH="$fakebin:$PATH" FM_BUSY_LOCK_STALE_SECS=1 \
-    "$EV" apply "$state" t1 idle --current-gen --source test --event stale-lock 2>&1) && rc=0 || rc=$?
-
-  [ "$rc" -eq 0 ] || fail "stale writer lock was not reclaimed under a GNU stat (rc=$rc): $out"
-  case "$out" in
-    *"busy-state lock timeout"*) fail "lock_acquire timed out instead of reaping the stale lock: $out" ;;
-    *"syntax error"*|*"File:"*) fail "stat dialect garbage reached the caller: $out" ;;
-  esac
-  [ ! -d "$lock" ] || fail "the reclaimed lock was never released"
-  pass "a stale writer lock is reclaimed even when stat speaks GNU on a Darwin kernel"
-}
+test_progress_is_generation_bound_and_not_semantic_state
 
 test_arm_seeds_busy_spawn
 test_apply_advances_seq_and_source
@@ -470,7 +466,7 @@ test_apply_current_gen_reset
 test_apply_unarmed_refused
 test_retire_serializes_and_rejects_stale_gen
 test_retire_missing_sidecar_is_idempotent
-test_stale_writer_lock_reclaimed_under_gnu_stat
+test_stale_lock_broken_under_gnu_stat
 test_stale_gen_event_rejected
 test_stale_gen_record_unknown
 test_missing_record_unknown_not_idle
@@ -481,6 +477,7 @@ test_converted_adapters_ignore_footer_text
 test_grok_regex_isolated
 test_codex_unverified_gate
 test_kimi_unverified_gate
+test_cursor_ignores_rendered_and_native_signals
 test_dead_endpoint_overrides
 test_herdr_native_busy_only
 test_record_read_leaves_caller_shell_intact

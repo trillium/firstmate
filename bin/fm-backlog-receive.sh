@@ -58,7 +58,11 @@ list_keys() { # <file>
 
 lock_age() {
   local modified now
-  modified=$(fm_stat_mtime "$1") || return 1
+  if [ "$(uname 2>/dev/null)" = Darwin ]; then
+    modified=$(/usr/bin/stat -f '%m' "$1" 2>/dev/null) || return 1
+  else
+    modified=$(stat -c '%Y' "$1" 2>/dev/null) || return 1
+  fi
   now=$(date +%s) || return 1
   case "$modified$now" in *[!0-9]*) return 1 ;; esac
   printf '%s\n' "$((now - modified))"

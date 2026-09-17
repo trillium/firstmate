@@ -19,7 +19,7 @@ The failure repeated across harnesses and homes, and the workaround (remember to
   There is no arbitrary-text and no generic raw-key entry point.
   A caller either names an allowlisted verb or is refused.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.
-  These were previously carried only in the [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md) skill's per-adapter tables, which now point here.
+  These were previously carried only in the [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md) skill's tool references, which now point here.
   `bin/fm-send.sh`'s `--key` path reads the composer-clear table from this owner too, rather than keeping a second copy of it.
 - **Per-backend capability**: which named keys a runtime backend can deliver, and whether it has a recovery-grade agent-state classifier able to prove an agent stopped.
 
@@ -45,40 +45,15 @@ An interrupt is not complete until the composer is empty.
 muse is the one verified adapter that restores the cancelled prompt back into its composer as real text, so its interrupt key is followed by a Ctrl+U clear; without it the next submitted line - including this plane's own exit command - would concatenate onto the restored prompt and submit both as one line.
 The clear is refused before anything is sent when the recorded backend cannot deliver it.
 
+`exit` reads the composer's state before typing the exit command and requires the exact `empty` verdict; a `pending` verdict refuses by naming the pending text, and any other verdict (`unknown`, `pending-unproven`, or an unreadable read) refuses as not proven empty, matching the fail-safe contract every other consumer that can overwrite composer input follows.
+
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.
 Removing a worktree, closing an endpoint, or discarding work stays with [`bin/fm-teardown.sh`](../bin/fm-teardown.sh), which owns the landed-work test.
 
-**`resume` is not a pane-session verb.**
-Restoring a pane-session is not deterministic across the verified adapters: codex and grok resume only from a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, and kimi have no verified pane-resume contract.
-`relaunch` covers that need on every adapter, because the brief on disk - not a harness-private session - is the durable instruction.
-The `resume` verb exists only as the deterministic countermand of a durable suspension record for a persistent secondmate, described below.
-
-## Secondmate suspend and resume
-
-A persistent secondmate is provisioned to run until retired, and the session liveness sweep revives one whenever its endpoint proves dead or missing.
-When the captain wants a secondmate's home parked - proven, preserved, and exempt from that revival - the control plane offers an explicit park pair rather than a pile of lifetime workarounds:
-
-- **`suspend <task-id>`** is manual and secondmate-only (`kind=secondmate`).
-  Before stopping anything it proves the recorded home still exists, is a git worktree root, is marked `.fm-secondmate-home = <id>`, and has a readable HEAD and status, so a parked home is one a later resume can actually restore.
-  The agent is then stopped through the verified `exit` path (interrupting a busy turn first), and a durable record at `state/<id>.suspended` captures task, timestamp, backend, endpoint, worktree, kind, head, and dirty state.
-  An already-gone endpoint parks with `agent=no-agent` rather than being revived.
-  The status file carries a `suspended:` event.
-- While the record exists, the home is exempt from recovery: `fm-bootstrap.sh`'s session-start liveness sweep skips it, `fm-watch.sh` never probes or reclaims its pane, and `fm-supervise-daemon.sh` classifies its idle pane as `self` - parked by durable record, not a wedge.
-  The session-start fleet digest prints `endpoint: suspended` for it.
-- **`resume <task-id>`** is the only verb that countermands the record.
-  It refuses a task with no record, and refuses one that reads alive despite a record, because a live agent under a park record means something revived the home while parked and the contradiction must be resolved explicitly, not overridden.
-  With the recorded endpoint dead (cleared first, mirroring the liveness sweep's discipline) or missing, it relaunches through `bin/fm-spawn.sh <id> --secondmate`, re-resolves the exact endpoint from the published record, waits for a positively alive agent, then removes the suspension record and writes a `resumed:` event.
-  A failed relaunch retains the record so a later resume can try again.
-
-A suspended secondmate's retirement is ordinary retirement: `bin/fm-teardown.sh` removes the suspension record as part of the task's record cleanup.
-
-### Non-goals
-
-- Suspend is never automatic; there is no policy that parks a secondmate without an explicit `suspend`.
-- Suspend is not a crewmate verb: it is restricted to `kind=secondmate`.
-- Remote secondmates are refused by the control plane's target validation exactly as every other verb refuses them; a remotely placed home's park/resume belongs to the lifecycle tooling on its own host.
-- `resume` does not recreate a harness-private session; it relaunches the home the way every other respawn does.
+**`resume` is not a verb.**
+It is not deterministic across the verified adapters: codex, grok, and gemini resume only from a session id printed at exit, opencode continues the most recent session for the cwd, and claude, pi, pi-signed, omp, kimi, and agy have no verified pane-resume contract.
+`relaunch` covers the same need on every adapter, because the brief on disk - not a harness-private session - is the durable instruction.
 
 ## Transactional relaunch
 
@@ -118,10 +93,11 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 - A remotely placed secondmate is refused by name.
   Its agent runs on another host, so none of the postconditions this plane verifies could be read for it here; local endpoint validation would refuse the record regardless, because `window=remote:<id>` can never match a local backend's required shape.
   Drive that lifecycle on its own host and reconcile it through the secondmate recovery path.
+  For `relaunch` that host-side drive is `bin/fm-on.sh <id> fm-remote-secondmate-control.sh relaunch ...`, whose host-local leg runs this same plane against a record that is ordinary and local there, so every checkpoint, journal, rollback, and postcondition below applies unchanged ([`docs/remote-secondmates.md`](remote-secondmates.md)); `interrupt` and `exit` have no such route.
 - An unverified harness is refused rather than guessed at.
 - An implicit relaunch from a prefixed raw-command basename is refused before the agent or durable state is touched because its original launch command cannot be reconstructed.
 - An adapter that is not verified for this task's kind is refused **before** the running agent is stopped, not after.
-  muse is a crewmate and scout adapter only, so relaunching a secondmate onto it refuses while its agent is still up rather than leaving that secondmate with no agent when the launch owner refuses.
+  Muse is a crewmate and scout adapter only, so relaunching a secondmate onto it refuses while its agent is still up rather than leaving that secondmate with no agent when the launch owner refuses.
 - A backend that cannot deliver the harness's interrupt key, or the composer clear that key needs, is refused rather than sent a different key.
   Orca's terminal API exposes only an interrupt and an Enter, so it can deliver neither Escape nor Ctrl+U.
 - `exit` and `relaunch` require a backend with a recovery-grade agent-state classifier - tmux and herdr - because without one the "the agent stopped" postcondition cannot be proven.
@@ -130,8 +106,9 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 - `resume` acts only on a durable suspension record: a task with no record is refused, and one that reads alive despite a record is a contradiction the operator must resolve, not a resume target.
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
-  On Herdr, a stale registered agent is cleared only after repeated structured reads prove the exact pane contains one recognized bare foreground shell in the recorded worktree; a live agent is never cleared, and a mismatched process is never sent exit text.
-- `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free and its shell is sitting in the recorded worktree, so a replacement can never join a live agent or start outside the copy holding the work.
+- `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
+- `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free, so a replacement can never join a live agent.
+  It also requires the shell to be in the recorded worktree: tmux refuses immediately when it is not, while Herdr sends one `cd` to the recorded path and refuses unless a subsequent path read confirms the move.
 
 ## Capability matrix
 
@@ -145,12 +122,12 @@ Backend capability comes from each adapter's real surface, not from a policy cho
 | cmux | yes | yes | yes | yes | no |
 | orca | no | yes | yes | no | no |
 
-Per-harness interrupt keys, repeat counts, composer clears, exit commands, and supported task kinds live in `bin/fm-control-lib.sh` and are exercised for every verified harness by `tests/fm-control.test.sh`.
+Per-harness interrupt keys, repeat counts, composer clears, exit commands, and supported task kinds live in `bin/fm-control-lib.sh` and are exercised for every verified harness by `tests/fm-control.test.sh`, with adapters outside its lane pinning their control mechanics in their own harness suites.
 The empirical basis for each adapter's value is the `harness-adapters` skill's verification record for that adapter.
 
 ## Verification
 
-- `tests/fm-control.test.sh` - the adapter contract for every verified harness, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
+- `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, and rollback after a failed launch.
 - `tests/fm-control-suspend.test.sh` - the secondmate park pair: byte-identical suspend/resume round-trip of home, branch, worktree, record, and uncommitted changes, manual-only and secondmate-only enforcement, the liveness-sweep and watcher exemption, resume's relaunch fallback on a gone endpoint, and the record's removal at retirement.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
