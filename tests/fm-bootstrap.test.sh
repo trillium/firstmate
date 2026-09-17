@@ -29,6 +29,10 @@ set -u
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(fm_test_tmproot fm-bootstrap-tests)
 export FM_BACKEND_CMUX_BUNDLE_BIN="$TMP_ROOT/no-bundled-cmux"
+# Hermetic inbox-event source. Bootstrap arms the inbox store-event tail
+# whenever its watch file exists; the ambient ~/data/inbox/events.jsonl must
+# not leak into these cases, so point the watch at a path that never exists.
+export INBOX_EVENTS_FILE="$TMP_ROOT/no-inbox-events.jsonl"
 
 # Hermetic runtime-backend detection. These cases pin the backend per-home via
 # config/backend; the dev shell's ambient runtime markers ($TMUX inside tmux,
