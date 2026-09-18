@@ -198,7 +198,10 @@ fm_herdr_lab_provision() { # <session>
   fm_herdr_lab_raw "$name" server >/dev/null 2>&1 &
   server_pid=$!
   attempt=0
-  max_attempts=300
+  # Attempt budget is an env knob (default 300) so tests can force a fast
+  # deterministic timeout; the poll interval stays /bin/sleep and the default
+  # budget stays 60s of wall time.
+  max_attempts=${FM_HERDR_LAB_PROVISION_ATTEMPTS:-300}
   timeout_seconds=60
   while [ "$attempt" -lt "$max_attempts" ]; do
     running=$(fm_herdr_lab_cli "$name" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null) || running=false

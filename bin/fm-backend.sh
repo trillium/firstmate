@@ -57,6 +57,9 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # shellcheck source=bin/fm-stat-lib.sh
 # shellcheck disable=SC1091
 . "$FM_BACKEND_LIB_DIR/fm-stat-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+# shellcheck disable=SC1091
+. "$FM_BACKEND_LIB_DIR/fm-timeout-lib.sh"  # fm_run_timed: the shared hard bound for backend probes
 
 # Verified backend adapters. Extend only after a backend gets its own
 # bin/backends/<name>.sh and empirical verification, mirroring AGENTS.md

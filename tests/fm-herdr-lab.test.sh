@@ -219,7 +219,10 @@ exec "$FM_FAKE_HERDR_REAL_SLEEP" "$@"
 SH
   chmod +x "$FAKEBIN/sleep"
   : > "$FAKE_LOG"
-  FM_FAKE_HERDR_FAST_POLL=1 FM_FAKE_HERDR_SERVER_DELAY=30 \
+  # Force a fast deterministic timeout: the fake server takes 30s to report
+  # running, so a 5-attempt budget (~1s of real /bin/sleep polls) always
+  # beats it and exercises the cancel-and-retain path.
+  FM_HERDR_LAB_PROVISION_ATTEMPTS=5 FM_FAKE_HERDR_FAST_POLL=1 FM_FAKE_HERDR_SERVER_DELAY=30 \
     run_with_fake fm_herdr_lab_provision "$name" >/dev/null 2>&1 || status=$?
   expect_code 1 "$status" "timed-out provision must fail"
   assert_present "$TRIPWIRES/$name.fleet-state.json" \

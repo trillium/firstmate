@@ -69,6 +69,15 @@
 # fm_backend_herdr_workspace_label falls through to "1M-FIRSTMATE" when a
 # test does not care about home-specific labeling).
 FM_BACKEND_HERDR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# fm_run_timed is the shared hard bound used below; source it directly so the
+# adapter stays bounded even when a caller sources this file without
+# fm-backend.sh's preamble (the unit-test path named above).
+if [ -z "${_FM_TIMEOUT_LIB_SOURCED:-}" ]; then
+  # shellcheck source=bin/fm-timeout-lib.sh
+  # shellcheck disable=SC1091
+  . "$FM_BACKEND_HERDR_ROOT/bin/fm-timeout-lib.sh" || true
+  _FM_TIMEOUT_LIB_SOURCED=1
+fi
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BACKEND_HERDR_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER=${FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER:-$FM_BACKEND_HERDR_ROOT/bin/backends/herdr-clear-agent-authority.py}
@@ -413,9 +422,18 @@ fm_backend_herdr_workspace_label() {
 # fm_backend_herdr_version_check, which is intentionally session-independent
 # (reads only .client.* fields).
 fm_backend_herdr_cli() {  # <session> <herdr-subcommand-and-args...>
-  local session=$1
+  local session=$1 timeout=${FM_BACKEND_HERDR_CLI_TIMEOUT:-15}
   shift
-  HERDR_SESSION="$session" herdr "$@" --session "$session"
+  # Every herdr CLI call inherits a hard bound so a wedged CLI can never
+  # stall a probe loop past a known deadline. A value of 0 disables the bound
+  # for the one intentionally long-lived call (server_ensure's background
+  # `server` start, which runs until its owner stops it).
+  case "$timeout" in ''|*[!0-9]*) timeout=15 ;; esac
+  if [ "$timeout" = 0 ]; then
+    HERDR_SESSION="$session" herdr "$@" --session "$session"
+  else
+    fm_run_timed "$timeout" env HERDR_SESSION="$session" herdr "$@" --session "$session"
+  fi
 }
 
 # fm_backend_herdr_tool_check: refuse loudly if herdr or jq is missing.
@@ -1603,7 +1621,7 @@ fm_backend_herdr_server_ensure() {  # <session>
   local session=$1 running out i
   running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
   [ "$running" = "true" ] && return 0
-  ( fm_backend_herdr_cli "$session" server >/dev/null 2>&1 & ) || return 1
+  ( FM_BACKEND_HERDR_CLI_TIMEOUT=0 fm_backend_herdr_cli "$session" server >/dev/null 2>&1 & ) || return 1
   for i in $(seq 1 20); do
     running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
     [ "$running" = "true" ] && return 0
