@@ -282,6 +282,63 @@ test_workspace_label_different_secondmates_get_different_labels() {
   pass "fm_backend_herdr_workspace_label: two different secondmate homes get two different, non-colliding labels"
 }
 
+# --- workspace_label pin: config/herdr-workspace-label (pin-workspace-labels) ---
+# A pinned home keeps its exact label across every lifecycle path (spawn,
+# relaunch, restart recovery, presentation-space parent lookup): every path
+# resolves through fm_backend_herdr_workspace_label, so pinning that one
+# function pins them all, and nothing ever renames a workspace to match.
+
+test_workspace_label_pin_overrides_primary_default() {
+  local home out
+  home="$TMP_ROOT/pin-primary-home"; mkdir -p "$home/config"
+  printf '1M-\360\237\221\221\n' > "$home/config/herdr-workspace-label"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = $'1M-\360\237\221\221' ] || fail "a pinned primary home should resolve to its exact pin, got '$out'"
+  pass "fm_backend_herdr_workspace_label: a config pin overrides the primary '1M-FIRSTMATE' default"
+}
+
+test_workspace_label_pin_overrides_secondmate_derived() {
+  local home out
+  home="$TMP_ROOT/pin-secondmate-home"; mkdir -p "$home/config"
+  printf 'mcpmate\n' > "$home/.fm-secondmate-home"
+  printf '2M-\360\237\221\221\n' > "$home/config/herdr-workspace-label"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = $'2M-\360\237\221\221' ] || fail "a pinned secondmate home should resolve to its exact pin, got '$out'"
+  pass "fm_backend_herdr_workspace_label: a config pin overrides the derived '2M-<SCOPE>' label"
+}
+
+test_workspace_label_pin_trims_outer_whitespace_and_keeps_first_line() {
+  local home out
+  home="$TMP_ROOT/pin-whitespace-home"; mkdir -p "$home/config"
+  printf '  1M-\360\237\221\221  \nignored-second-line\n' > "$home/config/herdr-workspace-label"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = $'1M-\360\237\221\221' ] || fail "the pin should trim outer whitespace and keep only the first line, got '$out'"
+  pass "fm_backend_herdr_workspace_label: a pin trims outer whitespace and ignores further lines"
+}
+
+test_workspace_label_empty_pin_falls_back_to_derived() {
+  local home out
+  home="$TMP_ROOT/pin-empty-home"; mkdir -p "$home/config"
+  printf '   \n' > "$home/config/herdr-workspace-label"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = "1M-FIRSTMATE" ] || fail "an empty pin should fall back to the derived label, got '$out'"
+  pass "fm_backend_herdr_workspace_label: an empty pin falls back to the derived label"
+}
+
+test_workspace_label_pin_stable_across_lifecycle_paths() {
+  local home restart relaunch presentation
+  home="$TMP_ROOT/pin-stable-home"; mkdir -p "$home/config"
+  printf 'mcpmate\n' > "$home/.fm-secondmate-home"
+  printf '2M-\360\237\221\221\n' > "$home/config/herdr-workspace-label"
+  restart=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  relaunch=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  presentation=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$restart" = $'2M-\360\237\221\221' ] || fail "restart-path label mismatch: $restart"
+  [ "$relaunch" = $'2M-\360\237\221\221' ] || fail "relaunch-path label mismatch: $relaunch"
+  [ "$presentation" = $'2M-\360\237\221\221' ] || fail "presentation-move-path label mismatch: $presentation"
+  pass "fm_backend_herdr_workspace_label: a pin is stable across restart, relaunch, and presentation-space lookups"
+}
+
 # --- mate_scope: id sanitization and fallback (herdr mate naming convention) --
 
 test_mate_scope_uppercases_plain_id() {
@@ -4465,6 +4522,11 @@ test_workspace_label_secondmate_marker_trims_whitespace
 test_workspace_label_secondmate_marker_preserves_embedded_separator
 test_workspace_label_empty_marker_falls_back_to_unknown_scope
 test_workspace_label_different_secondmates_get_different_labels
+test_workspace_label_pin_overrides_primary_default
+test_workspace_label_pin_overrides_secondmate_derived
+test_workspace_label_pin_trims_outer_whitespace_and_keeps_first_line
+test_workspace_label_empty_pin_falls_back_to_derived
+test_workspace_label_pin_stable_across_lifecycle_paths
 test_mate_scope_uppercases_plain_id
 test_mate_scope_collapses_non_alnum_and_trims_edges
 test_mate_scope_empty_id_falls_back_to_unknown

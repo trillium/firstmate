@@ -369,9 +369,32 @@ fm_backend_herdr_presentation_enabled() {  # <config-dir> [<state-dir>]
   fm_backend_herdr_presentation_default_supported "$state_dir"
 }
 
+# The optional per-home workspace-label pin, read from the home's own config dir.
+# When a home writes its pinned label here, that exact label wins over the
+# derived mate-naming-convention label on every lifecycle path, and nothing
+# ever renames an existing workspace to match a derived value.
+FM_BACKEND_HERDR_WORKSPACE_LABEL_CONFIG="herdr-workspace-label"
+
+# fm_backend_herdr_workspace_label_pin: echo this home's pinned workspace label,
+# or nothing when the home pinned nothing. Only the file's first line counts,
+# with outer whitespace and a trailing carriage return trimmed, so an editor-
+# added newline never becomes part of the label and emoji pins survive verbatim.
+fm_backend_herdr_workspace_label_pin() {
+  local file="$FM_HOME/config/$FM_BACKEND_HERDR_WORKSPACE_LABEL_CONFIG" line
+  [ -f "$file" ] && [ ! -L "$file" ] || return 0
+  line=$(head -n 1 "$file" 2>/dev/null) || return 0
+  line=${line%$'\r'}
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  [ -n "$line" ] || return 0
+  printf '%s' "$line"
+}
+
 # fm_backend_herdr_workspace_label: the per-firstmate-HOME herdr workspace
 # label (docs/herdr-backend.md "Mate naming convention"), always uppercase
-# "<materank>-<scope>". The PRIMARY home (no secondmate marker) resolves to
+# "<materank>-<scope>" unless this home pinned an exact label in
+# config/herdr-workspace-label, which wins verbatim on every call.
+# Without a pin, the PRIMARY home (no secondmate marker) resolves to
 # the constant "1M-FIRSTMATE". A SECONDMATE home resolves to
 # "2M-<fm_backend_herdr_mate_scope-of-its-id>", so its tasks land in their own
 # workspace, obviously distinguishable from the primary's (and from every
@@ -383,7 +406,12 @@ fm_backend_herdr_presentation_enabled() {  # <config-dir> [<state-dir>]
 # when the PRIMARY spawns that secondmate (its own process's FM_HOME still
 # names the primary at that point) - see fm-spawn.sh's herdr case arm.
 fm_backend_herdr_workspace_label() {
-  local marker="$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" id
+  local marker="$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" id pin
+  pin=$(fm_backend_herdr_workspace_label_pin)
+  if [ -n "$pin" ]; then
+    printf '%s' "$pin"
+    return 0
+  fi
   if [ -f "$marker" ]; then
     id=$(cat "$marker" 2>/dev/null)
     # Trim only outer whitespace here; fm_backend_herdr_mate_scope is what

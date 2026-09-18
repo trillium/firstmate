@@ -75,6 +75,10 @@ A mate's workspace and its own live-agent tab are always labeled uppercase `<mat
 `scope` is the mate's own registered id, uppercased: the primary defaults to the literal scope `FIRSTMATE` (giving `1M-FIRSTMATE`), and a secondmate's scope comes from its `.fm-secondmate-home` marker id (`bin/backends/herdr.sh`'s `fm_backend_herdr_mate_scope`), for example `2M-BEADME`.
 That helper sanitizes the id (uppercase, non-alphanumeric characters collapsed to a single `-`, leading/trailing `-` trimmed) and falls back to the literal scope `UNKNOWN` when the id is empty or sanitizes to nothing, so a malformed or missing marker never produces an empty label; every malformed marker shares that same `UNKNOWN` scope, so two malformed homes can still collide on `2M-UNKNOWN`.
 A crewmate spawned by any mate inherits that mate's placement but is never uppercase: its tab keeps the ordinary lowercase `fm-<id>` task label, so a mate and its subordinate crewmates are always visually distinct and never collide.
+A home pins its workspace label by writing the exact label on the first line of local gitignored `config/herdr-workspace-label`.
+The pin wins verbatim over the derived mate-naming-convention label on every spawn, relaunch, restart-recovery, and presentation-space parent lookup, and no path ever renames an existing workspace to match a derived value.
+An absent file, an empty file, or a file holding only whitespace leaves the derived label in force, so homes without a pin behave exactly as before.
+Only the first line counts and outer whitespace is trimmed, so editor-added newlines never become part of the label and emoji pins such as `1M-👑` survive verbatim.
 
 ## Presentation spaces
 
