@@ -133,7 +133,7 @@ test_herdr_cli_probe_inherits_bound() {
   fakebin=$(make_fakebin "$home")
   start=$SECONDS
   (
-    PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND_HERDR_CLI_TIMEOUT=1
+    export PATH="$fakebin:$PATH" FM_HOME="$home" FM_BACKEND_HERDR_CLI_TIMEOUT=1
     # shellcheck source=bin/fm-backend.sh
     # shellcheck disable=SC1091
     . "$ROOT/bin/fm-backend.sh"

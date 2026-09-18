@@ -111,6 +111,7 @@
 #   FM_CONTROL_EXIT_WAIT         alive->dead wait after the exit command (30)
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
+#   FM_CONTROL_SLEEP_BIN         sleep binary for waits (/bin/sleep; tests point it at a shim)
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -162,6 +163,7 @@ SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
 EXIT_WAIT=${FM_CONTROL_EXIT_WAIT:-30}
 LAUNCH_WAIT=${FM_CONTROL_LAUNCH_WAIT:-90}
 EXIT_RETRIES=${FM_CONTROL_EXIT_RETRIES:-3}
+CONTROL_SLEEP_BIN=${FM_CONTROL_SLEEP_BIN:-/bin/sleep}
 
 die() {  # <message>
   echo "error: $1" >&2
@@ -352,7 +354,7 @@ wait_agent_state() {  # <timeout> <wanted>...
       fi
     done
     awk -v e="$elapsed" -v t="$timeout" 'BEGIN{exit !(e < t)}' || break
-    /bin/sleep "$POLL"
+    "$CONTROL_SLEEP_BIN" "$POLL"
     elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
   done
   printf '%s' "$state"
@@ -382,7 +384,7 @@ send_interrupt_keys() {
     fm_backend_send_key "$BACKEND" "$T" "$key" "$LABEL" \
       || die "interrupt key $key was not delivered to task $ID on $BACKEND"
     i=$((i + 1))
-    [ "$i" -ge "$repeat" ] || /bin/sleep 0.2
+    [ "$i" -ge "$repeat" ] || "$CONTROL_SLEEP_BIN" 0.2
   done
   [ -z "$clear" ] || fm_backend_send_key "$BACKEND" "$T" "$clear" "$LABEL" \
     || die "interrupt key $key reached task $ID, but $clear did not, so its composer still holds the cancelled prompt; clear it before the next lifecycle action"
@@ -414,7 +416,7 @@ interrupt_cancel_claim() {
       ?*) printf 'unconfirmed'; return 0 ;;
     esac
     awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
-    /bin/sleep "$POLL"
+    "$CONTROL_SLEEP_BIN" "$POLL"
     elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
   done
   printf 'unconfirmed'

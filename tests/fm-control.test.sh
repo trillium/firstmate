@@ -193,6 +193,7 @@ run_control() {
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     FM_CONTROL_POLL=0.01 FM_CONTROL_SETTLE_WAIT=0.05 \
     FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
+    FM_CONTROL_SLEEP_BIN="${FM_CONTROL_SLEEP_BIN:-}" \
     FM_FAKE_MUSE_LOG="${FM_FAKE_MUSE_LOG:-}" \
     FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK="${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" \
     FM_FAKE_INTERRUPT_STOPS_AGENT="${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" \
@@ -737,7 +738,7 @@ test_interrupt_revalidates_agent_after_acknowledgement_wait() {
     '{"schema_version":1,"payload_type":"runtime.session","payload":{"kind":"run","run_id":"run-1","event":{"kind":"started","prompt":"work"}}}' > "$log"
   printf 'sessions_root=%s\nworkspace_root=%s\nbinding_id=test\n' \
     "$root" "$dir/wt-t1" > "$dir/home/state/t1.muse-session"
-  out=$(FM_FAKE_MUSE_LOG="$log" FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK=1 \
+  out=$(FM_FAKE_MUSE_LOG="$log" FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK=1 FM_CONTROL_SLEEP_BIN=sleep \
     run_control "$dir" t1 interrupt); rc=$?
   expect_code 1 "$rc" "interrupt should fail when the agent stops during acknowledgement polling"
   assert_contains "$out" "agent is 'dead' after its interrupt key" \
