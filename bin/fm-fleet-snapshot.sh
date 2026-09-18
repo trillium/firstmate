@@ -114,6 +114,14 @@ FM_SNAPSHOT_REGISTRY_RECORDS=${FM_SNAPSHOT_REGISTRY_RECORDS:-40}
 FM_SNAPSHOT_REGISTRY_TIMEOUT=${FM_SNAPSHOT_REGISTRY_TIMEOUT:-2}
 FM_SNAPSHOT_BEADS_LIMIT=${FM_SNAPSHOT_BEADS_LIMIT:-200}
 FM_SNAPSHOT_BEADS_TIMEOUT=${FM_SNAPSHOT_BEADS_TIMEOUT:-4}
+FM_SNAPSHOT_TASK_CREW_STATE_TIMEOUT=${FM_SNAPSHOT_TASK_CREW_STATE_TIMEOUT:-5}
+FM_SNAPSHOT_TASK_ENDPOINT_TIMEOUT=${FM_SNAPSHOT_TASK_ENDPOINT_TIMEOUT:-2}
+# Per-task probe bounds cap the two unbounded reads inside task_json_lines so
+# one wedged endpoint cannot stall the whole snapshot. The crew-state probe
+# gets FM_SNAPSHOT_TASK_CREW_STATE_TIMEOUT (default 5); each backend endpoint
+# probe gets FM_SNAPSHOT_TASK_ENDPOINT_TIMEOUT (default 2). A hit marks that
+# task's row (current_state.source timeout, endpoint.exists null, per-task
+# detail naming the bound) instead of failing the snapshot.
 validate_positive_bound() {  # <name> <value>
   case "$2" in
     ''|*[!0-9]*|0)
@@ -146,6 +154,8 @@ validate_positive_bound FM_SNAPSHOT_REGISTRY_RECORDS "$FM_SNAPSHOT_REGISTRY_RECO
 validate_positive_bound FM_SNAPSHOT_REGISTRY_TIMEOUT "$FM_SNAPSHOT_REGISTRY_TIMEOUT"
 validate_positive_bound FM_SNAPSHOT_BEADS_LIMIT "$FM_SNAPSHOT_BEADS_LIMIT"
 validate_positive_bound FM_SNAPSHOT_BEADS_TIMEOUT "$FM_SNAPSHOT_BEADS_TIMEOUT"
+validate_positive_bound FM_SNAPSHOT_TASK_CREW_STATE_TIMEOUT "$FM_SNAPSHOT_TASK_CREW_STATE_TIMEOUT"
+validate_positive_bound FM_SNAPSHOT_TASK_ENDPOINT_TIMEOUT "$FM_SNAPSHOT_TASK_ENDPOINT_TIMEOUT"
 
 # shellcheck source=bin/fm-backend.sh
 # shellcheck disable=SC1091
@@ -201,6 +211,10 @@ FM_SNAPSHOT_REGISTRY_TIMEOUT, with unavailability and truncation disclosed.
 When config/backlog-backend=beads, the beads-backed backlog read uses
 FM_SNAPSHOT_BEADS_LIMIT (default 200) and FM_SNAPSHOT_BEADS_TIMEOUT (default
 4), with truncation disclosed via records_truncated/records_limit.
+Per-task probes use FM_SNAPSHOT_TASK_CREW_STATE_TIMEOUT (default 5) for the
+crew-state read and FM_SNAPSHOT_TASK_ENDPOINT_TIMEOUT (default 2) for each
+backend endpoint probe; a hit marks that task timeout/unknown instead of
+stalling the snapshot.
 EOF
 }
 
@@ -235,16 +249,17 @@ last_nonempty_line() {  # <file>
 }
 
 crew_state_json() {  # <id>
-  local id=$1 raw rest state source detail sep
-  raw=$(
+  local id=$1 raw rest state source detail sep timed_out=0 rc
+  raw=$(fm_run_timed "$FM_SNAPSHOT_TASK_CREW_STATE_TIMEOUT" env \
     FM_ROOT_OVERRIDE="$FM_ROOT" \
-      FM_HOME="$FM_HOME" \
-      FM_STATE_OVERRIDE="$STATE" \
-      FM_DATA_OVERRIDE="$DATA" \
-      FM_PROJECTS_OVERRIDE="$PROJECTS" \
-      FM_CONFIG_OVERRIDE="$CONFIG" \
-      "$SCRIPT_DIR/fm-crew-state.sh" "$id" 2>/dev/null || true
-  )
+    FM_HOME="$FM_HOME" \
+    FM_STATE_OVERRIDE="$STATE" \
+    FM_DATA_OVERRIDE="$DATA" \
+    FM_PROJECTS_OVERRIDE="$PROJECTS" \
+    FM_CONFIG_OVERRIDE="$CONFIG" \
+    "$SCRIPT_DIR/fm-crew-state.sh" "$id" 2>/dev/null)
+  rc=$?
+  [ "$rc" -eq 124 ] && timed_out=1
   raw=$(printf '%s\n' "$raw" | head -1)
   sep=' · '
   state=unknown
@@ -261,6 +276,11 @@ crew_state_json() {  # <id>
       esac
       ;;
   esac
+  if [ "$timed_out" -eq 1 ]; then
+    jq -n --arg bound "$FM_SNAPSHOT_TASK_CREW_STATE_TIMEOUT" \
+      '{state:"unknown",source:"timeout",detail:("crew-state probe timed out after " + $bound + "s"),raw:""}'
+    return 0
+  fi
   jq -n --arg raw "$raw" --arg state "$state" --arg source "$source" --arg detail "$detail" \
     '{state:$state,source:$source,detail:$detail,raw:$raw}'
 }
@@ -673,14 +693,25 @@ task_json_lines() {
       fi
     else
       if [ -n "$target" ]; then
-        if fm_backend_target_exists "$backend" "$target" "fm-$id" >/dev/null 2>&1; then
-          endpoint_exists=true
-        else
-          endpoint_exists=false
-        fi
+        # bash -c wrapper: fm_run_timed re-execs under timeout-style
+        # mechanisms where shell functions are invisible, so the probe must
+        # re-source its library inside the bounded child (same shape as the
+        # terminal-capture call below).
+        # shellcheck disable=SC2016 # Positional parameters expand inside the child bash, not here.
+        fm_run_timed "$FM_SNAPSHOT_TASK_ENDPOINT_TIMEOUT" bash -c \
+          '. "$1"; fm_backend_target_exists "$2" "$3" "$4"' \
+          fm-target-exists "$SCRIPT_DIR/fm-backend.sh" "$backend" "$target" "fm-$id" >/dev/null 2>&1
+        case "$?" in
+          0) endpoint_exists=true ;;
+          124) endpoint_exists=null ;;
+          *) endpoint_exists=false ;;
+        esac
       fi
       if [ "$kind" = secondmate ] && [ -n "$target" ]; then
-        agent_alive=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || printf unknown)
+        # shellcheck disable=SC2016 # Positional parameters expand inside the child bash, not here.
+        agent_alive=$(fm_run_timed "$FM_SNAPSHOT_TASK_ENDPOINT_TIMEOUT" bash -c \
+          '. "$1"; fm_backend_agent_alive "$2" "$3"' \
+          fm-agent-alive "$SCRIPT_DIR/fm-backend.sh" "$backend" "$target" 2>/dev/null || printf unknown)
       fi
     fi
 
