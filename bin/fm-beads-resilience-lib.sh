@@ -81,7 +81,7 @@ fm_beads_require_wake_lib() {
 FM_BEADS_MIRROR_MAX_AGE=${FM_BEADS_MIRROR_MAX_AGE:-900}
 case "$FM_BEADS_MIRROR_MAX_AGE" in '' | *[!0-9]*) FM_BEADS_MIRROR_MAX_AGE=900 ;; esac
 
-FM_BEADS_MIRROR_VIEWS="ready inflight fleet"
+FM_BEADS_MIRROR_VIEWS="ready inflight fleet projects memories entities"
 FM_BEADS_MIRROR_WRITTEN_AT=
 
 FM_BEADS_WRITE_QUEUE="${FM_BEADS_WRITE_QUEUE:-$STATE/.beads-write-queue}"

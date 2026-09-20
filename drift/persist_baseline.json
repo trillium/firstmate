@@ -1,0 +1,1349 @@
+{
+  "version": 1,
+  "generated": "2026-09-20T00:39:18.588056+00:00",
+  "firstmate_revision": "86c03533",
+  "boundaries": {
+    "boundary_1": {
+      "name": "Backlog & Task Queue Management",
+      "classification": "Canonical State",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "beads_mapping": {
+        "primitive": "issue",
+        "type": "task",
+        "state_dimension": "lifecycle",
+        "labels": [
+          "fleet:firstmate",
+          "home:<home_scope>",
+          "task:<home_scope>:<id>"
+        ]
+      },
+      "surfaces": [
+        "data/backlog.md",
+        "data/done-archive.md",
+        ".tasks.toml"
+      ],
+      "chokepoints": [
+        "tasks-axi",
+        "bin/fm-tasks-axi-lib.sh:fm_tasks_axi_cmd",
+        "bin/fm-tasks-axi-lib.sh:fm_task_create"
+      ]
+    },
+    "boundary_2": {
+      "name": "Beads Store Resilience & Mirroring Layer",
+      "classification": "Independent Local Files / Outage Resilience",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "surfaces": [
+        "state/.beads-mirror-<view>.json",
+        "state/.beads-write-queue",
+        "state/.beads-write-queue.lock",
+        "state/.beads-label-migration-v1",
+        "state/.beads-sync-last"
+      ],
+      "chokepoints": [
+        "fm_beads_mirror_write",
+        "fm_beads_mirror_read",
+        "fm_beads_write_enqueue",
+        "fm_beads_write_queue_reconcile"
+      ]
+    },
+    "boundary_3": {
+      "name": "Task Specifications & Written Deliverables",
+      "classification": "Hybrid Canonical / Worktree Projection",
+      "beads_role": "HYBRID_PROJECTION",
+      "beads_mapping": {
+        "canonical": "issue.description + acceptance_criteria",
+        "projection": "<worktree>/brief.md"
+      },
+      "surfaces": [
+        "data/<id>/brief.md",
+        "data/<id>/report.md",
+        "data/<id>/claim-prompt.md",
+        "data/charter.md"
+      ],
+      "chokepoints": [
+        "bin/fm-brief.sh",
+        "bin/fm-claim-prompt-lib.sh",
+        "bin/fm-promote.sh"
+      ]
+    },
+    "boundary_4": {
+      "name": "Task Runtime Metadata",
+      "classification": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "beads_mapping": {
+        "logical_attributes": "issue.metadata (JSON)",
+        "volatile_coordinates": "INDEPENDENT_LOCAL_FILE (state/<id>.runtime)"
+      },
+      "surfaces": [
+        "state/<id>.meta",
+        "state/<id>.runtime",
+        "state/<id>.control-relaunch"
+      ],
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ]
+    },
+    "boundary_5": {
+      "name": "Task Status Logs & Open Decisions",
+      "classification": "Hybrid Event Log / Decision Gates",
+      "beads_role": "HYBRID_EVENT_GATES",
+      "beads_mapping": {
+        "status_stream": "state/<id>.status (local file append)",
+        "decisions": "task gate create --type=human"
+      },
+      "surfaces": [
+        "state/<id>.status",
+        "state/.<id>.open-decisions-cursor"
+      ],
+      "chokepoints": [
+        "fm_classify_status",
+        "fm_send_resolve_key",
+        "fm_decision_hold"
+      ]
+    },
+    "boundary_6": {
+      "name": "Semantic Busy-State IPC & Turn Handshakes",
+      "classification": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "surfaces": [
+        "state/<id>.busy-state",
+        "state/<id>.busy-gen",
+        "state/<id>.turn-ended",
+        "state/<id>.grok-turnend-token",
+        "state/<id>.kimi-turnend-token",
+        "state/<id>.muse-session"
+      ],
+      "chokepoints": [
+        "fm_busy_event",
+        "fm_busy_record_read",
+        "fm_busy_classify"
+      ]
+    },
+    "boundary_7": {
+      "name": "Session Locks & Supervision Liveness",
+      "classification": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "surfaces": [
+        "state/.lock",
+        "state/.watch.lock",
+        "state/.last-watcher-beat",
+        "state/.claude-autoarm.lock"
+      ],
+      "chokepoints": [
+        "fm_lock_try_acquire",
+        "fm_lock_release",
+        "fm_lock_acquire_wait"
+      ]
+    },
+    "boundary_8": {
+      "name": "Durable Wake Queue",
+      "classification": "Canonical State / Interchange Queue",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "surfaces": [
+        "state/.wake-queue",
+        "state/.wake-queue.lock"
+      ],
+      "chokepoints": [
+        "fm_wake_append",
+        "fm_wake_records",
+        "fm_wake_absorb_seqs",
+        "fm_wake_enqueue"
+      ]
+    },
+    "boundary_9": {
+      "name": "Away Mode (AFK) & Daemon Coordination",
+      "classification": "Ephemeral Runtime Flag / Daemon IPC",
+      "beads_role": "HYBRID_PRESENCE",
+      "surfaces": [
+        "state/.afk",
+        "state/.subsuper-escalations",
+        "state/.subsuper-pid"
+      ],
+      "chokepoints": [
+        "bin/fm-afk-start.sh",
+        "bin/fm-afk-return.sh",
+        "bin/fm-supervise-daemon.sh"
+      ]
+    },
+    "boundary_10": {
+      "name": "PR Checks, Forge Polling & Retirement Barrier",
+      "classification": "Canonical Forge Gates / PR Polls",
+      "beads_role": "CANONICAL_BEADS_GATES",
+      "beads_mapping": {
+        "primitive": "gate",
+        "type": "gh:pr",
+        "resolution": "automated on forge merge"
+      },
+      "surfaces": [
+        "state/<id>.check.sh",
+        "state/<id>.check-trust",
+        "state/<id>.pr-poll",
+        "state/<id>.pr-poll-registration",
+        "state/<id>.pr-poll-retirement",
+        "state/<id>.pr-review-seen"
+      ],
+      "chokepoints": [
+        "fm_pr_gate_create",
+        "fm_pr_gate_check",
+        "fm_pr_poll_prepare",
+        "fm_pr_poll_publish_prepared"
+      ]
+    },
+    "boundary_11": {
+      "name": "Public Relay (X-Mode) & Public Follow-up Transport",
+      "classification": "Canonical Relay Task & Event Beads",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "surfaces": [
+        "state/x-inbox/<request_id>.json",
+        "state/x-context/<request_id>.json",
+        "state/x-outbox/<request_id>.json",
+        "state/public-followup/<request_id>.json"
+      ],
+      "chokepoints": [
+        "fmx_context_registry_set",
+        "fmx_context_registry_get",
+        "fmx_offer_registry_claim",
+        "fm_pf_registry_ids",
+        "fm_pf_event_id"
+      ]
+    },
+    "boundary_12": {
+      "name": "Process-to-Event Sources",
+      "classification": "Beads KV Registrations & Event Streams",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "surfaces": [
+        "state/procevent/<source_id>.json",
+        "state/procevent-inbox/<source_id>.output"
+      ],
+      "chokepoints": [
+        "fm_procevent_capture",
+        "fm_procevent_mark_handled",
+        "fm_procevent_register"
+      ]
+    },
+    "boundary_13": {
+      "name": "Secondmate Routing & Inter-Home RPC",
+      "classification": "Canonical Dolt Replication / Distributed State",
+      "beads_role": "CANONICAL_DOLT_REPLICATION",
+      "surfaces": [
+        "data/secondmates.md",
+        "state/pending-replies/<corr_id>.json",
+        "data/handoff/<id>.outbox.md"
+      ],
+      "chokepoints": [
+        "secondmate_registry_get",
+        "secondmate_registry_sync",
+        "fm_pending_reply_record"
+      ]
+    },
+    "boundary_14": {
+      "name": "Project Posture Registry",
+      "classification": "Canonical Project Entity Beads",
+      "beads_role": "CANONICAL_BEADS_ENTITY",
+      "beads_mapping": {
+        "primitive": "issue",
+        "type": "entity",
+        "labels": [
+          "type:project",
+          "project:<slug>"
+        ]
+      },
+      "surfaces": [
+        "data/projects.md"
+      ],
+      "chokepoints": [
+        "fm_project_mode",
+        "fm_project_entity_get",
+        "fm_project_entity_set"
+      ]
+    },
+    "boundary_15": {
+      "name": "Domain Knowledge, Preferences & Startup Memory",
+      "classification": "Canonical Persistent Memories",
+      "beads_role": "CANONICAL_BEADS_MEMORIES",
+      "beads_mapping": {
+        "primitive": "memory",
+        "storage": "task remember / recall"
+      },
+      "surfaces": [
+        "data/captain.md",
+        "data/captain-shared.md",
+        "data/learnings.md",
+        "config/startup-memory-budget"
+      ],
+      "chokepoints": [
+        "fm_memory_get",
+        "fm_memory_set",
+        "fm_memory_render",
+        "fm_startup_memory_budget_read"
+      ]
+    }
+  },
+  "surfaces": {
+    ".tasks.toml": {
+      "boundary": "boundary_1",
+      "category": "Canonical State",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "file",
+      "chokepoints": [
+        "tasks-axi",
+        "bin/fm-tasks-axi-lib.sh:fm_tasks_axi_cmd",
+        "bin/fm-tasks-axi-lib.sh:fm_task_create"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "config/startup-memory-budget": {
+      "boundary": "boundary_15",
+      "category": "Canonical Persistent Memories",
+      "beads_role": "CANONICAL_BEADS_MEMORIES",
+      "format": "file",
+      "chokepoints": [
+        "fm_memory_get",
+        "fm_memory_set",
+        "fm_memory_render",
+        "fm_startup_memory_budget_read"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/<id>/brief.md": {
+      "boundary": "boundary_3",
+      "category": "Hybrid Canonical / Worktree Projection",
+      "beads_role": "HYBRID_PROJECTION",
+      "format": "markdown",
+      "chokepoints": [
+        "bin/fm-brief.sh",
+        "bin/fm-claim-prompt-lib.sh",
+        "bin/fm-promote.sh"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-groom.sh:261"
+      ],
+      "bypass_leaks": []
+    },
+    "data/<id>/claim-prompt.md": {
+      "boundary": "boundary_3",
+      "category": "Hybrid Canonical / Worktree Projection",
+      "beads_role": "HYBRID_PROJECTION",
+      "format": "markdown",
+      "chokepoints": [
+        "bin/fm-brief.sh",
+        "bin/fm-claim-prompt-lib.sh",
+        "bin/fm-promote.sh"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/<id>/report.md": {
+      "boundary": "boundary_3",
+      "category": "Hybrid Canonical / Worktree Projection",
+      "beads_role": "HYBRID_PROJECTION",
+      "format": "markdown",
+      "chokepoints": [
+        "bin/fm-brief.sh",
+        "bin/fm-claim-prompt-lib.sh",
+        "bin/fm-promote.sh"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/backlog.md": {
+      "boundary": "boundary_1",
+      "category": "Canonical State",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "markdown",
+      "chokepoints": [
+        "tasks-axi",
+        "bin/fm-tasks-axi-lib.sh:fm_tasks_axi_cmd",
+        "bin/fm-tasks-axi-lib.sh:fm_task_create"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/captain-shared.md": {
+      "boundary": "boundary_15",
+      "category": "Canonical Persistent Memories",
+      "beads_role": "CANONICAL_BEADS_MEMORIES",
+      "format": "markdown",
+      "chokepoints": [
+        "fm_memory_get",
+        "fm_memory_set",
+        "fm_memory_render",
+        "fm_startup_memory_budget_read"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/captain.md": {
+      "boundary": "boundary_15",
+      "category": "Canonical Persistent Memories",
+      "beads_role": "CANONICAL_BEADS_MEMORIES",
+      "format": "markdown",
+      "chokepoints": [
+        "fm_memory_get",
+        "fm_memory_set",
+        "fm_memory_render",
+        "fm_startup_memory_budget_read"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/charter.md": {
+      "boundary": "boundary_3",
+      "category": "Hybrid Canonical / Worktree Projection",
+      "beads_role": "HYBRID_PROJECTION",
+      "format": "markdown",
+      "chokepoints": [
+        "bin/fm-brief.sh",
+        "bin/fm-claim-prompt-lib.sh",
+        "bin/fm-promote.sh"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/done-archive.md": {
+      "boundary": "boundary_1",
+      "category": "Canonical State",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "markdown",
+      "chokepoints": [
+        "tasks-axi",
+        "bin/fm-tasks-axi-lib.sh:fm_tasks_axi_cmd",
+        "bin/fm-tasks-axi-lib.sh:fm_task_create"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/handoff/<id>.outbox.md": {
+      "boundary": "boundary_13",
+      "category": "Canonical Dolt Replication / Distributed State",
+      "beads_role": "CANONICAL_DOLT_REPLICATION",
+      "format": "markdown",
+      "chokepoints": [
+        "secondmate_registry_get",
+        "secondmate_registry_sync",
+        "fm_pending_reply_record"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/learnings.md": {
+      "boundary": "boundary_15",
+      "category": "Canonical Persistent Memories",
+      "beads_role": "CANONICAL_BEADS_MEMORIES",
+      "format": "markdown",
+      "chokepoints": [
+        "fm_memory_get",
+        "fm_memory_set",
+        "fm_memory_render",
+        "fm_startup_memory_budget_read"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/projects.md": {
+      "boundary": "boundary_14",
+      "category": "Canonical Project Entity Beads",
+      "beads_role": "CANONICAL_BEADS_ENTITY",
+      "format": "markdown",
+      "chokepoints": [
+        "fm_project_mode",
+        "fm_project_entity_get",
+        "fm_project_entity_set"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/secondmates.md": {
+      "boundary": "boundary_13",
+      "category": "Canonical Dolt Replication / Distributed State",
+      "beads_role": "CANONICAL_DOLT_REPLICATION",
+      "format": "markdown",
+      "chokepoints": [
+        "secondmate_registry_get",
+        "secondmate_registry_sync",
+        "fm_pending_reply_record"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.<id>.open-decisions-cursor": {
+      "boundary": "boundary_5",
+      "category": "Hybrid Event Log / Decision Gates",
+      "beads_role": "HYBRID_EVENT_GATES",
+      "format": "file",
+      "chokepoints": [
+        "fm_classify_status",
+        "fm_send_resolve_key",
+        "fm_decision_hold"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.afk": {
+      "boundary": "boundary_9",
+      "category": "Ephemeral Runtime Flag / Daemon IPC",
+      "beads_role": "HYBRID_PRESENCE",
+      "format": "file",
+      "chokepoints": [
+        "bin/fm-afk-start.sh",
+        "bin/fm-afk-return.sh",
+        "bin/fm-supervise-daemon.sh"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.beads-label-migration-v1": {
+      "boundary": "boundary_2",
+      "category": "Independent Local Files / Outage Resilience",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_beads_mirror_write",
+        "fm_beads_mirror_read",
+        "fm_beads_write_enqueue",
+        "fm_beads_write_queue_reconcile"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.beads-mirror-<view>.json": {
+      "boundary": "boundary_2",
+      "category": "Independent Local Files / Outage Resilience",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "json",
+      "chokepoints": [
+        "fm_beads_mirror_write",
+        "fm_beads_mirror_read",
+        "fm_beads_write_enqueue",
+        "fm_beads_write_queue_reconcile"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.beads-sync-last": {
+      "boundary": "boundary_2",
+      "category": "Independent Local Files / Outage Resilience",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_beads_mirror_write",
+        "fm_beads_mirror_read",
+        "fm_beads_write_enqueue",
+        "fm_beads_write_queue_reconcile"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-bootstrap.sh:320"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.beads-write-queue": {
+      "boundary": "boundary_2",
+      "category": "Independent Local Files / Outage Resilience",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_beads_mirror_write",
+        "fm_beads_mirror_read",
+        "fm_beads_write_enqueue",
+        "fm_beads_write_queue_reconcile"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.beads-write-queue.lock": {
+      "boundary": "boundary_2",
+      "category": "Independent Local Files / Outage Resilience",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_beads_mirror_write",
+        "fm_beads_mirror_read",
+        "fm_beads_write_enqueue",
+        "fm_beads_write_queue_reconcile"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.claude-autoarm.lock": {
+      "boundary": "boundary_7",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_lock_try_acquire",
+        "fm_lock_release",
+        "fm_lock_acquire_wait"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.last-watcher-beat": {
+      "boundary": "boundary_7",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_lock_try_acquire",
+        "fm_lock_release",
+        "fm_lock_acquire_wait"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.lock": {
+      "boundary": "boundary_7",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_lock_try_acquire",
+        "fm_lock_release",
+        "fm_lock_acquire_wait"
+      ],
+      "verified_readers": [
+        "bin/fm-sessionstart-nudge.sh:26"
+      ],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.subsuper-escalations": {
+      "boundary": "boundary_9",
+      "category": "Ephemeral Runtime Flag / Daemon IPC",
+      "beads_role": "HYBRID_PRESENCE",
+      "format": "file",
+      "chokepoints": [
+        "bin/fm-afk-start.sh",
+        "bin/fm-afk-return.sh",
+        "bin/fm-supervise-daemon.sh"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.subsuper-pid": {
+      "boundary": "boundary_9",
+      "category": "Ephemeral Runtime Flag / Daemon IPC",
+      "beads_role": "HYBRID_PRESENCE",
+      "format": "file",
+      "chokepoints": [
+        "bin/fm-afk-start.sh",
+        "bin/fm-afk-return.sh",
+        "bin/fm-supervise-daemon.sh"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.wake-queue": {
+      "boundary": "boundary_8",
+      "category": "Canonical State / Interchange Queue",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "tsv_stream",
+      "chokepoints": [
+        "fm_wake_append",
+        "fm_wake_records",
+        "fm_wake_absorb_seqs",
+        "fm_wake_enqueue"
+      ],
+      "verified_readers": [
+        "bin/fm-session-start.sh:773"
+      ],
+      "verified_writers": [],
+      "bypass_leaks": [],
+      "columns": [
+        "epoch",
+        "seq",
+        "kind",
+        "key",
+        "payload"
+      ]
+    },
+    "state/.wake-queue.lock": {
+      "boundary": "boundary_8",
+      "category": "Canonical State / Interchange Queue",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "tsv_stream",
+      "chokepoints": [
+        "fm_wake_append",
+        "fm_wake_records",
+        "fm_wake_absorb_seqs",
+        "fm_wake_enqueue"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/.watch.lock": {
+      "boundary": "boundary_7",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_lock_try_acquire",
+        "fm_lock_release",
+        "fm_lock_acquire_wait"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.busy-gen": {
+      "boundary": "boundary_6",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_busy_event",
+        "fm_busy_record_read",
+        "fm_busy_classify"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.busy-state": {
+      "boundary": "boundary_6",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_busy_event",
+        "fm_busy_record_read",
+        "fm_busy_classify"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.check-trust": {
+      "boundary": "boundary_10",
+      "category": "Canonical Forge Gates / PR Polls",
+      "beads_role": "CANONICAL_BEADS_GATES",
+      "format": "file",
+      "chokepoints": [
+        "fm_pr_gate_create",
+        "fm_pr_gate_check",
+        "fm_pr_poll_prepare",
+        "fm_pr_poll_publish_prepared"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.check.sh": {
+      "boundary": "boundary_10",
+      "category": "Canonical Forge Gates / PR Polls",
+      "beads_role": "CANONICAL_BEADS_GATES",
+      "format": "file",
+      "chokepoints": [
+        "fm_pr_gate_create",
+        "fm_pr_gate_check",
+        "fm_pr_poll_prepare",
+        "fm_pr_poll_publish_prepared"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.control-relaunch": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.grok-turnend-token": {
+      "boundary": "boundary_6",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_busy_event",
+        "fm_busy_record_read",
+        "fm_busy_classify"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-spawn.sh:2816"
+      ],
+      "bypass_leaks": []
+    },
+    "state/<id>.kimi-turnend-token": {
+      "boundary": "boundary_6",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_busy_event",
+        "fm_busy_record_read",
+        "fm_busy_classify"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-spawn.sh:2881"
+      ],
+      "bypass_leaks": []
+    },
+    "state/<id>.meta": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "key_value_lines",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [
+        "bin/fm-spawn.sh:1798"
+      ],
+      "verified_writers": [
+        "bin/fm-spawn.sh:3038",
+        "bin/fm-spawn.sh:969"
+      ],
+      "bypass_leaks": [],
+      "keys": [
+        "window",
+        "endpoint_task_id",
+        "worktree",
+        "project",
+        "harness",
+        "model",
+        "effort",
+        "kind",
+        "mode",
+        "yolo",
+        "tasktmp",
+        "traceparent",
+        "home",
+        "projects",
+        "remote_host",
+        "remote_root",
+        "remote_backend",
+        "remote_herdr_session",
+        "remote_target",
+        "account",
+        "claim_prompt",
+        "label",
+        "beads_id",
+        "pr",
+        "pr_head",
+        "x_request",
+        "x_request_ts",
+        "x_followups",
+        "x_platform",
+        "x_reply_max_chars",
+        "runtime"
+      ]
+    },
+    "state/<id>.muse-session": {
+      "boundary": "boundary_6",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_busy_event",
+        "fm_busy_record_read",
+        "fm_busy_classify"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-spawn.sh:2868"
+      ],
+      "bypass_leaks": []
+    },
+    "state/<id>.pr-poll": {
+      "boundary": "boundary_10",
+      "category": "Canonical Forge Gates / PR Polls",
+      "beads_role": "CANONICAL_BEADS_GATES",
+      "format": "file",
+      "chokepoints": [
+        "fm_pr_gate_create",
+        "fm_pr_gate_check",
+        "fm_pr_poll_prepare",
+        "fm_pr_poll_publish_prepared"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.pr-poll-registration": {
+      "boundary": "boundary_10",
+      "category": "Canonical Forge Gates / PR Polls",
+      "beads_role": "CANONICAL_BEADS_GATES",
+      "format": "file",
+      "chokepoints": [
+        "fm_pr_gate_create",
+        "fm_pr_gate_check",
+        "fm_pr_poll_prepare",
+        "fm_pr_poll_publish_prepared"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.pr-poll-retirement": {
+      "boundary": "boundary_10",
+      "category": "Canonical Forge Gates / PR Polls",
+      "beads_role": "CANONICAL_BEADS_GATES",
+      "format": "file",
+      "chokepoints": [
+        "fm_pr_gate_create",
+        "fm_pr_gate_check",
+        "fm_pr_poll_prepare",
+        "fm_pr_poll_publish_prepared"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.pr-review-seen": {
+      "boundary": "boundary_10",
+      "category": "Canonical Forge Gates / PR Polls",
+      "beads_role": "CANONICAL_BEADS_GATES",
+      "format": "file",
+      "chokepoints": [
+        "fm_pr_gate_create",
+        "fm_pr_gate_check",
+        "fm_pr_poll_prepare",
+        "fm_pr_poll_publish_prepared"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.runtime": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/<id>.status": {
+      "boundary": "boundary_5",
+      "category": "Hybrid Event Log / Decision Gates",
+      "beads_role": "HYBRID_EVENT_GATES",
+      "format": "tsv_stream",
+      "chokepoints": [
+        "fm_classify_status",
+        "fm_send_resolve_key",
+        "fm_decision_hold"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-control.sh:945",
+        "bin/fm-control.sh:985",
+        "bin/fm-spawn.sh:2466",
+        "bin/fm-spawn.sh:3273"
+      ],
+      "bypass_leaks": []
+    },
+    "state/<id>.turn-ended": {
+      "boundary": "boundary_6",
+      "category": "OS Process Interchange / Mutual Exclusion",
+      "beads_role": "INDEPENDENT_LOCAL_FILE",
+      "format": "file",
+      "chokepoints": [
+        "fm_busy_event",
+        "fm_busy_record_read",
+        "fm_busy_classify"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/pending-replies/<corr_id>.json": {
+      "boundary": "boundary_13",
+      "category": "Canonical Dolt Replication / Distributed State",
+      "beads_role": "CANONICAL_DOLT_REPLICATION",
+      "format": "json",
+      "chokepoints": [
+        "secondmate_registry_get",
+        "secondmate_registry_sync",
+        "fm_pending_reply_record"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/procevent-inbox/<source_id>.output": {
+      "boundary": "boundary_12",
+      "category": "Beads KV Registrations & Event Streams",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "file",
+      "chokepoints": [
+        "fm_procevent_capture",
+        "fm_procevent_mark_handled",
+        "fm_procevent_register"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/procevent/<source_id>.json": {
+      "boundary": "boundary_12",
+      "category": "Beads KV Registrations & Event Streams",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "json",
+      "chokepoints": [
+        "fm_procevent_capture",
+        "fm_procevent_mark_handled",
+        "fm_procevent_register"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/public-followup/<request_id>.json": {
+      "boundary": "boundary_11",
+      "category": "Canonical Relay Task & Event Beads",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "json",
+      "chokepoints": [
+        "fmx_context_registry_set",
+        "fmx_context_registry_get",
+        "fmx_offer_registry_claim",
+        "fm_pf_registry_ids",
+        "fm_pf_event_id"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/x-context/<request_id>.json": {
+      "boundary": "boundary_11",
+      "category": "Canonical Relay Task & Event Beads",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "json",
+      "chokepoints": [
+        "fmx_context_registry_set",
+        "fmx_context_registry_get",
+        "fmx_offer_registry_claim",
+        "fm_pf_registry_ids",
+        "fm_pf_event_id"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/x-inbox/<request_id>.json": {
+      "boundary": "boundary_11",
+      "category": "Canonical Relay Task & Event Beads",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "json",
+      "chokepoints": [
+        "fmx_context_registry_set",
+        "fmx_context_registry_get",
+        "fmx_offer_registry_claim",
+        "fm_pf_registry_ids",
+        "fm_pf_event_id"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "state/x-outbox/<request_id>.json": {
+      "boundary": "boundary_11",
+      "category": "Canonical Relay Task & Event Beads",
+      "beads_role": "CANONICAL_BEADS_STATE",
+      "format": "json",
+      "chokepoints": [
+        "fmx_context_registry_set",
+        "fmx_context_registry_get",
+        "fmx_offer_registry_claim",
+        "fm_pf_registry_ids",
+        "fm_pf_event_id"
+      ],
+      "verified_readers": [],
+      "verified_writers": [],
+      "bypass_leaks": []
+    },
+    "data/<id>/report.md)": {
+      "boundary": "boundary_3",
+      "category": "Hybrid Canonical / Worktree Projection",
+      "beads_role": "HYBRID_PROJECTION",
+      "format": "file",
+      "chokepoints": [
+        "bin/fm-brief.sh",
+        "bin/fm-claim-prompt-lib.sh",
+        "bin/fm-promote.sh"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-groom.sh:264"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.heartbeat-streak": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-push-transition-lib.sh:77",
+        "bin/fm-push-transition-lib.sh:78",
+        "bin/fm-watch.sh:1615"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.subsuper-last-housekeep": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-supervise-daemon.sh:1567"
+      ],
+      "bypass_leaks": []
+    },
+    "state/$id.meta": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [
+        "bin/fm-update.sh:91"
+      ],
+      "verified_writers": [
+        "bin/fm-remote-launch.sh:464"
+      ],
+      "bypass_leaks": []
+    },
+    "state/<id>.pi-ext.ts": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-spawn.sh:2754"
+      ],
+      "bypass_leaks": []
+    },
+    "state/<id>.parlay-listen-pid": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-spawn.sh:3297"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.staleness-fails-$key": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-watch.sh:535"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.staleness-next-$key": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-watch.sh:540"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.stale-$key": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-watch.sh:576",
+        "bin/fm-watch.sh:666"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.paused-$key": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-watch.sh:577",
+        "bin/fm-watch.sh:671"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.paused-rechecked-$key": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-watch.sh:672"
+      ],
+      "bypass_leaks": []
+    },
+    "state/.paused-resurfaced-$key": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-watch.sh:673"
+      ],
+      "bypass_leaks": []
+    },
+    "state/<id>.staleness-unfiled": {
+      "boundary": "boundary_4",
+      "category": "Canonical State / Runtime Interchange",
+      "beads_role": "HYBRID_SPLIT_MODEL",
+      "format": "file",
+      "chokepoints": [
+        "fm_meta_set",
+        "fm_meta_get",
+        "fm_meta_get_exact",
+        "fm_backend_meta_set",
+        "fm_backend_meta_get"
+      ],
+      "verified_readers": [],
+      "verified_writers": [
+        "bin/fm-teardown.sh:893"
+      ],
+      "bypass_leaks": []
+    }
+  }
+}

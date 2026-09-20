@@ -158,7 +158,7 @@ fm_herdr_lab_cancel_provision() { # <pid>
   if kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid" 2>/dev/null || true
     while kill -0 "$pid" 2>/dev/null && [ "$attempt" -lt 10 ]; do
-      /bin/sleep 0.1
+      sleep 0.1
       attempt=$((attempt + 1))
     done
     if kill -0 "$pid" 2>/dev/null; then
@@ -209,7 +209,7 @@ fm_herdr_lab_provision() { # <session>
       }
       return 0
     fi
-    /bin/sleep 0.2
+    sleep 0.2
     attempt=$((attempt + 1))
   done
   fm_herdr_lab_cancel_provision "$server_pid"

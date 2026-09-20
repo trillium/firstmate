@@ -11,6 +11,7 @@ FAKE_STATE="$TMP_ROOT/herdr-state"
 FAKE_LOG="$TMP_ROOT/herdr.log"
 TRIPWIRES="$TMP_ROOT/tripwires"
 REAL_SLEEP=$(command -v sleep)
+export FM_FAKE_HERDR_REAL_SLEEP="$REAL_SLEEP"
 mkdir -p "$FAKE_STATE"
 printf '%s\n' '/home/test/.config/herdr/herdr.sock' > "$FAKE_STATE/default-socket"
 : > "$FAKE_LOG"

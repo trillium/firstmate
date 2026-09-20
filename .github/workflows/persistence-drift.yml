@@ -1,0 +1,27 @@
+name: Persistence Drift Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  persistence-drift:
+    name: Persistence Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Generate observed persistence snapshot
+        run: |
+          python3 drift/persist_snapshot.py --fm-home . -o /tmp/persist_observed.json
+      - name: Run persistence drift check
+        run: |
+          python3 drift/persist_check.py drift/persist_baseline.json /tmp/persist_observed.json --format markdown

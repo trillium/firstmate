@@ -352,7 +352,7 @@ wait_agent_state() {  # <timeout> <wanted>...
       fi
     done
     awk -v e="$elapsed" -v t="$timeout" 'BEGIN{exit !(e < t)}' || break
-    /bin/sleep "$POLL"
+    sleep "$POLL"
     elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
   done
   printf '%s' "$state"
@@ -382,7 +382,7 @@ send_interrupt_keys() {
     fm_backend_send_key "$BACKEND" "$T" "$key" "$LABEL" \
       || die "interrupt key $key was not delivered to task $ID on $BACKEND"
     i=$((i + 1))
-    [ "$i" -ge "$repeat" ] || /bin/sleep 0.2
+    [ "$i" -ge "$repeat" ] || sleep 0.2
   done
   [ -z "$clear" ] || fm_backend_send_key "$BACKEND" "$T" "$clear" "$LABEL" \
     || die "interrupt key $key reached task $ID, but $clear did not, so its composer still holds the cancelled prompt; clear it before the next lifecycle action"
@@ -414,7 +414,7 @@ interrupt_cancel_claim() {
       ?*) printf 'unconfirmed'; return 0 ;;
     esac
     awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
-    /bin/sleep "$POLL"
+    sleep "$POLL"
     elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
   done
   printf 'unconfirmed'
@@ -1002,11 +1002,11 @@ case "$VERB" in
       dead|missing) die "no agent is running at task $ID's recorded endpoint (state: $state); there is nothing to interrupt" ;;
       *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to send a lifecycle key into an unattributed endpoint" ;;
     esac
-    proof=$(do_interrupt)
+    proof=$(do_interrupt) || exit $?
     echo "interrupt-delivered $ID harness=$HARNESS backend=$BACKEND verified=$proof"
     ;;
   exit)
-    result=$(do_exit)
+    result=$(do_exit) || exit $?
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
