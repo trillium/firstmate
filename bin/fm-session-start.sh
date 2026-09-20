@@ -309,6 +309,8 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-parlay-lib.sh
 . "$SCRIPT_DIR/fm-parlay-lib.sh"
+# shellcheck source=bin/fm-memory-lib.sh
+. "$SCRIPT_DIR/fm-memory-lib.sh"
 
 # One tasks-axi compatibility verdict per session start. The probe costs three
 # tasks-axi subprocesses and this digest needs the same answer twice - here for
@@ -979,9 +981,9 @@ stage context
 section "CONTEXT"
 print_file_or_absent "$DATA/projects.md" "data/projects.md"
 print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
-print_file_or_absent "$DATA/captain.md" "data/captain.md"
-print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
-print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
+fm_memory_render "captain" "data/captain.md"
+fm_memory_render "captain-shared" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
+fm_memory_render "learnings" "data/learnings.md"
 
 # --- 9a. parlay sweep --------------------------------------------------
 # Read-only parlay sweep surfacing captain-parked agents. Skips silently

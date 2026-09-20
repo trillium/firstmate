@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Resolve a project's REGISTERED delivery posture from the data/projects.md registry.
+# Resolve a project's REGISTERED delivery posture from the project registry.
 # Prints two words to stdout: "<mode> <yolo>" where mode is one of
 # no-mistakes|direct-PR|local-only and yolo is on|off.
+#
+# Governed by config/projects-backend:
+#   "beads" (default) - queries Project Entity Beads (`type: entity`, labeled `type:project,project:<slug>`)
+#                       with read-through fallback to data/projects.md.
+#   "files"           - reads data/projects.md file directly (rollback mode).
 #
 # MECHANICAL CONSUMERS ONLY. This answers "what posture did the captain register
 # for this project", never "how does this task ship". A task's delivery mode and
@@ -41,6 +46,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 REG="$DATA/projects.md"
 RAW=0
@@ -50,27 +56,54 @@ if [ "${1:-}" = "--raw" ]; then
 fi
 NAME=${1:?usage: fm-project-mode.sh [--raw] <project-name>}
 
-if [ ! -f "$REG" ]; then
-  echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
-  echo "no-mistakes off"
-  exit 0
+# Determine configured projects backend (default: files)
+PROJECTS_BACKEND="files"
+if [ -f "$CONFIG/projects-backend" ]; then
+  val=$(<"$CONFIG/projects-backend")
+  case "$val" in
+    beads) PROJECTS_BACKEND="beads" ;;
+    files|*) PROJECTS_BACKEND="files" ;;
+  esac
 fi
 
-# awk emits "<mode> <yolo>" (one line) or nothing if the project is absent.
-parsed=$(awk -v n="$NAME" '
-  $1=="-" && $2==n {
-    mode="no-mistakes"; yolo="off";
-    if ($3 ~ /^\[/) {
-      s="";
-      for (i=3; i<=NF; i++) { s = s (s==""?"":" ") $i; if ($i ~ /\]$/) break }
-      gsub(/^\[|\]$/, "", s);           # strip the surrounding brackets
-      k = split(s, a, " ");
-      if (a[1] != "" && a[1] != "+yolo") mode = a[1];
-      for (j=1; j<=k; j++) if (a[j]=="+yolo") yolo="on";
+parsed=""
+
+# Attempt Beads query when backend is beads
+if [ "$PROJECTS_BACKEND" = "beads" ] && command -v task >/dev/null 2>&1; then
+  json=$(task list --label type:project --label "project:$NAME" --json 2>/dev/null || true)
+  if [ -n "$json" ] && [ "$json" != "[]" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      b_mode=$(printf '%s\n' "$json" | jq -r '.[0].metadata.delivery_mode // "no-mistakes"' 2>/dev/null || true)
+      b_yolo=$(printf '%s\n' "$json" | jq -r '.[0].metadata.yolo // false' 2>/dev/null || true)
+      if [ -n "$b_mode" ] && [ "$b_mode" != "null" ]; then
+        case "$b_yolo" in
+          true|on|1) b_yolo="on" ;;
+          *) b_yolo="off" ;;
+        esac
+        parsed="$b_mode $b_yolo"
+      fi
+    fi
+  fi
+fi
+
+# Fallback / read-through to data/projects.md file
+if [ -z "$parsed" ] && [ -f "$REG" ]; then
+  # awk emits "<mode> <yolo>" (one line) or nothing if the project is absent.
+  parsed=$(awk -v n="$NAME" '
+    $1=="-" && $2==n {
+      mode="no-mistakes"; yolo="off";
+      if ($3 ~ /^\[/) {
+        s="";
+        for (i=3; i<=NF; i++) { s = s (s==""?"":" ") $i; if ($i ~ /\]$/) break }
+        gsub(/^\[|\]$/, "", s);           # strip the surrounding brackets
+        k = split(s, a, " ");
+        if (a[1] != "" && a[1] != "+yolo") mode = a[1];
+        for (j=1; j<=k; j++) if (a[j]=="+yolo") yolo="on";
+      }
+      print mode, yolo; exit
     }
-    print mode, yolo; exit
-  }
-' "$REG")
+  ' "$REG")
+fi
 
 if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2

@@ -265,6 +265,27 @@ Fleet-local operational facts and gotchas live locally in `data/learnings.md`; i
 The file is created lazily on first learning and follows the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) aging-tier and cold-archive contract: inspect the current file first and curate it instead of appending forever.
 There is no shared learnings file by captain decision.
 
+## Domain memory backend (config/memory-backend)
+
+The local, gitignored `config/memory-backend` file selects the persistence backend for domain memory and learnings (`data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`).
+Absent or `beads` selects canonical Beads persistent memories (`task remember` and `task recall`) through `bin/fm-memory-lib.sh`, maintaining dual-write projections to the local markdown files.
+`files` selects legacy file-only persistence, reading and writing the markdown files directly.
+Setting `config/memory-backend` to `files` instantly reverts domain memory to file persistence without code changes.
+
+## Project registry backend (config/projects-backend)
+
+The local, gitignored `config/projects-backend` file selects the persistence backend for the project posture registry (`data/projects.md`).
+Absent or `beads` queries Project Entity Beads (`issue_type: entity`, labeled `type:project,project:<slug>`) through `bin/fm-project-mode.sh`, falling back to `data/projects.md` if the entity bead is not found.
+`files` selects legacy file-only persistence, reading `data/projects.md` directly.
+Setting `config/projects-backend` to `files` instantly reverts project posture resolution to file persistence without code changes.
+
+## PR merge gate backend (config/pr-gate-backend)
+
+The local, gitignored `config/pr-gate-backend` file selects the PR merge checking and polling backend.
+Absent or `beads-gates` arms native Beads forge gates (`task gate create --type=gh:pr`) through `bin/fm-pr-check.sh`, recording PR metadata while eliminating generated shell check scripts and sidecars.
+`files` selects legacy file-based polling, generating `state/<id>.check.sh` and `state/<id>.pr-poll` sidecars.
+Setting `config/pr-gate-backend` to `files` instantly reverts PR merge checks to legacy file-based polling.
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.

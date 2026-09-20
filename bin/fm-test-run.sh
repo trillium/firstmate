@@ -1194,7 +1194,8 @@ families_for_changed_path() {
       printf '%s\n' real-herdr-gated
       ;;
     bin/fm-watch*|bin/fm-wake*|bin/fm-attended-triage-lib.sh|bin/fm-triage-log-lib.sh|\
-    bin/fm-classify-lib.sh|bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh)
+    bin/fm-classify-lib.sh|bin/fm-daemon*|bin/fm-turnend-guard*|bin/fm-guard.sh|\
+    .pi/extensions/fm-primary-pi-watch.ts)
       printf '%s\n' watcher-wake-lock
       ;;
     bin/fm-attended-start.sh)
@@ -1211,9 +1212,13 @@ families_for_changed_path() {
       printf '%s\n' live-harness-optin
       printf '%s\n' afk
       ;;
-    bin/fm-startup-memory-budget.sh|bin/fm-startup-memory-budget-lib.sh)
+    bin/fm-startup-memory-budget.sh|bin/fm-startup-memory-budget-lib.sh|bin/fm-memory-lib.sh)
       printf '%s\n' secondmate
       printf '%s\n' session-bootstrap
+      printf '%s\n' pure-contract-unit
+      ;;
+    drift/*)
+      printf '%s\n' pure-contract-unit
       ;;
     bin/fm-secondmate*|bin/fm-remote*|bin/fm-on.sh|bin/fm-home-seed.sh|\
     bin/fm-backlog-handoff.sh|bin/fm-backlog-receive.sh|bin/fm-procevent-remote-reply.sh|\

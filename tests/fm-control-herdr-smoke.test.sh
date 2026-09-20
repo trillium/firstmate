@@ -35,18 +35,45 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the her
 . "$ROOT/tests/herdr-test-safety.sh"
 herdr_forget_inherited_pane
 
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
+SCRATCH=$(cd "$SCRATCH" && pwd)
+
+CC_BIN=$(command -v cc 2>/dev/null || command -v gcc 2>/dev/null || command -v clang 2>/dev/null || true)
+[ -n "$CC_BIN" ] || fail "a C compiler (cc, gcc, or clang) is required for the OpenCode smoke binary"
+FAKEBIN="$SCRATCH/fakebin"
+mkdir -p "$FAKEBIN"
+cat > "$SCRATCH/opencode.c" << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+    const char *session = getenv("HERDR_SESSION");
+    const char *pane = getenv("HERDR_PANE_ID");
+    const char *bin = getenv("HERDR_BIN_PATH");
+    if (!bin || !bin[0]) bin = "herdr";
+    if (session && pane) {
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd), "%s pane report-agent %s --session %s --source herdr:opencode-stale --agent opencode --state idle >/dev/null 2>&1", bin, pane, session);
+        (void)system(cmd);
+    }
+    while (1) {
+        sleep(10);
+    }
+    return 0;
+}
+EOF
+"$CC_BIN" -O2 -o "$FAKEBIN/opencode" "$SCRATCH/opencode.c" || fail "could not compile stub opencode executable"
+export PATH="$FAKEBIN:$PATH"
+
 SESSION="fm-lab-control-smoke-$$"
 export HERDR_SESSION="$SESSION"
-SCRATCH=
 cleanup_all() {
   [ -n "$SCRATCH" ] && rm -rf "$SCRATCH"
   herdr_safe_stop_and_delete "$SESSION"
 }
 trap cleanup_all EXIT
 fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
-
-SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
-SCRATCH=$(cd "$SCRATCH" && pwd)
 HOME_DIR="$SCRATCH/home"
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/data/hsmoke"
 printf '# brief\n' > "$HOME_DIR/data/hsmoke/brief.md"
