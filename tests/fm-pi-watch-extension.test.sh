@@ -1245,15 +1245,19 @@ const hooks = await mod.FmPrimaryWatchArm({
 });
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
 await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-test" } } });
-for (let i = 0; i < 250 && !existsSync(process.env.FM_ARM_LOG); i += 1) {
+const expectedRoot = realpathSync(process.env.WORKTREE);
+let text = "";
+for (let i = 0; i < 250; i += 1) {
+  if (existsSync(process.env.FM_ARM_LOG)) {
+    text = readFileSync(process.env.FM_ARM_LOG, "utf8");
+    if (text.includes(`home=${process.env.FM_HOME}`) && text.includes(`root=${expectedRoot}`)) break;
+  }
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 if (!existsSync(process.env.FM_ARM_LOG)) {
   console.error("watch arm did not run");
   process.exit(1);
 }
-const text = readFileSync(process.env.FM_ARM_LOG, "utf8");
-const expectedRoot = realpathSync(process.env.WORKTREE);
 if (!text.includes(`home=${process.env.FM_HOME}`) || !text.includes(`root=${expectedRoot}`)) {
   console.error(text);
   process.exit(1);
@@ -1261,7 +1265,7 @@ if (!text.includes(`home=${process.env.FM_HOME}`) || !text.includes(`root=${expe
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode watch plugin must use FM_HOME state outside the repo root"
+  expect_code 0 "$status" "OpenCode watch plugin must use FM_HOME state outside the repo root" "$out"
   [ -z "$out" ] || fail "OpenCode effective-state test printed output: $out"
   pass "OpenCode watcher plugin uses the effective FM_HOME state"
 }
@@ -1295,14 +1299,18 @@ const hooks = await mod.FmPrimaryWatchArm({
 });
 writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
 await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-test" } } });
-for (let i = 0; i < 250 && !existsSync(process.env.FM_ARM_LOG); i += 1) {
+let text = "";
+for (let i = 0; i < 250; i += 1) {
+  if (existsSync(process.env.FM_ARM_LOG)) {
+    text = readFileSync(process.env.FM_ARM_LOG, "utf8");
+    if (text.includes("poll=7")) break;
+  }
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 if (!existsSync(process.env.FM_ARM_LOG)) {
   console.error("watch arm did not run");
   process.exit(1);
 }
-const text = readFileSync(process.env.FM_ARM_LOG, "utf8");
 if (!text.includes("poll=7")) {
   console.error(text);
   process.exit(1);
@@ -1310,7 +1318,7 @@ if (!text.includes("poll=7")) {
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode watch plugin must source FM_HOME config outside the repo root"
+  expect_code 0 "$status" "OpenCode watch plugin must source FM_HOME config outside the repo root" "$out"
   [ -z "$out" ] || fail "OpenCode effective-config test printed output: $out"
   pass "OpenCode watcher plugin sources the effective config"
 }
@@ -2086,7 +2094,7 @@ if (promptBody) {
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode turn-end guard must let the auto-arm plugin establish supervision first"
+  expect_code 0 "$status" "OpenCode turn-end guard must let the auto-arm plugin establish supervision first" "$out"
   [ -z "$out" ] || fail "OpenCode coordination test printed output: $out"
   pass "OpenCode watcher plugin coordinates with the turn-end guard"
 }
@@ -2144,11 +2152,19 @@ await guardHooks.event({ event: { type: "session.idle", properties: { sessionID:
 for (let i = 0; i < 250 && !existsSync(process.env.FM_GUARD_LOG); i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
+let text = "";
+for (let i = 0; i < 250; i += 1) {
+  if (existsSync(process.env.FM_ARM_LOG)) {
+    text = readFileSync(process.env.FM_ARM_LOG, "utf8");
+    if (text.includes("args=--restart")) break;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
 if (!existsSync(process.env.FM_ARM_LOG)) {
   console.error("watch arm did not run");
   process.exit(1);
 }
-if (!readFileSync(process.env.FM_ARM_LOG, "utf8").includes("args=--restart")) {
+if (!text.includes("args=--restart")) {
   console.error("watch arm was not asked to restart into an owned child");
   process.exit(1);
 }
@@ -2163,7 +2179,7 @@ if (!promptBody.includes("TURN WOULD END BLIND")) {
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode watch plugin must not treat external healthy output as an owned arm"
+  expect_code 0 "$status" "OpenCode watch plugin must not treat external healthy output as an owned arm" "$out"
   [ -z "$out" ] || fail "OpenCode external-healthy test printed output: $out"
   pass "OpenCode healthy arm output does not suppress the turn-end guard"
 }

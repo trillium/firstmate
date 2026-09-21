@@ -352,6 +352,13 @@ add_sm_home() {
   # meta-driven, so the registry is easy to omit in a fixture and impossible to
   # omit in a home that actually supervises a secondmate.
   fm_register_secondmate "$w/home/data/secondmates.md" "$id" "$home"
+  # Pre-converge inherited config so an already-live secondmate fixture
+  # starts with the primary's configuration already in place.
+  if [ -d "$w/home/config" ]; then
+    cp -R "$w/home/config"/* "$home/config/" 2>/dev/null || true
+  fi
+  printf '7500\n' > "$w/home/config/startup-memory-budget"
+  printf '7500\n' > "$home/config/startup-memory-budget"
 }
 
 run_bootstrap() {  # <fakebin> <home> <pane-cmd> <call-log> [extra env...] -> stdout
