@@ -2094,7 +2094,7 @@ if (promptBody) {
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode turn-end guard must let the auto-arm plugin establish supervision first"
+  expect_code 0 "$status" "OpenCode turn-end guard must let the auto-arm plugin establish supervision first" "$out"
   [ -z "$out" ] || fail "OpenCode coordination test printed output: $out"
   pass "OpenCode watcher plugin coordinates with the turn-end guard"
 }
@@ -2152,11 +2152,19 @@ await guardHooks.event({ event: { type: "session.idle", properties: { sessionID:
 for (let i = 0; i < 250 && !existsSync(process.env.FM_GUARD_LOG); i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
+let text = "";
+for (let i = 0; i < 250; i += 1) {
+  if (existsSync(process.env.FM_ARM_LOG)) {
+    text = readFileSync(process.env.FM_ARM_LOG, "utf8");
+    if (text.includes("args=--restart")) break;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
 if (!existsSync(process.env.FM_ARM_LOG)) {
   console.error("watch arm did not run");
   process.exit(1);
 }
-if (!readFileSync(process.env.FM_ARM_LOG, "utf8").includes("args=--restart")) {
+if (!text.includes("args=--restart")) {
   console.error("watch arm was not asked to restart into an owned child");
   process.exit(1);
 }
@@ -2171,7 +2179,7 @@ if (!promptBody.includes("TURN WOULD END BLIND")) {
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode watch plugin must not treat external healthy output as an owned arm"
+  expect_code 0 "$status" "OpenCode watch plugin must not treat external healthy output as an owned arm" "$out"
   [ -z "$out" ] || fail "OpenCode external-healthy test printed output: $out"
   pass "OpenCode healthy arm output does not suppress the turn-end guard"
 }
