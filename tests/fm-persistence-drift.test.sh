@@ -17,7 +17,7 @@ test_snapshot_generation() {
 import json
 with open('$snap') as f:
     d = json.load(f)
-assert d['version'] == 1
+assert d['version'] == 2
 assert 'boundaries' in d
 assert 'surfaces' in d
 assert len(d['boundaries']) == 15
@@ -56,7 +56,7 @@ d['surfaces']['state/unmapped_shadow_file.meta'] = {
     'boundary': 'boundary_4',
     'category': 'Unclassified',
     'beads_role': 'UNKNOWN',
-    'verified_writers': ['bin/fm-evil.sh:10'],
+    'verified_writers': ['bin/fm-evil.sh :: echo evil > "\$STATE/x"'],
     'verified_readers': [],
     'bypass_leaks': []
 }

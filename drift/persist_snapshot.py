@@ -414,7 +414,10 @@ def scan_file_for_persistence(filepath: Path, rel_path: str):
     write_re = re.compile(r'(?:>|>>|tee\s+-a|tee\s+|cp\s+.*?|mv\s+.*?|mv\s+-f\s+.*?)\s+([\'"]?(?:\$STATE|\$DATA|\$CONFIG|\$PROJECTS|\$\{STATE\}|\$\{DATA\}|\$\{CONFIG\}|state/|data/|config/)[^\s;|\'\"]+[\'"]?)')
     read_re = re.compile(r'(?:<|cat\s+|head\s+|tail\s+|grep\s+.*?|source\s+|\.\s+|jq\s+.*?)\s+([\'"]?(?:\$STATE|\$DATA|\$CONFIG|\$PROJECTS|\$\{STATE\}|\$\{DATA\}|\$\{CONFIG\}|state/|data/|config/)[^\s;|\'\"]+[\'"]?)')
 
-    for idx, line in enumerate(lines, 1):
+    seen_reads = {}
+    seen_writes = {}
+    seen_chokes = {}
+    for line in lines:
         line_str = line.strip()
         if line_str.startswith("#") and not line_str.startswith("#!"):
             continue
@@ -422,23 +425,41 @@ def scan_file_for_persistence(filepath: Path, rel_path: str):
         # Check for chokepoint calls
         for helper in helper_patterns:
             if re.search(r'\b' + re.escape(helper) + r'\b', line_str):
-                chokepoints.append((helper, f"{rel_path}:{idx}"))
+                chokepoints.append((helper, _citation(rel_path, line_str, seen_chokes)))
 
         # Check for writes
         for match in write_re.finditer(line_str):
             target = match.group(1)
             norm = normalize_path(target)
             if norm.startswith(("state/", "data/", "config/", ".tasks.toml")):
-                writes.append((norm, f"{rel_path}:{idx}", line_str))
+                writes.append((norm, _citation(rel_path, line_str, seen_writes), line_str))
 
         # Check for reads
         for match in read_re.finditer(line_str):
             target = match.group(1)
             norm = normalize_path(target)
             if norm.startswith(("state/", "data/", "config/", ".tasks.toml")):
-                reads.append((norm, f"{rel_path}:{idx}", line_str))
+                reads.append((norm, _citation(rel_path, line_str, seen_reads), line_str))
 
     return reads, writes, chokepoints
+
+
+def _citation(rel_path, line_str, seen):
+    # Content-stable citation: file + normalized statement (+ occurrence
+    # index for identical statements), never a bare line number. Line-pinned
+    # citations read every insertion above a tracked access as a new
+    # reader/writer, so any PR touching bin/ trips the drift gate with zero
+    # semantic change. Occurrence counting keeps add/remove detection for
+    # duplicated statements: only inserting an identical statement above
+    # shifts later occurrences, which is rare and still self-describing.
+    norm = re.sub(r"\s+", " ", line_str.strip())
+    key = (rel_path, norm)
+    n = seen.get(key, 0) + 1
+    seen[key] = n
+    cit = f"{rel_path} :: {norm}"
+    if n > 1:
+        cit += f" #{n}"
+    return cit
 
 
 def generate_snapshot(fm_home: Path) -> dict:
@@ -452,7 +473,7 @@ def generate_snapshot(fm_home: Path) -> dict:
         rev = "unknown"
 
     snapshot = {
-        "version": 1,
+        "version": 2,
         "generated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "firstmate_revision": rev,
         "boundaries": BOUNDARIES_CONFIG,
