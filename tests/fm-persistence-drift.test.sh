@@ -56,7 +56,7 @@ d['surfaces']['state/unmapped_shadow_file.meta'] = {
     'boundary': 'boundary_4',
     'category': 'Unclassified',
     'beads_role': 'UNKNOWN',
-    'verified_writers': ['bin/fm-evil.sh :: echo evil > "\$STATE/x"'],
+    'verified_writers': ['bin/fm-evil.sh :: echo evil > state/x'],
     'verified_readers': [],
     'bypass_leaks': []
 }
