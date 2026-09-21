@@ -68,6 +68,10 @@ export FM_SPAWN_FIRSTTURN=off
 # need an FM_HOME set it per invocation, which this cannot affect.
 unset FM_HOME
 
+# Pin INBOX_EVENTS_FILE away from ambient ~/data/inbox/events.jsonl so developer
+# machines do not leak unconfigured inbox store-event warnings into tests.
+export INBOX_EVENTS_FILE="${INBOX_EVENTS_FILE:-/nonexistent/inbox/events.jsonl}"
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
