@@ -361,6 +361,26 @@ run_bootstrap() {  # <fakebin> <home> <pane-cmd> <call-log> [extra env...] -> st
     env "$@" "$ROOT/bin/fm-bootstrap.sh" 2>&1
 }
 
+# assert_no_kill_or_respawn <log> <what>: the sweep must never have killed or
+# respawned the endpoint. A literal-content reread pointer delivery
+# (send-keys CONFIG_REREAD, owned by b4316bee on the bootstrap convergence
+# path) is allowed: a fresh fixture home always counts as changed on first
+# propagation, so the pointer fires even where recovery is refused. That
+# send-keys is a pointer delivery to a live pane, not recovery: if the sweep
+# touched the endpoint at all, every touch must be the reread pointer.
+assert_no_kill_or_respawn() {
+  local log=$1 what=$2
+  assert_no_grep "kill-window" "$log" "$what must never be killed"
+  assert_no_grep "new-window" "$log" "$what must never be respawned"
+  if [ -s "$log" ]; then
+    assert_grep "CONFIG_REREAD" "$log" \
+      "any touch of $what must be the reread pointer"
+    grep -v "^send-keys" "$log" | grep -q . \
+      && fail "unexpected non-pointer touch of $what: $(cat "$log")" \
+      || true
+  fi
+}
+
 test_sweep_respawns_confirmed_dead_secondmate() {
   local w fb tmuxfb log out
   w=$(new_world sweep-dead)
@@ -431,12 +451,12 @@ test_sweep_leaves_alive_secondmate_untouched() {
 
   assert_not_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: already-live" \
     "an already-live secondmate should be handled silently"
-  [ ! -s "$log" ] || fail "an already-live secondmate must never be killed or respawned: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an already-live secondmate"
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log" FM_BOOTSTRAP_VERBOSE_FACTS=1)
   assert_contains "$out" "BOOTSTRAP_INFO: secondmate sm1 already live (backend=tmux)" \
     "verbose diagnostics should identify the already-live outcome"
-  [ ! -s "$log" ] || fail "verbose reporting must not touch an already-live secondmate: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an already-live secondmate under verbose reporting"
   pass "sweep: an already-live secondmate is untouched and distinguishable in verbose diagnostics"
 }
 
@@ -485,7 +505,7 @@ test_sweep_never_acts_on_ambiguous_existing_process() {
 
   assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: existing endpoint has ambiguous agent process" \
     "an existing Pi-shaped node process should be reported as ambiguous"
-  [ ! -s "$log" ] || fail "an ambiguous existing process must never trigger kill or relaunch: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an ambiguous existing process"
   pass "sweep: an existing ambiguous Pi process prevents duplicate recovery"
 }
 
@@ -500,7 +520,7 @@ test_sweep_never_acts_on_transient_unreadability() {
 
   assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: endpoint probe unreadable" \
     "a transiently unreadable target should be distinguished from an absent one"
-  [ ! -s "$log" ] || fail "an unreadable target must never trigger kill or relaunch: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an unreadable target"
   pass "sweep: transient target unreadability never licenses recovery"
 }
 
@@ -529,7 +549,7 @@ test_sweep_never_acts_on_unverified_harness_dead_reading() {
 
   assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: recorded harness 'custom-agent' is unverified for recovery" \
     "an unverified harness should not let a dead endpoint become actionable"
-  [ ! -s "$log" ] || fail "an unverified harness must never trigger kill or relaunch: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an unverified harness"
   pass "sweep: an unverified harness blocks recovery with a concrete diagnostic"
 }
 
