@@ -253,7 +253,9 @@ test_herdr_legacy_meta_self_repair_and_recycled_pane_refusal() {
   cat > "$dir/fakebin/herdr" <<'SH'
 #!/usr/bin/env bash
 if [ "$1" = pane ] && [ "$2" = get ]; then
-  printf '{"result":{"pane":{"label":"%s"}}}\n' "${FM_TEST_HERDR_PANE_LABEL:?}"
+  # Realistic pane object: verification gates on pane_id match (recycled-pane
+  # safety), so echo the requested pane id back with the configured label.
+  printf '{"result":{"pane":{"pane_id":"%s","label":"%s"}}}\n' "$3" "${FM_TEST_HERDR_PANE_LABEL:?}"
   exit 0
 fi
 exit 1
