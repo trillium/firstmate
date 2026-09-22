@@ -364,6 +364,25 @@ fm_lock_mid_acquire_is_fresh() {
   return 1
 }
 
+# A lock path is a symlink to an owner directory, so a lock path that is
+# neither a symlink nor a directory is never a legitimate live lock - it is
+# garbage left behind by a process that opened the path as a plain file
+# (observed: an out-of-repo bridge holding its own flock fd on the path).
+# Reclaim it once it is older than the staleness window so waiters stop
+# spinning on it forever; a fresh one is still respected so a mid-acquire
+# window is never stolen. Safe under concurrency: removal only unblocks the
+# normal atomic symlink create below, so racing reclaimers still resolve to
+# exactly one holder.
+fm_lock_reclaim_stale_plain_path() {
+  local lockdir=$1
+  [ -L "$lockdir" ] && return 1
+  [ -d "$lockdir" ] && return 1
+  [ -e "$lockdir" ] || return 1
+  fm_lock_mid_acquire_is_fresh "$lockdir" "" && return 1
+  rm -f "$lockdir" 2>/dev/null || true
+  return 0
+}
+
 fm_lock_recheck_stale_owner() {
   local lockdir=$1 expected_owner=$2 expected_pid=$3 actual_pid
   if [ -n "$expected_owner" ]; then
@@ -388,6 +407,13 @@ fm_lock_try_acquire() {
   FM_LOCK_OWNER_DIR=
 
   if fm_lock_try_create "$lockdir"; then
+    return 0
+  fi
+
+  # A stale plain file (or other non-directory, non-symlink path) at the lock
+  # path can never become a live lock on its own; reclaim it and take the
+  # normal atomic create path so racing reclaimers still yield one holder.
+  if fm_lock_reclaim_stale_plain_path "$lockdir" && fm_lock_try_create "$lockdir"; then
     return 0
   fi
 
