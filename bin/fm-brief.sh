@@ -99,7 +99,7 @@
 # "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart.
-# Ship briefs begin with a worktree-isolation assertion before the branch step.
+# Ship briefs begin with a worktree-isolation assertion before the branch step, and the branch step fetches first and branches from the freshly fetched remote default branch because a pooled worktree HEAD may be stale.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns approval decisions, so yolo is
@@ -702,13 +702,14 @@ $PARLAY_SECTION
 $HERDR_SECTION
 
 # Setup
-You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
+You are in a disposable git worktree of $REPO, at a detached HEAD.
+That HEAD is not guaranteed to be current - a pooled worktree may have been parked at an older commit - so establish a current base yourself before branching; nothing here is clean-and-current until you make it so.
 
 **Verify isolation before anything else.** Run \`pwd -P\` and \`git rev-parse --show-toplevel\`; both must resolve to the disposable task worktree you were launched in, such as a treehouse pool path or an Orca-managed worktree, not the primary checkout firstmate operates from.
 The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse --git-common-dir\` can help inspect the repo, but they do not prove you are outside the primary checkout.
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
-1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
+1. First action: fetch, then branch from the freshly fetched remote default branch: \`git fetch origin\`, then resolve the default branch with \`git symbolic-ref --quiet --short refs/remotes/origin/HEAD\` (falling back to \`main\`, then \`master\`), then \`git checkout -b fm/$ID origin/<default>\` (for example \`git checkout -b fm/$ID origin/main\`). Do not branch from the worktree's current HEAD without fetching first. Change nothing else to get there: fetch and branch only, never move, overwrite, or discard anything already in the worktree.$SETUP2
 
 # Rules
 $RULE1
