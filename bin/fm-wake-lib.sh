@@ -370,17 +370,35 @@ fm_lock_mid_acquire_is_fresh() {
 # (observed: an out-of-repo bridge holding its own flock fd on the path).
 # Reclaim it once it is older than the staleness window so waiters stop
 # spinning on it forever; a fresh one is still respected so a mid-acquire
-# window is never stolen. Safe under concurrency: removal only unblocks the
-# normal atomic symlink create below, so racing reclaimers still resolve to
-# exactly one holder.
+# window is never stolen. The removal runs under the steal mutex with its
+# guards re-verified after acquisition, so a rival that just created a live
+# lock can never have it unlinked from under it and racing reclaimers still
+# resolve to exactly one holder.
 fm_lock_reclaim_stale_plain_path() {
-  local lockdir=$1
+  local lockdir=$1 steal steal_owner rc
+  steal="$lockdir.steal"
   [ -L "$lockdir" ] && return 1
   [ -d "$lockdir" ] && return 1
   [ -e "$lockdir" ] || return 1
   fm_lock_mid_acquire_is_fresh "$lockdir" "" && return 1
+  if ! fm_lock_try_acquire "$steal"; then
+    return 1
+  fi
+  steal_owner=${FM_LOCK_OWNER_DIR:-}
+  if [ -L "$lockdir" ] || [ -d "$lockdir" ] || [ ! -e "$lockdir" ] || fm_lock_mid_acquire_is_fresh "$lockdir" ""; then
+    fm_lock_release "$steal"
+    FM_LOCK_OWNER_DIR=
+    return 1
+  fi
   rm -f "$lockdir" 2>/dev/null || true
-  return 0
+  rc=1
+  if fm_lock_try_create "$lockdir" "$steal_owner"; then
+    rc=0
+  else
+    FM_LOCK_OWNER_DIR=
+  fi
+  fm_lock_release "$steal"
+  return "$rc"
 }
 
 fm_lock_recheck_stale_owner() {
@@ -411,9 +429,10 @@ fm_lock_try_acquire() {
   fi
 
   # A stale plain file (or other non-directory, non-symlink path) at the lock
-  # path can never become a live lock on its own; reclaim it and take the
-  # normal atomic create path so racing reclaimers still yield one holder.
-  if fm_lock_reclaim_stale_plain_path "$lockdir" && fm_lock_try_create "$lockdir"; then
+  # path can never become a live lock on its own; reclaim it under the steal
+  # mutex so a live lock is never unlinked and racing reclaimers still yield
+  # exactly one holder.
+  if fm_lock_reclaim_stale_plain_path "$lockdir"; then
     return 0
   fi
 
