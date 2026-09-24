@@ -1,7 +1,7 @@
 {
-  "version": 1,
-  "generated": "2026-09-20T00:39:18.588056+00:00",
-  "firstmate_revision": "86c03533",
+  "version": 2,
+  "generated": "2026-09-21T19:37:49.049541+00:00",
+  "firstmate_revision": "ee600600",
   "boundaries": {
     "boundary_1": {
       "name": "Backlog & Task Queue Management",
@@ -325,7 +325,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-groom.sh:261"
+        "bin/fm-groom.sh :: } > \"$DATA/$task_id/brief.md\""
       ],
       "bypass_leaks": []
     },
@@ -557,7 +557,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-bootstrap.sh:320"
+        "bin/fm-bootstrap.sh :: : > \"$STATE/.beads-sync-last\" 2>/dev/null || true"
       ],
       "bypass_leaks": []
     },
@@ -630,7 +630,7 @@
         "fm_lock_acquire_wait"
       ],
       "verified_readers": [
-        "bin/fm-sessionstart-nudge.sh:26"
+        "bin/fm-sessionstart-nudge.sh :: IFS= read -r lock_pid < \"$STATE/.lock\" 2>/dev/null || return 1"
       ],
       "verified_writers": [],
       "bypass_leaks": []
@@ -675,7 +675,7 @@
         "fm_wake_enqueue"
       ],
       "verified_readers": [
-        "bin/fm-session-start.sh:773"
+        "bin/fm-session-start.sh :: [ -s \"$STATE/.wake-queue\" ] && QLEN=$(grep -c . \"$STATE/.wake-queue\" 2>/dev/null || printf '0')"
       ],
       "verified_writers": [],
       "bypass_leaks": [],
@@ -802,7 +802,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-spawn.sh:2816"
+        "bin/fm-spawn.sh :: printf '%s\\n' \"${auth_file##*/}\" > \"$STATE/$ID.grok-turnend-token\""
       ],
       "bypass_leaks": []
     },
@@ -818,7 +818,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-spawn.sh:2881"
+        "bin/fm-spawn.sh :: printf '%s\\n' \"${auth_file##*/}\" > \"$STATE/$ID.kimi-turnend-token\""
       ],
       "bypass_leaks": []
     },
@@ -835,11 +835,11 @@
         "fm_backend_meta_get"
       ],
       "verified_readers": [
-        "bin/fm-spawn.sh:1798"
+        "bin/fm-spawn.sh :: FIRSTMATE_HOME=$(grep '^home=' \"$STATE/$ID.meta\" | cut -d= -f2- || true)"
       ],
       "verified_writers": [
-        "bin/fm-spawn.sh:3038",
-        "bin/fm-spawn.sh:969"
+        "bin/fm-spawn.sh :: mv -f \"$SPAWN_META_TMP\" \"$STATE/$ID.meta\"",
+        "bin/fm-spawn.sh :: } > \"$STATE/$ID.meta\" 2>/dev/null || true"
       ],
       "bypass_leaks": [],
       "keys": [
@@ -888,7 +888,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-spawn.sh:2868"
+        "bin/fm-spawn.sh :: } > \"$STATE/$ID.muse-session\""
       ],
       "bypass_leaks": []
     },
@@ -980,10 +980,10 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-control.sh:945",
-        "bin/fm-control.sh:985",
-        "bin/fm-spawn.sh:2466",
-        "bin/fm-spawn.sh:3273"
+        "bin/fm-control.sh :: \"$ID\" \"$BACKEND\" \"$T\" \"$exit_result\" \"$note_suffix\" >> \"$STATE/$ID.status\"",
+        "bin/fm-control.sh :: \"$ID\" \"$BACKEND\" \"$T\" \"$note_suffix\" >> \"$STATE/$ID.status\"",
+        "bin/fm-spawn.sh :: \"$firstturn_outcome\" \"$firstturn_detail\" \"$META_WINDOW\" >> \"$STATE/$ID.status\"",
+        "bin/fm-spawn.sh :: printf 'failed: %s\\n' \"$1\" >> \"$STATE/$ID.status\""
       ],
       "bypass_leaks": []
     },
@@ -1119,7 +1119,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-groom.sh:264"
+        "bin/fm-groom.sh :: \"$IDEAS_BIN\" note \"$id\" \"fm-groom dispatched as task $task_id (result -> data/$task_id/report.md)\" >/dev/null 2>&1 || true"
       ],
       "bypass_leaks": []
     },
@@ -1137,9 +1137,9 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-push-transition-lib.sh:77",
-        "bin/fm-push-transition-lib.sh:78",
-        "bin/fm-watch.sh:1615"
+        "bin/fm-push-transition-lib.sh :: *) echo 0 > \"$STATE/.heartbeat-streak\" ;;",
+        "bin/fm-push-transition-lib.sh :: heartbeat*) echo $(( $(cat \"$STATE/.heartbeat-streak\" 2>/dev/null || echo 0) + 1 )) > \"$STATE/.heartbeat-streak\" ;;",
+        "bin/fm-watch.sh :: echo $(( $(cat \"$STATE/.heartbeat-streak\" 2>/dev/null || echo 0) + 1 )) > \"$STATE/.heartbeat-streak\""
       ],
       "bypass_leaks": []
     },
@@ -1157,7 +1157,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-supervise-daemon.sh:1567"
+        "bin/fm-supervise-daemon.sh :: _now > \"$STATE/.subsuper-last-housekeep\""
       ],
       "bypass_leaks": []
     },
@@ -1174,10 +1174,10 @@
         "fm_backend_meta_get"
       ],
       "verified_readers": [
-        "bin/fm-update.sh:91"
+        "bin/fm-update.sh :: if [ -f \"$STATE/$id.meta\" ] && grep -qx 'kind=secondmate' \"$STATE/$id.meta\"; then"
       ],
       "verified_writers": [
-        "bin/fm-remote-launch.sh:464"
+        "bin/fm-remote-launch.sh :: } > \"$STATE/$id.meta\""
       ],
       "bypass_leaks": []
     },
@@ -1195,7 +1195,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-spawn.sh:2754"
+        "bin/fm-spawn.sh :: cat > \"$STATE/$ID.pi-ext.ts\" <<EOF"
       ],
       "bypass_leaks": []
     },
@@ -1213,7 +1213,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-spawn.sh:3297"
+        "bin/fm-spawn.sh :: echo $! > \"$STATE/$ID.parlay-listen-pid\" 2>/dev/null \\"
       ],
       "bypass_leaks": []
     },
@@ -1231,7 +1231,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-watch.sh:535"
+        "bin/fm-watch.sh :: echo \"$fails\" > \"$STATE/.staleness-fails-$key\""
       ],
       "bypass_leaks": []
     },
@@ -1249,7 +1249,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-watch.sh:540"
+        "bin/fm-watch.sh :: echo \"$(( $(date +%s) + backoff ))\" > \"$STATE/.staleness-next-$key\""
       ],
       "bypass_leaks": []
     },
@@ -1267,8 +1267,8 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-watch.sh:576",
-        "bin/fm-watch.sh:666"
+        "bin/fm-watch.sh :: printf '%s' \"$h\" > \"$STATE/.stale-$key\"",
+        "bin/fm-watch.sh :: printf '%s' \"$h\" > \"$STATE/.stale-$key\" #2"
       ],
       "bypass_leaks": []
     },
@@ -1286,8 +1286,8 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-watch.sh:577",
-        "bin/fm-watch.sh:671"
+        "bin/fm-watch.sh :: : > \"$STATE/.paused-$key\"",
+        "bin/fm-watch.sh :: : > \"$STATE/.paused-$key\" #2"
       ],
       "bypass_leaks": []
     },
@@ -1305,7 +1305,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-watch.sh:672"
+        "bin/fm-watch.sh :: date +%s > \"$STATE/.paused-rechecked-$key\""
       ],
       "bypass_leaks": []
     },
@@ -1323,7 +1323,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-watch.sh:673"
+        "bin/fm-watch.sh :: date +%s > \"$STATE/.paused-resurfaced-$key\""
       ],
       "bypass_leaks": []
     },
@@ -1341,7 +1341,7 @@
       ],
       "verified_readers": [],
       "verified_writers": [
-        "bin/fm-teardown.sh:893"
+        "bin/fm-teardown.sh :: \"${harness:-unknown}\" \"$STALENESS_IDLE_SINCE\" > \"$STATE/$ID.staleness-unfiled\""
       ],
       "bypass_leaks": []
     }
