@@ -50,8 +50,9 @@
 # Hook system: when environment variables like FM_HOOK_BEADS_ID are set, executable
 # scripts in fm-brief-hooks.d/ are sourced in a subshell during scaffolding, and their
 # stdout is prepended to the generated brief. The beads hook (fm-brief-hooks.d/beads.sh)
-# is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt and
-# Bead Closure sections that ask the worker to confirm dispatch/lifecycle state changes
+# is automatically invoked when FM_HOOK_BEADS_ID is set, adding Bead Receipt,
+# Bead Report Landing, and Bead Closure sections that ask the worker to confirm
+# dispatch/lifecycle state changes, land deliverable content in the bead,
 # and close the bead on completion. FM_HOOK_BEADS_ID is never auto-populated here: those
 # worker-facing sections are always added at dispatch by fm-spawn.sh, since a
 # not-yet-spawned task has no worker to act on them, which keeps section injection
@@ -60,7 +61,7 @@
 # the brief is scaffolded, so a task firstmate is aware of but has not yet spawned is
 # represented by an open bead immediately rather than only at dispatch (AGENTS.md
 # sections 7 and 10); the shared home-scoped task:<scope>:<id> idempotency label means
-# fm-spawn.sh's later resolve returns that same bead. The Bead Receipt/Closure section
+# fm-spawn.sh's later resolve returns that same bead. The Bead Receipt/Report Landing/Closure sections
 # only renders when a caller sets FM_HOOK_BEADS_ID explicitly before scaffolding (the
 # pre-existing --beads opt-in path); secondmate charters are exempt.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
@@ -426,7 +427,7 @@ REPO=${POS[1]}
 # idempotent on the home-scoped task:<scope>:<id> label, so fm-spawn.sh's later
 # resolve returns this same bead (never a duplicate) and records it as beads_id=
 # for fm-teardown.sh / fm-ledger.sh to close. FM_HOOK_BEADS_ID is deliberately left
-# unset here: the worker-facing Bead Receipt/Closure sections are added at dispatch by
+# unset here: the worker-facing Bead Receipt/Report Landing/Closure sections are added at dispatch by
 # fm-spawn.sh (a not-yet-spawned task has no worker to act on them), which keeps
 # section injection single-sourced there. An explicit opt-in that already owns
 # the bead link and its sections is exempt, in either shape: the --beads flag
