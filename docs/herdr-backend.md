@@ -80,6 +80,15 @@ The pin wins verbatim over the derived mate-naming-convention label on every spa
 An absent file, an empty file, or a file holding only whitespace leaves the derived label in force, so homes without a pin behave exactly as before.
 Only the first line counts and outer whitespace is trimmed, so editor-added newlines never become part of the label and emoji pins such as `1M-👑` survive verbatim.
 
+## Visible pane naming
+
+Herdr pane labels are display-only and never decide placement, lookup, ownership, or cleanup.
+An owner pane shows the active harness plus its role and a crown, for example `Pi Firstmate 👑` and `Pi TalonMate 👑`.
+A subordinate worker pane never uses a crown and shows the active harness plus its linked task identifier, for example `Pi · task-d6376`.
+Firstmate applies these labels automatically when it creates a managed pane and when it arranges its own launcher pane during a spawn, and it preserves any captain-set pane label it does not recognize instead of overwriting it.
+Labeling never moves focus or placement and never changes the `fm-<id>` tab identity that recovery reads.
+The executable owner is `bin/backends/herdr.sh` (`fm_backend_herdr_ensure_pane_label` with the `fm_backend_herdr_owner_pane_label` and `fm_backend_herdr_worker_pane_label` constructors), wired in at `bin/fm-spawn.sh`'s herdr branch, with behavioral coverage in `tests/fm-backend-herdr-pane-labels.test.sh`.
+
 ## Presentation spaces
 
 Each new crewmate or scout is placed in a disposable one-task workspace by default, on Herdr 0.8.0 and newer.
