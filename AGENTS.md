@@ -579,6 +579,7 @@ These skills are not captain-invocable; load them only at their precise triggers
 - `firstmate-coding-guidelines` - load before changing firstmate's shared, tracked material, as defined by section 1's list, whether editing directly or briefing a crewmate for a firstmate-repo task.
 - `night-ops-directive` - load when the captain authorizes autonomous, unattended, or overnight work across a backlog or federated task store, or when reconciling that a standing autonomous-dispatch directive is still active.
 - `coderabbit-pr-gate` - load before treating a public registered repo's PR as ready to merge or teardown when CodeRabbit is enabled on it, and whenever a CodeRabbit review comment or rate-limit response needs a reaction.
+- `workspace-cleanup` - load when the captain invokes `/workspace-cleanup` or asks to clean discarded herdr spaces.
 
 ## 14. Relay
 
