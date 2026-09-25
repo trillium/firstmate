@@ -1,156 +1,235 @@
 #!/usr/bin/env bash
-# fm-mini1-healthcheck.sh — dev-space readiness check for mini1
+# Health check for mini1 firstmate satellite home.
 #
-# WHAT IT IS
-# ----------
-# A point-in-time health check that confirms mini1 has everything needed to
-# take over as the captain's primary dev space. It checks the four gaps found
-# during the September 2026 mini1 inventory (gh auth, Claude credential,
-# juggle/ccjuggler, disk), plus the services fm-remote-doctor.sh already
-# covers (beads stores, herdr, key harnesses).
+# Usage:
+#   bin/fm-mini1-healthcheck.sh [--fix]
 #
-# HOW TO USE IT
-# -------------
-# Run locally on mini1:
-#   ~/code/firstmate/bin/fm-mini1-healthcheck.sh
+# Verifies that mini1's dev environment has all required tools, stores, and
+# credentials. Reports one fact per line in a stable format; exit code 0 only
+# when all gating checks pass.
 #
-# Run from the MacBook over SSH:
-#   ssh mini1 '~/code/firstmate/bin/fm-mini1-healthcheck.sh'
-#
-# HOW TO FIX GAPS (in priority order)
-# ------------------------------------
-# 1. gh auth MISSING
-#    Run on mini1:  gh auth login
-#    (blocks all PR pushes and crewmate GitHub operations from mini1)
-#
-# 2. Claude credential MISSING
-#    Run on MacBook:  scp ~/.claude/.credentials.json mini1:~/.claude/.credentials.json
-#    (Claude Code sessions won't authenticate without this file)
-#
-# 3. juggle MISSING
-#    Run on MacBook:
-#      ssh mini1 'mkdir -p ~/code/juggle ~/.local/bin'
-#      scp ~/code/juggle/accounts.json mini1:~/code/juggle/accounts.json
-#      scp ~/.local/bin/juggle mini1:~/.local/bin/juggle
-#    (parlay token resolution for primary account fails without juggle)
-#
-# 4. Disk full
-#    Run on mini1:  brew cleanup && brew autoremove
-#    (mini1 was at 100% / 1.6G free in September 2026 inventory)
-#
-# 5. fm-remote-doctor gaps (beads unreachable, herdr down, etc.)
-#    Run:  ~/code/firstmate/bin/fm-remote-doctor.sh
-#    Each reported gap includes its own fix command.
+# Line protocol:
+#   tool <name>=<path>|MISSING
+#   store <name>=ok|UNREACHABLE
+#   credential <name>=present|MISSING
+#   disk <mount>=<used>/<total>|<% used>
+#   check <name>=ok|fixable|human|info
+#   action: <check>: <step to take>
+#   error: <message> (stderr only)
+#   ok: all checks passed (success only)
+set -eu
 
-set -euo pipefail
+SCRIPT_SELF=${BASH_SOURCE[0]}
+SCRIPT_DIR=${SCRIPT_SELF%/*}
+[ "$SCRIPT_DIR" != "$SCRIPT_SELF" ] || SCRIPT_DIR=.
+SCRIPT_DIR=$(CDPATH='' cd -- "$SCRIPT_DIR" && pwd -P)
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 
-PASS="ok"
-FAIL="MISSING"
-WARN="warn"
+MODE=check
+case "${1:-}" in
+  '') ;;
+  --fix) MODE=fix; shift ;;
+  *) { printf 'Usage: %s [--fix]\n' "$0" >&2; exit 2; }
+esac
+[ "$#" -eq 0 ] || { printf 'Usage: %s [--fix]\n' "$0" >&2; exit 2; }
 
-pass() { printf "  %-30s %s\n" "$1" "$PASS"; }
-fail() { printf "  %-30s %s\n" "$1" "$FAIL"; FAILED=1; }
-warn() { printf "  %-30s %s  (%s)\n" "$1" "$WARN" "$2"; }
+CHECKS=()
+ACTIONS=()
+GAPS=()
+PLATFORM=$(uname -s)
 
-FAILED=0
+record_check() { # <name> <status>
+  CHECKS+=("$1=$2")
+}
 
-echo ""
-echo "=== mini1 dev-space health check ==="
-echo ""
+record_action() { # <check> <action>
+  ACTIONS+=("$1: $2")
+}
 
-# --- 1. GitHub auth ---
-echo "-- GitHub auth"
-if gh auth status 2>&1 | grep -q "✓ Logged"; then
-  pass "gh auth"
-elif gh auth status 2>&1 | grep -q "X Failed"; then
-  fail "gh auth (token invalid — run: gh auth login)"
-else
-  fail "gh auth (not configured — run: gh auth login)"
-fi
-echo ""
+# --- tools -----------------------------------------------------------------
 
-# --- 2. Claude Code credential ---
-echo "-- Claude Code credential"
-CRED="$HOME/.claude/.credentials.json"
-if [[ -f "$CRED" ]]; then
-  if python3 -c "import json,sys; d=json.load(open('$CRED')); assert d.get('claudeAiOauth')" 2>/dev/null; then
-    pass ".credentials.json (claudeAiOauth present)"
+check_tool() { # <name>
+  if resolved=$(command -v "$1" 2>/dev/null) && [ -x "$resolved" ]; then
+    printf 'tool %s=%s\n' "$1" "$resolved"
+    return 0
   else
-    warn ".credentials.json" "present but claudeAiOauth key missing"
+    printf 'tool %s=MISSING\n' "$1"
+    return 1
   fi
-else
-  fail ".credentials.json (run from MacBook: scp ~/.claude/.credentials.json mini1:~/.claude/.credentials.json)"
-fi
-echo ""
+}
 
-# --- 3. juggle / ccjuggler ---
-echo "-- juggle (ccjuggler account switcher)"
-JUGGLE_ACCOUNTS="$HOME/code/juggle/accounts.json"
-if [[ -f "$JUGGLE_ACCOUNTS" ]]; then
-  ACCTS=$(python3 -c "import json,sys; [print('  account:', a['name']) for a in json.load(open('$JUGGLE_ACCOUNTS')).get('accounts',[])]" 2>/dev/null || echo "  (parse error)")
-  pass "accounts.json"
-  echo "$ACCTS"
-else
-  fail "accounts.json (copy from MacBook: scp ~/code/juggle/accounts.json mini1:~/code/juggle/accounts.json)"
-fi
-if [[ -f "$HOME/.local/bin/juggle" ]]; then
-  pass "juggle binary"
-else
-  fail "juggle binary (copy from MacBook: scp ~/.local/bin/juggle mini1:~/.local/bin/juggle)"
-fi
-echo ""
+# --- stores and credentials ------------------------------------------------
 
-# --- 4. Disk space ---
-echo "-- Disk space"
-FREE_BYTES=$(df -k "$HOME" | awk 'NR==2 {print $4}')
-FREE_GB=$(echo "scale=1; $FREE_BYTES / 1048576" | bc 2>/dev/null || echo "?")
-FREE_DISPLAY=$(df -h "$HOME" | awk 'NR==2 {print $4, "free (" $5, "used)"}')
-if (( FREE_BYTES < 5242880 )); then  # < 5 GB
-  fail "disk: $FREE_DISPLAY  (run: brew cleanup && brew autoremove)"
-elif (( FREE_BYTES < 20971520 )); then  # < 20 GB
-  warn "disk" "$FREE_DISPLAY — getting low"
-else
-  pass "disk ($FREE_DISPLAY)"
-fi
-echo ""
-
-# --- 5. Key harnesses / CLI tools ---
-echo "-- Harnesses and CLI tools"
-for tool in claude opencode herdr parlay bun node go; do
-  if command -v "$tool" &>/dev/null; then
-    pass "$tool"
+check_beads_store() {
+  local store="${HOME:-}/data/tasks/.beads"
+  if [ ! -d "$store" ]; then
+    printf 'store beads=UNREACHABLE (no .beads directory)\n'
+    return 1
+  fi
+  if ! command -v task >/dev/null 2>&1 && ! command -v bd >/dev/null 2>&1; then
+    printf 'store beads=UNREACHABLE (no task or bd CLI)\n'
+    return 1
+  fi
+  if task list >/dev/null 2>&1; then
+    printf 'store beads=ok\n'
+    return 0
   else
-    fail "$tool"
+    printf 'store beads=UNREACHABLE (task list failed)\n'
+    return 1
   fi
-done
-echo ""
+}
 
-# --- 6. Beads federated stores ---
-echo "-- Federated stores (beads)"
-for store in task brain friction ideas; do
-  if $store list 2>/dev/null | head -1 &>/dev/null; then
-    pass "$store store"
+check_claude_credential() {
+  if [ -f "${HOME:-}/.claude/.credentials.json" ]; then
+    printf 'credential claude=present\n'
+    return 0
   else
-    fail "$store store (is Dolt running? check: ps aux | grep dolt)"
+    printf 'credential claude=MISSING\n'
+    return 1
   fi
-done
-echo ""
+}
 
-# --- 7. fm-remote-doctor (covers herdr, GUI session, launch agent, entrypoint) ---
-echo "-- fm-remote-doctor"
-DOCTOR="$HOME/code/firstmate/bin/fm-remote-doctor.sh"
-if [[ -x "$DOCTOR" ]]; then
-  "$DOCTOR" 2>&1 | grep -E "ok:|fixable:|gap:|MISSING|ERROR" | sed 's/^/  /' || true
-else
-  warn "fm-remote-doctor.sh" "not found at $DOCTOR"
-fi
-echo ""
+check_gh_auth() {
+  if gh auth status >/dev/null 2>&1; then
+    local status
+    status=$(gh auth status 2>&1 || true)
+    printf 'credential gh=present (%s)\n' "$(echo "$status" | head -1)"
+    return 0
+  else
+    printf 'credential gh=MISSING\n'
+    return 1
+  fi
+}
 
-# --- Summary ---
-echo "=== Summary ==="
-if [[ $FAILED -eq 0 ]]; then
-  echo "  All checks passed. mini1 is ready for dev handoff."
-else
-  echo "  One or more checks FAILED. Fix the MISSING items above before handing off dev work."
-fi
-echo ""
+# --- disk space -----------------------------------------------------------
+
+check_disk() {
+  local home="${HOME:-~}" used total percent line
+  if ! line=$(df -h "$home" 2>/dev/null | tail -1); then
+    printf 'disk %s=UNKNOWN\n' "$home"
+    return 1
+  fi
+  used=$(printf '%s' "$line" | awk '{print $3}')
+  total=$(printf '%s' "$line" | awk '{print $2}')
+  percent=$(printf '%s' "$line" | awk '{print $5}')
+  printf 'disk %s=%s/%s (%s)\n' "$home" "$used" "$total" "$percent"
+  # Warn if >85%
+  percent_num=${percent%%%}
+  [ "$percent_num" -lt 85 ] && return 0
+  record_check disk-space "fixable: over 85% full"
+  record_action disk-space "clean up or expand storage; current usage is $used/$total ($percent)"
+  return 1
+}
+
+# --- required tools --------------------------------------------------------
+
+check_required_tools() {
+  local missing=() tool
+  local required_tools=(git jq herdr tasks-axi)
+  local harness_tools=(claude codex herdr pi opencode grok kimi)
+
+  for tool in "${required_tools[@]}"; do
+    check_tool "$tool" || missing+=("$tool")
+  done
+
+  # At least one harness required
+  local found_harness=0
+  for tool in "${harness_tools[@]}"; do
+    if check_tool "$tool" >/dev/null 2>&1; then
+      found_harness=1
+      break
+    fi
+  done
+  [ "$found_harness" -eq 1 ] || missing+=(harness)
+
+  [ "${#missing[@]}" -eq 0 ] && return 0
+  GAPS+=("missing-tools: ${missing[*]}")
+  return 1
+}
+
+# --- optional tools and extras ------------------------------------------
+
+check_optional_tools() {
+  local optional=(tmux no-mistakes npm)
+  for tool in "${optional[@]}"; do
+    check_tool "$tool" || true
+  done
+}
+
+check_juggle() {
+  local juggle_repo="${HOME:-}/code/juggle" juggle_bin="${HOME:-}/.local/bin/juggle"
+  if [ -d "$juggle_repo" ]; then
+    printf 'repo juggle=%s\n' "$juggle_repo"
+  else
+    printf 'repo juggle=MISSING\n'
+  fi
+  if [ -x "$juggle_bin" ]; then
+    printf 'tool juggle=%s\n' "$juggle_bin"
+  elif command -v juggle >/dev/null 2>&1; then
+    printf 'tool juggle=%s\n' "$(command -v juggle)"
+  else
+    printf 'tool juggle=MISSING\n'
+  fi
+}
+
+# --- credential checks ------------------------------------------------
+
+check_credentials() {
+  local missing=()
+  check_claude_credential || missing+=(claude)
+  check_gh_auth || missing+=(gh)
+  check_beads_store || missing+=(beads)
+  [ "${#missing[@]}" -eq 0 ] && return 0
+  record_check credentials "fixable: missing ${missing[*]}"
+  record_action credentials "see Firstmate docs/remote-secondmates.md for setup guidance"
+  GAPS+=("missing-credentials: ${missing[*]}")
+  return 1
+}
+
+# --- aggregate results --------------------------------------------------
+
+report_results() {
+  printf '\n=== SUMMARY ===\n' >&2
+
+  if [ "${#CHECKS[@]}" -gt 0 ]; then
+    for check in "${CHECKS[@]}"; do
+      printf 'check %s\n' "$check"
+    done
+  fi
+
+  if [ "${#ACTIONS[@]}" -gt 0 ]; then
+    printf '\n=== ACTIONS NEEDED ===\n' >&2
+    for action in "${ACTIONS[@]}"; do
+      printf 'action: %s\n' "$action" >&2
+    done
+  fi
+
+  if [ "${#GAPS[@]}" -gt 0 ]; then
+    printf '\nerror: health check found %d blocker(s)\n' "${#GAPS[@]}" >&2
+    for gap in "${GAPS[@]}"; do
+      printf 'error:   %s\n' "$gap" >&2
+    done
+    return 1
+  fi
+
+  printf '\nok: mini1 firstmate health check passed\n'
+  return 0
+}
+
+# --- main ---------------------------------------------------------------
+
+printf '=== Mini1 Firstmate Health Check ===\n' >&2
+printf 'platform=%s\n' "$PLATFORM"
+printf 'home=%s\n' "${FM_HOME:-${FM_ROOT}}"
+
+# Required checks
+check_required_tools || true
+check_credentials || true
+check_disk || true
+
+# Optional and extras
+check_optional_tools || true
+check_juggle || true
+
+# Report
+report_results
