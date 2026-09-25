@@ -22,12 +22,15 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-backend.sh
+. "$SCRIPT_DIR/fm-backend.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -86,7 +89,7 @@ fi
 # records its private 0600 metadata, publishes nothing, and exits 3.
 POLL_ARMING_BLOCKED=0
 "$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || POLL_ARMING_BLOCKED=1
-"$FM_ROOT/bin/fm-guard.sh" || true
+[ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
 
 # pr_head is recorded only when the forge's CLI can supply it. gh exposes the
 # head commit as a selectable field; plain glab exposes it only inside its JSON
@@ -95,13 +98,23 @@ POLL_ARMING_BLOCKED=0
 # bin/fm-teardown.sh reads the head from the forge at teardown rather than from
 # metadata and falls back to its provider-agnostic content check, and
 # bin/fm-review-diff.sh resolves the head from the remote when none is recorded.
-WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
+WT=$(fm_backend_meta_exact_value "$META" worktree 2>/dev/null || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
   if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
+fi
+
+# Determine configured PR gate backend (default: files)
+PR_GATE_BACKEND="files"
+if [ -f "$CONFIG/pr-gate-backend" ]; then
+  val=$(<"$CONFIG/pr-gate-backend")
+  case "$val" in
+    beads-gates) PR_GATE_BACKEND="beads-gates" ;;
+    files|*) PR_GATE_BACKEND="files" ;;
+  esac
 fi
 
 META_TMP=
@@ -117,7 +130,7 @@ pr_check_cleanup() {
 }
 trap pr_check_cleanup EXIT
 trap 'exit 1' HUP INT TERM
-if [ "$POLL_ARMING_BLOCKED" -eq 0 ]; then
+if [ "$PR_GATE_BACKEND" = "files" ] && [ "$POLL_ARMING_BLOCKED" -eq 0 ]; then
   fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
     || { echo "error: could not prepare PR poll" >&2; exit 1; }
 fi
@@ -159,6 +172,18 @@ META_LOCK_HELD=0
 if [ "$POLL_ARMING_BLOCKED" -ne 0 ]; then
   echo "error: merge poll NOT armed for $ID: the PR check migration is blocked; pr= metadata was recorded, so re-arm with bin/fm-watch-arm.sh once that migration is repaired" >&2
   exit 3
+fi
+
+# Under native Beads gates, register gate in Beads and skip legacy shell poll publication
+if [ "$PR_GATE_BACKEND" = "beads-gates" ]; then
+  BEAD_ID=$(fm_backend_meta_exact_value "$META" beads_id 2>/dev/null || true)
+  [ -n "$BEAD_ID" ] || BEAD_ID="$ID"
+  if command -v task >/dev/null 2>&1; then
+    task gate create "$BEAD_ID" --type=gh:pr --target="$URL" \
+      --metadata='{"repo":"'"$PROJECT_PATH"'","pr":'"$NUMBER"',"forge":"'"$PROVIDER"'","pr_head":"'"$PR_HEAD"'"}' >/dev/null 2>&1 || true
+  fi
+  printf 'armed: beads-gate gh:pr (%s)\n' "$ID"
+  exit 0
 fi
 
 fm_pr_poll_publish_prepared || {

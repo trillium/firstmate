@@ -68,6 +68,10 @@ export FM_SPAWN_FIRSTTURN=off
 # need an FM_HOME set it per invocation, which this cannot affect.
 unset FM_HOME
 
+# Pin INBOX_EVENTS_FILE away from ambient ~/data/inbox/events.jsonl so developer
+# machines do not leak unconfigured inbox store-event warnings into tests.
+export INBOX_EVENTS_FILE="${INBOX_EVENTS_FILE:-/nonexistent/inbox/events.jsonl}"
+
 # Resolve the repo root from this library's own location. Consumed by sourcing
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
@@ -377,4 +381,194 @@ assert_absent() {
 # assert_present <path> <msg>: path must exist.
 assert_present() {
   [ -e "$1" ] || fail "$2"
+}
+
+# --- beads test fixtures ---------------------------------------------------
+
+# fm_test_beads_setup <root_dir>
+# Sets up an isolated, hermetic mock Beads/Dolt environment in <root_dir>/fakebin
+# and <root_dir>/beads_store, prepending fakebin to PATH and exporting FM_BEADS_TEST_DIR.
+fm_test_beads_setup() {
+  local root=$1 fakebin store
+  fakebin=$(fm_fakebin "$root")
+  store="$root/beads_store"
+  mkdir -p "$store"
+  export FM_BEADS_TEST_DIR="$store"
+
+  cat > "$fakebin/task" <<'PYTHON_TASK'
+#!/usr/bin/env python3
+import sys, os, json, argparse
+from pathlib import Path
+
+store_dir = Path(os.environ.get("FM_BEADS_TEST_DIR", "/tmp/beads_store"))
+store_dir.mkdir(parents=True, exist_ok=True)
+
+mem_file = store_dir / "memories.json"
+entities_file = store_dir / "entities.json"
+gates_file = store_dir / "gates.json"
+tasks_file = store_dir / "tasks.json"
+
+def load_json(p, default):
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            return default
+    return default
+
+def save_json(p, data):
+    p.write_text(json.dumps(data, indent=2))
+
+if len(sys.argv) < 2:
+    sys.exit(0)
+
+cmd = sys.argv[1]
+
+if cmd == "remember":
+    text = sys.argv[2] if len(sys.argv) > 2 else ""
+    key = ""
+    for arg in sys.argv[3:]:
+        if arg.startswith("--key="):
+            key = arg.split("=", 1)[1]
+    mems = load_json(mem_file, {})
+    if key:
+        mems[key] = text
+    save_json(mem_file, mems)
+    sys.exit(0)
+
+elif cmd == "recall":
+    key = sys.argv[2] if len(sys.argv) > 2 else ""
+    mems = load_json(mem_file, {})
+    if key in mems:
+        print(mems[key])
+        sys.exit(0)
+    sys.exit(1)
+
+elif cmd == "memories":
+    mems = load_json(mem_file, {})
+    if "--json" in sys.argv:
+        print(json.dumps([{"key": k, "content": v} for k, v in mems.items()]))
+    else:
+        for k, v in mems.items():
+            print(f"{k}: {v}")
+    sys.exit(0)
+
+elif cmd == "forget":
+    key = sys.argv[2] if len(sys.argv) > 2 else ""
+    mems = load_json(mem_file, {})
+    if key in mems:
+        del mems[key]
+        save_json(mem_file, mems)
+    sys.exit(0)
+
+elif cmd == "create":
+    title = sys.argv[2] if len(sys.argv) > 2 else ""
+    itype = "task"
+    labels = []
+    metadata = {}
+    for arg in sys.argv[3:]:
+        if arg.startswith("--type="):
+            itype = arg.split("=", 1)[1]
+        elif arg.startswith("--labels="):
+            labels = [l.strip() for l in arg.split("=", 1)[1].split(",")]
+        elif arg.startswith("--metadata="):
+            try:
+                metadata = json.loads(arg.split("=", 1)[1])
+            except Exception:
+                pass
+    
+    target_f = entities_file if itype == "entity" else tasks_file
+    items = load_json(target_f, [])
+    item_id = f"{itype}-{len(items)+1}"
+    item = {
+        "id": item_id,
+        "title": title,
+        "type": itype,
+        "labels": labels,
+        "metadata": metadata,
+        "status": "ready"
+    }
+    items.append(item)
+    save_json(target_f, items)
+    print(item_id)
+    sys.exit(0)
+
+elif cmd == "list":
+    target_labels = []
+    as_json = "--json" in sys.argv
+    i = 2
+    while i < len(sys.argv):
+        if sys.argv[i] == "--label" and i + 1 < len(sys.argv):
+            target_labels.append(sys.argv[i+1])
+            i += 2
+        elif sys.argv[i].startswith("--label="):
+            target_labels.append(sys.argv[i].split("=", 1)[1])
+            i += 1
+        else:
+            i += 1
+    
+    all_items = load_json(entities_file, []) + load_json(tasks_file, [])
+    matched = []
+    for item in all_items:
+        match = True
+        for tl in target_labels:
+            if tl not in item.get("labels", []):
+                match = False
+                break
+        if match:
+            matched.append(item)
+    
+    if as_json:
+        print(json.dumps(matched))
+    else:
+        for item in matched:
+            print(f"{item['id']}\t{item['title']}")
+    sys.exit(0)
+
+elif cmd == "gate":
+    sub = sys.argv[2] if len(sys.argv) > 2 else ""
+    if sub == "create":
+        bead_id = sys.argv[3] if len(sys.argv) > 3 else ""
+        gtype = ""
+        target = ""
+        meta = {}
+        for arg in sys.argv[4:]:
+            if arg.startswith("--type="):
+                gtype = arg.split("=", 1)[1]
+            elif arg.startswith("--target="):
+                target = arg.split("=", 1)[1]
+            elif arg.startswith("--metadata="):
+                try:
+                    meta = json.loads(arg.split("=", 1)[1])
+                except Exception:
+                    pass
+        gates = load_json(gates_file, [])
+        gate_id = f"gate-{len(gates)+1}"
+        gates.append({
+            "id": gate_id,
+            "bead_id": bead_id,
+            "type": gtype,
+            "target": target,
+            "metadata": meta,
+            "status": "pending"
+        })
+        save_json(gates_file, gates)
+        print(gate_id)
+        sys.exit(0)
+    elif sub == "check":
+        sys.exit(0)
+    elif sub == "list":
+        gates = load_json(gates_file, [])
+        if "--json" in sys.argv:
+            print(json.dumps(gates))
+        else:
+            for g in gates:
+                print(f"{g['id']}\t{g['bead_id']}\t{g['status']}")
+        sys.exit(0)
+
+sys.exit(0)
+PYTHON_TASK
+  chmod +x "$fakebin/task"
+  cp "$fakebin/task" "$fakebin/bd"
+  export PATH="$fakebin:$PATH"
 }

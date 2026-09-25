@@ -69,6 +69,9 @@ config/persona.md    local captain-facing voice override; LOCAL, gitignored; abs
 config/crew-dispatch.json  optional crewmate dispatch profiles; LOCAL, gitignored; firstmate-maintained but human-editable natural-language rules that choose a per-task harness/model/effort profile (section 4). Inherited by secondmate homes
 config/secondmate-harness  harness the PRIMARY uses to launch SECONDMATE agents, optionally followed by a model and effort token on the same line ("<harness> [<model>] [<effort>]"; section 4); LOCAL, gitignored; absent or "default" harness falls back to config/crew-harness then firstmate's own. The primary's own setting; NOT inherited into secondmate homes (secondmates do not spawn secondmates)
 config/backlog-backend  backlog backend override; LOCAL, gitignored; absent or "tasks-axi" = default tasks-axi backend, "manual" = force routine backlog updates to hand-editing, "beads" = use beads federated task store; inherited by secondmate homes (section 10)
+config/memory-backend   domain memory and learnings backend override; LOCAL, gitignored; absent or "beads" = canonical Beads memories with dual-write file projections, "files" = legacy file-only persistence (Boundary 15; docs/configuration.md)
+config/projects-backend project registry backend override; LOCAL, gitignored; absent or "beads" = Project Entity Beads with read-through fallback, "files" = legacy data/projects.md file (Boundary 14; docs/configuration.md)
+config/pr-gate-backend  PR merge checking backend override; LOCAL, gitignored; absent or "beads-gates" = native Beads forge gates, "files" = legacy .check.sh polling (Boundary 10; docs/configuration.md)
 config/backend  runtime session-provider backend override for new tasks; LOCAL, gitignored; absent = falls through to runtime auto-detection (the runtime firstmate itself is executing inside), then tmux; tmux is the verified reference backend (docs/tmux-backend.md), while herdr, zellij, orca, and cmux are experimental spawn backends (docs/herdr-backend.md, docs/zellij-backend.md, docs/orca-backend.md, docs/cmux-backend.md) - herdr and cmux can also be selected by runtime auto-detection, zellij and orca never are (always explicit), and codex-app is not accepted; see docs/codex-app-backend.md; inherited by secondmate homes under the primary-authoritative contract in secondmate-provisioning
 config/calm     Pi Calm presentation preference; LOCAL, gitignored, and not inherited; see docs/configuration.md "Pi Calm preference"
 config/startup-memory-budget     primary-authoritative per-home startup-memory budget; LOCAL, gitignored, materialized as 7,500 estimated tokens by locked primary bootstrap and inherited into secondmate homes; see docs/configuration.md "Startup memory budget"
@@ -94,6 +97,7 @@ projects/            cloned repos; gitignored; read-only except under hard rule 
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
+  <id>.suspended     parent-owned durable secondmate park record, written by fm-control `suspend` (docs/agent-control.md "Secondmate suspend and resume"); exempts the home from liveness recovery and watcher reclaim, removed by `resume` or by teardown
   <id>.grok-turnend-token   firstmate-owned grok hook registry token for the task; removed by teardown
   <id>.staleness-unfiled   written by fm-teardown.sh's --staleness-autoclose reclaim only when filing the triage bead failed, before <id>.meta is removed; records the preserved worktree, branch, and project so the location is never lost
   <id>.kimi-turnend-token   firstmate-owned Kimi hook registry token for the task; removed by teardown
@@ -318,7 +322,7 @@ A persistent secondmate is recorded in the secondmate registry and runtime state
 Steer a worker with short single-line messages through fail-closed `fm-send`; put long instructions in a file.
 When a steer answers an open keyed decision or blocker, pass `fm-send`'s `--resolve-key` so the answer itself closes that decision record at answer time, identically for local and remote workers (contract: `bin/fm-send.sh` header).
 `fm-send` is the data plane for text the worker should read; never use its key or text paths for interrupt, exit, or other lifecycle control, because routing-marked lifecycle text becomes chat the worker reasons about instead of executing.
-Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which owns the per-runtime mechanics, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](docs/agent-control.md)).
+Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which owns the per-runtime mechanics, verifies each action, and never tears down or discards anything; a persistent secondmate can additionally be parked with `suspend` and restored with `resume` (both secondmate-only and manual) ([`docs/agent-control.md`](docs/agent-control.md)).
 A secondmate's routed reply returns through status or a document pointer, not by firstmate peeking into its chat.
 For the parent-owned correlation, recovery, and escalation contract on marked secondmate requests, see `bin/fm-pending-reply-lib.sh`.
 Supervise all live work under section 8.
@@ -575,6 +579,7 @@ These skills are not captain-invocable; load them only at their precise triggers
 - `firstmate-coding-guidelines` - load before changing firstmate's shared, tracked material, as defined by section 1's list, whether editing directly or briefing a crewmate for a firstmate-repo task.
 - `night-ops-directive` - load when the captain authorizes autonomous, unattended, or overnight work across a backlog or federated task store, or when reconciling that a standing autonomous-dispatch directive is still active.
 - `coderabbit-pr-gate` - load before treating a public registered repo's PR as ready to merge or teardown when CodeRabbit is enabled on it, and whenever a CodeRabbit review comment or rate-limit response needs a reaction.
+- `workspace-cleanup` - load when the captain invokes `/workspace-cleanup` or asks to clean discarded herdr spaces.
 
 ## 14. Relay
 

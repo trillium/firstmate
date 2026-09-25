@@ -261,7 +261,9 @@ SH
   printf '%s\n' "$fakebin"
 }
 
-# make_liveness_tmux <dir>: a controllable tmux stub. FM_TEST_PANE_CMD may be
+# make_liveness_tmux <dir>: a controllable tmux stub. Window lifecycle calls and
+# the keystrokes that actually launch the agent are both logged, so a test can
+# assert what the relaunched secondmate was really started with. FM_TEST_PANE_CMD may be
 # a foreground command, `missing` (readable inventory omits the window), or
 # `unreadable` (both pane and inventory reads fail).
 make_liveness_tmux() {
@@ -293,7 +295,7 @@ case "${1:-}" in
       *) [ -e "${FM_TMUX_CALL_LOG:?}.killed" ] || printf '%s\n' fm-sm1; exit 0 ;;
     esac
     ;;
-  new-window|kill-window)
+  new-window|kill-window|send-keys)
     printf '%s\n' "$*" >> "${FM_TMUX_CALL_LOG:?}"
     [ "${1:-}" = kill-window ] && : > "${FM_TMUX_CALL_LOG}.killed"
     [ "${FM_TEST_FAIL_NEW_WINDOW:-0}" = 1 ] && [ "${1:-}" = new-window ] && exit 1
@@ -331,7 +333,7 @@ new_world() {
 # worktree; a non-git home just makes the unrelated fast-forward sweep log a
 # harmless "not a git repo" skip.
 add_sm_home() {
-  local w=$1 id=$2 window=$3 harness=${4:-claude}
+  local w=$1 id=$2 window=$3 harness=${4:-claude} model=${5:-sonnet}
   local home="$w/$id"
   mkdir -p "$home/bin" "$home/data" "$home/state" "$home/config" "$home/projects"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
@@ -341,6 +343,7 @@ add_sm_home() {
     printf 'window=%s\n' "$window"
     printf 'kind=secondmate\n'
     printf 'harness=%s\n' "$harness"
+    printf 'model=%s\n' "$model"
     printf 'home=%s\n' "$home"
   } > "$w/home/state/$id.meta"
   # The sweep relaunches through a --secondmate spawn, which refuses unless this
@@ -349,6 +352,13 @@ add_sm_home() {
   # meta-driven, so the registry is easy to omit in a fixture and impossible to
   # omit in a home that actually supervises a secondmate.
   fm_register_secondmate "$w/home/data/secondmates.md" "$id" "$home"
+  # Pre-converge inherited config so an already-live secondmate fixture
+  # starts with the primary's configuration already in place.
+  if [ -d "$w/home/config" ]; then
+    cp -R "$w/home/config"/* "$home/config/" 2>/dev/null || true
+  fi
+  printf '7500\n' > "$w/home/config/startup-memory-budget"
+  printf '7500\n' > "$home/config/startup-memory-budget"
 }
 
 run_bootstrap() {  # <fakebin> <home> <pane-cmd> <call-log> [extra env...] -> stdout
@@ -356,6 +366,26 @@ run_bootstrap() {  # <fakebin> <home> <pane-cmd> <call-log> [extra env...] -> st
   PATH="$fb:$BASE_PATH" TMUX='' FM_BACKEND=tmux FM_HOME="$home" \
     FM_TEST_PANE_CMD="$cmd" FM_TMUX_CALL_LOG="$log" \
     env "$@" "$ROOT/bin/fm-bootstrap.sh" 2>&1
+}
+
+# assert_no_kill_or_respawn <log> <what>: the sweep must never have killed or
+# respawned the endpoint. A literal-content reread pointer delivery
+# (send-keys CONFIG_REREAD, owned by b4316bee on the bootstrap convergence
+# path) is allowed: a fresh fixture home always counts as changed on first
+# propagation, so the pointer fires even where recovery is refused. That
+# send-keys is a pointer delivery to a live pane, not recovery: if the sweep
+# touched the endpoint at all, every touch must be the reread pointer.
+assert_no_kill_or_respawn() {
+  local log=$1 what=$2
+  assert_no_grep "kill-window" "$log" "$what must never be killed"
+  assert_no_grep "new-window" "$log" "$what must never be respawned"
+  if [ -s "$log" ]; then
+    assert_grep "CONFIG_REREAD" "$log" \
+      "any touch of $what must be the reread pointer"
+    grep -v "^send-keys" "$log" | grep -q . \
+      && fail "unexpected non-pointer touch of $what: $(cat "$log")" \
+      || true
+  fi
 }
 
 test_sweep_respawns_confirmed_dead_secondmate() {
@@ -367,13 +397,54 @@ test_sweep_respawns_confirmed_dead_secondmate() {
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
 
-  assert_not_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: respawned" \
+  assert_not_contains "$out" "SECONDMATE_LIVENESS:" \
     "a successfully respawned secondmate should be handled silently"
   assert_contains "$(cat "$log")" "kill-window -t =firstmate:=fm-sm1" \
     "the stale endpoint must be killed before respawn (tmux refuses a same-named window over a live one)"
   assert_contains "$(cat "$log")" "new-window" \
     "a confirmed-dead secondmate should actually be relaunched"
   pass "sweep: a confirmed-dead secondmate endpoint is killed and respawned"
+}
+
+test_sweep_respawn_reuses_the_model_recorded_in_the_secondmate_meta() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-recorded-model)
+  # No model token in config/secondmate-harness (this home pinned its
+  # secondmate's model per-spawn), so the only surviving record of the model
+  # deliberately chosen for sm1 is sm1's own durable metadata.
+  add_sm_home "$w" sm1 firstmate:fm-sm1 codex gpt-5
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+
+  assert_not_contains "$out" "SECONDMATE_LIVENESS:" \
+    "a recorded model is a deliberate prior choice, so the respawn should just succeed"
+  assert_contains "$(cat "$log")" "gpt-5" \
+    "the respawned agent must be launched on the model its metadata recorded"
+  assert_grep 'model=gpt-5' "$w/home/state/sm1.meta" \
+    "the reused model must stay recorded so the next respawn can reuse it too"
+  pass "sweep: a respawn reuses the model recorded in the secondmate's own metadata"
+}
+
+test_sweep_refuses_respawn_when_no_model_was_ever_chosen() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-model-default)
+  # "default" is the sentinel a spawn writes when no model was chosen at all;
+  # reusing it would be exactly the implicit default the captain directive bans.
+  add_sm_home "$w" sm1 firstmate:fm-sm1 codex default
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" missing "$log")
+
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: respawn failed" \
+    "a respawn with no chosen model anywhere must refuse loudly, not silently launch a default"
+  assert_contains "$out" "--model is required" \
+    "the refusal should name the missing model rather than a generic failure"
+  assert_not_contains "$(cat "$log")" "new-window" \
+    "a refused respawn must not launch an agent"
+  pass "sweep: a respawn refuses when no model was ever chosen for the secondmate"
 }
 
 test_sweep_leaves_alive_secondmate_untouched() {
@@ -387,12 +458,12 @@ test_sweep_leaves_alive_secondmate_untouched() {
 
   assert_not_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: already-live" \
     "an already-live secondmate should be handled silently"
-  [ ! -s "$log" ] || fail "an already-live secondmate must never be killed or respawned: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an already-live secondmate"
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log" FM_BOOTSTRAP_VERBOSE_FACTS=1)
   assert_contains "$out" "BOOTSTRAP_INFO: secondmate sm1 already live (backend=tmux)" \
     "verbose diagnostics should identify the already-live outcome"
-  [ ! -s "$log" ] || fail "verbose reporting must not touch an already-live secondmate: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an already-live secondmate under verbose reporting"
   pass "sweep: an already-live secondmate is untouched and distinguishable in verbose diagnostics"
 }
 
@@ -441,7 +512,7 @@ test_sweep_never_acts_on_ambiguous_existing_process() {
 
   assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: existing endpoint has ambiguous agent process" \
     "an existing Pi-shaped node process should be reported as ambiguous"
-  [ ! -s "$log" ] || fail "an ambiguous existing process must never trigger kill or relaunch: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an ambiguous existing process"
   pass "sweep: an existing ambiguous Pi process prevents duplicate recovery"
 }
 
@@ -456,7 +527,7 @@ test_sweep_never_acts_on_transient_unreadability() {
 
   assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: endpoint probe unreadable" \
     "a transiently unreadable target should be distinguished from an absent one"
-  [ ! -s "$log" ] || fail "an unreadable target must never trigger kill or relaunch: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an unreadable target"
   pass "sweep: transient target unreadability never licenses recovery"
 }
 
@@ -485,7 +556,7 @@ test_sweep_never_acts_on_unverified_harness_dead_reading() {
 
   assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: recorded harness 'custom-agent' is unverified for recovery" \
     "an unverified harness should not let a dead endpoint become actionable"
-  [ ! -s "$log" ] || fail "an unverified harness must never trigger kill or relaunch: $(cat "$log")"
+  assert_no_kill_or_respawn "$log" "an unverified harness"
   pass "sweep: an unverified harness blocks recovery with a concrete diagnostic"
 }
 
@@ -551,6 +622,8 @@ test_tmux_agent_state_rejects_malformed_targets_before_probe
 test_herdr_agent_state_preserves_husk_classifier
 test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
+test_sweep_respawn_reuses_the_model_recorded_in_the_secondmate_meta
+test_sweep_refuses_respawn_when_no_model_was_ever_chosen
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_respawns_authoritatively_missing_pi_secondmate
 test_sweep_respawns_authoritatively_missing_pi_signed_secondmate

@@ -122,8 +122,8 @@ Sync is best-effort throughout: a failing step is reported as a `BEADS_SYNC:` li
 Best-effort never means silent, though. `task dolt commit` exits 0 whether it committed or found a clean working set, so any non-zero exit is reported as a commit failure on the exit status alone rather than on parsed vendor wording, and a push line can never announce success over writes that are still stranded uncommitted.
 Likewise, a remote listing that cannot be read at all is reported as its own distinct skip rather than as the no-remote line below, since a home that is silently not syncing to a configured remote is the opposite of a home that has none.
 
-Firstmate configures no Dolt remote, because adding one publishes the fleet's task store to that destination and the destination is the captain's decision; with none configured the sweep reports that the store is single-machine only and does nothing else.
-[`docs/beads-sync-topology.md`](beads-sync-topology.md) is the owner of that recommendation, its trade-offs, and the one question the captain answers to enable off-machine durability.
+The approved Dolt remote is the captain's decision: since 2026-09-06 that is `mini1`, and [`bin/fm-beads-remote-backup.sh`](../bin/fm-beads-remote-backup.sh) owns the verify/repair contract the routine sync sweep calls; with none configured the sweep reports that the store is single-machine only and does nothing else.
+[`docs/beads-sync-topology.md`](beads-sync-topology.md) owns that recommendation, its trade-offs, and the decision that enables off-machine durability.
 
 ### Beads resilience layer (state/.beads-mirror-*.json, state/.beads-write-queue)
 
@@ -265,6 +265,27 @@ Fleet-local operational facts and gotchas live locally in `data/learnings.md`; i
 The file is created lazily on first learning and follows the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) aging-tier and cold-archive contract: inspect the current file first and curate it instead of appending forever.
 There is no shared learnings file by captain decision.
 
+## Domain memory backend (config/memory-backend)
+
+The local, gitignored `config/memory-backend` file selects the persistence backend for domain memory and learnings (`data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`).
+Absent or `beads` selects canonical Beads persistent memories (`task remember` and `task recall`) through `bin/fm-memory-lib.sh`, maintaining dual-write projections to the local markdown files.
+`files` selects legacy file-only persistence, reading and writing the markdown files directly.
+Setting `config/memory-backend` to `files` instantly reverts domain memory to file persistence without code changes.
+
+## Project registry backend (config/projects-backend)
+
+The local, gitignored `config/projects-backend` file selects the persistence backend for the project posture registry (`data/projects.md`).
+Absent or `beads` queries Project Entity Beads (`issue_type: entity`, labeled `type:project,project:<slug>`) through `bin/fm-project-mode.sh`, falling back to `data/projects.md` if the entity bead is not found.
+`files` selects legacy file-only persistence, reading `data/projects.md` directly.
+Setting `config/projects-backend` to `files` instantly reverts project posture resolution to file persistence without code changes.
+
+## PR merge gate backend (config/pr-gate-backend)
+
+The local, gitignored `config/pr-gate-backend` file selects the PR merge checking and polling backend.
+Absent or `beads-gates` arms native Beads forge gates (`task gate create --type=gh:pr`) through `bin/fm-pr-check.sh`, recording PR metadata while eliminating generated shell check scripts and sidecars.
+`files` selects legacy file-based polling, generating `state/<id>.check.sh` and `state/<id>.pr-poll` sidecars.
+Setting `config/pr-gate-backend` to `files` instantly reverts PR merge checks to legacy file-based polling.
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.
@@ -355,6 +376,9 @@ When it is absent or contains `default`, crewmates mirror the firstmate's own ha
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
 A bare `<harness>` preserves the previous behavior for effort: harness only, with no effort launch flag.
 `bin/fm-spawn.sh` now REQUIRES an explicit model for every secondmate spawn (its own implicit default is never acceptable), so a bare `<harness>` line with no model token no longer launches on its own; either add a model token here or pass `--model` at spawn time.
+A RESPAWN of a secondmate this home already stood up is the one case that needs neither: when no `--model` is passed and this file carries no model token, the spawn reuses the model recorded in that secondmate's own `state/<id>.meta`, which a prior spawn wrote from a model that was deliberately chosen then.
+A meta recording `model=default` records that no model was ever chosen, so it is not reused and the respawn refuses like any other modelless spawn.
+Without that reuse, `bin/fm-bootstrap.sh`'s liveness sweep could never relaunch a dead secondmate on a home that pins its model per-spawn rather than in this file.
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
 Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).

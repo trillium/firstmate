@@ -13,6 +13,7 @@ metadata:
 Sweep this session for durable knowledge that exists only in conversation, then leave the next session with a compact current operating map rather than an accumulating journal.
 Memory entries are tiered and decay between passes, and stale material retires to a cold archive instead of being deleted.
 This skill writes only through the existing Firstmate ownership and write boundaries.
+When `config/memory-backend=beads`, memory mutations write through `bin/fm-memory-lib.sh` to Beads persistent memories with dual-write projections to local memory files.
 
 ## Memory tiers and entry markers
 

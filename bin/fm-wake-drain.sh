@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Atomically drain durable watcher wake records, optionally annotate validated
-# signal status keys after raw consumption commits, then assert liveness.
+# Atomically drain durable watcher wake records, emit each drained wake's memo
+# identity (bin/fm-wake-memo.sh owns the memo format), optionally annotate
+# validated signal status keys after raw consumption commits, then assert
+# liveness.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-wake-memo.sh
+. "$SCRIPT_DIR/fm-wake-memo.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
@@ -137,6 +141,9 @@ DRAIN_LOCK_HELD=false
 
 # Raw output and queue deletion are authoritative. Everything below is
 # best-effort and cannot restore, duplicate, hide, or fail the consumed rows.
+# The memo emission is the two-phase write's first phase: one pending identity
+# per drained row, with the handling outcome appended later by the handler.
+(memo_emit_drained_identities "$RAW_ROWS") || true
 (fm_wake_print_annotations "$RAW_ROWS") || true
 (print_open_decisions_section) || true
 assert_watcher_liveness

@@ -9,9 +9,10 @@
 # an agent is running, and therefore whether a lifecycle verb may act at all,
 # comes from herdr's own agent registry.
 #
-# No real agent is launched. herdr's `pane report-agent` is the same registry
-# the adapter reads, so registering and not registering an agent on a plain
-# shell pane exercises exactly the classification the control plane gates on.
+# The stale-registration regression seeds Herdr's registry on a plain shell
+# and runs the real relaunch path. The replacement is a real OpenCode process;
+# the follow-up reconciliation call proves that a genuinely live process is
+# never mistaken for the stale shell case.
 #
 # Always runs on a private, named, throwaway lab session, never the default
 # one (tests/herdr-test-safety.sh; the 2026-07-02 incident). Skips cleanly
@@ -19,6 +20,10 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Herdr gives its server login shell to restored panes. Pin a shell without
+# operator startup helpers so the live nested-shell proof is deterministic.
+SHELL=/bin/bash
+export SHELL
 
 fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
@@ -30,18 +35,45 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (required by the her
 . "$ROOT/tests/herdr-test-safety.sh"
 herdr_forget_inherited_pane
 
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
+SCRATCH=$(cd "$SCRATCH" && pwd)
+
+CC_BIN=$(command -v cc 2>/dev/null || command -v gcc 2>/dev/null || command -v clang 2>/dev/null || true)
+[ -n "$CC_BIN" ] || fail "a C compiler (cc, gcc, or clang) is required for the OpenCode smoke binary"
+FAKEBIN="$SCRATCH/fakebin"
+mkdir -p "$FAKEBIN"
+cat > "$SCRATCH/opencode.c" << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+    const char *session = getenv("HERDR_SESSION");
+    const char *pane = getenv("HERDR_PANE_ID");
+    const char *bin = getenv("HERDR_BIN_PATH");
+    if (!bin || !bin[0]) bin = "herdr";
+    if (session && pane) {
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd), "%s pane report-agent %s --session %s --source herdr:opencode-stale --agent opencode --state idle >/dev/null 2>&1", bin, pane, session);
+        (void)system(cmd);
+    }
+    while (1) {
+        sleep(10);
+    }
+    return 0;
+}
+EOF
+"$CC_BIN" -O2 -o "$FAKEBIN/opencode" "$SCRATCH/opencode.c" || fail "could not compile stub opencode executable"
+export PATH="$FAKEBIN:$PATH"
+
 SESSION="fm-lab-control-smoke-$$"
 export HERDR_SESSION="$SESSION"
-SCRATCH=
 cleanup_all() {
   [ -n "$SCRATCH" ] && rm -rf "$SCRATCH"
   herdr_safe_stop_and_delete "$SESSION"
 }
 trap cleanup_all EXIT
 fm_herdr_lab_prepare "$SESSION" || fail "could not prepare isolated Herdr lab session"
-
-SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-control-herdr.XXXXXX")
-SCRATCH=$(cd "$SCRATCH" && pwd)
 HOME_DIR="$SCRATCH/home"
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/data/hsmoke"
 printf '# brief\n' > "$HOME_DIR/data/hsmoke/brief.md"
@@ -76,7 +108,7 @@ EOF
   echo "endpoint_task_id=hsmoke"
   echo "worktree=$WT"
   echo "project=$PROJ"
-  echo "harness=claude"
+  echo "harness=opencode"
   echo "kind=ship"
   echo "mode=no-mistakes"
   echo "yolo=off"
@@ -91,7 +123,8 @@ EOF
 
 run_control() {
   env FM_HOME="$HOME_DIR" HERDR_SESSION="$SESSION" \
-    FM_CONTROL_POLL=0.2 FM_CONTROL_EXIT_WAIT=2 \
+    FM_CONTROL_POLL=0.2 FM_CONTROL_EXIT_WAIT=2 FM_CONTROL_LAUNCH_WAIT=20 \
+    FM_SPAWN_FIRSTTURN=off FM_SPAWN_SKIP_PARLAY=1 \
     "$ROOT/bin/fm-control.sh" "$@" 2>&1
 }
 
@@ -113,37 +146,42 @@ case "$OUT" in
 esac
 pass "real herdr: interrupt refuses when herdr's own agent registry reports no agent"
 
-# --- a registered agent: classification flips, and the verbs follow ---------
+# --- stale official-style registration: clear, then relaunch ---------------
 
-herdr pane report-agent "$PANE_ID" --source fm-control-smoke --agent fm-control-smoke-agent \
-  --state idle --session "$SESSION" >/dev/null 2>&1 \
-  || fail "could not register a live agent on the task pane"
+fm_herdr_lab_cli "$SESSION" pane report-agent "$PANE_ID" \
+  --source herdr:opencode-stale --agent opencode --state idle \
+  >/dev/null 2>&1 \
+  || fail "could not seed a stale OpenCode-style registration on the shell pane"
 
 STATE=$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")
-[ "$STATE" = alive ] || fail "herdr should classify a registered agent as alive, got '$STATE'"
+[ "$STATE" = alive ] || fail "herdr should classify the stale registration as alive, got '$STATE'"
+fm_backend_herdr_pane_shell_foreground_pid "$SESSION" "$PANE_ID" "$WT" >/dev/null \
+  || fail "the stale registration regression must see a shell foreground in the task copy before relaunch: $(fm_herdr_lab_cli "$SESSION" pane process-info --pane "$PANE_ID" 2>&1)"
 
-OUT=$(run_control hsmoke interrupt) || fail "interrupt against a registered agent should succeed: $OUT"
+OUT=$(run_control hsmoke relaunch --note "The previous OpenCode process returned to a shell while Herdr retained its lifecycle registration.") \
+  || fail "relaunch should clear the stale shell registration and start OpenCode: $OUT"
 case "$OUT" in
-  *"interrupt-delivered hsmoke harness=claude backend=herdr verified=agent-alive cancel=unconfirmed"*) : ;;
-  *) fail "interrupt should report the agent-alive proof on herdr, got: $OUT" ;;
+  *"relaunched hsmoke harness=opencode"*) : ;;
+  *) fail "relaunch should report the replacement OpenCode process, got: $OUT" ;;
 esac
-pass "real herdr: interrupt delivers the harness's key and proves the agent survived it"
+STATE=$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")
+[ "$STATE" = alive ] || fail "the replacement OpenCode process should be registered as alive, got '$STATE'"
+pass "real herdr: relaunch clears a stale shell registration before starting OpenCode"
 
-herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
+# The repair is deliberately narrower than an unconditional release: a real
+# foreground OpenCode process must not be treated as a stale shell.
+if fm_backend_herdr_reconcile_stale_agent "$SESSION:$PANE_ID" "$WT"; then
+  fail "stale-agent reconciliation must refuse a genuinely live OpenCode process"
+fi
+[ "${FM_BACKEND_HERDR_RECONCILE_RESULT:-}" = not-stale ] \
+  || fail "live OpenCode protection should report not-stale, got '${FM_BACKEND_HERDR_RECONCILE_RESULT:-unset}'"
+STATE=$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")
+[ "$STATE" = alive ] || fail "live OpenCode protection must leave the registration alive, got '$STATE'"
+pass "real herdr: a genuine live OpenCode process is protected from stale-registration repair"
+
+fm_herdr_lab_cli "$SESSION" pane get "$PANE_ID" >/dev/null 2>&1 \
   || fail "the control plane must never remove the endpoint it was operating on"
 [ -d "$WT" ] || fail "the control plane must never remove the task's local copy"
-pass "real herdr: no control verb removed the endpoint or the task's local copy"
-
-# Last, because it deliberately types a harness command into a pane that hosts
-# a plain shell: the registered agent cannot actually be stopped that way, and
-# the control plane must say so rather than report a stop it did not achieve.
-if OUT=$(run_control hsmoke exit 2>&1); then
-  fail "exit should fail closed when the agent does not stop: $OUT"
-fi
-case "$OUT" in
-  *"did not stop"*) : ;;
-  *) fail "the exit failure should say the agent did not stop, got: $OUT" ;;
-esac
-pass "real herdr: an agent that does not stop fails closed instead of being reported as stopped"
+pass "real herdr: relaunch preserved the endpoint and the task's local copy"
 
 fm_backend_herdr_kill "$SESSION:$PANE_ID" 2>/dev/null || true

@@ -282,6 +282,63 @@ test_workspace_label_different_secondmates_get_different_labels() {
   pass "fm_backend_herdr_workspace_label: two different secondmate homes get two different, non-colliding labels"
 }
 
+# --- workspace_label pin: config/herdr-workspace-label (pin-workspace-labels) ---
+# A pinned home keeps its exact label across every lifecycle path (spawn,
+# relaunch, restart recovery, presentation-space parent lookup): every path
+# resolves through fm_backend_herdr_workspace_label, so pinning that one
+# function pins them all, and nothing ever renames a workspace to match.
+
+test_workspace_label_pin_overrides_primary_default() {
+  local home out
+  home="$TMP_ROOT/pin-primary-home"; mkdir -p "$home/config"
+  printf '1M-\360\237\221\221\n' > "$home/config/herdr-workspace-label"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = $'1M-\360\237\221\221' ] || fail "a pinned primary home should resolve to its exact pin, got '$out'"
+  pass "fm_backend_herdr_workspace_label: a config pin overrides the primary '1M-FIRSTMATE' default"
+}
+
+test_workspace_label_pin_overrides_secondmate_derived() {
+  local home out
+  home="$TMP_ROOT/pin-secondmate-home"; mkdir -p "$home/config"
+  printf 'mcpmate\n' > "$home/.fm-secondmate-home"
+  printf '2M-\360\237\221\221\n' > "$home/config/herdr-workspace-label"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = $'2M-\360\237\221\221' ] || fail "a pinned secondmate home should resolve to its exact pin, got '$out'"
+  pass "fm_backend_herdr_workspace_label: a config pin overrides the derived '2M-<SCOPE>' label"
+}
+
+test_workspace_label_pin_trims_outer_whitespace_and_keeps_first_line() {
+  local home out
+  home="$TMP_ROOT/pin-whitespace-home"; mkdir -p "$home/config"
+  printf '  1M-\360\237\221\221  \nignored-second-line\n' > "$home/config/herdr-workspace-label"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = $'1M-\360\237\221\221' ] || fail "the pin should trim outer whitespace and keep only the first line, got '$out'"
+  pass "fm_backend_herdr_workspace_label: a pin trims outer whitespace and ignores further lines"
+}
+
+test_workspace_label_empty_pin_falls_back_to_derived() {
+  local home out
+  home="$TMP_ROOT/pin-empty-home"; mkdir -p "$home/config"
+  printf '   \n' > "$home/config/herdr-workspace-label"
+  out=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$out" = "1M-FIRSTMATE" ] || fail "an empty pin should fall back to the derived label, got '$out'"
+  pass "fm_backend_herdr_workspace_label: an empty pin falls back to the derived label"
+}
+
+test_workspace_label_pin_stable_across_lifecycle_paths() {
+  local home restart relaunch presentation
+  home="$TMP_ROOT/pin-stable-home"; mkdir -p "$home/config"
+  printf 'mcpmate\n' > "$home/.fm-secondmate-home"
+  printf '2M-\360\237\221\221\n' > "$home/config/herdr-workspace-label"
+  restart=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  relaunch=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  presentation=$( FM_HOME="$home" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_label' "$ROOT" )
+  [ "$restart" = $'2M-\360\237\221\221' ] || fail "restart-path label mismatch: $restart"
+  [ "$relaunch" = $'2M-\360\237\221\221' ] || fail "relaunch-path label mismatch: $relaunch"
+  [ "$presentation" = $'2M-\360\237\221\221' ] || fail "presentation-move-path label mismatch: $presentation"
+  pass "fm_backend_herdr_workspace_label: a pin is stable across restart, relaunch, and presentation-space lookups"
+}
+
 # --- mate_scope: id sanitization and fallback (herdr mate naming convention) --
 
 test_mate_scope_uppercases_plain_id() {
@@ -1530,7 +1587,7 @@ test_projection_close_emptying_after_focus_uses_pane_death_without_move() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","workspace_id":"w2"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   death_process_info_fixture w2:p2 "$bgpid" > "$resp/7.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/8.out"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","active_tab_id":"w1:t1","focused":true},{"workspace_id":"w3","active_tab_id":"w3:t1","focused":false}]}}' > "$resp/9.out"
@@ -1567,7 +1624,7 @@ test_projection_close_emptying_before_focus_repositions_then_uses_pane_death() {
   # shellcheck disable=SC2016 # $defs is a literal JSON Schema key.
   printf '%s\n' '{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["workspace_id","insert_index"],"properties":{"insert_index":{"type":"integer"}}}}}}}' > "$resp/8.out"
   printf '%s\n' '{"sessions":[{"name":"fmtest","running":true,"socket_path":"/tmp/fmtest.sock"}]}' > "$resp/9.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   death_process_info_fixture w1:p1 "$bgpid" > "$resp/10.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/11.out"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w2","active_tab_id":"w2:t1","focused":true},{"workspace_id":"w3","active_tab_id":"w3:t1","focused":false}]}}' > "$resp/12.out"
@@ -1604,7 +1661,7 @@ test_projection_close_emptying_before_last_focus_needs_no_move() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w1:t1","workspace_id":"w1"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   death_process_info_fixture w1:p1 "$bgpid" > "$resp/7.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/8.out"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w2","active_tab_id":"w2:t1","focused":false},{"workspace_id":"w3","active_tab_id":"w3:t1","focused":true}]}}' > "$resp/9.out"
@@ -1636,7 +1693,7 @@ test_projection_close_emptying_last_workspace_needs_no_move() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w3:t1","workspace_id":"w3"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w3:p1","tab_id":"w3:t1"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   death_process_info_fixture w3:p1 "$bgpid" > "$resp/7.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/8.out"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","active_tab_id":"w1:t1","focused":true},{"workspace_id":"w2","active_tab_id":"w2:t1","focused":false}]}}' > "$resp/9.out"
@@ -1667,7 +1724,7 @@ test_projection_close_non_emptying_stays_plain_without_proof_or_move() {
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/6.out"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","active_tab_id":"w1:t1","focused":true},{"workspace_id":"w2","active_tab_id":"w2:t1","focused":false}]}}' > "$resp/7.out"
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w1:t1","focused":true}]}}' > "$resp/8.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   make_death_lab "$dir" "$bgpid"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
@@ -1740,6 +1797,63 @@ test_idle_shell_proof_refuses_a_background_job_on_the_pane_terminal() {
   pass "herdr idle-shell proof: a job on the pane's own terminal, or an ambiguous shell row, still refuses"
 }
 
+foreground_shell_result() {  # <dir> <process-info> <task-dir> [polls]
+  local dir=$1 info=$2 task_dir=$3 polls=${4:-2}
+  mkdir -p "$dir" "$task_dir"
+  ROOT="$ROOT" FM_TEST_PROCESS_INFO="$info" FM_TEST_RESULT_LOG="$dir/result.log" \
+    FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS="$polls" bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    fm_backend_herdr_cli() {
+      printf "%s\n" "$FM_TEST_PROCESS_INFO"
+      printf "read\n" >> "$FM_TEST_RESULT_LOG"
+    }
+    if fm_backend_herdr_pane_shell_foreground_pid fmtest w2:p1 "$1" > "$FM_TEST_RESULT_LOG.pid"; then
+      printf "ok:%s:%s\n" "$FM_BACKEND_HERDR_FOREGROUND_RESULT" "$(cat "$FM_TEST_RESULT_LOG.pid")"
+    else
+      printf "refused:%s\n" "${FM_BACKEND_HERDR_FOREGROUND_RESULT:-unset}"
+    fi
+  ' _ "$task_dir"
+}
+
+test_foreground_shell_proof_accepts_nested_task_shell_only_after_stable_reads() {
+  local dir="$TMP_ROOT/foreground-nested" task_dir=/tmp/task-worktree info out
+  info=$(jq -cn --arg cwd "$task_dir" '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"/bin/zsh",argv:["/bin/zsh"],argv0:"zsh",cmdline:"-zsh",cwd:$cwd}]}}}')
+  out=$(foreground_shell_result "$dir" "$info" "$task_dir")
+  [ "$out" = "ok:shell:200" ] || fail "nested foreground shell was not accepted after stable reads: $out"
+  [ "$(wc -l < "$dir/result.log" | tr -d ' ')" -ge 2 ] \
+    || fail "nested foreground shell proof did not take repeated structured reads"
+  pass "herdr stale-authority proof: accepts a stable nested foreground shell with a distinct pane shell pid"
+}
+
+test_foreground_shell_proof_refuses_live_and_ambiguous_processes() {
+  local dir="$TMP_ROOT/foreground-refusals" task_dir=/tmp/task-worktree info out
+  info=$(jq -cn --arg cwd "$task_dir" '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"opencode",argv:["opencode"],argv0:"opencode",cmdline:"opencode",cwd:$cwd}]}}}')
+  out=$(foreground_shell_result "$dir/live" "$info" "$task_dir" 1)
+  [ "$out" = "refused:agent" ] || fail "a live agent was not refused by stale-authority proof: $out"
+  info=$(jq -cn --arg cwd "$task_dir" '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"python",argv:["python","job"],argv0:"python",cmdline:"python job",cwd:$cwd}]}}}')
+  out=$(foreground_shell_result "$dir/ambiguous" "$info" "$task_dir" 1)
+  [ "$out" = "refused:unsafe" ] || fail "an ambiguous foreground process was not refused: $out"
+  info=$(jq -cn --arg cwd /tmp/other-worktree '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"zsh",argv:["/bin/zsh"],argv0:"zsh",cmdline:"-zsh",cwd:$cwd}]}}}')
+  out=$(foreground_shell_result "$dir/mismatch" "$info" "$task_dir" 1)
+  [ "$out" = "refused:unsafe" ] || fail "a shell in a mismatched directory was accepted: $out"
+  pass "herdr stale-authority proof: live agents, ambiguous processes, and mismatched directories refuse"
+}
+
+test_reconcile_stale_agent_never_clears_live_agent() {
+  local dir="$TMP_ROOT/reconcile-live" task_dir="$TMP_ROOT/task-worktree" info out
+  mkdir -p "$task_dir"
+  info=$(jq -cn --arg cwd "$task_dir" '{result:{type:"pane_process_info",process_info:{pane_id:"w2:p1",shell_pid:100,foreground_process_group_id:200,foreground_processes:[{pid:200,name:"opencode",argv:["opencode"],argv0:"opencode",cmdline:"opencode",cwd:$cwd}]}}}')
+  out=$(ROOT="$ROOT" FM_TEST_PROCESS_INFO="$info" bash -c '
+    . "$ROOT/bin/backends/herdr.sh"
+    fm_backend_herdr_cli() { printf "%s\n" "$FM_TEST_PROCESS_INFO"; }
+    fm_backend_herdr_clear_agent_authority() { printf cleared; return 0; }
+    fm_backend_herdr_reconcile_stale_agent fmtest:w2:p1 "$1"
+    printf ":%s" "${FM_BACKEND_HERDR_RECONCILE_RESULT:-unset}"
+  ' _ "$task_dir" 2>/dev/null || true)
+  [ "$out" = ":not-stale" ] || fail "live agent reconciliation did not refuse without clearing: $out"
+  pass "herdr stale-authority reconciliation: a genuine live agent never reaches the clear operation"
+}
+
 test_projection_close_plain_without_move_requires_structured_removal() {
   local dir log out status
   dir="$TMP_ROOT/close-plain-unconfirmed"; mkdir -p "$dir"
@@ -1778,7 +1892,7 @@ test_projection_close_ambiguous_positions_fall_back_to_plain_close() {
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/8.out"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","active_tab_id":"w1:t1","focused":true}]}}' > "$resp/9.out"
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w1:t1","focused":true}]}}' > "$resp/10.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   make_death_lab "$dir" "$bgpid"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
@@ -1814,7 +1928,7 @@ test_projection_close_move_failure_falls_back_to_plain_close() {
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w2","active_tab_id":"w2:t1","focused":true},{"workspace_id":"w3","active_tab_id":"w3:t1","focused":false}]}}' > "$resp/12.out"
   cp "$resp/12.out" "$resp/13.out"
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t1","focused":true}]}}' > "$resp/14.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   make_death_lab "$dir" "$bgpid"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_HERDR_SCRIPT_STATUS=1 \
@@ -1843,7 +1957,7 @@ test_projection_close_busy_pane_falls_back_to_plain_close() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","workspace_id":"w2"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   # The pane still has a foreground agent, so the idle-shell proof refuses.
   printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w2:p2","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"zsh","argv0":"zsh"},{"pid":99999,"name":"pi","argv0":"pi"}]}}}\n' "$bgpid" "$bgpid" "$bgpid" > "$resp/7.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/9.out"
@@ -1874,7 +1988,7 @@ test_projection_close_transient_prompt_helper_settles_then_uses_pane_death() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","workspace_id":"w2"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   # Sample 1: the shell is transiently redrawing its prompt (real 0.7.5 shape:
   # a helper such as starship rides along as a second foreground process).
   printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w2:p2","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":99998,"name":"starship","argv":["/usr/local/bin/starship","prompt","--continuation"]},{"pid":%s,"name":"zsh","argv0":"zsh"}]}}}\n' "$bgpid" "$bgpid" "$bgpid" > "$resp/7.out"
@@ -1910,7 +2024,7 @@ test_projection_close_death_escalates_sigkill_after_sighup_survival() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","workspace_id":"w2"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  bash -c 'trap "" HUP; sleep 300' & bgpid=$!
+  bash -c 'trap "" HUP; /bin/sleep 300' & bgpid=$!
   death_process_info_fixture w2:p2 "$bgpid" > "$resp/7.out"
   printf '%s\n' '{"error":{"code":"internal_error","message":"transient failure"}}' > "$resp/8.out"
   printf '%s\n' '{"result":{"pane":{"pane_id":"w2:p2"}}}' > "$resp/9.out"
@@ -1946,7 +2060,7 @@ test_projection_close_death_failure_falls_back_to_plain_close() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","workspace_id":"w2"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  bash -c 'trap "" HUP; sleep 300' & bgpid=$!
+  bash -c 'trap "" HUP; /bin/sleep 300' & bgpid=$!
   death_process_info_fixture w2:p2 "$bgpid" > "$resp/7.out"
   printf '%s\n' '{"result":{"pane":{"pane_id":"w2:p2"}}}' > "$resp/8.out"
   printf '%s\n' '{"result":{"pane":{"pane_id":"w2:p2"}}}' > "$resp/9.out"
@@ -1980,7 +2094,7 @@ test_projection_close_death_still_restores_a_stolen_focus() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","workspace_id":"w2"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   death_process_info_fixture w2:p2 "$bgpid" > "$resp/7.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/8.out"
   # The backstop still fires when the post-close snapshot disagrees.
@@ -2015,7 +2129,7 @@ test_projection_close_death_never_sigkills_a_reused_pid() {
   # The original shell survives SIGHUP; by SIGKILL time the pane's process
   # information shows a DIFFERENT shell pid, modeling the original pid having
   # been reused by an unrelated process the pane no longer owns.
-  bash -c 'trap "" HUP; sleep 300' & bgpid=$!
+  bash -c 'trap "" HUP; /bin/sleep 300' & bgpid=$!
   death_process_info_fixture w2:p2 "$bgpid" > "$resp/7.out"
   cp "$resp/3.out" "$resp/8.out"   # SIGHUP poll 1: pane still present
   cp "$resp/3.out" "$resp/9.out"   # SIGHUP poll 2: pane still present
@@ -2059,7 +2173,7 @@ assert_projection_close_failed_removal_rolls_back_the_reposition() {
   # shellcheck disable=SC2016 # $defs is a literal JSON Schema key.
   printf '%s\n' '{"schemas":{"request":{"oneOf":[{"properties":{"method":{"const":"workspace.move"}}}],"$defs":{"WorkspaceMoveParams":{"required":["workspace_id","insert_index"],"properties":{"insert_index":{"type":"integer"}}}}}}}' > "$resp/8.out"
   printf '%s\n' '{"sessions":[{"name":"fmtest","running":true,"socket_path":"/tmp/fmtest.sock"}]}' > "$resp/9.out"
-  bash -c 'trap "" HUP; sleep 300' & bgpid=$!
+  bash -c 'trap "" HUP; /bin/sleep 300' & bgpid=$!
   death_process_info_fixture w1:p1 "$bgpid" > "$resp/10.out"
   if [ "$mode" = pane-gone-workspace-present ]; then
     printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/11.out"
@@ -2123,7 +2237,7 @@ test_kill_emptying_non_focused_uses_pane_death() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","workspace_id":"w2"}]}}' > "$resp/4.out"
   printf '%s\n' '{"result":{"panes":[{"pane_id":"w2:p2","tab_id":"w2:t2"}]}}' > "$resp/5.out"
   cp "$resp/1.out" "$resp/6.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   death_process_info_fixture w2:p2 "$bgpid" > "$resp/7.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/8.out"
   printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","active_tab_id":"w1:t1","focused":true}]}}' > "$resp/9.out"
@@ -2173,7 +2287,7 @@ test_kill_focused_workspace_stays_plain_close() {
   printf '%s\n' '{"result":{"tabs":[{"tab_id":"w2:t2","focused":true}]}}' > "$resp/2.out"
   printf '%s\n' '{"result":{"pane":{"pane_id":"w2:p2","tab_id":"w2:t2","workspace_id":"w2"}}}' > "$resp/3.out"
   printf '%s\n' '{"error":{"code":"pane_not_found"}}' > "$resp/5.out"
-  sleep 300 & bgpid=$!
+  /bin/sleep 300 & bgpid=$!
   make_death_lab "$dir" "$bgpid"
   fb=$(make_herdr_fakebin "$dir")
   out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
@@ -2217,7 +2331,7 @@ test_kill_refuses_when_presentation_lock_is_unavailable() {
         printf "%s\n" "$*" >> "$CLI_LOG"
         return 0
       }
-      sleep() { :; }
+      fm_backend_herdr_system_sleep() { :; }
       fm_backend_herdr_kill fmtest:w2:p2
     ' 2>&1)
     status=$?
@@ -3532,7 +3646,7 @@ test_wait_for_working_samples_budget_endpoint_without_final_sleep() {
   printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/6.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_SLEEP_LOG="$sleep_log" \
-    bash -c '. "$0/bin/backends/herdr.sh"; sleep() { printf "sleep:%s\n" "$1" >> "$FM_SLEEP_LOG"; }; fm_backend_herdr_wait_for_working default w1:p2 0.5 6' "$ROOT" )
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_system_sleep() { printf "sleep:%s\n" "$1" >> "$FM_SLEEP_LOG"; }; fm_backend_herdr_wait_for_working default w1:p2 0.5 6' "$ROOT" )
   [ "$out" = idle ] || fail "wait_for_working should report idle when every endpoint-spread poll is readable-idle, got '$out'"
   sleeps=$(grep -c '^sleep:0.1000$' "$sleep_log")
   [ "$sleeps" -eq 5 ] || fail "six polls across a 0.5s budget should sleep five times at 0.1000s, got $sleeps matching sleeps; log: $(cat "$sleep_log")"
@@ -3551,7 +3665,7 @@ test_send_text_submit_applies_herdr_minimum_confirm_budget() {
   printf '{"result":{"agent":{"agent_status":"working"}}}\n' > "$resp/9.out"
   fb=$(make_herdr_fakebin "$dir")
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_SLEEP_LOG="$sleep_log" FM_BACKEND_HERDR_SUBMIT_POLLS=6 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6 \
-    bash -c '. "$0/bin/backends/herdr.sh"; sleep() { printf "sleep:%s\n" "$1" >> "$FM_SLEEP_LOG"; }; fm_backend_herdr_send_text_submit default:w1:p2 "hello captain" 1 0.4 0' "$ROOT" )
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_system_sleep() { printf "sleep:%s\n" "$1" >> "$FM_SLEEP_LOG"; }; fm_backend_herdr_send_text_submit default:w1:p2 "hello captain" 1 0.4 0' "$ROOT" )
   [ "$out" = empty ] || fail "send_text_submit should catch a slow-but-valid transition inside the herdr minimum budget, got '$out'"
   sleeps=$(grep -c '^sleep:0.1200$' "$sleep_log")
   [ "$sleeps" -eq 5 ] || fail "a 0.4s caller budget should be expanded to five 0.1200s sleeps across the 0.6s herdr floor, got $sleeps; log: $(cat "$sleep_log")"
@@ -4408,6 +4522,11 @@ test_workspace_label_secondmate_marker_trims_whitespace
 test_workspace_label_secondmate_marker_preserves_embedded_separator
 test_workspace_label_empty_marker_falls_back_to_unknown_scope
 test_workspace_label_different_secondmates_get_different_labels
+test_workspace_label_pin_overrides_primary_default
+test_workspace_label_pin_overrides_secondmate_derived
+test_workspace_label_pin_trims_outer_whitespace_and_keeps_first_line
+test_workspace_label_empty_pin_falls_back_to_derived
+test_workspace_label_pin_stable_across_lifecycle_paths
 test_mate_scope_uppercases_plain_id
 test_mate_scope_collapses_non_alnum_and_trims_edges
 test_mate_scope_empty_id_falls_back_to_unknown
@@ -4474,6 +4593,9 @@ test_projection_close_emptying_last_workspace_needs_no_move
 test_projection_close_non_emptying_stays_plain_without_proof_or_move
 test_idle_shell_proof_converges_past_an_off_terminal_rc_helper
 test_idle_shell_proof_refuses_a_background_job_on_the_pane_terminal
+test_foreground_shell_proof_accepts_nested_task_shell_only_after_stable_reads
+test_foreground_shell_proof_refuses_live_and_ambiguous_processes
+test_reconcile_stale_agent_never_clears_live_agent
 test_projection_close_plain_without_move_requires_structured_removal
 test_projection_close_ambiguous_positions_fall_back_to_plain_close
 test_projection_close_move_failure_falls_back_to_plain_close

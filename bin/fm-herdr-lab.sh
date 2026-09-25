@@ -270,7 +270,7 @@ fm_herdr_lab_teardown() { # <session>
     return
   fi
   fm_herdr_lab_stop "$name" >/dev/null 2>&1 || true
-  sleep 0.5
+  /bin/sleep 0.5
   fm_herdr_lab_refuse_if_default "$name" || return 1
   fm_herdr_lab_raw "$name" session delete "$name" --json >/dev/null 2>&1 || delete_status=$?
   sessions=$(fm_herdr_lab_session_list "$name" 2>/dev/null) || {

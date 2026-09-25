@@ -402,6 +402,13 @@ classify_signal() {  # <reason-after-colon> <state>
 classify_stale() {  # <window> <state>
   local win=$1 state=$2 task last seen
   task=$(window_to_task "$win" "$state")
+  if [ -e "$state/$task.suspended" ]; then
+    # A secondmate parked by its parent's durable fm-control `suspend` record
+    # expects an idle pane and is never wedged: nothing in this daemon can
+    # un-park it, it carries no re-surface cadence, and resume owns the return.
+    printf 'self|suspended secondmate (%s): parked by durable record, not a wedge' "$win"
+    return
+  fi
   last=$(last_status_line "$state/$task.status")
   if [ -n "$last" ] && status_is_paused "$last"; then
     # A DECLARED external-wait pause (fm-classify-lib.sh): an idle pane is EXPECTED,

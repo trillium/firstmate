@@ -71,6 +71,14 @@
 FM_BACKEND_HERDR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-${FM_ROOT:-$FM_BACKEND_HERDR_ROOT}}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER=${FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER:-$FM_BACKEND_HERDR_ROOT/bin/backends/herdr-clear-agent-authority.py}
+
+# Herdr lifecycle polling must use the system sleep, not a PATH-resolved
+# wrapper that may be the local guard. Tests override this function to keep
+# timing assertions deterministic.
+fm_backend_herdr_system_sleep() {
+  /bin/sleep "$@"
+}
 
 # Shared composer-content classifier (empty|pending|unknown, and the fleet-wide
 # dead-shell-vs-agent-composer rule). Owned by bin/fm-composer-lib.sh, reused by
@@ -361,9 +369,32 @@ fm_backend_herdr_presentation_enabled() {  # <config-dir> [<state-dir>]
   fm_backend_herdr_presentation_default_supported "$state_dir"
 }
 
+# The optional per-home workspace-label pin, read from the home's own config dir.
+# When a home writes its pinned label here, that exact label wins over the
+# derived mate-naming-convention label on every lifecycle path, and nothing
+# ever renames an existing workspace to match a derived value.
+FM_BACKEND_HERDR_WORKSPACE_LABEL_CONFIG="herdr-workspace-label"
+
+# fm_backend_herdr_workspace_label_pin: echo this home's pinned workspace label,
+# or nothing when the home pinned nothing. Only the file's first line counts,
+# with outer whitespace and a trailing carriage return trimmed, so an editor-
+# added newline never becomes part of the label and emoji pins survive verbatim.
+fm_backend_herdr_workspace_label_pin() {
+  local file="$FM_HOME/config/$FM_BACKEND_HERDR_WORKSPACE_LABEL_CONFIG" line
+  [ -f "$file" ] && [ ! -L "$file" ] || return 0
+  line=$(head -n 1 "$file" 2>/dev/null) || return 0
+  line=${line%$'\r'}
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  [ -n "$line" ] || return 0
+  printf '%s' "$line"
+}
+
 # fm_backend_herdr_workspace_label: the per-firstmate-HOME herdr workspace
 # label (docs/herdr-backend.md "Mate naming convention"), always uppercase
-# "<materank>-<scope>". The PRIMARY home (no secondmate marker) resolves to
+# "<materank>-<scope>" unless this home pinned an exact label in
+# config/herdr-workspace-label, which wins verbatim on every call.
+# Without a pin, the PRIMARY home (no secondmate marker) resolves to
 # the constant "1M-FIRSTMATE". A SECONDMATE home resolves to
 # "2M-<fm_backend_herdr_mate_scope-of-its-id>", so its tasks land in their own
 # workspace, obviously distinguishable from the primary's (and from every
@@ -375,7 +406,12 @@ fm_backend_herdr_presentation_enabled() {  # <config-dir> [<state-dir>]
 # when the PRIMARY spawns that secondmate (its own process's FM_HOME still
 # names the primary at that point) - see fm-spawn.sh's herdr case arm.
 fm_backend_herdr_workspace_label() {
-  local marker="$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" id
+  local marker="$FM_HOME/$FM_BACKEND_HERDR_SECONDMATE_MARKER" id pin
+  pin=$(fm_backend_herdr_workspace_label_pin)
+  if [ -n "$pin" ]; then
+    printf '%s' "$pin"
+    return 0
+  fi
   if [ -f "$marker" ]; then
     id=$(cat "$marker" 2>/dev/null)
     # Trim only outer whitespace here; fm_backend_herdr_mate_scope is what
@@ -1165,7 +1201,7 @@ fm_backend_herdr_death_close_pane() {  # <session> <pane-id> <shell-pid>
   while [ "$attempt" -lt "$max_attempts" ]; do
     presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
     [ "$presence" = dead ] && return 0
-    sleep 0.05
+    fm_backend_herdr_system_sleep 0.05
     attempt=$((attempt + 1))
   done
   # SIGKILL escalation revalidates exact pane ownership, not just the pid: a
@@ -1179,7 +1215,7 @@ fm_backend_herdr_death_close_pane() {  # <session> <pane-id> <shell-pid>
   while [ "$attempt" -lt "$max_attempts" ]; do
     presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane_id")
     [ "$presence" = dead ] && return 0
-    sleep 0.05
+    fm_backend_herdr_system_sleep 0.05
     attempt=$((attempt + 1))
   done
   return 1
@@ -1232,8 +1268,108 @@ fm_backend_herdr_pane_idle_shell_pid() {  # <session> <pane-id>
     fi
     attempt=$((attempt + 1))
     [ "$attempt" -lt "$max_attempts" ] || return 1
-    sleep 0.1
+    fm_backend_herdr_system_sleep 0.1
   done
+}
+
+# fm_backend_herdr_pane_shell_foreground_pid: print the pid of a stable,
+# recognized bare foreground shell in the recorded task directory. This proof
+# is intentionally separate from fm_backend_herdr_pane_idle_shell_pid: the
+# pane's shell_pid identifies the original pane shell, but Herdr can report a
+# nested foreground shell with a different pid after an agent returns to an
+# ordinary prompt. A genuine verified agent sets the result to `agent`, while
+# every unknown, mismatched, or unreadable process sets it to `unsafe`.
+# <task-dir> is mandatory because a recognized shell in another directory is
+# not authority for this task's pane. Two consecutive valid samples must name
+# the same foreground shell pid before lifecycle authority may be cleared.
+fm_backend_herdr_pane_shell_foreground_pid() {  # <session> <pane-id> <task-dir>
+  local attempt=0 max_attempts=${FM_BACKEND_HERDR_IDLE_SHELL_PROOF_POLLS:-10}
+  local previous='' current=''
+  FM_BACKEND_HERDR_FOREGROUND_RESULT=unsafe
+  [ -n "${3:-}" ] || return 1
+  while :; do
+    if fm_backend_herdr_pane_shell_foreground_sample "$1" "$2" "$3" >/dev/null; then
+      current=$FM_BACKEND_HERDR_FOREGROUND_SHELL_PID
+      if [ -n "$previous" ] && [ "$current" = "$previous" ]; then
+        FM_BACKEND_HERDR_FOREGROUND_RESULT=shell
+        printf '%s\n' "$current"
+        return 0
+      fi
+      previous=$current
+    else
+      case "${FM_BACKEND_HERDR_FOREGROUND_RESULT:-unsafe}" in
+        agent) return 1 ;;
+      esac
+      previous=
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt "$max_attempts" ] || return 1
+    fm_backend_herdr_system_sleep 0.1
+  done
+}
+
+fm_backend_herdr_pane_shell_foreground_sample() {  # <session> <pane-id> <task-dir>
+  local session=$1 pane=$2 task_dir=$3 canonical_task_dir info foreground_pgid rows
+  local pid name argv0 cmdline cwd base shell_count=0 agent_count=0 unsafe_count=0
+  FM_BACKEND_HERDR_FOREGROUND_RESULT=unsafe
+  [ -n "$task_dir" ] || return 1
+  canonical_task_dir=$(cd "$task_dir" 2>/dev/null && pwd -P) || return 1
+  info=$(fm_backend_herdr_cli "$session" pane process-info --pane "$pane" 2>/dev/null) || return 1
+  printf '%s' "$info" | jq -e --arg pane "$pane" '
+    .result.type == "pane_process_info"
+    and .result.process_info.pane_id == $pane
+  ' >/dev/null 2>&1 || return 1
+  printf '%s' "$info" | jq -e \
+    '.result.process_info.shell_pid | select(type == "number" and . > 1) | floor' \
+    >/dev/null 2>&1 || return 1
+  foreground_pgid=$(printf '%s' "$info" | jq -er \
+    '.result.process_info.foreground_process_group_id | select(type == "number" and . > 1) | floor' 2>/dev/null) || return 1
+  rows=$(printf '%s' "$info" | jq -r --arg task_dir "$task_dir" '
+    .result.process_info.foreground_processes
+    | select(type == "array" and length > 0)[]
+    | [(.pid // ""), (.name // ""), (.argv0 // .argv[0] // ""), (.cmdline // ""), (.cwd // "")]
+    | @tsv
+  ' 2>/dev/null) || return 1
+  [ -n "$rows" ] || return 1
+  while IFS=$'\t' read -r pid name argv0 cmdline cwd; do
+    case "$pid:$name:$argv0" in *[!0-9A-Za-z._/-:]*|:*|*::) return 1 ;; esac
+    # Herdr reports physical cwd paths, while metadata can preserve a
+    # symlinked spelling such as macOS /var for /private/var.
+    cwd=$(cd "$cwd" 2>/dev/null && pwd -P) \
+      || { unsafe_count=$((unsafe_count + 1)); continue; }
+    [ "$cwd" = "$canonical_task_dir" ] || { unsafe_count=$((unsafe_count + 1)); continue; }
+    base=${name##*/}
+    argv0=${argv0#-}
+    argv0=${argv0##*/}
+    case "$base" in
+      sh|bash|zsh|dash|ksh|fish)
+        if [ "$argv0" = "$base" ]; then
+          shell_count=$((shell_count + 1))
+          FM_BACKEND_HERDR_FOREGROUND_SHELL_PID=$pid
+        else
+          unsafe_count=$((unsafe_count + 1))
+        fi
+        ;;
+      claude|codex|opencode|pi|grok|kimi|muse)
+        agent_count=$((agent_count + 1))
+        ;;
+      *)
+        case "$cmdline" in
+          claude\ *|*/claude\ *|codex\ *|*/codex\ *|opencode\ *|*/opencode\ *|pi\ *|*/pi\ *|grok\ *|*/grok\ *|kimi\ *|*/kimi\ *|muse\ *|*/muse\ *) agent_count=$((agent_count + 1)) ;;
+          *) unsafe_count=$((unsafe_count + 1)) ;;
+        esac
+        ;;
+    esac
+  done <<< "$rows"
+  if [ "$agent_count" -gt 0 ] && [ "$unsafe_count" -eq 0 ]; then
+    FM_BACKEND_HERDR_FOREGROUND_RESULT=agent
+    return 1
+  fi
+  if [ "$unsafe_count" -ne 0 ] || [ "$agent_count" -ne 0 ] || [ "$shell_count" -ne 1 ]; then
+    return 1
+  fi
+  [ "$foreground_pgid" = "${FM_BACKEND_HERDR_FOREGROUND_SHELL_PID:-}" ] || return 1
+  printf '%s\n' "$FM_BACKEND_HERDR_FOREGROUND_SHELL_PID"
 }
 
 # fm_backend_herdr_pane_idle_shell_sample: one strict instantaneous
@@ -1499,7 +1635,7 @@ fm_backend_herdr_server_ensure() {  # <session>
   for i in $(seq 1 20); do
     running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
     [ "$running" = "true" ] && return 0
-    sleep 0.5
+    fm_backend_herdr_system_sleep 0.5
   done
   echo "error: herdr server for session '$session' did not report running within 10s" >&2
   return 1
@@ -1951,6 +2087,50 @@ fm_backend_herdr_pane_agent_state() {  # <session> <pane_id>
     working|idle|done|blocked) printf 'live' ;;
     *) printf 'unknown' ;;
   esac
+}
+
+# fm_backend_herdr_clear_agent_authority: remove the current pane's lifecycle
+# authority through Herdr's supported control API. This is deliberately not
+# pane.release-agent: Herdr ignores that operation for official lifecycle
+# sources, which is the stale OpenCode registration this repair addresses.
+# The exact pane is selected from the recorded target and the caller proves it
+# is a stable bare foreground shell in the recorded task directory before
+# invoking this function.
+fm_backend_herdr_clear_agent_authority() {  # <session> <pane_id>
+  local session=$1 pane_id=$2 socket
+  socket=$(fm_backend_herdr_socket_path "$session") || return 1
+  [ -n "$socket" ] || return 1
+  "$FM_BACKEND_HERDR_AGENT_AUTHORITY_CLEARER" "$socket" "$pane_id" >/dev/null
+}
+
+# fm_backend_herdr_reconcile_stale_agent: clear a stale registration only when
+# the recorded Herdr pane is independently proved to be a stable bare
+# foreground shell in the recorded task directory.
+# shellcheck disable=SC2034 # the result is consumed by fm-control.sh
+# A live foreground agent is reported as not-stale and never reaches the clear
+# API. An unexpected or mismatched process is unsafe and must not fall through
+# to typing an exit command into an ordinary shell.
+fm_backend_herdr_reconcile_stale_agent() {  # <target> <task-dir>
+  local target=$1 task_dir=${2:-} state
+  FM_BACKEND_HERDR_RECONCILE_RESULT=unsafe
+  fm_backend_herdr_parse_target "$target" || return 1
+  if ! fm_backend_herdr_pane_shell_foreground_pid \
+      "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" "$task_dir" >/dev/null; then
+    [ "${FM_BACKEND_HERDR_FOREGROUND_RESULT:-unsafe}" = agent ] \
+      && FM_BACKEND_HERDR_RECONCILE_RESULT=not-stale
+    return 1
+  fi
+  if ! fm_backend_herdr_clear_agent_authority "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE"; then
+    FM_BACKEND_HERDR_RECONCILE_RESULT=failed
+    return 1
+  fi
+  state=$(fm_backend_herdr_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
+  if [ "$state" = no-agent ]; then
+    FM_BACKEND_HERDR_RECONCILE_RESULT=repaired
+    return 0
+  fi
+  FM_BACKEND_HERDR_RECONCILE_RESULT=failed
+  return 1
 }
 
 # fm_backend_herdr_tab_is_husk: true (0) only for the two conservative husk
@@ -2975,7 +3155,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
   local target=$1 text=$2 retries=$3 sleep_s=$4 settle=$5 i=0 verdict baseline confirm_sleep
   fm_backend_herdr_parse_target "$target" || { printf 'unknown'; return 0; }
   fm_backend_herdr_send_literal "$target" "$text" || { printf 'send-failed'; return 0; }
-  sleep "$settle"
+  fm_backend_herdr_system_sleep "$settle"
   baseline=$(fm_backend_herdr_classify_submit_agent_status \
     "$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")")
   confirm_sleep=$(fm_backend_herdr_submit_confirm_budget "$sleep_s")
@@ -2985,7 +3165,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       verdict=$(fm_backend_herdr_wait_for_working "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" \
         "$confirm_sleep" "$FM_BACKEND_HERDR_SUBMIT_POLLS")
     else
-      sleep "$sleep_s"
+      fm_backend_herdr_system_sleep "$sleep_s"
       verdict=$(fm_backend_herdr_composer_state "$target")
     fi
     case "$verdict" in
@@ -3087,7 +3267,7 @@ fm_backend_herdr_kill() {  # <target>
         fi
         break
       fi
-      sleep "$lock_interval"
+      fm_backend_herdr_system_sleep "$lock_interval"
       attempt=$((attempt + 1))
     done
   fi
@@ -3285,7 +3465,7 @@ fm_backend_herdr_wait_for_working() {  # <session> <pane_id> <budget-seconds> <p
   case "$interval" in ''|*[!0-9.]*) interval=0 ;; esac
   for ((i = 0; i < polls; i++)); do
     if [ "$polls" -eq 1 ] || [ "$i" -gt 0 ]; then
-      sleep "$interval"
+      fm_backend_herdr_system_sleep "$interval"
     fi
     raw=$(fm_backend_herdr_agent_status_raw "$session" "$pane_id")
     bs=$(fm_backend_herdr_classify_submit_agent_status "$raw")

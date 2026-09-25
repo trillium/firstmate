@@ -307,6 +307,10 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
+# shellcheck source=bin/fm-parlay-lib.sh
+. "$SCRIPT_DIR/fm-parlay-lib.sh"
+# shellcheck source=bin/fm-memory-lib.sh
+. "$SCRIPT_DIR/fm-memory-lib.sh"
 
 # One tasks-axi compatibility verdict per session start. The probe costs three
 # tasks-axi subprocesses and this digest needs the same answer twice - here for
@@ -854,7 +858,9 @@ for meta in "$STATE"/*.meta; do
 
   window=$(fm_meta_get "$meta" window)
   target=$(fm_backend_target_of_meta "$meta")
-  if [ -n "$window" ]; then
+  if [ -e "$STATE/$id.suspended" ]; then
+    printf 'endpoint: suspended (parked by fm-control suspend; absent from liveness probing until resumed)\n'
+  elif [ -n "$window" ]; then
     backend=$(fm_backend_of_meta "$meta")
     if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
       printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
@@ -885,6 +891,33 @@ for status in "$STATE"/*.status; do
   print_status_tail "$status"
 done
 [ "$ORPHAN_STATUS_FOUND" -eq 1 ] || printf '(none)\n'
+
+# Parlay-spawned helpers that firstmate never recorded as state/<id>.meta:
+# surfaced from parlay's own durable store (fm-parlay-lib.sh) so they are not
+# invisible to every cleanup path. Read-only and local-only - the fleet-state
+# stage runs before the deferred network stage, and this never touches the
+# relay or mutates parlay. The whole subsection stays silent when parlay is
+# not in use (binary or store absent).
+if fm_parlay_store_present; then
+  subsection "Parlay recorded agents (endpoint parlay:<id>; no firstmate .meta)"
+  FM_PARLAY_RECORDS=$(fm_parlay_agent_records)
+  if [ -n "$FM_PARLAY_RECORDS" ]; then
+    printf '%s\n' "$FM_PARLAY_RECORDS" | while IFS=$'\t' read -r p_id p_name p_model p_workdir p_age p_state; do
+      if [ -n "${p_name:-}" ]; then
+        printf '\n--- %s (%s) ---\n' "$p_id" "$p_name"
+      else
+        printf '\n--- %s ---\n' "$p_id"
+      fi
+      printf 'endpoint: parlay:%s (parlay-managed, not a firstmate task)\n' "$p_id"
+      printf 'state: %s\n' "${p_state:-unknown}"
+      printf 'age: %s\n' "$(fm_fmt_parlay_age "${p_age:-unknown}")"
+      printf 'workdir: %s\n' "${p_workdir:--}"
+      [ -z "${p_model:-}" ] || printf 'model: %s\n' "$p_model"
+    done
+  else
+    printf '(none)\n'
+  fi
+fi
 
 subsection "AFK"
 if [ -e "$STATE/.afk" ]; then
@@ -948,9 +981,9 @@ stage context
 section "CONTEXT"
 print_file_or_absent "$DATA/projects.md" "data/projects.md"
 print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
-print_file_or_absent "$DATA/captain.md" "data/captain.md"
-print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
-print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
+fm_memory_render "captain" "data/captain.md"
+fm_memory_render "captain-shared" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
+fm_memory_render "learnings" "data/learnings.md"
 
 # --- 9a. parlay sweep --------------------------------------------------
 # Read-only parlay sweep surfacing captain-parked agents. Skips silently

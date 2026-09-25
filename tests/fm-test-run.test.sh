@@ -127,7 +127,7 @@ init_changed_fixture_repo() {
   : >"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
   : >"$repo/src/unmapped.ts"
   git -C "$repo" init -q
-  git -C "$repo" add .
+  git -C "$repo" add -f .
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm baseline
 }
 
@@ -167,7 +167,7 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" "skill source selects pure contract coverage"
   assert_contains "$listed" "tests/fm-cd-pretool-check.test.sh" "Claude and Pi source selects hook coverage"
   assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" "Pi source selects watcher coverage"
-  git -C "$repo" add .agents .claude .pi
+  git -C "$repo" add -f .agents .claude .pi
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm non-bin-source-change
 
   printf '\n' >>"$repo/src/unmapped.ts"

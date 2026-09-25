@@ -10,6 +10,11 @@ SNAPSHOT="$ROOT/bin/fm-fleet-snapshot.sh"
 VIEW="$ROOT/bin/fm-fleet-view.sh"
 TMP_ROOT=$(fm_test_tmproot fm-fleet-snapshot)
 
+# Pin the parlay record store away from the developer's real ~/.parlay so every
+# snapshot/view case in this file is hermetic; cases that need records set
+# PARLAY_AGENT_HOME themselves.
+export PARLAY_AGENT_HOME="$TMP_ROOT/.parlay-absent"
+
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
 make_fakebin() {  # <dir>
@@ -17,6 +22,11 @@ make_fakebin() {  # <dir>
   fb=$(fm_fakebin "$1")
   cat > "$fb/no-mistakes" <<'SH'
 #!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fb/parlay" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = sweep ] || exit 0
 exit 0
 SH
   cat > "$fb/tmux" <<'SH'
@@ -52,7 +62,7 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux"
+  chmod +x "$fb/no-mistakes" "$fb/parlay" "$fb/tmux"
   printf '%s\n' "$fb"
 }
 
@@ -195,6 +205,46 @@ test_fixture_snapshot_json() {
     | .state == "done" and .pr_url == "https://github.com/kunchenguid/firstmate/pull/7"
   ' >/dev/null || fail "done backlog PR row missing"
   pass "fixture snapshot covers task rows, backlog rows, pointers, and stable ordering"
+}
+
+test_parlay_records_snapshot_and_view() {
+  local home fakebin out view
+  home=$(make_home parlay-records)
+  fakebin=$(make_fakebin "$home")
+  mkdir -p "$home/.parlay/agents/parlay-pr221"
+  cat > "$home/.parlay/agents/parlay-pr221/identity.md" <<'EOF'
+---
+id: parlay-pr221
+name: "Parlay PR 221"
+color: "#e11d48"
+model: sonnet
+cwd: /Users/trilliumsmith/code/parlay
+mode: branch
+kind: claude
+yolo: on
+---
+EOF
+  date '+%s' > "$home/.parlay/agents/parlay-pr221/session-start"
+  printf 'working: iterating on the review chain\n' > "$home/.parlay/agents/parlay-pr221/status"
+
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" PARLAY_AGENT_HOME="$home/.parlay/agents" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.parlay_records | length) == 1
+      and .parlay_records[0].id == "parlay-pr221"
+      and .parlay_records[0].source == "parlay-store"
+      and .parlay_records[0].endpoint == "parlay:parlay-pr221"
+      and .parlay_records[0].state == "working"
+      and .parlay_records[0].workdir == "/Users/trilliumsmith/code/parlay"
+      and (.parlay_records[0].age_seconds | type) == "number"
+  ' >/dev/null || fail "snapshot parlay_records row missing or malformed: $out"
+
+  view=$(PATH="$fakebin:$PATH" FM_HOME="$home" PARLAY_AGENT_HOME="$home/.parlay/agents" "$VIEW")
+  assert_contains "$view" "## Parlay-Recorded Agents" \
+    "view did not render the parlay-recorded agents section"
+  assert_contains "$view" "| parlay-pr221 | working |" \
+    "view did not render the parlay agent row"
+
+  pass "fleet snapshot carries parlay_recorded agents and view renders them"
 }
 
 # R1 owner contract: main_inventory discloses orphan in-flight and unstructured
@@ -956,6 +1006,7 @@ test_default_backend_backlog_json_has_no_beads_fields() {
 
 test_empty_fleet_json
 test_fixture_snapshot_json
+test_parlay_records_snapshot_and_view
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state

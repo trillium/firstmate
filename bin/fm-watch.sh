@@ -82,6 +82,23 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-wake-memo.sh
+. "$SCRIPT_DIR/fm-wake-memo.sh"
+
+# Wake-drain memo consult for the stale/heartbeat triage below (memo format owned
+# by bin/fm-wake-memo.sh). memo_cite_suffix prints " (memo: <citation>)" when an
+# identical wake was previously absorbed or reconciled, else prints nothing and
+# always exits 0, so a miss - genuinely new, pending, or previously actioned -
+# keeps the exact log line and verdict it has today. The consult only ever
+# annotates an absorb the triage already chose; it never overrides a surface
+# decision, and stale consults use the canonical "stale: <window>" payload that
+# matches what a surfaced stale for the same window would queue.
+memo_cite_suffix() {  # <kind> <key> <payload>
+  local cite
+  cite=$(fm_memo_consult "$1" "$2" "$3" 2>/dev/null) || cite=
+  [ -n "$cite" ] || return 0
+  printf ' (%s)' "$cite"
+}
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -360,7 +377,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
   case "$since" in
     ''|*[!0-9]*)
       date +%s > "$since_file"
-      triage_log "absorbed $label timer reset: $win"
+      triage_log "absorbed $label timer reset: $win$(memo_cite_suffix stale "$win" "stale: $win")"
       ;;
     *)
       age=$(( $(date +%s) - since ))
@@ -571,7 +588,9 @@ handle_paused_stale() {  # <window> <task> <hash>
     date +%s > "$rf"
     wake "$reason"
   fi
-  triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win"
+  memo_suffix=$(memo_cite_suffix stale "$win" "stale: $win")
+  fm_memo_record stale "$win" "stale: $win" reconciled-idle || true
+  triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win$memo_suffix"
 }
 
 clear_pause_state() {  # <window>
@@ -1307,12 +1326,38 @@ EOF
     if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
       clear_pause_tracking "$w"
     fi
-    if [ "$kind" = secondmate ] && ! status_is_paused "$last"; then
-      continue
+    if [ "$kind" = secondmate ]; then
+      # A suspended secondmate is parked by its parent's durable fm-control
+      # `suspend` record; its pane must not be probed for staleness at all,
+      # regardless of what the last status line says.
+      [ -e "$STATE/$task.suspended" ] && continue
+      # Idle or blocked secondmate agent panes are healthy by design, so a
+      # non-paused secondmate skips the stale loop exactly as before.
+      status_is_paused "$last" || continue
     fi
     tail40=$(fm_backend_capture "$(window_backend "$w")" "$w" 40 "$(window_label "$w")" 2>/dev/null) || continue
     h=$(printf '%s' "$tail40" | hash_pane)
     key=$(printf '%s' "$w" | tr ':/.' '___')
+    # Org-disabled early detection, ahead of ordinary busy/stale classification:
+    # a pane showing Claude Code's org-subscription-disabled error is wedged
+    # before its first turn and can never self-recover, so waiting out staleness
+    # escalation only burns the captain's time. Surface it on the first poll that
+    # sees it and fire a blocked wake so firstmate can relaunch on an account
+    # that still has access. Keyed on the pane hash so a pane that keeps
+    # rendering the same error wakes once, not every cycle.
+    odf="$STATE/.org-disabled-surfaced-$key"
+    if fm_busy_org_disabled "$tail40" && [ "$(cat "$odf" 2>/dev/null || true)" != "$h" ]; then
+      odsf="$STATE/$task.status"
+      printf 'blocked [key=org-disabled]: worker launched on an account whose organization has disabled Claude Code access; relaunch it on an account that still has access\n' \
+        >> "$odsf" 2>/dev/null || true
+      printf '%s' "$h" > "$odf"
+      # Enqueued and reported in the same "signal:<status-file>" shape every other
+      # status-driven wake uses, so the away daemon and the Stop auto-arm both read
+      # this close as actionable and surface the blocked line just appended.
+      fm_wake_append signal "$task.status" "signal:$odsf" || exit 1
+      mark_surfaced "$odsf"
+      wake "signal:$odsf"
+    fi
     hf="$STATE/.hash-$key"
     cf="$STATE/.count-$key"
     sf="$STATE/.stale-$key"
@@ -1431,7 +1476,9 @@ EOF
             if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
-              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+              memo_suffix=$(memo_cite_suffix stale "$w" "stale: $w")
+              fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
+              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w$memo_suffix"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
               printf '%s' "$h" > "$sf"
@@ -1471,7 +1518,9 @@ EOF
                 clear_pause_tracking "$w"
                 printf '%s' "$h" > "$sf"
                 date +%s > "$ssf"
-                triage_log "absorbed non-terminal stale (provably working): $w"
+                memo_suffix=$(memo_cite_suffix stale "$w" "stale: $w")
+                fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
+                triage_log "absorbed non-terminal stale (provably working): $w$memo_suffix"
                 ;;
               paused)
                 handle_paused_stale "$w" "$task" "$h"
@@ -1487,8 +1536,10 @@ EOF
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$w"
                          printf '%s' "$h" > "$sf"
+                         memo_suffix=$(memo_cite_suffix stale "$w" "stale: $w")
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf"
-                         triage_log "absorbed non-terminal stale (provably working): $w" ;;
+                         fm_memo_record stale "$w" "stale: $w" absorbed-benign || true
+                         triage_log "absorbed non-terminal stale (provably working): $w$memo_suffix" ;;
                 *)       handle_paused_stale "$w" "$task" "$h" ;;
               esac
             else
@@ -1557,9 +1608,12 @@ EOF
       mark_all_captain_relevant_surfaced
       wake "heartbeat"
     else
+      hb_payload=$(parlay_heartbeat_payload)
+      hb_memo_suffix=$(memo_cite_suffix heartbeat heartbeat "$hb_payload")
+      fm_memo_record heartbeat heartbeat "$hb_payload" absorbed-benign || true
       touch "$STATE/.last-heartbeat"
       echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak"
-      triage_log "absorbed heartbeat (no captain-relevant change)"
+      triage_log "absorbed heartbeat (no captain-relevant change)$hb_memo_suffix"
     fi
   fi
 
