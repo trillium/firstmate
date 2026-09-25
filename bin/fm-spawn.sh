@@ -2579,6 +2579,39 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
+
+  # Stale-base visibility: a recycled pool slot can sit at a commit behind the
+  # project's current default branch, and branching from that HEAD silently
+  # builds on an obsolete base (seen live as a duplicate of an already-landed
+  # PR, then a PR conflicting against main). Detection and evidence only:
+  # freshen the remote refs, then warn loudly when HEAD differs from the remote
+  # default branch, naming both commits. This must never reset, checkout,
+  # restore, or otherwise touch the worktree - a recycled slot can legitimately
+  # hold work someone still needs - and any failure here only skips the warning,
+  # never the spawn. The spawned brief's Setup step owns establishing the branch
+  # base from the remote default branch; the relaunch path is exempt because its
+  # worktree already holds that task's own branch, which always differs.
+  spawn_base_name=""
+  spawn_base_symref=$(git -C "$WT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ -n "$spawn_base_symref" ]; then
+    spawn_base_name=${spawn_base_symref#origin/}
+  else
+    for spawn_base_candidate in main master; do
+      if git -C "$WT" show-ref --verify --quiet "refs/heads/$spawn_base_candidate" 2>/dev/null; then
+        spawn_base_name=$spawn_base_candidate
+        break
+      fi
+    done
+  fi
+  if [ -n "$spawn_base_name" ] \
+    && git -C "$WT" fetch --quiet origin "$spawn_base_name" 2>/dev/null; then
+    spawn_base_head=$(git -C "$WT" rev-parse HEAD 2>/dev/null || true)
+    spawn_base_remote=$(git -C "$WT" rev-parse "refs/remotes/origin/$spawn_base_name" 2>/dev/null || true)
+    if [ -n "$spawn_base_head" ] && [ -n "$spawn_base_remote" ] \
+      && [ "$spawn_base_head" != "$spawn_base_remote" ]; then
+      echo "warning: spawned worktree HEAD $spawn_base_head differs from fresh origin/$spawn_base_name $spawn_base_remote; the worker's Setup step branches from the remote default, not from this HEAD" >&2
+    fi
+  fi
 fi
 
 # Crew git identity: every firstmate-launched crew worktree commits as the
