@@ -294,6 +294,25 @@ test_spawn_hook_noop_without_beads_id() {
   pass "fm-spawn-hooks.d/beads.sh: no-ops silently when FM_HOOK_BEADS_ID is empty"
 }
 
+test_brief_beads_renders_report_landing_once() {
+  local home brief scout_brief
+  home="$TMP_ROOT/brief-landing-home"
+  mkdir -p "$home/data"
+  FM_HOME="$home" "$BRIEF" landing-ship-a13 some-proj --mode direct-PR --beads task-land1 >/dev/null 2>&1 \
+    || fail "fm-brief.sh --beads should exit 0 for a ship brief"
+  brief="$home/data/landing-ship-a13/brief.md"
+  assert_grep "# Bead Report Landing" "$brief" "ship brief missing Bead Report Landing section"
+  # shellcheck disable=SC2016
+  assert_grep 'task comment task-land1' "$brief" "ship brief missing the bead-landing comment command"
+  [ "$(grep -c '# Bead Report Landing' "$brief")" -eq 1 ] || fail "Bead Report Landing section must appear exactly once in a ship brief"
+  FM_HOME="$home" "$BRIEF" landing-scout-a14 some-proj --scout --beads task-land2 >/dev/null 2>&1 \
+    || fail "fm-brief.sh --beads should exit 0 for a scout brief"
+  scout_brief="$home/data/landing-scout-a14/brief.md"
+  assert_grep "# Bead Report Landing" "$scout_brief" "scout brief missing Bead Report Landing section"
+  [ "$(grep -c '# Bead Report Landing' "$scout_brief")" -eq 1 ] || fail "Bead Report Landing section must appear exactly once in a scout brief"
+  pass "fm-brief.sh: --beads renders one Bead Report Landing section in ship and scout briefs"
+}
+
 test_script_parses() {
   local f
   for f in "$STAMP" "$ROOT/bin/fm-brief-hooks.d/beads.sh" "$ROOT/bin/fm-spawn-hooks.d/beads.sh"; do
@@ -308,6 +327,7 @@ test_stamp_fails_open_without_task_cli
 test_stamp_fails_open_on_missing_bead
 test_stamp_sets_dispatch_and_assigns
 test_brief_beads_renders_receipt_and_closure_once
+test_brief_beads_renders_report_landing_once
 test_brief_without_beads_has_no_bead_content
 test_brief_beads_rejected_for_secondmate
 test_brief_beads_rejects_invalid_id
