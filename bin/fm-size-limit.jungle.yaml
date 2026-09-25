@@ -1,0 +1,25 @@
+# fm-size-limit.jungle.yaml - mcp-stdio-bridge wrapper allowlist serving
+# bin/fm-size-limit.sh on Jungle as the scoped coding-standards tool.
+# Colocated with the script because the two are versioned and reviewed as
+# one unit; the command path below is the stable primary-checkout path the
+# registration uses once this branch has merged (see PR body for the exact
+# DELETE plus re-POST re-point step).
+# Security posture: the allowlist admits absolute safe-character paths only
+# and rejects every flag-like subcommand, so the tool surface can never pass
+# --limit to relax the standard and can never smuggle shell metacharacters
+# (the bridge executes with no shell, so metacharacters are inert anyway).
+# An empty subcommand skips the allowlist by bridge design and runs the bare
+# script, which only prints usage text.
+mode: "command-wrapper"
+transport: "stdio"
+wrapped_commands:
+  - name: "check-size-limit"
+    description: "Coding-standards size check: pass an absolute file path, get back an OK or OVER-LIMIT verdict with line count against the 250-line non-test limit. Test files are reported exempt. An OVER-LIMIT verdict always includes the decomposition playbook: split by concept into single-concept files, never relax or bypass the limit."
+    command: "/Users/trilliumsmith/code/firstmate/bin/fm-size-limit.sh"
+    allowed_patterns:
+      - "^/[A-Za-z0-9_./-]+$"
+    forbidden_patterns:
+      - "(^|\\s)-"
+      - "\\$\\("
+      - "`"
+    timeout: 30
