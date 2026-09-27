@@ -458,7 +458,9 @@ fm_lock_try_acquire() {
 fm_lock_acquire_wait() {
   local lockdir=$1
   while ! fm_lock_try_acquire "$lockdir"; do
-    sleep 0.1
+    # Absolute path: the Pi tool guard aborts bare sleep, which would turn
+    # every lock wait in the sanctioned drain path into a busy spin.
+    /bin/sleep 0.1
   done
 }
 
@@ -558,20 +560,14 @@ fm_wake_clean_field() {
   LC_ALL=C tr '\t\r\n' '   '
 }
 
-fm_wake_append() {
+fm_wake_append_locked() {  # <kind> <key> <payload>, queue lock already held
   local kind=$1 key=$2 payload=$3 clean_key clean_payload epoch seq seq_file status
-  case "$kind" in
-    signal|stale|check|heartbeat) ;;
-    *) printf 'fm_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
-  esac
-
   clean_key=$(printf '%s' "$key" | fm_wake_clean_field)
   clean_payload=$(printf '%s' "$payload" | fm_wake_clean_field)
   epoch=$(date +%s)
   seq_file="$STATE/.wake-queue.seq"
   status=0
 
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
   seq=$(cat "$seq_file" 2>/dev/null || echo 0)
   case "$seq" in
     ''|*[!0-9]*) seq=0 ;;
@@ -581,6 +577,51 @@ fm_wake_append() {
   if [ "$status" -eq 0 ]; then
     printf '%s\t%s\t%s\t%s\t%s\n' "$epoch" "$seq" "$kind" "$clean_key" "$clean_payload" >> "$FM_WAKE_QUEUE" || status=$?
   fi
+  return "$status"
+}
+
+fm_wake_append() {
+  local kind=$1 key=$2 payload=$3 status
+  case "$kind" in
+    signal|stale|check|heartbeat) ;;
+    *) printf 'fm_wake_append: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
+  esac
+
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  fm_wake_append_locked "$kind" "$key" "$payload"
+  status=$?
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$status"
+}
+
+# fm_wake_append_once <kind> <key> <payload>
+# Append exactly like fm_wake_append, except a record with the same kind+key
+# already sitting unconsumed in the queue suppresses the new one: the pending
+# record already guarantees a handling turn, so a second row only re-fires the
+# same wake on a later poll or pads the drain with a duplicate line. The check
+# and the append hold the same lock acquisition, so concurrent callers cannot
+# both observe an empty queue and double-append. A suppressed append still
+# returns 0: the wake is guaranteed, just by the earlier record. Payloads are
+# display data only (drain-time annotations re-read the live status files), so
+# the surviving earlier payload staying put is safe.
+fm_wake_append_once() {
+  local kind=$1 key=$2 payload=$3 clean_key status
+  case "$kind" in
+    signal|stale|check|heartbeat) ;;
+    *) printf 'fm_wake_append_once: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
+  esac
+
+  clean_key=$(printf '%s' "$key" | fm_wake_clean_field)
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  status=0
+  if [ -s "$FM_WAKE_QUEUE" ] && awk -F '\t' -v kind="$kind" -v key="$clean_key" \
+    'NF >= 5 && $3 == kind && $4 == key { found=1; exit 0 } END { exit !found }' \
+    "$FM_WAKE_QUEUE" 2>/dev/null; then
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    return 0
+  fi
+  fm_wake_append_locked "$kind" "$key" "$payload"
+  status=$?
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   return "$status"
 }
@@ -813,7 +854,7 @@ fm_wake_print_annotations() {  # <deduped-raw-rows>
   case "${FM_WAKE_ENRICH_TEST_DELAY:-0}" in
     0) ;;
     ''|*[!0-9]*) ;;
-    *) sleep "$FM_WAKE_ENRICH_TEST_DELAY" ;;
+    *) /bin/sleep "$FM_WAKE_ENRICH_TEST_DELAY" ;;
   esac
 
   while IFS=$(printf '\t') read -r status_key mode; do

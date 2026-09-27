@@ -1287,11 +1287,18 @@ EOF
     # ordering evaluates it ONLY for a non-afk, no-captain-verb signal.
     # shellcheck disable=SC2086  # $files is a space-separated status-path list (ids carry no spaces)
     if afk_present || signal_reason_is_actionable $files || ! signal_crew_provably_working $files; then
-      while IFS=$(printf '\t') read -r sf sig f; do
-        [ -n "$sf" ] || continue
-        fm_wake_append signal "$(basename "$f")" "$reason" || exit 1
+      # One record per distinct file, and none while an identical record is
+      # still queued: the pre-grace and post-grace scans above report the same
+      # file twice, and a re-poll with an unconsumed record must not pad the
+      # queue - the pending record already guarantees this turn is handled.
+      # The single consolidated signal:<files> reason is still the one wake
+      # this cycle delivers.
+      distinct_files=$(printf '%s\n' "$pending" | awk -F '\t' 'NF >= 3 && $3 != "" && !seen[$3]++ { print $3 }')
+      while IFS= read -r distinct_f; do
+        [ -n "$distinct_f" ] || continue
+        fm_wake_append_once signal "$(basename "$distinct_f")" "$reason" || exit 1
       done <<EOF
-$pending
+$distinct_files
 EOF
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
@@ -1596,14 +1603,17 @@ EOF
     # without exiting); the away-mode daemon, when present, owns triage and wants
     # every heartbeat.
     if afk_present; then
-      fm_wake_append heartbeat heartbeat "$(parlay_heartbeat_payload)" || exit 1
+      # Append-once: the heartbeat key is constant, so without this every
+      # actionable poll pads the queue with an identical row while one is
+      # still pending - one pending-queue wake per turn, never one per poll.
+      fm_wake_append_once heartbeat heartbeat "$(parlay_heartbeat_payload)" || exit 1
       touch "$STATE/.last-heartbeat"
       wake "heartbeat"
     elif heartbeat_scan_finds_actionable; then
       # Backstop: a captain-relevant status the per-wake path absorbed by mistake.
       # Enqueue first, then mark every captain-relevant status surfaced so the next
       # heartbeat does not re-fire them (enqueue-before-suppress preserved).
-      fm_wake_append heartbeat heartbeat "$(parlay_heartbeat_payload)" || exit 1
+      fm_wake_append_once heartbeat heartbeat "$(parlay_heartbeat_payload)" || exit 1
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced
       wake "heartbeat"

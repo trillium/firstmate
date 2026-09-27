@@ -240,11 +240,15 @@ fm_herdr_spur_spur_or_skip() {  # <agent> <status> <pane_id>
   fm_herdr_spur_enqueue "$agent" "$status" "$pane"
 }
 
-# Enqueue one spur wake for <agent> reaching <status>.
+# Enqueue one spur wake for <agent> reaching <status>. Append-once: while a
+# spur record for this agent sits unconsumed, further finish edges for the
+# same agent (a flapping external/parlay agent, or a spur restart that replays
+# the poll) must not pad the queue - the pending record already guarantees a
+# handling turn.
 fm_herdr_spur_enqueue() {  # <agent> <status> <pane_id>
   local agent=$1 status=$2 pane=$3 reason
   reason="herdr agent ${agent} went ${status} (was working; external agent, no firstmate status file) pane=${pane}"
-  if fm_wake_append check "herdr-spur:${agent}" "$reason"; then
+  if fm_wake_append_once check "herdr-spur:${agent}" "$reason"; then
     log "SPUR agent=$agent status=$status pane=$pane"
     printf 'fm-herdr-spur: spurred firstmate: %s\n' "$reason" >&2
     return 0

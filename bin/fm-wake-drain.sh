@@ -127,7 +127,7 @@ RAW_ROWS=$(fm_wake_print_deduped "$DRAIN_TMP") || exit "$?"
 case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
   0) ;;
   ''|*[!0-9]*) ;;
-  *) sleep "$FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT" ;;
+  *) /bin/sleep "$FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT" ;;
 esac
 if [ -n "$RAW_ROWS" ]; then
   # Print-before-delete is the deliberate at-least-once no-loss boundary: a

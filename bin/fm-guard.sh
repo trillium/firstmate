@@ -98,7 +98,9 @@ fm_guard_claim_stale_banner() {
       return 1
     fi
     # Brief yield; 0.02s is fine on macOS/Linux sleep, fall back to 1s.
-    sleep 0.02 2>/dev/null || sleep 1
+    # Absolute paths: the Pi tool guard aborts bare sleep, which would turn
+    # this spin into a busy loop exactly when the guard is most needed.
+    /bin/sleep 0.02 2>/dev/null || /bin/sleep 1
     i=$((i + 1))
   done
   # Contended past the spin budget: stay loud rather than dropping the alarm.
