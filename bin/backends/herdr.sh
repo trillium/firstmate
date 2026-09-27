@@ -2188,14 +2188,19 @@ fm_backend_herdr_reconcile_stale_agent() {  # <target> <task-dir>
 # registry reports agent-free. The first read is immediate, so a clear that
 # converges at once costs no extra wait; later reads sleep
 # FM_BACKEND_HERDR_RECONCILE_CLEAR_INTERVAL (default 0.5s) up to
-# FM_BACKEND_HERDR_RECONCILE_CLEAR_POLLS reads (default 40, about 20s -
-# measured release latency for a detected agent over a persistent nested
-# shell varies from two seconds to well over ten). Any state other than no-agent keeps
-# polling, and exhausting the bound without converging refuses, so a clear
-# the server accepted but never applied still reports failed, never repaired.
+# FM_BACKEND_HERDR_RECONCILE_CLEAR_POLLS reads (default 120, about 60s).
+# The bound covers the measured release distribution for an auto-detected
+# record, not a guess: on pinned Herdr 0.7.4 an accepted clear of a stale
+# detected agent converged after 13, 14, 14.5, 16, 17, and 19 seconds on an
+# idle machine, and past 20 seconds under CI load, while seeded records
+# converge at once. The pane status, the agent list, and agent get flip
+# together, so no earlier signal can shorten the wait. Any state other than
+# no-agent keeps polling, and exhausting the bound without converging
+# refuses, so a clear the server accepted but never applied still reports
+# failed, never repaired.
 fm_backend_herdr_reconcile_clear_converged() {  # <session> <pane-id>
   local session=$1 pane_id=$2
-  local attempts=${FM_BACKEND_HERDR_RECONCILE_CLEAR_POLLS:-40} state
+  local attempts=${FM_BACKEND_HERDR_RECONCILE_CLEAR_POLLS:-120} state
   while [ "$attempts" -gt 0 ]; do
     state=$(fm_backend_herdr_pane_agent_state "$session" "$pane_id")
     [ "$state" = no-agent ] && return 0

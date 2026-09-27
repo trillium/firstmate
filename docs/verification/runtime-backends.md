@@ -596,7 +596,8 @@ The same day the full exit and relaunch recovery plane was verified against a re
 That command is the guard that refreshes the classification half of this record; run it after every Herdr upgrade rather than trusting the versions above.
 
 The stale-registration half was reverified on 2026-09-27 with Herdr 0.9.0: a pi-shaped worker that exits inside a persistent nested task shell keeps its `agent: pi` registration indefinitely (the foreground never returns to the pane's own shell, which is the only shape Herdr's own release path accepts), while the pane's process evidence shows one bare nested shell in the recorded task directory.
-An accepted `pane.clear_agent_authority` converges to `agent_not_found` asynchronously over two to well over ten seconds, so the reconciliation waits a bounded time for the registry to report agent-free instead of judging the repair by a single immediate re-read:
+An accepted `pane.clear_agent_authority` converges to `agent_not_found` asynchronously: 13 to 19 seconds measured on pinned Herdr 0.7.4 for an auto-detected record on an idle machine, past 20 seconds under CI load, while seeded records converge at once.
+The pane status, the agent list, and `agent get` flip together, so no earlier signal shortens the wait and the reconciliation polls up to 60 seconds for the registry to report agent-free instead of judging the repair by a single immediate re-read:
 
 ```sh
 tests/fm-control-herdr-stale-nested.test.sh

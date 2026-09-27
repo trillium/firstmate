@@ -171,7 +171,10 @@ wait_stale_registration() {
   local attempt=0 reg
   while [ "$attempt" -lt 30 ]; do
     reg=$(agent_registration)
-    [ "$reg" = "pi idle" ] || [ "$reg" = "pi working" ] && return 0
+    if [ "$reg" = "pi idle" ] || [ "$reg" = "pi working" ]; then
+      printf 'auto-detected\n'
+      return 0
+    fi
     sleep 0.5
     attempt=$((attempt + 1))
   done
