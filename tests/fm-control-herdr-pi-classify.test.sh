@@ -50,7 +50,14 @@ SCRATCH=$(cd "$SCRATCH" && pwd)
 
 SESSION="fm-lab-pi-classify-$$"
 export HERDR_SESSION="$SESSION"
+CLEANED=0
 cleanup_all() {
+  # fail() and the EXIT trap both call this, and the lab teardown consumes its
+  # fleet-state tripwire on the first successful call, so a second call would
+  # only print a spurious "missing fleet-state tripwire" refusal instead of a
+  # clean failure report.
+  [ "$CLEANED" = 1 ] && return 0
+  CLEANED=1
   [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"
   herdr_safe_stop_and_delete "$SESSION"
 }
@@ -111,9 +118,13 @@ EOF
 
 lab() { fm_herdr_lab_cli "$SESSION" "$@"; }
 
+# foreground_shape prints "<name> <argv0>" using the SAME field expression the
+# classifier and the capability probe use. Reading only .argv0 here let the
+# probe pass on a herdr that reports the invoked name as argv[0] while the live
+# assertion saw an empty second field it could never match.
 foreground_shape() {
   lab pane process-info --pane "$PANE_ID" 2>/dev/null | jq -r \
-    '.result.process_info.foreground_processes[0] | "\(.name // "") \(.argv0 // "")"' 2>/dev/null
+    '.result.process_info.foreground_processes[0] | "\(.name // "") \(.argv0 // .argv[0] // "")"' 2>/dev/null
 }
 
 # wait_shape <want-name> <want-argv0>: poll until the pane foreground matches.
@@ -165,15 +176,16 @@ run_control() {
     "$ROOT/bin/fm-control.sh" "$@" 2>&1
 }
 
-# --- live capability probe: can the installed herdr expose the agent name? ---
+# --- live capability probe: can the installed herdr name the invoked argv0? --
 # A live pi worker runs under node, and the classification added here keys on
-# the pane's own argv0 because that is where the agent identity lives. Older
-# herdr does not expose that field at all: CI pins 0.7.4, where the same pane
-# reports just `node` with no argv0, argv, or cmdline. Probe the live field
-# before asserting anything, and take the declared gate-skip path when the
-# installed herdr cannot expose it, rather than failing a capability the
-# backend was never given. The unit-level identity pins below are version-
-# independent and stay unconditional when this test does run.
+# the pane's own argv0 because that is where the agent identity lives. Herdr
+# exposes that name as `argv0` on some versions and as `argv[0]` on others, so
+# the probe reads both - exactly the expression the classifier uses - and takes
+# the declared gate-skip path only when the installed herdr exposes neither,
+# rather than failing a capability the backend was never given. Every reader
+# below must use that same expression: a probe that passes while the live
+# assertion reads a different field would assert against a shape it can never
+# match. The unit-level identity pins stay unconditional when this test runs.
 lab pane run "$PANE_ID" "bash -c 'exec -a pi $FAKEBIN/node'" >/dev/null 2>&1 \
   || fail "could not start the pi-shaped stub in the lab pane"
 PROCESS_SHAPE='{}'
