@@ -1342,18 +1342,12 @@ fm_backend_herdr_identity_is_agent() {  # <base> <argv0> <cmdline>
   return 1
 }
 
-fm_backend_herdr_pane_shell_foreground_sample() {  # <session> <pane-id> [<task-dir>]
-  local session=$1 pane=$2 task_dir=${3:-} canonical_task_dir='' info foreground_pgid rows
+fm_backend_herdr_pane_shell_foreground_sample() {  # <session> <pane-id> <task-dir>
+  local session=$1 pane=$2 task_dir=$3 canonical_task_dir info foreground_pgid rows
   local pid name argv0 cmdline cwd base shell_count=0 agent_count=0 unsafe_count=0
   FM_BACKEND_HERDR_FOREGROUND_RESULT=unsafe
-  # Callers that record a task directory require the shell to sit in it: a
-  # recognized shell elsewhere is not authority for this task's pane. An empty
-  # <task-dir> drops only that directory constraint, for callers asking the
-  # narrower question of whether the pane's foreground is a recognized bare
-  # shell at all (fm_backend_herdr_pane_is_bare_shell).
-  if [ -n "$task_dir" ]; then
-    canonical_task_dir=$(cd "$task_dir" 2>/dev/null && pwd -P) || return 1
-  fi
+  [ -n "$task_dir" ] || return 1
+  canonical_task_dir=$(cd "$task_dir" 2>/dev/null && pwd -P) || return 1
   info=$(fm_backend_herdr_cli "$session" pane process-info --pane "$pane" 2>/dev/null) || return 1
   printf '%s' "$info" | jq -e --arg pane "$pane" '
     .result.type == "pane_process_info"
@@ -1381,15 +1375,10 @@ fm_backend_herdr_pane_shell_foreground_sample() {  # <session> <pane-id> [<task-
   while IFS=$'\t' read -r pid name argv0 cwd cmdline; do
     case "$pid:$name:$argv0" in *[!0-9A-Za-z._/-:]*|:*|*::) return 1 ;; esac
     # Herdr reports physical cwd paths, while metadata can preserve a
-    # symlinked spelling such as macOS /var for /private/var. An empty cwd is
-    # never evidence: `cd ""` would silently resolve to this process's own
-    # directory, so it must count unsafe rather than pass as a match.
-    [ -n "$cwd" ] || { unsafe_count=$((unsafe_count + 1)); continue; }
+    # symlinked spelling such as macOS /var for /private/var.
     cwd=$(cd "$cwd" 2>/dev/null && pwd -P) \
       || { unsafe_count=$((unsafe_count + 1)); continue; }
-    if [ -n "$canonical_task_dir" ]; then
-      [ "$cwd" = "$canonical_task_dir" ] || { unsafe_count=$((unsafe_count + 1)); continue; }
-    fi
+    [ "$cwd" = "$canonical_task_dir" ] || { unsafe_count=$((unsafe_count + 1)); continue; }
     base=${name##*/}
     argv0=${argv0#-}
     argv0=${argv0##*/}
@@ -1420,17 +1409,6 @@ fm_backend_herdr_pane_shell_foreground_sample() {  # <session> <pane-id> [<task-
   fi
   [ "$foreground_pgid" = "${FM_BACKEND_HERDR_FOREGROUND_SHELL_PID:-}" ] || return 1
   printf '%s\n' "$FM_BACKEND_HERDR_FOREGROUND_SHELL_PID"
-}
-
-# fm_backend_herdr_pane_is_bare_shell: true (0) when the exact pane's own
-# process evidence proves its sole foreground process is a recognized bare
-# shell - including the nested shell firstmate's `treehouse get` leaves in a
-# ship pane. It applies no recorded-task-directory constraint, because it
-# answers "is any agent process running in this pane", a question the
-# directory cannot change. This is the process-side authority
-# fm_backend_herdr_agent_state consults before trusting a live registry entry.
-fm_backend_herdr_pane_is_bare_shell() {  # <session> <pane-id>
-  fm_backend_herdr_pane_shell_foreground_sample "$1" "$2" >/dev/null
 }
 
 # fm_backend_herdr_pane_idle_shell_sample: one strict instantaneous
@@ -2210,35 +2188,14 @@ fm_backend_herdr_tab_is_husk() {  # <session> <pane_id>
 # sweep as the tmux classifier. It reuses the husk classifier rather than
 # creating a second Herdr state machine: a structurally gone pane is `missing`,
 # a confirmed agent-less pane is `dead`, a registered agent is `alive`, and an
-# unexpected or failed API read is `unreadable`. `live` is the one case that is
-# cross-checked against the pane's own process evidence, because Herdr's
-# registry can outlive a detected agent that exited inside a persistent nested
-# shell; a provably bare foreground shell is `dead`, and every weaker read stays
-# `alive` so a running or unclassifiable agent is never reported stopped.
+# unexpected or failed API read is `unreadable`.
 fm_backend_herdr_agent_state() {  # <target>
-  local target=$1 state
+  local target=$1
   fm_backend_herdr_parse_target "$target" || { printf 'unreadable'; return 0; }
-  state=$(fm_backend_herdr_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")
-  case "$state" in
+  case "$(fm_backend_herdr_pane_agent_state "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")" in
     dead) printf 'missing' ;;
     no-agent) printf 'dead' ;;
-    live)
-      # Herdr's registry can retain a DETECTED agent after the agent process
-      # itself has exited whenever it ran inside a persistent nested shell:
-      # firstmate's `treehouse get` opens one, and Herdr releases a detected
-      # agent only when the pane's foreground process group returns to the
-      # pane's OWN shell, which the nested shell keeps from happening. The
-      # pane's own process evidence is strictly stronger than the registration,
-      # so a provably bare foreground shell means the agent stopped even though
-      # the registry still lists it. Anything short of that proof stays live,
-      # so a running agent, an unrecognized process, or an unreadable pane is
-      # never downgraded to dead.
-      if fm_backend_herdr_pane_is_bare_shell "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE"; then
-        printf 'dead'
-      else
-        printf 'alive'
-      fi
-      ;;
+    live) printf 'alive' ;;
     *) printf 'unreadable' ;;
   esac
 }

@@ -131,7 +131,6 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
   On Herdr, a stale registered agent is cleared only after repeated structured reads prove the exact pane contains one recognized bare foreground shell in the recorded worktree; a live agent is never cleared, and a mismatched process is never sent exit text.
-  Herdr's recovery-grade classifier also cross-checks a live registration against the pane's own process evidence, so a provably bare foreground shell reads `dead` even while the registration persists, while a running agent, an unrecognized process, or an unreadable read stays `alive`.
 - `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free and its shell is sitting in the recorded worktree, so a replacement can never join a live agent or start outside the copy holding the work.
 
 ## Capability matrix

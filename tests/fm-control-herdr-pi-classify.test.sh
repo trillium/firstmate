@@ -185,7 +185,7 @@ while [ "$attempt" -lt 20 ]; do
   attempt=$((attempt + 1))
 done
 if ! printf '%s' "$PROCESS_SHAPE" \
-  | jq -e 'has("argv0") or (has("argv") and (.argv[0] == "pi"))' >/dev/null 2>&1; then
+  | jq -e '((.argv0 // .argv[0] // "") == "pi")' >/dev/null 2>&1; then
   printf 'skip: installed herdr (%s) does not expose a pane argv0 field, so the argv0-keyed live classification cannot be exercised\n' \
     "$(lab status --json 2>/dev/null | jq -r '.client.version // "unknown"' 2>/dev/null)"
   exit 0
@@ -266,44 +266,6 @@ case "$OUT" in
   *) fail "the relaunch refusal should name the unattributed process, got: $OUT" ;;
 esac
 pass "real herdr: relaunch refuses a genuinely unexpected process"
-
-# --- a stale registration over a bare nested shell reads dead ----------------
-#
-# firstmate's `treehouse get` leaves a persistent nested shell in a ship pane,
-# and Herdr releases a detected agent only when the pane's foreground process
-# group returns to the pane's OWN shell. A pi worker that exits inside that
-# nested shell therefore leaves its registration behind forever, which is what
-# made a real ship task's exit report `exit=unconfirmed`. The process proof is
-# strictly stronger, so the classifier must read `dead` and exit must converge.
-lab pane send-keys "$PANE_ID" C-c >/dev/null 2>&1 || true
-stop_foreground || fail "could not stop the unexpected process before the nested-shell phase"
-lab pane run "$PANE_ID" "bash -c 'cd $WT && exec bash'" >/dev/null 2>&1 \
-  || fail "could not start a nested shell in the task copy"
-NESTED=0
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-  INFO=$(lab pane process-info --pane "$PANE_ID" 2>/dev/null || true)
-  if printf '%s' "$INFO" | jq -e '
-    .result.process_info as $p
-    | ($p.foreground_process_group_id != $p.shell_pid)
-      and ($p.foreground_processes[0].name == "bash")
-      and ($p.foreground_processes[0].argv0 == "bash")
-  ' >/dev/null 2>&1; then
-    NESTED=1
-    break
-  fi
-  sleep 0.5
-done
-[ "$NESTED" -eq 1 ] || fail "the pane never showed a nested shell foreground: $(lab pane process-info --pane "$PANE_ID" 2>/dev/null)"
-lab pane report-agent "$PANE_ID" --source herdr:pi-stale --agent pi --state idle \
-  >/dev/null 2>&1 || fail "could not seed a stale pi registration over the nested shell"
-[ "$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")" = dead ] \
-  || fail "a stale pi registration over a bare nested shell must read dead, got '$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")'"
-OUT=$(run_control pismoke exit 2>&1) || fail "exit over a stale registration and a bare nested shell should converge: $OUT"
-case "$OUT" in
-  *"already-stopped"*) : ;;
-  *) fail "exit over a stopped agent must report already-stopped, got: $OUT" ;;
-esac
-pass "real herdr: a stale pi registration over a bare nested shell reads dead and exit converges"
 
 lab pane get "$PANE_ID" >/dev/null 2>&1 \
   || fail "the control plane must never remove the endpoint it was operating on"

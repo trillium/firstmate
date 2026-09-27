@@ -4510,47 +4510,9 @@ test_wait_transition_clean_timeout_returns_1() {
   pass "fm_backend_herdr_wait_transition: stock macOS Bash clean timeout closes fd 9 and returns 1"
 }
 
-# fm_backend_herdr_agent_state cross-checks a live registry entry against the
-# pane's own process evidence. Herdr releases a DETECTED agent only when the
-# pane's foreground process group returns to the pane's OWN shell, so an agent
-# that exits inside a persistent nested shell (firstmate's `treehouse get`
-# opens one) leaves its registration behind. A provably bare foreground shell
-# is therefore `dead`, while a running agent, an unrecognized process, and any
-# weaker read all stay `alive`.
-test_agent_state_cross_checks_a_live_registration_against_process_evidence() {
-  local out
-  pane_state() {  # <process-json>
-    ROOT="$ROOT" FM_TEST_PROCESS_JSON="$1" bash -c '
-      . "$ROOT/bin/backends/herdr.sh"
-      fm_backend_herdr_cli() {
-        case "$2 $3" in
-          "pane get") printf "%s\n" "{\"result\":{\"pane\":{\"pane_id\":\"w1:p2\"}}}" ;;
-          "agent get") printf "%s\n" "{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}" ;;
-          "pane process-info") printf "%s\n" "$FM_TEST_PROCESS_JSON" ;;
-        esac
-      }
-      fm_backend_herdr_agent_state "sess:w1:p2"
-    '
-  }
-  # A lone nested shell in the pane: Herdr never released the pi registration.
-  out=$(pane_state '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":100,"foreground_process_group_id":200,"foreground_processes":[{"pid":200,"name":"/bin/zsh","argv0":"zsh","cmdline":"/bin/zsh","cwd":"/tmp"}]}}}')
-  [ "$out" = dead ] || fail "a stale pi registration over a bare nested shell must read dead, got '$out'"
-  # A live node/pi agent in the pane: the process proof must keep it alive.
-  out=$(pane_state '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":100,"foreground_process_group_id":200,"foreground_processes":[{"pid":200,"name":"node","argv0":"pi","cwd":"/tmp"}]}}}')
-  [ "$out" = alive ] || fail "a live node/pi agent must stay alive, got '$out'"
-  # An unrecognized foreground process is never authority for a stop.
-  out=$(pane_state '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","shell_pid":100,"foreground_process_group_id":200,"foreground_processes":[{"pid":200,"name":"sleep","argv0":"sleep","cmdline":"sleep 300","cwd":"/tmp"}]}}}')
-  [ "$out" = alive ] || fail "an unrecognized foreground process must stay alive, got '$out'"
-  # An unreadable process read is never authority for a stop either.
-  out=$(pane_state 'not-json')
-  [ "$out" = alive ] || fail "an unreadable process read must keep a live registration alive, got '$out'"
-  pass "fm_backend_herdr_agent_state: a live registration is downgraded only by a provable bare shell"
-}
-
 # shellcheck source=bin/fm-backend.sh
 . "$ROOT/bin/fm-backend.sh"
 
-test_agent_state_cross_checks_a_live_registration_against_process_evidence
 test_version_check_accepts_current_protocol
 test_version_check_refuses_old_protocol
 test_version_check_refuses_missing_herdr
