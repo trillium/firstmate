@@ -1005,3 +1005,38 @@ test_scout_and_secondmate_scaffold
 test_crewmate_briefs_enroll_in_parlay_first
 test_beads_backend_mints_bead_at_intake
 test_default_backend_omits_hook_sections
+
+# A pooled worktree HEAD may sit commits behind the project's current default
+# branch, so every ship brief's Setup step must tell the crewmate to fetch
+# first and branch from the freshly fetched remote default branch - never from
+# the inherited HEAD - resolving that branch the way the rest of this repo
+# does (origin/HEAD, then main, then master) and changing nothing else to get
+# there. Asserts on generated brief text (the scaffold's public interface),
+# never on the script's source bytes.
+test_ship_setup_branches_from_fresh_remote_default() {
+  local home id mode brief setup
+  home="$TMP_ROOT/remote-base-home"
+  write_registry "$home"
+
+  for id_mode in "base-nm-b1:no-mistakes" "base-dp-b2:direct-PR" "base-lo-b3:local-only"; do
+    id=${id_mode%%:*}
+    mode=${id_mode##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    setup=$(sed -n '/^# Setup$/,/^# Rules$/p' "$brief")
+    [ -n "$setup" ] || fail "$id: brief has no Setup section to assert on"
+    assert_contains "$setup" 'git fetch origin' "$id: Setup must fetch before branching"
+    assert_contains "$setup" 'git symbolic-ref --quiet --short refs/remotes/origin/HEAD' "$id: Setup must resolve the default branch via origin/HEAD"
+    assert_contains "$setup" "git checkout -b fm/$id origin/" "$id: Setup must branch from the remote default branch"
+    assert_not_contains "$setup" "at a detached HEAD on a clean default branch" "$id: Setup must stop asserting a clean-and-current HEAD"
+    assert_not_contains "$setup" "reset --hard" "$id: Setup must carry no destructive reset verb"
+    assert_not_contains "$setup" "checkout -f" "$id: Setup must carry no forced-checkout verb"
+    assert_not_contains "$setup" "checkout --force" "$id: Setup must carry no forced-checkout verb"
+    assert_not_contains "$setup" "clean -f" "$id: Setup must carry no destructive clean verb"
+    assert_not_contains "$setup" "--force" "$id: Setup must carry no force flag"
+  done
+  pass "fm-brief.sh: every ship Setup fetches and branches from the fresh remote default, non-destructively"
+}
+
+test_ship_setup_branches_from_fresh_remote_default
