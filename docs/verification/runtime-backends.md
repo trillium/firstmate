@@ -593,6 +593,8 @@ ok - real herdr: refusals preserved the endpoint and the task's local copy
 ```
 
 The same day the full exit and relaunch recovery plane was verified against a real pi worker in a named lab: `fm-control.sh exit` printed `stopped` with `harness=pi`, and `fm-control.sh relaunch` printed `relaunched` with `harness=pi from=pi` after its replacement worker came up alive.
+The same day a real `fm-spawn.sh` ship task was driven through the named lab, which is the shape that matters: `treehouse get` leaves a persistent nested shell foreground, so the live pane reports `{name:"node", argv0:"pi"}` with the nested shell below it.
+There `fm-control.sh exit` printed `stopped realpi harness=pi backend=herdr`, `fm-control.sh relaunch` printed `relaunched realpi harness=pi from=pi`, and a second `exit` on the replacement returned to `stopped` while Herdr's registry still listed the retired agent, which is the stale-registration case the recovery-grade classifier now cross-checks against the pane's own process evidence.
 That command is the guard that refreshes the classification half of this record; run it after every Herdr upgrade rather than trusting the versions above.
 
 ### Away-mode transport

@@ -45,23 +45,6 @@ herdr_forget_inherited_pane
 . "$ROOT/bin/fm-backend.sh"
 fm_backend_source herdr || { echo "skip: could not source the herdr backend"; exit 0; }
 
-# --- unit pins: argv0 carries the agent identity, the name alone does not --
-if ! fm_backend_herdr_identity_is_agent "node" "pi" ""; then
-  printf 'not ok - %s\n' "name=node argv0=pi with empty cmdline must identify the pi agent" >&2
-  exit 1
-fi
-pass "identity: name=node argv0=pi with empty cmdline identifies the pi agent"
-if fm_backend_herdr_identity_is_agent "node" "node" ""; then
-  printf 'not ok - %s\n' "a bare node process must not identify any agent" >&2
-  exit 1
-fi
-pass "identity: a bare node process identifies no agent"
-if fm_backend_herdr_identity_is_agent "sleep" "sleep" "sleep 300"; then
-  printf 'not ok - %s\n' "an unexpected process must not identify any agent" >&2
-  exit 1
-fi
-pass "identity: an unexpected process identifies no agent"
-
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/fm-pi-classify.XXXXXX")
 SCRATCH=$(cd "$SCRATCH" && pwd)
 
@@ -182,9 +165,50 @@ run_control() {
     "$ROOT/bin/fm-control.sh" "$@" 2>&1
 }
 
-# --- the incident shape: name=node, argv0=pi -------------------------------
+# --- live capability probe: can the installed herdr expose the agent name? ---
+# A live pi worker runs under node, and the classification added here keys on
+# the pane's own argv0 because that is where the agent identity lives. Older
+# herdr does not expose that field at all: CI pins 0.7.4, where the same pane
+# reports just `node` with no argv0, argv, or cmdline. Probe the live field
+# before asserting anything, and take the declared gate-skip path when the
+# installed herdr cannot expose it, rather than failing a capability the
+# backend was never given. The unit-level identity pins below are version-
+# independent and stay unconditional when this test does run.
 lab pane run "$PANE_ID" "bash -c 'exec -a pi $FAKEBIN/node'" >/dev/null 2>&1 \
   || fail "could not start the pi-shaped stub in the lab pane"
+PROCESS_SHAPE='{}'
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+  PROCESS_SHAPE=$(lab pane process-info --pane "$PANE_ID" 2>/dev/null | jq -c '.result.process_info.foreground_processes[0] // {}' 2>/dev/null) || PROCESS_SHAPE='{}'
+  [ "$(printf '%s' "$PROCESS_SHAPE" | jq -r '.name // empty' 2>/dev/null)" = node ] && break
+  sleep 0.5
+  attempt=$((attempt + 1))
+done
+if ! printf '%s' "$PROCESS_SHAPE" \
+  | jq -e 'has("argv0") or (has("argv") and (.argv[0] == "pi"))' >/dev/null 2>&1; then
+  printf 'skip: installed herdr (%s) does not expose a pane argv0 field, so the argv0-keyed live classification cannot be exercised\n' \
+    "$(lab status --json 2>/dev/null | jq -r '.client.version // "unknown"' 2>/dev/null)"
+  exit 0
+fi
+
+# --- unit pins: argv0 carries the agent identity, the name alone does not --
+if ! fm_backend_herdr_identity_is_agent "node" "pi" ""; then
+  printf 'not ok - %s\n' "name=node argv0=pi with empty cmdline must identify the pi agent" >&2
+  exit 1
+fi
+pass "identity: name=node argv0=pi with empty cmdline identifies the pi agent"
+if fm_backend_herdr_identity_is_agent "node" "node" ""; then
+  printf 'not ok - %s\n' "a bare node process must not identify any agent" >&2
+  exit 1
+fi
+pass "identity: a bare node process identifies no agent"
+if fm_backend_herdr_identity_is_agent "sleep" "sleep" "sleep 300"; then
+  printf 'not ok - %s\n' "an unexpected process must not identify any agent" >&2
+  exit 1
+fi
+pass "identity: an unexpected process identifies no agent"
+
+# --- the incident shape: name=node, argv0=pi -------------------------------
 wait_shape "node" "pi" || fail "the lab pane never showed the name=node argv0=pi shape, got: $(foreground_shape)"
 
 fm_backend_herdr_pane_shell_foreground_sample "$SESSION" "$PANE_ID" "$WT" >/dev/null
@@ -242,6 +266,44 @@ case "$OUT" in
   *) fail "the relaunch refusal should name the unattributed process, got: $OUT" ;;
 esac
 pass "real herdr: relaunch refuses a genuinely unexpected process"
+
+# --- a stale registration over a bare nested shell reads dead ----------------
+#
+# firstmate's `treehouse get` leaves a persistent nested shell in a ship pane,
+# and Herdr releases a detected agent only when the pane's foreground process
+# group returns to the pane's OWN shell. A pi worker that exits inside that
+# nested shell therefore leaves its registration behind forever, which is what
+# made a real ship task's exit report `exit=unconfirmed`. The process proof is
+# strictly stronger, so the classifier must read `dead` and exit must converge.
+lab pane send-keys "$PANE_ID" C-c >/dev/null 2>&1 || true
+stop_foreground || fail "could not stop the unexpected process before the nested-shell phase"
+lab pane run "$PANE_ID" "bash -c 'cd $WT && exec bash'" >/dev/null 2>&1 \
+  || fail "could not start a nested shell in the task copy"
+NESTED=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  INFO=$(lab pane process-info --pane "$PANE_ID" 2>/dev/null || true)
+  if printf '%s' "$INFO" | jq -e '
+    .result.process_info as $p
+    | ($p.foreground_process_group_id != $p.shell_pid)
+      and ($p.foreground_processes[0].name == "bash")
+      and ($p.foreground_processes[0].argv0 == "bash")
+  ' >/dev/null 2>&1; then
+    NESTED=1
+    break
+  fi
+  sleep 0.5
+done
+[ "$NESTED" -eq 1 ] || fail "the pane never showed a nested shell foreground: $(lab pane process-info --pane "$PANE_ID" 2>/dev/null)"
+lab pane report-agent "$PANE_ID" --source herdr:pi-stale --agent pi --state idle \
+  >/dev/null 2>&1 || fail "could not seed a stale pi registration over the nested shell"
+[ "$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")" = dead ] \
+  || fail "a stale pi registration over a bare nested shell must read dead, got '$(fm_backend_agent_state herdr "$SESSION:$PANE_ID")'"
+OUT=$(run_control pismoke exit 2>&1) || fail "exit over a stale registration and a bare nested shell should converge: $OUT"
+case "$OUT" in
+  *"already-stopped"*) : ;;
+  *) fail "exit over a stopped agent must report already-stopped, got: $OUT" ;;
+esac
+pass "real herdr: a stale pi registration over a bare nested shell reads dead and exit converges"
 
 lab pane get "$PANE_ID" >/dev/null 2>&1 \
   || fail "the control plane must never remove the endpoint it was operating on"

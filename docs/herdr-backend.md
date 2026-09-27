@@ -277,6 +277,10 @@ The generic Herdr agent-liveness probe reuses the same classifier.
 A structurally gone pane becomes `missing`, a restored agent-less shell becomes `dead`, a registered agent becomes `alive`, and an unexpected read becomes `unreadable`.
 Unlike tmux process-name inspection, native registration can classify Pi without guessing from a generic interpreter name.
 
+A live registration is cross-checked against the pane's own process evidence before it is reported as `alive`.
+Herdr releases a detected agent only when the pane's foreground process group returns to the pane's own shell, so an agent that exits inside a persistent nested shell - the one `treehouse get` leaves in a ship pane - can keep its registration indefinitely.
+A provably bare foreground shell therefore reads `dead`, while a running agent, an unrecognized process, and every weaker read stay `alive`.
+
 The session-start sweep uses this probe.
 Mid-session secondmate liveness is not implemented because idle secondmates are deliberately exempt from stale-pane escalation and need a separate periodic identity signal.
 
