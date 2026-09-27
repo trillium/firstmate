@@ -205,6 +205,25 @@ pass "real herdr: the pane holds a persistent nested shell in the recorded task 
 
 # --- a pi-shaped worker runs in the nested shell, then exits ----------------
 type_line "bash -c 'exec -a pi $FAKEBIN/node'"
+# Live capability probe: the pi-shaped worker is only exerciseable when the
+# installed herdr exposes the invoked argv0 (0.7.4 reports just node), so
+# probe exactly the expression the classifier uses and take the declared
+# gate-skip path otherwise, rather than failing a capability the backend
+# was never given. The hermetic pins stay unconditional when this runs.
+PROCESS_SHAPE='{}'
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+  PROCESS_SHAPE=$(lab pane process-info --pane "$PANE_ID" 2>/dev/null | jq -c '.result.process_info.foreground_processes[0] // {}' 2>/dev/null) || PROCESS_SHAPE='{}'
+  [ "$(printf '%s' "$PROCESS_SHAPE" | jq -r '.name // empty' 2>/dev/null)" = node ] && break
+  sleep 0.5
+  attempt=$((attempt + 1))
+done
+if ! printf '%s' "$PROCESS_SHAPE" \
+  | jq -e '((.argv0 // .argv[0] // "") == "pi")' >/dev/null 2>&1; then
+  printf 'skip: installed herdr (%s) does not expose a pane argv0 field, so the nested-shell stale repair cannot be exercised\n' \
+    "$(lab status --json 2>/dev/null | jq -r '.client.version // "unknown"' 2>/dev/null)"
+  exit 0
+fi
 wait_shape "node" "pi" \
   || fail "the lab pane never showed the name=node argv0=pi worker, got: $(foreground_shape)"
 wait_stale_registration \
