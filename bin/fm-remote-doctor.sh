@@ -9,8 +9,10 @@
 # PATH used by worker jobs while retaining authority to inspect and repair the
 # worker itself.
 #
-# A remote second mate always runs on the Herdr backend in the dedicated
-# fm-remote session. Its account therefore needs the Firstmate-owned Aqua Herdr
+# A remote second mate always runs on the Herdr backend in the configured
+# remote-secondmate session (FM_REMOTE_HERDR_SESSION, default `default`), so
+# the captain sees it from his own Herdr client. Its account therefore needs
+# the Firstmate-owned Aqua Herdr
 # agent plus the sibling dev.firstmate.remote-job worker that runs normal fm-on
 # commands through the Aqua or Linux job-worker path. On darwin, that Herdr
 # agent runs bin/fm-remote-herdr-guard.sh through the remote account's login
@@ -21,7 +23,11 @@
 # Aqua-born server alone, and takes the session over from a server born
 # outside that session (an SSH remote attach wins the socket at boot), because
 # such a server's panes cannot read the login keychain;
-# bin/fm-remote-herdr-owner-lib.sh owns that birth test. Doctor remains
+# bin/fm-remote-herdr-owner-lib.sh owns that birth test. On a host that
+# still carries the previous `dev.firstmate.herdr.fm-remote` agent after the
+# session moved to `default`, --fix boots that legacy agent out and removes
+# its plist so the two agents never run side by side; check mode reports it
+# as fixable. Doctor remains
 # invokable over the plain-SSH bootstrap path to inspect and repair that worker.
 # SSH cannot create an Aqua session, so a host with no GUI login is a human
 # gap rather than something --fix attempts to bypass.
@@ -70,11 +76,18 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 REQUIRED_TOOLS=(git jq herdr tasks-axi treehouse)
 HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
-LAUNCH_AGENT_LABEL=dev.firstmate.herdr.fm-remote
-# The dedicated remote-secondmate session. The user's interactive Herdr work
-# remains in the separate default session, which this readiness check never
-# requires or changes.
-HERDR_SESSION_NAME=fm-remote
+# The remote-secondmate Herdr session is a deployment choice, not a constant:
+# FM_REMOTE_HERDR_SESSION points it elsewhere without editing code, and it
+# defaults to `default` so the captain sees remote mates from his own Herdr
+# client. Every status check, client select, and birth/ownership proof below
+# reads HERDR_SESSION_NAME, so no use is left behind.
+HERDR_SESSION_NAME=${FM_REMOTE_HERDR_SESSION:-default}
+# The launchd label derives from the session name so the two cannot disagree.
+LAUNCH_AGENT_LABEL=dev.firstmate.herdr.$HERDR_SESSION_NAME
+# The previous hardcoded session's agent. When the session moved on, --fix
+# retires this legacy agent (bootout plus plist removal) before owning the
+# new one, so an old `fm-remote` agent is never left running alongside it.
+LEGACY_LAUNCH_AGENT_LABEL=dev.firstmate.herdr.fm-remote
 LAUNCH_AGENT_DIR="${HOME:-}/Library/LaunchAgents"
 LAUNCH_AGENT_PLIST="$LAUNCH_AGENT_DIR/$LAUNCH_AGENT_LABEL.plist"
 LAUNCH_AGENT_LOG_DIR="${HOME:-}/Library/Logs"
@@ -726,6 +739,7 @@ run_checks() { # <resolved-login-shell>
   check_herdr
   check_gui_session
   check_remote_job_worker
+  check_legacy_launch_agent
   check_launch_agent "$shell"
   check_herdr_server
   check_entrypoint_link
@@ -735,6 +749,54 @@ run_checks() { # <resolved-login-shell>
 
 fix_report() { # <check> applied|failed <text>
   printf 'fix %s=%s: %s\n' "$1" "$2" "$3"
+}
+
+# The previous hardcoded session's launch agent. When the configured session
+# moved on (LEGACY label differs from the derived one), a leftover legacy
+# plist or loaded job would own the old session alongside the new one, so
+# check mode reports it as fixable and --fix boots it out and removes its
+# plist. When the configured session IS fm-remote the two labels agree and
+# this check skips: there is nothing legacy to retire.
+check_legacy_launch_agent() {
+  local legacy_plist loaded=0
+  if [ "$LEGACY_LAUNCH_AGENT_LABEL" = "$LAUNCH_AGENT_LABEL" ]; then
+    record launchagent-legacy "skip: the configured session owns $LAUNCH_AGENT_LABEL; no legacy agent applies"
+    return 0
+  fi
+  if [ "$PLATFORM" != darwin ]; then
+    record launchagent-legacy "skip: launch agents apply only on darwin"
+    return 0
+  fi
+  legacy_plist="$LAUNCH_AGENT_DIR/$LEGACY_LAUNCH_AGENT_LABEL.plist"
+  if [ -f "$legacy_plist" ] && [ ! -L "$legacy_plist" ]; then
+    record launchagent-legacy "fixable: legacy launch agent $LEGACY_LAUNCH_AGENT_LABEL remains from the previous fm-remote session" \
+      "rerun this command with --fix to boot it out and remove its plist so only $LAUNCH_AGENT_LABEL runs"
+    return 0
+  fi
+  if [ -n "$UID_NUM" ] && command -v launchctl >/dev/null 2>&1 \
+    && launchctl print "gui/$UID_NUM/$LEGACY_LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
+    record launchagent-legacy "fixable: legacy launch agent $LEGACY_LAUNCH_AGENT_LABEL is still loaded" \
+      "rerun this command with --fix to boot it out so only $LAUNCH_AGENT_LABEL runs"
+    return 0
+  fi
+  record launchagent-legacy "ok: no legacy $LEGACY_LAUNCH_AGENT_LABEL agent remains"
+}
+
+retire_legacy_launch_agent() {
+  local legacy_plist
+  legacy_plist="$LAUNCH_AGENT_DIR/$LEGACY_LAUNCH_AGENT_LABEL.plist"
+  if [ -n "$UID_NUM" ] && command -v launchctl >/dev/null 2>&1; then
+    launchctl bootout "gui/$UID_NUM/$LEGACY_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+  fi
+  if [ -f "$legacy_plist" ] && [ ! -L "$legacy_plist" ]; then
+    if rm -f -- "$legacy_plist" 2>/dev/null; then
+      fix_report launchagent-legacy applied "booted out and removed the legacy $LEGACY_LAUNCH_AGENT_LABEL agent; only $LAUNCH_AGENT_LABEL remains"
+      return 0
+    fi
+    fix_report launchagent-legacy failed "could not remove $legacy_plist"
+    return 1
+  fi
+  fix_report launchagent-legacy applied "booted out the legacy $LEGACY_LAUNCH_AGENT_LABEL agent; only $LAUNCH_AGENT_LABEL remains"
 }
 
 write_launch_agent() { # <resolved-login-shell>
@@ -840,6 +902,9 @@ apply_fixes() { # <resolved-login-shell>
     i=$((i + 1))
     case "$value" in fixable:*) ;; *) continue ;; esac
     case "$name" in
+      launchagent-legacy)
+        retire_legacy_launch_agent || true
+        ;;
       remote-job-worker|remote-job-worker-loaded|remote-job-probe)
         [ "$remote_job_fixed" -eq 0 ] || continue
         remote_job_fixed=1
