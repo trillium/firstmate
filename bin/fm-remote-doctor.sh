@@ -23,11 +23,11 @@
 # Aqua-born server alone, and takes the session over from a server born
 # outside that session (an SSH remote attach wins the socket at boot), because
 # such a server's panes cannot read the login keychain;
-# bin/fm-remote-herdr-owner-lib.sh owns that birth test. On a host that
-# still carries the previous `dev.firstmate.herdr.fm-remote` agent after the
-# session moved to `default`, --fix boots that legacy agent out and removes
-# its plist so the two agents never run side by side; check mode reports it
-# as fixable. Doctor remains
+# bin/fm-remote-herdr-owner-lib.sh owns that birth test. On the shared default
+# session this doctor manages no launch agent: the host's own server owns it.
+# A leftover `dev.firstmate.herdr.fm-remote` agent is retired by --fix only
+# once its session is provably not running, so live mates are never stranded;
+# while it may still serve, check mode leaves it alone. Doctor remains
 # invokable over the plain-SSH bootstrap path to inspect and repair that worker.
 # SSH cannot create an Aqua session, so a host with no GUI login is a human
 # gap rather than something --fix attempts to bypass.
@@ -82,11 +82,24 @@ OPTIONAL_TOOLS=(tmux no-mistakes gh)
 # client. Every status check, client select, and birth/ownership proof below
 # reads HERDR_SESSION_NAME, so no use is left behind.
 HERDR_SESSION_NAME=${FM_REMOTE_HERDR_SESSION:-default}
+# Whether Firstmate owns this session's server lifecycle. False for the shared
+# default session, where the host's own server owns it and this doctor only
+# verifies; true for a dedicated session, where the doctor provisions and
+# manages its own launch agent. Ported from the fm/herdr-launcher-identity
+# lineage, which the minis already run.
+if [ "$HERDR_SESSION_NAME" = default ]; then
+  HERDR_SESSION_DEDICATED=0
+else
+  HERDR_SESSION_DEDICATED=1
+fi
 # The launchd label derives from the session name so the two cannot disagree.
+# It applies only to dedicated sessions; the shared default session is
+# host-owned and never gets a Firstmate agent.
 LAUNCH_AGENT_LABEL=dev.firstmate.herdr.$HERDR_SESSION_NAME
-# The previous hardcoded session's agent. When the session moved on, --fix
-# retires this legacy agent (bootout plus plist removal) before owning the
-# new one, so an old `fm-remote` agent is never left running alongside it.
+# The previous hardcoded session's agent. When the configured session moved
+# on, a leftover `fm-remote` agent is retired by --fix, but only once its
+# session is provably not running: while mates still ride it, check mode
+# leaves it alone rather than stranding them.
 LEGACY_LAUNCH_AGENT_LABEL=dev.firstmate.herdr.fm-remote
 LAUNCH_AGENT_DIR="${HOME:-}/Library/LaunchAgents"
 LAUNCH_AGENT_PLIST="$LAUNCH_AGENT_DIR/$LAUNCH_AGENT_LABEL.plist"
@@ -618,6 +631,12 @@ check_gui_session() {
 
 check_launch_agent() { # <resolved-login-shell>
   local shell=$1
+  if [ "$HERDR_SESSION_DEDICATED" -eq 0 ]; then
+    record launchagent "skip: the shared '$HERDR_SESSION_NAME' server is owned by the host, not a Firstmate launch agent"
+    record launchagent-scope "skip: no Firstmate launch agent is managed for the shared session"
+    record launchagent-loaded "skip: no Firstmate launch agent is managed for the shared session"
+    return 0
+  fi
   if [ "$PLATFORM" != darwin ]; then
     record launchagent "skip: launch agents apply only on darwin"
     record launchagent-scope "skip: launch agents apply only on darwin"
@@ -677,6 +696,10 @@ check_herdr_server() {
     return 0
   fi
   if herdr_server_running; then
+    if [ "$HERDR_SESSION_DEDICATED" -eq 0 ]; then
+      record herdr-server "ok: session $HERDR_SESSION_NAME is running"
+      return 0
+    fi
     if [ "$PLATFORM" != darwin ]; then
       record herdr-server "ok: session $HERDR_SESSION_NAME is running"
       return 0
@@ -700,6 +723,11 @@ check_herdr_server() {
           "rerun this command with --fix so the launch agent takes the session over (its current panes close and the parent firstmate relaunches its mates)"
         ;;
     esac
+    return 0
+  fi
+  if [ "$HERDR_SESSION_DEDICATED" -eq 0 ]; then
+    record herdr-server "human: the shared herdr server for session $HERDR_SESSION_NAME is not running" \
+      "start the host's own herdr server for the '$HERDR_SESSION_NAME' session (e.g. its dev.herdr.server.plist launch agent); Firstmate does not manage the shared server"
     return 0
   fi
   if [ "$PLATFORM" = darwin ] && ! check_is_ok gui-session; then
@@ -751,14 +779,20 @@ fix_report() { # <check> applied|failed <text>
   printf 'fix %s=%s: %s\n' "$1" "$2" "$3"
 }
 
-# The previous hardcoded session's launch agent. When the configured session
-# moved on (LEGACY label differs from the derived one), a leftover legacy
-# plist or loaded job would own the old session alongside the new one, so
-# check mode reports it as fixable and --fix boots it out and removes its
-# plist. When the configured session IS fm-remote the two labels agree and
-# this check skips: there is nothing legacy to retire.
+# The previous hardcoded session's launch agent. A leftover is retired by
+# --fix, but only once its fm-remote session is provably not running: while
+# mates may still ride it, check mode leaves it alone rather than stranding
+# them, and an unprovable session state also defers rather than guesses.
+legacy_session_running() { # true only when the legacy session provably runs
+  local running
+  herdr_cli_available || return 1
+  herdr_adapter_load || return 1
+  running=$(fm_backend_herdr_cli fm-remote status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null) || return 1
+  [ "$running" = true ]
+}
+
 check_legacy_launch_agent() {
-  local legacy_plist loaded=0
+  local legacy_plist legacy_present=0
   if [ "$LEGACY_LAUNCH_AGENT_LABEL" = "$LAUNCH_AGENT_LABEL" ]; then
     record launchagent-legacy "skip: the configured session owns $LAUNCH_AGENT_LABEL; no legacy agent applies"
     return 0
@@ -769,17 +803,25 @@ check_legacy_launch_agent() {
   fi
   legacy_plist="$LAUNCH_AGENT_DIR/$LEGACY_LAUNCH_AGENT_LABEL.plist"
   if [ -f "$legacy_plist" ] && [ ! -L "$legacy_plist" ]; then
-    record launchagent-legacy "fixable: legacy launch agent $LEGACY_LAUNCH_AGENT_LABEL remains from the previous fm-remote session" \
-      "rerun this command with --fix to boot it out and remove its plist so only $LAUNCH_AGENT_LABEL runs"
-    return 0
-  fi
-  if [ -n "$UID_NUM" ] && command -v launchctl >/dev/null 2>&1 \
+    legacy_present=1
+  elif [ -n "$UID_NUM" ] && command -v launchctl >/dev/null 2>&1 \
     && launchctl print "gui/$UID_NUM/$LEGACY_LAUNCH_AGENT_LABEL" >/dev/null 2>&1; then
-    record launchagent-legacy "fixable: legacy launch agent $LEGACY_LAUNCH_AGENT_LABEL is still loaded" \
-      "rerun this command with --fix to boot it out so only $LAUNCH_AGENT_LABEL runs"
+    legacy_present=1
+  fi
+  if [ "$legacy_present" -eq 0 ]; then
+    record launchagent-legacy "ok: no legacy $LEGACY_LAUNCH_AGENT_LABEL agent remains"
     return 0
   fi
-  record launchagent-legacy "ok: no legacy $LEGACY_LAUNCH_AGENT_LABEL agent remains"
+  if legacy_session_running; then
+    record launchagent-legacy "skip: legacy launch agent $LEGACY_LAUNCH_AGENT_LABEL left alone while its fm-remote session is running and may still serve live mates"
+    return 0
+  fi
+  if herdr_cli_available; then
+    record launchagent-legacy "fixable: legacy launch agent $LEGACY_LAUNCH_AGENT_LABEL remains and its fm-remote session is not running, so nothing serves from it" \
+      "rerun this command with --fix to boot it out and remove its plist"
+    return 0
+  fi
+  record launchagent-legacy "skip: legacy launch agent $LEGACY_LAUNCH_AGENT_LABEL left alone because its fm-remote session state cannot be proven without herdr; retirement waits until the session is provably idle"
 }
 
 retire_legacy_launch_agent() {
@@ -790,13 +832,13 @@ retire_legacy_launch_agent() {
   fi
   if [ -f "$legacy_plist" ] && [ ! -L "$legacy_plist" ]; then
     if rm -f -- "$legacy_plist" 2>/dev/null; then
-      fix_report launchagent-legacy applied "booted out and removed the legacy $LEGACY_LAUNCH_AGENT_LABEL agent; only $LAUNCH_AGENT_LABEL remains"
+      fix_report launchagent-legacy applied "booted out and removed the idle legacy $LEGACY_LAUNCH_AGENT_LABEL agent"
       return 0
     fi
     fix_report launchagent-legacy failed "could not remove $legacy_plist"
     return 1
   fi
-  fix_report launchagent-legacy applied "booted out the legacy $LEGACY_LAUNCH_AGENT_LABEL agent; only $LAUNCH_AGENT_LABEL remains"
+  fix_report launchagent-legacy applied "booted out the idle legacy $LEGACY_LAUNCH_AGENT_LABEL agent"
 }
 
 write_launch_agent() { # <resolved-login-shell>

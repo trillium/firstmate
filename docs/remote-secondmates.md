@@ -243,7 +243,7 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh --fix
 Over the plain SSH doctor bootstrap, it writes and reloads two Firstmate-owned launch agents on macOS:
 
 - `dev.firstmate.remote-job`.
-- `dev.firstmate.herdr.<session>` (default `dev.firstmate.herdr.default`), derived from the configured session so the two cannot disagree.
+- `dev.firstmate.herdr.<session>`, derived from the configured session so the two cannot disagree, but only for a dedicated (non-`default`) session: the shared `default` session is host-owned and never gets a Firstmate agent.
 
 Both are scoped with `LimitLoadToSessionType=Aqua` and bootstrapped in `gui/<uid>`.
 
@@ -288,9 +288,9 @@ The guard's header owns the decision table, and [`bin/fm-remote-herdr-owner-lib.
 Its limits:
 
 - It never installs packages or overwrites a non-Firstmate file at a reserved wrapper path.
-- The Herdr launch agent owns only the configured remote-secondmate session server.
-  When that session is `default` it is the same server the user interacts with, which is the point: the captain sees the mates from his own Herdr client.
-  On a host that still carries the previous `dev.firstmate.herdr.fm-remote` agent, `fm-remote-doctor.sh --fix` boots it out and removes its plist so the two agents never run side by side.
+- On a dedicated session, the Herdr launch agent owns only that session's server.
+  On the shared `default` session Firstmate manages no server: it is the same server the user interacts with, which is the point, and the doctor only verifies it runs.
+  A leftover `dev.firstmate.herdr.fm-remote` agent is retired by `fm-remote-doctor.sh --fix` only once its session is provably not running; while it may still serve live mates it is left alone.
 - It re-derives every check from the host afterwards, so what it prints is the state after the repair rather than the intent of one.
 
 ### Steps only a person can take
