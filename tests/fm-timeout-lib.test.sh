@@ -64,6 +64,27 @@ test_passes_the_command_status_and_output_through() {
   pass "fm_exec_timed passes a command's status and output through unchanged"
 }
 
+# A shell without BASHPID (bash added it in 4.0; macOS ships 3.2) aborts on an
+# unguarded "$BASHPID" under set -u, which killed every fm-spawn at the backlog
+# transition. Source the library in such a shell and the bounded call must still
+# run the command. Skipped where the system shell does have BASHPID.
+test_the_library_runs_in_a_shell_without_bashpid() {
+  local shell=/bin/bash
+  if [ ! -x "$shell" ]; then
+    pass 'the library runs in a shell without BASHPID (skipped: no /bin/bash on this host)'
+    return 0
+  fi
+  if "$shell" -c 'set -u; : "${BASHPID?}"' 2>/dev/null; then
+    pass 'the library runs in a shell without BASHPID (skipped: this shell provides BASHPID)'
+    return 0
+  fi
+  local out
+  out=$("$shell" -c "set -u; . '$ROOT/bin/fm-timeout-lib.sh'; fm_exec_timed 5 1 echo bounded-ok" 2>&1)
+  assert_contains "$out" "bounded-ok" 'the bounded call did not run in a shell without BASHPID'
+  assert_not_contains "$out" 'unbound variable' 'the library still reads BASHPID unguarded'
+  pass 'the library and its bounded call survive a shell without BASHPID'
+}
+
 # A command that honors TERM ends at the bound, long before the grace would
 # have forced it, and is gone afterwards.
 test_term_ends_a_cooperative_command_at_the_bound() {
@@ -342,3 +363,4 @@ test_refuses_rather_than_running_unbounded
 test_rejects_malformed_bounds_before_running_anything
 test_gnu_timeout_kills_a_term_ignoring_command_after_the_grace
 test_timed_out_names_exactly_the_bound_statuses
+test_the_library_runs_in_a_shell_without_bashpid
