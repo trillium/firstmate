@@ -43,9 +43,9 @@ TASK_TMPS=()
 relaunch_cleanup() {
   local d
   for d in "${TASK_TMPS[@]:-}"; do
-    [ -n "$d" ] && rm -rf "$d"
+    [ -n "$d" ] && { chmod -R +w "$d" 2>/dev/null || true; rm -rf "$d"; }
   done
-  rm -rf "$TMP_ROOT"
+  { chmod -R +w "$TMP_ROOT" 2>/dev/null || true; rm -rf "$TMP_ROOT"; }
 }
 trap relaunch_cleanup EXIT
 
@@ -2015,7 +2015,8 @@ case "${1:-} ${2:-}" in
     case "$payload" in
       *'encode launch-brief'* | *'Firstmate operational input waiting: read'*)
         printf '%s\n' "$payload" > "$D/launched-command"
-        : > "$D/herdr-agent-live" ;;
+        : > "$D/herdr-agent-live"
+        rm -f "$D/herdr-agent-registration" ;;
     esac
     exit 0 ;;
   'workspace list')
