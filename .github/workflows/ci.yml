@@ -9,6 +9,19 @@ on:
 permissions:
   contents: read
 
+# Pinned vendor dependency for the Pi extension tests: those tests assert
+# byte-exact rendering and presentation behavior of Pi's own exported
+# components, so their verdict is only meaningful against one Pi version.
+# An unversioned `npm install` floats onto whatever the registry publishes that
+# day, which is how main's Behavior portable serial 2 and 4 shards went red on
+# 2026-10-06 with no change in this repository: the installed package moved from
+# 0.87.1, the version of the last complete green main run, to 1.0.4.
+# Pin it exactly like ShellCheck, actionlint, Herdr, and Treehouse, and treat a
+# bump as the deliberate moment to re-verify the Pi extension tests against the
+# new version. Owner of the value: this workflow.
+env:
+  FM_PI_PACKAGE_VERSION: '0.87.1'
+
 # Per-PR supersession: a new push to the same PR replaces that PR's in-flight
 # CI instead of letting superseded heads keep the full hosted-runner fan-out.
 # The group uses the PR number for pull_request events, so every run of one PR
@@ -112,10 +125,10 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
-      - name: Install the Pi package for the Pi extension tests
+      - name: Install the pinned Pi package for the Pi extension tests
         run: |
           set -eu
-          npm install -g @earendil-works/pi-coding-agent
+          npm install -g "@earendil-works/pi-coding-agent@${FM_PI_PACKAGE_VERSION}"
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable parallel shard 1
         run: |
@@ -215,11 +228,12 @@ jobs:
           tasks-axi --version
       # The Pi extension tests read the installed Pi package's own types and
       # runtime, so without it they gate-skip and pass silently. It is a public
-      # npm package and needs no credential, so CI can hold the real thing.
-      - name: Install the Pi package for the Pi extension tests
+      # npm package and needs no credential, so CI can hold the real thing at
+      # the exact version the top-level FM_PI_PACKAGE_VERSION pins.
+      - name: Install the pinned Pi package for the Pi extension tests
         run: |
           set -eu
-          npm install -g @earendil-works/pi-coding-agent
+          npm install -g "@earendil-works/pi-coding-agent@${FM_PI_PACKAGE_VERSION}"
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
