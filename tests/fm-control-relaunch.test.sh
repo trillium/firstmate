@@ -43,9 +43,9 @@ TASK_TMPS=()
 relaunch_cleanup() {
   local d
   for d in "${TASK_TMPS[@]:-}"; do
-    [ -n "$d" ] && rm -rf "$d"
+    [ -n "$d" ] && { chmod -R +w "$d" 2>/dev/null || true; rm -rf "$d"; }
   done
-  rm -rf "$TMP_ROOT"
+  { chmod -R +w "$TMP_ROOT" 2>/dev/null || true; rm -rf "$TMP_ROOT"; }
 }
 trap relaunch_cleanup EXIT
 
@@ -2015,7 +2015,8 @@ case "${1:-} ${2:-}" in
     case "$payload" in
       *'encode launch-brief'* | *'Firstmate operational input waiting: read'*)
         printf '%s\n' "$payload" > "$D/launched-command"
-        : > "$D/herdr-agent-live" ;;
+        : > "$D/herdr-agent-live"
+        rm -f "$D/herdr-agent-registration" ;;
     esac
     exit 0 ;;
   'workspace list')
@@ -2458,3 +2459,25 @@ test_herdr_reclaim_of_a_secondmate_names_its_own_owner
 test_herdr_rebind_failure_from_a_plain_shell_names_the_real_cause
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+
+test_relaunch_proceeds_when_composer_is_unproven_but_interactive_ready() {
+  local dir out rc=0
+  herdr_case_or_skip interactive-ready rl80 fmlab '%7' || return 0
+  dir=$HERDR_CASE_DIR
+  
+  # Set up composer to fail reading (unknown)
+  export FM_FAKE_COMPOSER_READ_FAIL=1
+
+  # Provide herdr-agent-registration with interactive_ready = true
+  cat > "$dir/fake/herdr-agent-registration" <<'JSON'
+{"result":{"agent":{"agent_status":"idle","interactive_ready":true}}}
+JSON
+
+  out=$(run_control "$dir" rl80 relaunch --note "preserve") || rc=$?
+  
+  expect_code 0 "$rc" "a relaunch must proceed when interactive_ready proves the input buffer is empty"$'\n'"$out"
+  assert_not_contains "$out" "not proven empty" "should not fail with unproven empty"
+  pass "fm-control relaunch: interactive_ready overrides an unproven composer (OpenCode/Agy scenario) and proceeds with exit"
+}
+
+test_relaunch_proceeds_when_composer_is_unproven_but_interactive_ready
