@@ -40,9 +40,18 @@ case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows)
     [ -n "${FM_FAKE_LIVE_WINDOW:-}" ] && printf '%s\n' "$FM_FAKE_LIVE_WINDOW"
+    [ -f "${FM_FAKE_WINDOW_LOG:-/nonexistent}" ] && cat "$FM_FAKE_WINDOW_LOG"
     exit 0
     ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  new-window)
+    # Record the window name so later list-windows sees the task's own endpoint.
+    while [ $# -gt 0 ]; do
+      [ "$1" = -n ] && { printf '%s\n' "${2:-}" >> "${FM_FAKE_WINDOW_LOG:?FM_FAKE_WINDOW_LOG unset}"; break; }
+      shift
+    done
+    exit 0
+    ;;
+  has-session|new-session|kill-window) exit 0 ;;
   send-keys) exit 0 ;;
 esac
 exit 0
@@ -63,6 +72,7 @@ make_ownership_case() {
   fakebin=$(make_ownership_fakebin "$case_dir/fake")
   mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
   printf 'codex\n' > "$home/config/crew-harness"
+  printf 'manual\n' > "$home/config/backlog-backend"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin"
 }
@@ -83,6 +93,7 @@ run_ownership_spawn() {
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
     FM_FAKE_PANE_PATH="$pane" FM_FAKE_LIVE_WINDOW="${FM_FAKE_LIVE_WINDOW:-}" \
+    FM_FAKE_WINDOW_LOG="$HOME_DIR/fake-windows" \
     PATH="$FAKEBIN_DIR:$PATH" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off --model sonnet 2>&1
 }
