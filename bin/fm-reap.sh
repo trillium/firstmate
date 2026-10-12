@@ -73,7 +73,8 @@
 #                  no status -> `fm-control.sh <id> relaunch --note ...` at most
 #                  once per record; a later dead reading after that relaunch is
 #                  reported and escalated through one wake, never relaunched
-#                  again.
+#                  again; once escalated it is report-only (no pending action,
+#                  absent from --actionable) until its evidence changes.
 #   BLOCKED, FAILED, NEEDS-DECISION  the ledger verb; reported only.
 #   UNSURE         any evidence the reaper cannot read; reported only.
 #   SKIP           see the skips above.
