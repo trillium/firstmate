@@ -498,6 +498,10 @@ classify_record() {
     done|working|paused|'') ;;
     *) set_class DEAD-UNLANDED "endpoint $E_ENDPOINT, ledger reads $E_VERB; reported only"; return 0 ;;
   esac
+  if [ -n "$E_RELAUNCHED" ] && [ "$(sidecar_get "$id" escalated)" = 1 ]; then
+    set_class DEAD-UNLANDED "endpoint $E_ENDPOINT again after the one relaunch at $E_RELAUNCHED; already escalated, reported only"
+    return 0
+  fi
   if [ -n "$E_RELAUNCHED" ]; then
     set_class DEAD-UNLANDED "endpoint $E_ENDPOINT again after the one relaunch at $E_RELAUNCHED; escalated, not relaunched" escalate
     return 0

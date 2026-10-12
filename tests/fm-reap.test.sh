@@ -384,6 +384,8 @@ test_dead_unlanded_relaunches_once_then_escalates() {
   [ "$(grep -c '^control' "$dir/actions.log")" -eq 1 ] || fail "the worker was relaunched more than once: $(cat "$dir/actions.log")"
   assert_grep "check: reap dead escalate" "$dir/home/state/.wake-queue" "the escalation was queued"
 
+  out=$(run_reap "$dir" scan --actionable)
+  [ -z "$(line_for "$out" dead)" ] || fail "an already-escalated record is still actionable: $out"
   run_reap "$dir" scan --act >/dev/null
   [ "$(grep -c 'reap dead escalate' "$dir/home/state/.wake-queue")" -eq 1 ] || fail "the escalation was queued more than once"
   assert_present "$dir/home/state/dead.meta" "a dead-unlanded record was removed"
