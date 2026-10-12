@@ -208,11 +208,18 @@ SH
   fm_git_init_commit "$home/projects/alpha"
   fm_git_add_origin "$home/projects/alpha" "$dir/alpha.origin.git"
 
+  # The deferred network-only worker is always spawned with the fleet lock PID
+  # it started under (bin/fm-startup-network.sh) so its mutating sweeps can
+  # confirm they still own that lock before touching shared state. Model that
+  # here, or every sweep below skips loudly as an unauthorized stale worker.
+  printf '%s\n' 424242 > "$home/state/.lock"
+
   out=$(
     PATH="$fakebin:$BASE_PATH" \
     FM_HOME="$home" \
     FM_ROOT_OVERRIDE="$primary" \
     FM_BOOTSTRAP_NETWORK=only \
+    FM_BOOTSTRAP_NETWORK_LOCK_PID=424242 \
     FM_SSH_BIN="$fakebin/fake-ssh" \
     FM_FAKE_SSH_LOG="$log" \
     FM_FAKE_SSH_SLEEP=0.4 \

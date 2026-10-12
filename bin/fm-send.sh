@@ -730,7 +730,17 @@ else
     # did not execute (robots-u7gu). Refuse loudly rather than deliver that.
     # Checked on the body the secondmate would actually read, so an already
     # marked/correlated recovery resend is judged on its command, not its carrier.
-    fm_pending_reply_carrier_body "$MESSAGE" CARRIER_BODY
+    #
+    # The hazard is a COMPOSER line, so it exists only on the typed plane. A
+    # remote secondmate selector always rides the steering inbox (see the
+    # data-plane selection below), where the body is a durable record the
+    # secondmate reads rather than text typed at column 0, so there is no typed
+    # plane for the marker to spoil and nothing to refuse.
+    if [ "$TARGET_BACKEND" = remote ]; then
+      CARRIER_BODY=
+    else
+      fm_pending_reply_carrier_body "$MESSAGE" CARRIER_BODY
+    fi
     case "$CARRIER_BODY" in
       /*)
         SLASH_VERB=${CARRIER_BODY%%[[:space:]]*}

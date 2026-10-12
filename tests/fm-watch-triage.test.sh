@@ -1116,6 +1116,11 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" >> "$out" &
   pid=$!
   wait_for_exit "$pid" 300 || fail "live external-decision gate did not surface immediately"
+  # Acknowledge that surface before re-arming. An unacknowledged queue is what
+  # the downtime recovery path reads as a missed hand-off, so leaving it would
+  # stop the next watcher on a resurface wake instead of exercising the
+  # unchanged-hash fallback this case is about.
+  ack_stopped_cycle "$state" || fail "could not acknowledge the immediate external-decision surface"
 
   # Re-arm with the stale timer already beyond the wedge threshold. This is the
   # exact unchanged-hash fallback after the immediate surface: it must retain

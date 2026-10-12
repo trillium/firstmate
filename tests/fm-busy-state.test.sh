@@ -129,8 +129,14 @@ test_stale_lock_broken_under_gnu_stat() {
   # GNU coreutils semantics, self-contained so no real stat is consulted.
   cat > "$fakebin/stat" <<'SH'
 #!/usr/bin/env bash
-if [ "${1:-}" = -c ] && [ "${2:-}" = %Y ]; then
-  printf '%s\n' 1000000000   # long-abandoned lock
+# GNU coreutils semantics. -c is --format, and answers every field the dialect
+# probe in bin/fm-stat-lib.sh may ask for, so the probe identifies this binary
+# as GNU without ever consulting `uname`.
+if [ "${1:-}" = -c ]; then
+  case "${2:-}" in
+    %Y) printf '%s\n' 1000000000 ;;   # long-abandoned lock
+    *)  printf '%s\n' 4096 ;;         # any other bare-integer field
+  esac
   exit 0
 fi
 if [ "${1:-}" = -f ]; then

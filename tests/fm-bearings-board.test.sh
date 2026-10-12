@@ -47,6 +47,18 @@ run_decisions() {  # <home> <command args...>
     "$ROOT/bin/fm-decision-hold.sh" "$@"
 }
 
+# This fork keeps bin/fm-decision-hold.sh as the backend-aware owner of the
+# <origin>-decision-<key> hold identity, while the source bindings the board
+# arms against belong to bin/fm-captain-hold.sh's keyed-answer intake, which is
+# what bin/fm-bearings-board.sh binds through.
+run_captain_hold() {  # <home> <command args...>
+  local home=$1
+  shift
+  PATH="$home/fakebin:$PATH" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$ROOT/bin/fm-captain-hold.sh" "$@"
+}
+
 # A realistic payload: a cross-origin full-identity decision key past the old
 # 64-char cap, a merge card, a dispatchable charted row, and a string that
 # tries to terminate the data block early.
@@ -234,7 +246,7 @@ test_build_injects_binds_then_arms() {
 
   sid=$(run_lavish_source_id "$home" "$board")
   assert_contains "$out" "bound: $sid" "the binding does not name the board source: $out"
-  [ "$(run_decisions "$home" binding "$sid")" = "(any)" ] \
+  [ "$(run_captain_hold "$home" binding "$sid")" = "(any)" ] \
     || fail "the board source is not bound any-origin"
   run_procevent "$home" list | awk 'NR > 1 { print $1 }' | grep -Fxq "$sid" \
     || fail "the board source is not registered after build"
@@ -314,7 +326,7 @@ SH
   assert_contains "$show" "Resolution mode: answered" \
     "the answer was not closed through the real keyed-answer intake"
   sid=$(run_lavish_source_id "$home" "$board")
-  [ "$(run_decisions "$home" binding "$sid")" = "(any)" ] \
+  [ "$(run_captain_hold "$home" binding "$sid")" = "(any)" ] \
     || fail "the order-proof source did not retain its any-origin binding"
   pass "registration can consume answers only after any-origin binding exists"
 }
@@ -336,7 +348,7 @@ SH
   set -e
   [ "$rc" -ne 0 ] || fail "build continued after Lavish session establishment failed"
   sid=$(run_lavish_source_id "$home" "$home/.lavish/bearings-board.html")
-  ! run_decisions "$home" binding "$sid" >/dev/null 2>&1 \
+  ! run_captain_hold "$home" binding "$sid" >/dev/null 2>&1 \
     || fail "build bound the board before its Lavish session existed"
   ! run_procevent "$home" list | awk 'NR > 1 { print $1 }' | grep -Fxq "$sid" \
     || fail "build armed the board before its Lavish session existed"

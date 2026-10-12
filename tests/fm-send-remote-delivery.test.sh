@@ -611,14 +611,18 @@ test_local_secondmate_pending_keeps_expectation_armed() {
   fm_write_meta "$home/state/lsm.meta" \
     "window=sess:fm-lsm" "harness=claude" "kind=secondmate" "mode=secondmate" "home=$home/sm"
 
-  # A harness-native slash invocation keeps the typed plane for a LOCAL marked
-  # secondmate target, so this pins the kept armed-expectation semantics there.
+  # This fork refuses a harness-native slash invocation to a MARKED secondmate
+  # (the from-firstmate carrier at column 0 turns it into prose, so the command
+  # never runs), which leaves ordinary prose as the only body a local marked
+  # secondmate accepts. That body rides the steering inbox, where the durable
+  # record IS the delivery, so an unconfirmed composer submit cannot fail it.
+  # The armed-expectation semantics this case pins are the same either way.
   : > "$log"
   rc=0
   env PATH="$fb:$PATH" FM_FAKE_TMUX_PENDING=1 \
     FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
-    "$SEND" lsm "/audit the ledger" >/dev/null 2>&1 || rc=$?
-  expect_code 3 "$rc" "an unconfirmed local secondmate submit must exit delivered-unconfirmed"
+    "$SEND" lsm "audit the ledger" >/dev/null 2>&1 || rc=$?
+  expect_code 0 "$rc" "a durably recorded local secondmate steer must exit 0 at enqueue"
   rec=$(pending_record "$home")
   [ -n "$rec" ] \
     || fail "the pending-reply expectation must survive an unconfirmed local secondmate send"
@@ -629,7 +633,7 @@ test_local_secondmate_pending_keeps_expectation_armed() {
   printf 'done [corr=%s]: ledger clean\n' "$corr" > "$home/state/lsm.status"
   fm_pending_reply_try_resolve "$home/state" "$corr" \
     || fail "a correlated report must still resolve the preserved expectation"
-  pass "fm-send local: an unconfirmed secondmate send keeps its reply expectation armed"
+  pass "fm-send local: a recorded secondmate send keeps its reply expectation armed"
 }
 
 test_local_pending_reports_delivered_unconfirmed() {

@@ -150,9 +150,11 @@ test_marked_slash_lookalikes_still_send() {
 
   # Only a body whose FIRST character is the slash can be a command. Prose that
   # merely contains or is indented before one is ordinary text and must still go.
+  # The body rides the durable record; only the doorbell is typed, so the
+  # recorded steer is what proves the prose survived intact.
   run_send "$fb" "$home" "$log" "fm-domain" "see /Users/x/log for the failure"; rc=$?
   expect_code 0 "$rc" "prose containing a path should still send"
-  got=$(cat "$log")
+  got=$(record_body "$home/state/domain.inbox/001.msg")
   case "$got" in
     *"see /Users/x/log for the failure") : ;;
     *) fail "prose containing a path was altered"$'\n'"$got" ;;
@@ -160,6 +162,11 @@ test_marked_slash_lookalikes_still_send() {
 
   run_send "$fb" "$home" "$log" "fm-domain" " /exit is what I typed"; rc=$?
   expect_code 0 "$rc" "leading-blank prose should still send"
+  got=$(record_body "$home/state/domain.inbox/002.msg")
+  case "$got" in
+    *" /exit is what I typed") : ;;
+    *) fail "leading-blank prose was altered"$'\n'"$got" ;;
+  esac
   pass "fm-send: only a leading-slash body is refused; slash-bearing prose is unaffected"
 }
 
@@ -222,7 +229,9 @@ test_marked_dollar_prose_and_noncodex_still_send() {
   fm_write_secondmate_meta "$home/state/domain.meta" "$home" "sess:fm-domain" alpha claude
   run_send "$fb" "$home" "$log" "fm-domain" "\$no-mistakes"; rc=$?
   expect_code 0 "$rc" "a '\$no-mistakes' body to a non-codex secondmate should still send"
-  got=$(cat "$log")
+  # A non-codex leading '$' is ordinary prose, so it rides the durable record
+  # rather than the composer; the codex sends above stay on the typed plane.
+  got=$(record_body "$home/state/domain.inbox/001.msg")
   case "$got" in
     *"\$no-mistakes") : ;;
     *) fail "non-codex '\$no-mistakes' body was altered or dropped"$'\n'"$got" ;;
