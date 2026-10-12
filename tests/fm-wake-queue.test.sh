@@ -2896,6 +2896,7 @@ make_secondmate_liveness_case() {
   # A secondmate home is a git checkout: the AI-trailer strip hook refuses a
   # launch whose worktree is not git.
   git init -q -b main "$home"
+  fm_register_secondmate "$dir/data/secondmates.md" sm1 "$home"
   printf 'sm1\n' > "$home/.fm-secondmate-home"
   printf '# Firstmate\n' > "$home/AGENTS.md"
   printf 'charter\n' > "$home/data/charter.md"
