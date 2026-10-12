@@ -458,7 +458,7 @@ cmd_retire() {
 # they run without FM_HOME; every real command resolves TARGET_HOME first.
 case "${1:-}" in
   ''|-h|--help|help) usage ;;
-  launch|state|route|send|key|capture|observe|sync|update|retire) require_home ;;
+  launch|relaunch|state|route|send|key|capture|observe|sync|update|retire) require_home ;;
   *) die "unknown command: ${1:-}" ;;
 esac
 
