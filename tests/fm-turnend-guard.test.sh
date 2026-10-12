@@ -293,6 +293,7 @@ make_secondmate_linked_home_dir() {
 run_owning_session() {
   local owned_state=$1
   shift
+  # shellcheck disable=SC2016 # expansion must happen in the child shell so the fake-harness ancestry survives
   FM_TEST_OWNED_STATE="$owned_state" "$FAKE_HARNESS" -c '
     mkdir -p "$FM_TEST_OWNED_STATE" || exit 1
     printf "%s\n" "$$" > "$FM_TEST_OWNED_STATE/.lock" || exit 1
@@ -317,6 +318,7 @@ run_hook_unowned() {
   else
     printf '%s\n' "$lock" > "$home/state/.lock"
   fi
+  # shellcheck disable=SC2016 # expansion must happen in the child shell so the fake-harness ancestry survives
   printf '{"stop_hook_active":%s,"session_id":"sess-unowned"}' "$stop_active" \
     | env CLAUDECODE=1 FM_HOME="$home" "$FAKE_HARNESS" -c '
         "$@"
@@ -510,6 +512,7 @@ test_hook_blocks_when_unhealthy_in_primary() {
 test_fixture_unowned_runner_resolves_its_fake_harness() {
   local dir out ancestor parent
   dir=$(make_primary_dir "$TMP_ROOT/hook-fixture-ancestry")
+  # shellcheck disable=SC2016 # expansion must happen in the child shell so the fake-harness ancestry survives
   out=$("$FAKE_HARNESS" -c '
       "$@"
       rc=$?
