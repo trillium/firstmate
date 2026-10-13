@@ -19,11 +19,9 @@
 #       because git -c core.hooksPath=<this dir> (or a child process that
 #       inherits it) carries the override there, and a lookup that honored it
 #       would find this directory again and never run the repository's own
-#       hook - a skipped pre-push guard. A lookup that fails exits nonzero
-#       rather than skipping the repository's hook. A lookup that finds a copy
-#       of the wrapper itself exits zero instead of exec-ing that copy, since
-#       beads preserves the pane's hooks into .beads/hooks on init and that
-#       exec would re-enter the wrapper forever. Does not touch the
+#       hook - a skipped pre-push guard. An empty core.hooksPath means no
+#       repository hook, as in plain git; any other failed lookup exits
+#       nonzero rather than skipping the repository's hook. Does not touch the
 #       project's git config; the caller prefixes the pane with
 #       GIT_CONFIG_COUNT / GIT_CONFIG_KEY_0 / GIT_CONFIG_VALUE_0.
 #
@@ -156,41 +154,25 @@ write_executable() {
 # is the other environment channel that can carry this directory as
 # core.hooksPath; only the repository's config files name its own hooks. Skip
 # when the lookup still names this launch's own hooks dir, meaning those files
-# point here, so the wrapper cannot recurse into itself. Refuse as well when
-# the lookup names a directory holding a copy of this very file, so the
-# wrapper cannot exec itself: beads preserves the pane's hooks into
-# .beads/hooks on init and then points core.hooksPath there. Every wrapper
-# also carries a re-entrancy sentinel first: when FM_GIT_HOOK_ACTIVE is
-# already set the hook exits zero at once, else it sets and exports it.
-# Path comparisons miss mixed fresh/stale cycles - installed copies outlive
-# the task that wrote them, beads preserves pane hooks by copy (new inode),
-# and a section injected above the chain still runs - so the sentinel, which
-# depends on no path being what is expected, is what stops a hook that
-# re-enters itself through bd -> git from recursing.
+# point here, so the wrapper cannot recurse into itself. An empty
+# core.hooksPath makes that lookup fail, but plain git reads it as "no hooks",
+# so the wrapper runs none; any other failure reruns the lookup to show git's
+# error and refuses.
 runtime_chain_body() {
   local ours=$1
   cat <<EOF
 unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 ours=$(quote_for_hook "$ours")
 name=\${0##*/}
-orig=\$(unset GIT_CONFIG_PARAMETERS; git rev-parse --path-format=absolute --git-path hooks) || {
+orig=\$(unset GIT_CONFIG_PARAMETERS; git rev-parse --path-format=absolute --git-path hooks 2>/dev/null) || {
+  if hooks_path=\$(unset GIT_CONFIG_PARAMETERS; git config --get --type=path core.hooksPath 2>/dev/null) && [ -z "\$hooks_path" ]; then
+    exit 0
+  fi
+  (unset GIT_CONFIG_PARAMETERS; git rev-parse --path-format=absolute --git-path hooks >/dev/null)
   echo "fm-git-strip-ai-trailers: cannot resolve this repository's hooks directory; refusing to skip its \$name hook" >&2
   exit 1
 }
 if [ "\$orig" = "\$ours" ]; then
-  exit 0
-fi
-# A copy of this wrapper can live inside the repository's own hooks directory:
-# beads preserves the pane's hooks into .beads/hooks on init and then points
-# core.hooksPath there, so the lookup above names the directory holding this
-# very file. Then \$orig/\$name IS this file, and exec would re-enter this
-# wrapper forever while git waits for a hook exit that never comes (seen
-# 2026-09-28: every bd init in a fleet pane hung this way, orphaning one git
-# commit per attempt). Refuse that exec; commit-msg already stripped above,
-# and every other name has nothing left to do here. -ef follows symlinks, and
-# a relative \$0 still resolves against this process's cwd, so the comparison
-# holds however git invoked the hook.
-if [ "\$orig/\$name" -ef "\$0" ] 2>/dev/null; then
   exit 0
 fi
 if [ -x "\$orig/\$name" ]; then
@@ -227,25 +209,6 @@ FM_GIT_CLIENT_HOOKS='applypatch-msg pre-applypatch post-applypatch pre-commit
 pre-merge-commit prepare-commit-msg post-commit pre-rebase post-checkout
 post-merge pre-push post-rewrite pre-auto-gc sendemail-validate'
 
-# First lines of every generated wrapper, before the strip and before the
-# chain lookup. A hook that re-enters itself through bd -> git, or through any
-# chain of preserved hook copies, must not recurse: the first entry exports the
-# marker, and every entry below it on the same stack exits at once. This check
-# is first so a section injected above the chain (the beads integration block)
-# cannot run twice on one stack either. A re-entrant commit-msg exits before
-# the strip; the outer message was already stripped on the first entry, and a
-# nested commit inside a hook is the integrator's business, not a typed message.
-sentinel_body() {
-  cat <<'SENTINEL_EOF'
-# Re-entrancy sentinel: exit at once when a hook is already running above us
-# on this stack. Installed copies outlive their task, so no path check here.
-if [ -n "${FM_GIT_HOOK_ACTIVE:-}" ]; then
-  exit 0
-fi
-export FM_GIT_HOOK_ACTIVE=1
-SENTINEL_EOF
-}
-
 install_hooks() {
   local hooks_dir=$1 wt=$2 name
   [ -n "$hooks_dir" ] && [ -n "$wt" ] || usage
@@ -266,7 +229,6 @@ install_hooks() {
   write_executable "$hooks_dir/commit-msg" <<EOF
 #!/usr/bin/env bash
 set -u
-$(sentinel_body)
 $(quote_for_hook "$SELF") "\$1" || exit \$?
 $(runtime_chain_body "$hooks_dir")
 EOF
@@ -275,7 +237,6 @@ EOF
     write_executable "$hooks_dir/$name" <<EOF
 #!/usr/bin/env bash
 set -u
-$(sentinel_body)
 $(runtime_chain_body "$hooks_dir")
 EOF
   done
