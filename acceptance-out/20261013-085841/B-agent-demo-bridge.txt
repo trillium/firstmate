@@ -1,0 +1,6 @@
+>> real Claude Code, MOCK model endpoint (http://127.0.0.1:8998), approved MCP: beads-bridge-demo
+assistant: [mock model] Calling the approved MCP tool.
+tool_use: mcp__beads-bridge-demo__bridge_graph {"format":"text"}
+tool_result received (1819 chars)
+assistant: [mock model] The DEMO Beads Bridge answered with 5 cross-store edges across 3 stores. This reply is scripted.
+result: [mock model] The DEMO Beads Bridge answered with 5 cross-store edges across 3 stores. This reply is scripted. [turns=2]

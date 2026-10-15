@@ -1,0 +1,3 @@
+demo stores seeded from snapshot
+reset-brain: demo bridge stores reset in 1.9s
+reset-brain(bridge): 4s. Fetch fresh sshx links with: ops/links.sh

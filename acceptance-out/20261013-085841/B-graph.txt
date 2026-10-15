@@ -1,0 +1,25 @@
+[brain] Fernwood Bakery Brain (seeded FAKE)
+  brain-k002   open    Oven calibration notes (deck oven #2)
+  brain-k003   open    Supplier: Millbrook Flour Co (FICTIONAL)
+  brain-t001   open    Order 200kg bread flour for the pre-holiday run
+  brain-t002   open    Recalibrate deck oven #2 thermostat
+  brain-t003   open    Bug: allergen label prints wrong sesame flag
+[ops-demo] Ops demo store (disposable)
+  ops-w001     open    Plan the pre-holiday bake run
+  ops-w002     open    Confirm flour order with supplier
+  ops-w003     open    Book oven downtime window
+  ops-w004     open    Fix allergen label before reprint
+[voice-demo] Voice demo store (disposable)
+  voice-m001   open    Voice memo: call the supplier about delivery
+  voice-m002   open    Voice idea: weekend sourdough class
+edges (FROM is blocked by / related to / discovered from TO):
+  ops-demo:ops-w002   ==x-store==> brain:brain-t001  (blocks)
+  ops-demo:ops-w003   ==x-store==> brain:brain-t002  (related)
+  ops-demo:ops-w004   ==x-store==> brain:brain-t003  (related)
+  voice-demo:voice-m001   ==x-store==> brain:brain-k003  (related)
+  brain:brain-t001   ---> brain:brain-k003  (blocks)
+  brain:brain-t002   ---> brain:brain-k002  (blocks)
+  ops-demo:ops-w001   ---> ops-demo:ops-w002  (blocks)
+  ops-demo:ops-w001   ---> ops-demo:ops-w003  (blocks)
+  ops-demo:ops-w003   ---> ops-demo:ops-w004  (related)
+  voice-demo:voice-m002   ---> voice-demo:voice-m001  (discovered-from)

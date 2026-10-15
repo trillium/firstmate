@@ -1,0 +1,16 @@
+{
+ "workflow": "link",
+ "heard": "link ops-iju blocked by brain-t001",
+ "result": {
+  "from": {
+   "store": "ops-demo",
+   "bead": "ops-iju"
+  },
+  "to": {
+   "store": "brain",
+   "bead": "brain-t001"
+  },
+  "type": "blocks",
+  "scope": "across stores (bridge-owned edge file, neither bd store modified)"
+ }
+}

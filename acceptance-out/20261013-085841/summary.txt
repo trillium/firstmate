@@ -1,0 +1,4 @@
+acceptance 2026-10-13T16:01:11Z host=lnx workspace=studio/brain elapsed=149s
+PASS=75 FAIL=2
+FAILED: 3.4 Claude Code sees at least two MCP servers (brain, beads-bridge-demo)
+FAILED: B.15 graph is reachable from the shell CLI (bridge graph)

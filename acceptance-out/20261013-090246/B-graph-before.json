@@ -1,0 +1,140 @@
+{
+ "nodes": 11,
+ "edges": 10,
+ "cross_store_edges": 4,
+ "stores": [
+  "brain",
+  "ops-demo",
+  "voice-demo"
+ ],
+ "node_list": {
+  "brain:brain-t003": {
+   "store": "brain",
+   "id": "brain-t003",
+   "title": "Bug: allergen label prints wrong sesame flag",
+   "status": "open"
+  },
+  "brain:brain-t002": {
+   "store": "brain",
+   "id": "brain-t002",
+   "title": "Recalibrate deck oven #2 thermostat",
+   "status": "open"
+  },
+  "brain:brain-t001": {
+   "store": "brain",
+   "id": "brain-t001",
+   "title": "Order 200kg bread flour for the pre-holiday run",
+   "status": "open"
+  },
+  "brain:brain-k002": {
+   "store": "brain",
+   "id": "brain-k002",
+   "title": "Oven calibration notes (deck oven #2)",
+   "status": "open"
+  },
+  "brain:brain-k003": {
+   "store": "brain",
+   "id": "brain-k003",
+   "title": "Supplier: Millbrook Flour Co (FICTIONAL)",
+   "status": "open"
+  },
+  "ops-demo:ops-w004": {
+   "store": "ops-demo",
+   "id": "ops-w004",
+   "title": "Fix allergen label before reprint",
+   "status": "open"
+  },
+  "ops-demo:ops-w001": {
+   "store": "ops-demo",
+   "id": "ops-w001",
+   "title": "Plan the pre-holiday bake run",
+   "status": "open"
+  },
+  "ops-demo:ops-w002": {
+   "store": "ops-demo",
+   "id": "ops-w002",
+   "title": "Confirm flour order with supplier",
+   "status": "open"
+  },
+  "ops-demo:ops-w003": {
+   "store": "ops-demo",
+   "id": "ops-w003",
+   "title": "Book oven downtime window",
+   "status": "open"
+  },
+  "voice-demo:voice-m001": {
+   "store": "voice-demo",
+   "id": "voice-m001",
+   "title": "Voice memo: call the supplier about delivery",
+   "status": "open"
+  },
+  "voice-demo:voice-m002": {
+   "store": "voice-demo",
+   "id": "voice-m002",
+   "title": "Voice idea: weekend sourdough class",
+   "status": "open"
+  }
+ },
+ "edge_list": [
+  {
+   "from": "brain:brain-t002",
+   "to": "brain:brain-k002",
+   "type": "blocks",
+   "scope": "store"
+  },
+  {
+   "from": "brain:brain-t001",
+   "to": "brain:brain-k003",
+   "type": "blocks",
+   "scope": "store"
+  },
+  {
+   "from": "ops-demo:ops-w001",
+   "to": "ops-demo:ops-w002",
+   "type": "blocks",
+   "scope": "store"
+  },
+  {
+   "from": "ops-demo:ops-w001",
+   "to": "ops-demo:ops-w003",
+   "type": "blocks",
+   "scope": "store"
+  },
+  {
+   "from": "ops-demo:ops-w003",
+   "to": "ops-demo:ops-w004",
+   "type": "related",
+   "scope": "store"
+  },
+  {
+   "from": "voice-demo:voice-m002",
+   "to": "voice-demo:voice-m001",
+   "type": "discovered-from",
+   "scope": "store"
+  },
+  {
+   "from": "ops-demo:ops-w002",
+   "to": "brain:brain-t001",
+   "type": "blocks",
+   "scope": "cross-store"
+  },
+  {
+   "from": "ops-demo:ops-w003",
+   "to": "brain:brain-t002",
+   "type": "related",
+   "scope": "cross-store"
+  },
+  {
+   "from": "ops-demo:ops-w004",
+   "to": "brain:brain-t003",
+   "type": "related",
+   "scope": "cross-store"
+  },
+  {
+   "from": "voice-demo:voice-m001",
+   "to": "brain:brain-k003",
+   "type": "related",
+   "scope": "cross-store"
+  }
+ ]
+}

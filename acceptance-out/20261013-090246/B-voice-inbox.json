@@ -1,0 +1,25 @@
+{
+ "workflow": "inbox",
+ "processed": 2,
+ "failed": [],
+ "results": [
+  {
+   "workflow": "capture",
+   "heard": "new task in ops: order paper bags for the holiday run",
+   "result": {
+    "store": "ops-demo",
+    "bead": "ops-48g"
+   },
+   "title": "order paper bags for the holiday run"
+  },
+  {
+   "workflow": "capture",
+   "heard": "bug in voice: transcript drops the last word",
+   "result": {
+    "store": "voice-demo",
+    "bead": "voice-mtz"
+   },
+   "title": "transcript drops the last word"
+  }
+ ]
+}

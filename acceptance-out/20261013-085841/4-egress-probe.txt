@@ -1,0 +1,5 @@
+host ssh   172.17.0.1:22   BLOCKED
+coder api  172.17.0.1:7080 OPEN
+lan router 192.168.1.1:80 BLOCKED
+tailnet    100.100.100.100:80 BLOCKED
+relay      studio-relay:8051 OPEN

@@ -1,0 +1,10 @@
+{
+ "ok": true,
+ "instance": "DEMO-BRIDGE",
+ "port": 3838,
+ "stores": [
+  "brain",
+  "ops-demo",
+  "voice-demo"
+ ]
+}

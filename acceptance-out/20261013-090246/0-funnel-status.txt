@@ -1,0 +1,5 @@
+https://lnx-server.hippo-tilapia.ts.net (tailnet only)
+|-- / proxy http://127.0.0.1:8980
+
+https://lnx.hippo-tilapia.ts.net:8443 (tailnet only)
+|-- / proxy http://127.0.0.1:8051
