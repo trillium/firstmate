@@ -31,6 +31,10 @@
 #   loud one-line deviation notice is printed and the spawn continues.
 #   no-mistakes-prod-only is a registry policy rather than a task mode and is
 #   refused as a flag value.
+#   A fresh spawn on a home whose backlog tracks the task also REFUSES a project
+#   directory whose name differs from the item's recorded `repo`, naming both. An
+#   item with no recorded repo is refused too, unless --repo-unrecorded-ok
+#   acknowledges the target; the flag is refused on a relaunch.
 #   --branch-prefix is the optional prefix selected at intake for this ship's
 #   immutable branch, defaulting to "fm/". It must agree with the branch recorded
 #   in the brief, and is refused on scouts, secondmates, and relaunches. When the
@@ -652,6 +656,7 @@ MODE_SET=0
 YOLO_SET=0
 BRANCH_PREFIX_SET=0
 TRACEPARENT_SET=0
+REPO_UNRECORDED_OK=0
 RELAUNCH=0
 POS=()
 want_value=
@@ -749,6 +754,7 @@ for a in "$@"; do
     BRANCH_PREFIX=${a#--branch-prefix=}
     BRANCH_PREFIX_SET=1
     ;;
+  --repo-unrecorded-ok) REPO_UNRECORDED_OK=1 ;;
   --traceparent) want_value=traceparent ;;
   --traceparent=*)
     TRACEPARENT_ARG=${a#--traceparent=}
@@ -833,6 +839,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
   [ "$BRANCH_PREFIX_SET" -eq 0 ] || {
     echo "error: --relaunch reuses the task's recorded ship branch; --branch-prefix cannot override it" >&2
+    exit 1
+  }
+  [ "$REPO_UNRECORDED_OK" -eq 0 ] || {
+    echo "error: --relaunch reuses the task's recorded project; --repo-unrecorded-ok cannot apply" >&2
     exit 1
   }
 else
@@ -1461,6 +1471,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ "$MODE_SET" -eq 0 ] || shared_args+=(--mode "$MODE")
   [ "$YOLO_SET" -eq 0 ] || shared_args+=(--yolo "$YOLO")
   [ "$BRANCH_PREFIX_SET" -eq 0 ] || shared_args+=(--branch-prefix "$BRANCH_PREFIX")
+  [ "$REPO_UNRECORDED_OK" -eq 0 ] || shared_args+=(--repo-unrecorded-ok)
   for pair in "${POS[@]}"; do
     case "$pair" in
     *=*) : ;;
@@ -3602,6 +3613,20 @@ if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   elif ! fm_backlog_row_dispatchable "$BACKLOG_ROW_STATE"; then
     echo "error: this home's backlog item $ID is not dispatchable in state $BACKLOG_ROW_STATE; refusing before creating its endpoint or local copy" >&2
     exit 1
+  fi
+  # The item's recorded repo must be the project this spawn targets, so an
+  # isolated worktree of the wrong repository cannot pass the isolation checks.
+  if [ "$RELAUNCH" -eq 0 ]; then
+    SPAWN_TARGET_REPO=$(basename "$PROJ_ABS")
+    if [ -z "$FM_BACKLOG_ROW_REPO" ]; then
+      if [ "$REPO_UNRECORDED_OK" -ne 1 ]; then
+        echo "error: task $ID's backlog item records no repo, so the project $SPAWN_TARGET_REPO cannot be confirmed as the one this work belongs to; record it (bin/fm-tasks-axi.sh update $ID --repo <repo>) or pass --repo-unrecorded-ok to acknowledge the target" >&2
+        exit 1
+      fi
+    elif [ "$FM_BACKLOG_ROW_REPO" != "$SPAWN_TARGET_REPO" ]; then
+      echo "error: project mismatch for $ID: its backlog item records repo $FM_BACKLOG_ROW_REPO but the spawn targets project $SPAWN_TARGET_REPO ($PROJ_ABS); pass the $FM_BACKLOG_ROW_REPO project directory, or correct the item's repo if the item is wrong" >&2
+      exit 1
+    fi
   fi
 else
   BACKLOG_GATE_STATUS=$?
