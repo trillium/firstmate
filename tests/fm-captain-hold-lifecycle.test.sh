@@ -4190,10 +4190,11 @@ test_origin_is_never_its_own_inventory_entry() {
 }
 
 # `hold --origin` records which origin a call was held for, and `complete`
-# refuses a task held for a different origin. A hold recorded before that
-# record existed, or without --origin, still verifies and is flagged.
-test_complete_refuses_an_entry_held_for_another_origin() {
-  local home id other o out
+# accepts a durable captain-held task from any origin, naming a different one.
+# A hold recorded before that record existed, or without --origin, still
+# verifies and is flagged.
+test_complete_accepts_an_entry_held_for_another_origin() {
+  local home id other o out shown
   home=$(make_home origin-mismatch)
   id=sample-first-review
   other=sample-second-review
@@ -4207,13 +4208,22 @@ test_complete_refuses_an_entry_held_for_another_origin() {
   run_captain "$home" hold sample-other-call --title "Call for the second review" \
     --reason "captain must decide" --repo sample --origin "$other" >/dev/null \
     || fail "could not hold the call recorded for the second review"
-  if run_captain "$home" complete "$id" sample-other-call > "$home/mismatch.out" 2> "$home/mismatch.err"; then
-    fail "complete accepted an entry held for a different origin"
-  fi
-  assert_grep "was held for origin $other, not $id" "$home/mismatch.err" \
-    "the refusal does not name both origins"
-  assert_no_grep "decisions_reviewed=1" "$home/state/$id.meta" \
-    "the refused completion recorded an inventory attestation"
+  out=$(run_captain "$home" complete "$id" sample-other-call) \
+    || fail "complete refused an entry held for a different origin"
+  assert_contains "$out" "held for another origin: sample-other-call=$other" \
+    "the completion does not name the other origin"
+  assert_grep "decisions_reviewed=1" "$home/state/$id.meta" \
+    "the completion recorded no inventory attestation"
+  run_captain "$home" verify "$id" >/dev/null \
+    || fail "verify refused an entry held for a different origin"
+  # Holding it again for the completing origin must not rewrite the first one.
+  run_captain "$home" hold sample-other-call --reason "captain must decide" --origin "$id" \
+    > "$home/rehold.out" 2> "$home/rehold.err" || fail "re-holding for a second origin failed"
+  assert_grep "already held for origin $other" "$home/rehold.err" \
+    "the kept origin was not reported"
+  shown=$(tasks_in "$home" show sample-other-call --full)
+  assert_contains "$shown" "Captain hold origin: $other" "re-holding rewrote the original origin"
+  assert_not_contains "$shown" "Captain hold origin: $id" "re-holding recorded the second origin"
 
   run_captain "$home" hold sample-own-call --title "Call for the first review" \
     --reason "captain must decide" --repo sample --origin "$id" >/dev/null \
@@ -4231,11 +4241,11 @@ test_complete_refuses_an_entry_held_for_another_origin() {
     || fail "complete refused an older hold with no recorded origin"
   assert_contains "$out" "no recorded origin on: sample-old-call" \
     "an older hold with no recorded origin was not flagged"
-  pass "complete refuses an entry held for another origin and flags one with none recorded"
+  pass "complete accepts an entry held for another origin and flags one with none recorded"
 }
 
 test_hold_origins_precede_backend_holds() {
-  local home phase timing failure id shown origin until_args=()
+  local home phase timing failure id shown origin kept dropped until_args=()
   for phase in new active released; do
     for timing in plain dated; do
       home=$(make_home "origin-failure-$phase-$timing")
@@ -4284,6 +4294,8 @@ SH
       until_args=()
       [ "$timing" != dated ] || until_args=(--until 2099-01-01)
       for failure in lookup write hold; do
+        # An active hold keeps its first origin, so nothing is ever written.
+        [ "$phase $failure" != "active write" ] || continue
         : > "$home/fail-$failure"
         if run_captain "$home" hold "$id" --title "Separate call" --reason "Choose for B" \
           --origin origin-b ${until_args[@]+"${until_args[@]}"} > "$home/hold.out" 2> "$home/hold.err"; then
@@ -4292,8 +4304,13 @@ SH
         assert_present "$home/$failure-refused" "the failure did not reach the origin $failure"
         if [ "$failure" = hold ]; then
           assert_present "$home/before-backend-hold" "$phase $timing failure never reached the backend hold"
-          assert_grep 'Captain hold origin: origin-b' "$home/before-backend-hold" \
-            "the failed backend hold did not see the new association"
+          if [ "$phase" = active ]; then
+            assert_grep 'Captain hold origin: origin-a' "$home/before-backend-hold" \
+              "the failed backend hold lost the kept association"
+          else
+            assert_grep 'Captain hold origin: origin-b' "$home/before-backend-hold" \
+              "the failed backend hold did not see the new association"
+          fi
           rm "$home/before-backend-hold"
         else
           assert_absent "$home/before-backend-hold" "$phase $timing origin $failure failure reached the backend hold"
@@ -4315,11 +4332,13 @@ SH
           > "$home/unrelated.out" 2> "$home/unrelated.err"; then
           fail "$timing origin $failure failure satisfied an unrelated inventory"
         fi
-        if run_captain "$home" complete origin-b "$id" > "$home/complete.out" 2> "$home/complete.err"; then
+        if [ "$phase" = new ] \
+          && run_captain "$home" complete origin-b "$id" > "$home/complete.out" 2> "$home/complete.err"; then
           fail "$phase $timing origin $failure failure satisfied completion for B"
         fi
         printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$id" >> "$home/state/origin-b.meta"
-        if run_captain "$home" verify origin-b > "$home/verify.out" 2> "$home/verify.err"; then
+        if [ "$phase" = new ] \
+          && run_captain "$home" verify origin-b > "$home/verify.out" 2> "$home/verify.err"; then
           fail "$phase $timing origin $failure failure verified an inventory for B"
         fi
         if [ "$phase" != new ]; then
@@ -4333,21 +4352,25 @@ SH
         ${until_args[@]+"${until_args[@]}"} >/dev/null || fail "$phase $timing successful retry failed"
       assert_present "$home/before-backend-hold" "the successful retry did not reach the backend hold"
       shown=$(cat "$home/before-backend-hold")
-      assert_contains "$shown" 'Captain hold origin: origin-b' "the backend hold ran before the new origin was recorded"
-      assert_not_contains "$shown" 'Captain hold origin: origin-a' "the backend hold ran with the old association"
+      if [ "$phase" = active ]; then
+        kept=origin-a dropped=origin-b
+      else
+        kept=origin-b dropped=origin-a
+      fi
+      assert_contains "$shown" "Captain hold origin: $kept" "the backend hold ran before the origin was recorded"
+      assert_not_contains "$shown" "Captain hold origin: $dropped" "the backend hold ran with the wrong association"
       shown=$(tasks_in "$home" show "$id" --full)
       assert_contains "$shown" 'held: yes' "the successful retry did not hold the task"
-      assert_contains "$shown" 'Captain hold origin: origin-b' "a successful hold lost its association"
-      assert_not_contains "$shown" 'Captain hold origin: origin-a' "a successful hold retained the old association"
+      assert_contains "$shown" "Captain hold origin: $kept" "a successful hold lost its association"
+      assert_not_contains "$shown" "Captain hold origin: $dropped" "a successful hold kept the wrong association"
       run_captain "$home" complete origin-b "$id" >/dev/null \
         || fail "a successful hold could not complete B"
       run_captain "$home" verify origin-b >/dev/null || fail "a successful hold could not verify B"
-      if run_captain "$home" complete origin-a "$id" >/dev/null 2> "$home/old-origin.err"; then
-        fail "a successful reassociation still certified A"
-      fi
+      run_captain "$home" complete origin-a "$id" >/dev/null \
+        || fail "$phase $timing origin A could not complete a durable hold"
     done
   done
-  pass "new, active, and released holds require the origin first with and without deferral"
+  pass "new, released, and active holds record or keep the origin first with and without deferral"
 }
 
 test_historical_self_inventory_has_workable_repair() {
@@ -4445,14 +4468,11 @@ SH
   done
   for origin in fm-other other; do
     write_origin_meta "$home" "$origin"
-    if run_captain "$home" complete "$origin" call > "$home/other.out" 2> "$home/other.err"; then
-      fail "complete accepted another origin through $origin"
-    fi
-    assert_grep "was held for origin o, not $origin" "$home/other.err" "the alias mismatch was not identified"
-    printf 'decisions_reviewed=1\ndecision_keys=call\n' >> "$home/state/$origin.meta"
-    if run_captain "$home" verify "$origin" >/dev/null 2> "$home/other-verify.err"; then
-      fail "verify accepted another origin through $origin"
-    fi
+    run_captain "$home" complete "$origin" call > "$home/other.out" 2> "$home/other.err" \
+      || fail "complete refused a call held for another origin through $origin"
+    assert_grep "held for another origin: fm-call=o" "$home/other.out" "the alias mismatch was not named"
+    run_captain "$home" verify "$origin" >/dev/null \
+      || fail "verify refused a call held for another origin through $origin"
   done
   : > "$home/fail-identity"
   before=$(cat "$home/state/o.meta")
@@ -4634,7 +4654,7 @@ test_hold_origins_precede_backend_holds
 test_historical_self_inventory_has_workable_repair
 test_inventory_compares_backend_identities
 test_origin_is_never_its_own_inventory_entry
-test_complete_refuses_an_entry_held_for_another_origin
+test_complete_accepts_an_entry_held_for_another_origin
 test_uninventoried_report_decision_refuses_completion
 test_hold_decodes_a_bare_scalar_body_without_the_nonref_default
 test_retained_body_keeps_its_utf8_bytes
