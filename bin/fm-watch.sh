@@ -29,7 +29,10 @@
 #                          external-wait pause or verified captain-held transfer is
 #                          absorbed instead with its own long re-surface cadence,
 #                          never as a wedge, and that recheck reason names which
-#                          human the wait is on. Only when neither absorb class
+#                          human the wait is on. A REPEAT sighting of a terminal
+#                          status already presented whole and unchanged since is
+#                          absorbed on the same cadence (terminal_repeat_stale_bound);
+#                          its first sight always alarms. Only when neither absorb class
 #                          applies does the log's latest recognized status event decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
 #                          both surfaced at once. A provably-working stale past the
@@ -197,6 +200,9 @@ WATCH_HOME_EXISTED=0
 # runtime needlessly spends per-root CI lint memory while adding no uncovered file.
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
+# Log-only record of every stale verdict (docs/laya-stale-wake-triage.md).
+# shellcheck source=bin/fm-wake-decision-lib.sh
+. "$SCRIPT_DIR/fm-wake-decision-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
@@ -1903,6 +1909,54 @@ captain_call_stale_bound() {  # <window-key> <task>
   stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
 }
 
+# Bound a due terminal stale alarm whose captain-relevant status was ALREADY
+# presented to firstmate and has not changed since: a repeat sighting of a
+# surfaced, unchanged done/decision/blocker says nothing the first alarm did
+# not. The proof is the heartbeat-surfaced marker covering the whole status
+# log: the signal path, the stale path and the heartbeat each commit it only
+# after presenting that log, and any later append moves the log's end past it.
+# The declaration carries the status-log signature, so one appended line - a
+# new decision, a resolution, a fresh failure - starts its own window and
+# alarms on first sight exactly as before. Only the repeat is bounded, to the
+# same PAUSE_RESURFACE_SECS cadence as a declared wait, after which the stale
+# alarms once more. An unsurfaced status (no marker, a marker short of the
+# log's end, or a marker from an earlier incarnation of the log) is never
+# absorbed here, so the declaration the first alarm records only ever bounds a
+# sighting that follows a completed presentation. Sets STALE_WAIT_DECLARATION
+# exactly as captain_call_stale_bound does; returns 0 to absorb this sighting,
+# 1 to alarm.
+terminal_repeat_stale_bound() {  # <window-key> <task>
+  local key=$1 task=$2 statusf size offset
+  STALE_WAIT_DECLARATION=
+  [ -n "$task" ] || return 1
+  statusf="$STATE/$task.status"
+  size=$(_fm_status_file_size "$statusf" 2>/dev/null) || return 1
+  size=${size//[[:space:]]/}
+  case "$size" in ''|*[!0-9]*|0) return 1 ;; esac
+  STALE_WAIT_DECLARATION="terminal-surfaced:$(fm_wake_signal_sig "$statusf" || true)"
+  offset=$(hb_surfaced_offset "$task")
+  [ "$offset" = "$size" ] || return 1
+  stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
+}
+
+# Record a stale verdict in the decision log (bin/fm-wake-decision-lib.sh owns
+# the row). <hold> is open|none|unread as the deciding branch learned it, and
+# <seq> is the queued row of a surfaced wake. Never changes the verdict.
+stale_decision_log() {  # <window> <task> <verdict> <rule> <hold> [<seq>]
+  local win=$1 task=$2 key esc tage
+  key=$(window_key "$win")
+  esc=$(cat "$STATE/.wedge-escalations-$key" 2>/dev/null || true)
+  tage=''
+  [ ! -e "$STATE/.paused-resurfaced-$key" ] || tage=$(age_of "$STATE/.paused-resurfaced-$key")
+  fm_wake_decision_log_stale "$STATE" "$win" "$task" "$3" "$4" "${6-}" "$5" "${busy_now:-1}" "$esc" "$tage"
+}
+
+# The sequence of the newest queued stale row for <window>, for the decision
+# log's label join; 0 when none is queued.
+stale_queued_seq() {  # <window>
+  awk -F'\t' -v win="$1" '$3 == "stale" && $4 == win { s = $2 } END { print s + 0 }' "$FM_WAKE_QUEUE" 2>/dev/null || printf '0'
+}
+
 # Surface a stale pane no classifier could resolve, so firstmate inspects it: it
 # may have finished through an interactive menu that wrote no status, be waiting on
 # a decision, or be wedged. pause_state_class deliberately answers `none` for a
@@ -1923,7 +1977,7 @@ captain_call_stale_bound() {  # <window-key> <task>
 # above): the status line the worker declared, and the backlog hold firstmate
 # recorded once the captain took the work in hand.
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last declared=1 bounded=1 throttled=1 until now
+  local win=$1 h=$2 key task last declared=1 bounded=1 throttled=1 until now rule=nonterminal-surface hold=unread
   key=$(window_key "$win")
   task=$(window_to_task "$win" "$STATE")
   last=$(status_declared_wait_line "$STATE/$task.status")
@@ -1931,6 +1985,7 @@ surface_nonterminal_stale() {  # <window> <hash>
   if status_is_paused "$last"; then
     declared=0
     bounded=0
+    rule=nonterminal-declared-wait
     STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
     if until=$(status_paused_until "$last"); then
       now=$(date +%s)
@@ -1946,6 +2001,7 @@ surface_nonterminal_stale() {  # <window> <hash>
   elif status_is_captain_held "$last"; then
     declared=0
     bounded=0
+    rule=nonterminal-captain-held
     STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
     if captain_held_silenced "$last"; then
       throttled=0
@@ -1955,8 +2011,14 @@ surface_nonterminal_stale() {  # <window> <hash>
   elif captain_call_stale_bound "$key" "$task"; then
     bounded=0
     throttled=0
+    rule=nonterminal-captain-call-bound
+    hold=open
   elif [ -n "$STALE_WAIT_DECLARATION" ]; then
     bounded=0
+    rule=nonterminal-captain-call-first
+    hold=open
+  else
+    hold=none
   fi
   if [ "$throttled" -ne 0 ]; then
     fm_wake_append stale "$win" "stale: $win" || exit 1
@@ -1981,8 +2043,10 @@ surface_nonterminal_stale() {  # <window> <hash>
   fi
   if [ "$throttled" -eq 0 ]; then
     triage_log "absorbed non-terminal stale (declared wait or open captain call already re-surfaced this window): $win"
+    stale_decision_log "$win" "$task" absorb "$rule" "$hold"
     return 0
   fi
+  stale_decision_log "$win" "$task" surface "$rule" "$hold" "$(stale_queued_seq "$win")"
   wake "stale: $win"
 }
 
@@ -3125,6 +3189,7 @@ EOF
               date +%s > "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+              stale_decision_log "$w" "$task" absorb provably-working unread
             elif captain_call_stale_bound "$key" "$task"; then
               # The line is captain-relevant and stays so, but the backlog says
               # the captain already holds this work: further NEW pane hashes with
@@ -3137,7 +3202,21 @@ EOF
               rm -f "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (open captain call already surfaced for this status): $w"
+              stale_decision_log "$w" "$task" absorb captain-call-bound open
+            elif [ -z "$STALE_WAIT_DECLARATION" ] && terminal_repeat_stale_bound "$key" "$task"; then
+              # No captain call bounds this line, but it was already presented
+              # whole and is unchanged: a repeat sighting of the same surfaced
+              # done/decision/blocker is absorbed for one re-surface window
+              # (Phase 0 of docs/laya-stale-wake-triage.md). The first sight of
+              # any status-log state still alarms below, and the alarm branch
+              # records this declaration so only its repeats are bounded.
+              printf '%s' "$h" > "$sf"
+              rm -f "$ssf"
+              clear_write_tracking "$key"
+              triage_log "absorbed stale (repeat of an already-surfaced unchanged terminal status): $w"
+              stale_decision_log "$w" "$task" absorb terminal-repeat none
             else
+              if [ -n "$CAPTAIN_CALL_IDENTITY" ]; then stale_hold=open; else stale_hold=none; fi
               fm_wake_append stale "$w" "stale: $w" || exit 1
               stale_wait_record "$key"
               printf '%s' "$h" > "$sf"
@@ -3149,6 +3228,7 @@ EOF
                 0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
                 *) stale_end=''; stale_ident='' ;;
               esac
+              stale_decision_log "$w" "$task" surface terminal-surface "$stale_hold" "$(stale_queued_seq "$w")"
               mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
               wake "stale: $w"
             fi
