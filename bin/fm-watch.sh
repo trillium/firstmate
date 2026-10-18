@@ -64,7 +64,12 @@
 #                          arms it, a validation gate of its own awaiting a
 #                          supervisor decision nobody has answered yet - is
 #                          deferred to that same long recheck cadence instead
-#                          (wedge_wait_evidence), and a pane whose own task
+#                          (wedge_wait_evidence); once the count has reached
+#                          FM_WEDGE_DEMAND_INSPECT_COUNT, a pane parked at a
+#                          human-owed gate with any open needs-decision takes
+#                          that deferral in every home, so the ladder stops at
+#                          its own top rung instead of climbing for as long as
+#                          the human takes to answer; and a pane whose own task
 #                          worktree was written during the quiet window is
 #                          deferred rather than escalated (wedge_defer_writing),
 #                          because files appearing there are liveness the pane and
@@ -1591,9 +1596,30 @@ wait_record() {  # <kind> <subject> <whom> <action> <age-record>
 # so it is taken only behind a first fold read that finds some open
 # `needs-decision` at all, and only in the at-threshold branch - at most once per
 # window per STALE_ESCALATE_SECS, never on an ordinary poll.
+# The third record is the ESCALATION BOUND itself, and it needs no flag. The
+# demand-deep-inspection marker at FM_WEDGE_DEMAND_INSPECT_COUNT is the ladder's
+# own top rung: the wake payload has already forced the closer look it exists to
+# force, and the supervision turn that handled it found a lane parked at a
+# human-owed gate with its decision still open. Climbing past that rung reports
+# nothing new - the same parked gate, the same open decision - at the cost of one
+# handling turn per STALE_ESCALATE_SECS for as long as the human takes to
+# answer, which in an unarmed home was observed as seven and more escalations of
+# one lane (robots-xjhb5). So once <escalations-so-far> has reached the bound,
+# a lane whose current state is a human-owed gate and whose fold holds ANY open
+# `needs-decision` is deferred to the long recheck cadence instead. The key
+# convention is deliberately not required here: below the bound the ladder has
+# already run its full course, and the open decision only has to show that a
+# human was told something and has not answered. Everything below the bound is
+# untouched, so escalations 1 through FM_WEDGE_DEMAND_INSPECT_COUNT, their
+# reasons and the demand-deep-inspection wording fire exactly as before, and an
+# unarmed home still spends no fold or current-state read below the bound. A
+# crewmate-owed gate, an empty fold, and a lane with no wait at all keep the
+# unchanged schedule past the bound too: the counter is left where it is, so the
+# recheck absorbs each later threshold until the decision closes, after which the
+# empty fold hands the lane back to the ladder within one STALE_ESCALATE_SECS.
 WEDGE_BACKLOG_HOLD_KIND='captain hold'
-wedge_wait_evidence() {  # <task> -> one wait_record on stdout
-  local task=$1 last until statusf run verb
+wedge_wait_evidence() {  # <task> [<escalations-so-far>] -> one wait_record on stdout
+  local task=$1 count=${2:-0} last until statusf run verb armed='' capped=''
   [ -n "$task" ] || return 1
   statusf="$STATE/$task.status"
   last=$(status_declared_wait_line "$statusf")
@@ -1623,12 +1649,23 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
     fi
     return 0
   fi
-  [ -e "$CONFIG/wedge-defer-parked-gate" ] || return 1
-  if status_has_open_needs_decision "$statusf" \
-    && run=$(crew_gate_awaits_human_decision "$task") \
-    && status_has_open_needs_decision "$statusf" "$run"; then
+  [ -e "$CONFIG/wedge-defer-parked-gate" ] && armed=1
+  case "$count" in
+    ''|*[!0-9]*) ;;
+    *) [ "$count" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ] && capped=1 ;;
+  esac
+  [ -n "$armed" ] || [ -n "$capped" ] || return 1
+  status_has_open_needs_decision "$statusf" || return 1
+  run=$(crew_gate_awaits_human_decision "$task") || return 1
+  if [ -n "$armed" ] && status_has_open_needs_decision "$statusf" "$run"; then
     wait_record 'verified wait at a parked gate' "awaiting firstmate's ask-user decision" \
       supervisor "decide the gate's ask-user finding and relay the decision to the crewmate" ''
+    return 0
+  fi
+  if [ -n "$capped" ]; then
+    wait_record 'parked gate at the escalation bound' \
+      "already wedge-escalated $count times, awaiting a human decision on its open ask-user finding" \
+      supervisor 'answer or escalate the open decision and relay it to the crewmate' ''
     return 0
   fi
   return 1
@@ -1921,10 +1958,11 @@ wedge_defer_guard() {  # <window> <since-file> <triage-label> <idle-age> <guard-
 # one each per window per STALE_ESCALATE_SECS, never on an ordinary poll,
 # because the escalation that follows clears the timer they share. The
 # crew-state read
-# wedge_wait_evidence may take under config/wedge-defer-parked-gate keeps that
-# same bound however long the wait lasts, because the deferral it feeds restarts
-# the idle timer like every other deferral below; an unconfigured home never
-# reaches that read at all. On the UNCAPPED path the wait consult runs first,
+# wedge_wait_evidence may take under config/wedge-defer-parked-gate, or once the
+# escalation count it is handed has reached FM_WEDGE_DEMAND_INSPECT_COUNT, keeps
+# that same bound however long the wait lasts, because the deferral it feeds
+# restarts the idle timer like every other deferral below; an unconfigured home
+# below that bound never reaches that read at all. On the UNCAPPED path the wait consult runs first,
 # because a pane that can account for its own quiet has nothing to prove through
 # its worktree, and the dead-record probe runs last of the three, so the two
 # cheaper deferrals keep the panes they already own on their existing bounded
@@ -2038,7 +2076,8 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
             || { fm_epoch_seconds_to _wrb_now; printf '%s\n' "$_wrb_now" > "$since_file"; }
           return 0
         fi
-        if evidence=$(wedge_wait_evidence "$task") &&
+        n=$(cat "$escalation_file" 2>/dev/null || echo 0)
+        if evidence=$(wedge_wait_evidence "$task" "$n") &&
            wedge_defer_wait "$win" "$since_file" "$label" "$age" "$evidence"; then
           return 0
         fi

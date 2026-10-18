@@ -3856,6 +3856,127 @@ test_wedge_threshold_worker_wait_is_off_until_armed() {
   pass "with config/wedge-defer-worker-wait absent a worker blocker keeps the byte-identical wedge reason"
 }
 
+# --- the escalation bound caps a parked-on-decision lane in every home -------
+# robots-xjhb5: an unarmed home, a worker parked at its no-mistakes ask-user gate,
+# the decision raised under a free-form key and filed for the captain elsewhere,
+# and the watcher re-fired the same stale wake seven and more times at rising
+# counts, each costing a handling turn that found nothing new. The ladder's
+# own top rung - demand-deep-inspection at FM_WEDGE_DEMAND_INSPECT_COUNT - is the
+# bound the fix honours: every rung up to and including it fires exactly as
+# before, and past it a lane whose current state is a human-owed gate with ANY
+# open `needs-decision` is rechecked on the long cadence, with no flag and no
+# key convention required. The deferral leaves the counter at the bound, so
+# every later threshold is absorbed whole until the decision closes.
+test_wedge_threshold_caps_a_parked_decision_at_the_escalation_bound() {
+  local dir state fakebin out capture window key n queued below_probes
+  local human='state: parked · source: run-step · parked at ci: 1 finding(s) · ask-user: authority decision · run: 01RUNCAP'
+  local crewmate='state: parked · source: run-step · parked at fix_review (ask-user: authority decision follow-up): 1 finding(s) · run: 01RUNCAP'
+  # The incident log shape: an open decision under a key that names no run, and
+  # a trailing `working:` line that keeps the last line non-captain-relevant so
+  # the lane takes the plain non-terminal route into the wedge timer.
+  local freeform='needs-decision [key=gitguardian-false-positive-pr43]: the ci gate raised an authority question
+working: still parked at that gate'
+  window="test:fm-wedge"; key=$(printf '%s' "$window" | tr ':/.' '___')
+
+  dir=$(wedge_threshold_fixture parked-decision-capped "$freeform" 2000)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  [ ! -e "$dir/config/wedge-defer-parked-gate" ] \
+    || fail "the capped fixture armed the flag, so it proves nothing about the bound"
+  export FM_FAKE_CREW_STATE_LOG="$dir/crew-state.calls"
+  : > "$FM_FAKE_CREW_STATE_LOG"
+  # Up to the bound: the unchanged ladder, count by count, with the
+  # demand-deep-inspection wording at the bound and no current-state read spent.
+  n=1
+  while [ "$n" -le 3 ]; do
+    wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$human" exit \
+      || fail "a parked-on-decision lane stopped escalating below the bound at threshold $n: $(cat "$out")"
+    ack_stopped_cycle "$state" || fail "could not acknowledge capped-lane escalation $n"
+    grep -F "possible wedge, escalation $n" "$out" >/dev/null \
+      || fail "a parked-on-decision lane did not reach escalation $n: $(cat "$out")"
+    n=$((n + 1))
+  done
+  grep -F 'demand-deep-inspection: same pane has wedge-escalated 3 times in a row' "$out" >/dev/null \
+    || fail "a parked-on-decision lane lost the demand-deep-inspection wording at the bound: $(cat "$out")"
+  below_probes=$(wc -l < "$FM_FAKE_CREW_STATE_LOG" | tr -d ' ')
+  [ "$below_probes" -eq 0 ] \
+    || fail "an unarmed home spent $below_probes current-state read(s) below the bound"
+  [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || echo 0)" -eq 3 ] \
+    || fail "the counter did not reach the bound: $(cat "$state/.wedge-escalations-$key" 2>/dev/null)"
+
+  # Past the bound: one recheck naming the bound, the open decision and the
+  # action that clears the lane, and never a fourth escalation. The round output
+  # is appended to, so it is emptied here to make the absence checks exact.
+  : > "$out"
+  wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$human" exit \
+    || fail "a parked-on-decision lane at the bound was never rechecked: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the capped recheck"
+  grep -F 'parked gate at the escalation bound' "$out" >/dev/null \
+    || fail "the capped recheck did not name its evidence: $(cat "$out")"
+  grep -F 'already wedge-escalated 3 times, awaiting a human decision on its open ask-user finding' "$out" >/dev/null \
+    || fail "the capped recheck did not name the bound and the open decision: $(cat "$out")"
+  grep -F 'answer or escalate the open decision and relay it to the crewmate' "$out" >/dev/null \
+    || fail "the capped recheck did not name the action that clears the lane: $(cat "$out")"
+  grep -F 'possible wedge' "$out" >/dev/null \
+    && fail "a parked-on-decision lane was re-escalated beyond the bound: $(cat "$out")"
+  grep -F 'escalation 4' "$out" >/dev/null \
+    && fail "a parked-on-decision lane climbed past the bound: $(cat "$out")"
+  [ "$(wc -l < "$FM_FAKE_CREW_STATE_LOG" | tr -d ' ')" -gt 0 ] \
+    || fail "the capped recheck spent no current-state read, so the deferral was not evidence-based"
+  unset FM_FAKE_CREW_STATE_LOG
+
+  # Every further threshold is absorbed inside the recheck cadence, the counter
+  # stays at the bound, and nothing more is queued.
+  queued=$(wedge_stale_wakes "$state" "$window")
+  n=1
+  while [ "$n" -le 3 ]; do
+    wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$human" absorb \
+      || fail "a parked-on-decision lane re-escalated past the bound at further threshold $n: $(cat "$out")"
+    n=$((n + 1))
+  done
+  [ "$(wedge_stale_wakes "$state" "$window")" -eq "$queued" ] \
+    || fail "a capped lane queued a further wake inside its recheck cadence: $(cat "$state/.wake-queue")"
+  [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || echo 0)" -eq 3 ] \
+    || fail "the capped lane's counter moved off the bound: $(cat "$state/.wedge-escalations-$key" 2>/dev/null)"
+
+  # The decision closes: the fold is empty, so the lane is handed back to the
+  # ladder within one threshold, continuing its own count.
+  printf '%s\n' 'resolved [key=gitguardian-false-positive-pr43]: firstmate relayed the captain call' \
+    >> "$state/wedge.status"
+  printf '%s' "$(seen_sig "$state/wedge.status")" > "$state/.seen-wedge_status"
+  : > "$out"
+  wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$human" exit \
+    || fail "a lane whose decision closed stayed capped: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the post-decision escalation"
+  grep -F 'possible wedge, escalation 4' "$out" >/dev/null \
+    || fail "a lane whose decision closed did not resume the ladder at its own count: $(cat "$out")"
+
+  # The control: the same bound, the same open decision, but a gate the
+  # crewmate itself must answer keeps climbing - that quiet is the wedge the
+  # ladder exists to catch.
+  dir=$(wedge_threshold_fixture parked-decision-crewmate-owed "$freeform" 2000)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  printf '3\n' > "$state/.wedge-escalations-$key"
+  wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$crewmate" exit \
+    || fail "a crewmate-owed gate at the bound stopped escalating: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the crewmate-owed escalation"
+  grep -F 'possible wedge, escalation 4, demand-deep-inspection' "$out" >/dev/null \
+    || fail "a crewmate-owed gate at the bound did not keep the unchanged ladder: $(cat "$out")"
+  grep -F 'parked gate at the escalation bound' "$out" >/dev/null \
+    && fail "a crewmate-owed gate was capped as a wait on a human: $(cat "$out")"
+
+  # The other control: a human-owed gate at the bound with no open decision at
+  # all - nobody was told - keeps climbing too.
+  dir=$(wedge_threshold_fixture parked-decision-untold 'working: still parked at that gate' 2000)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  printf '3\n' > "$state/.wedge-escalations-$key"
+  wedge_threshold_round "$state" "$fakebin" "$out" "$capture" "$window" "$human" exit \
+    || fail "an untold human-owed gate at the bound stopped escalating: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the untold-gate escalation"
+  grep -F 'possible wedge, escalation 4, demand-deep-inspection' "$out" >/dev/null \
+    || fail "an untold human-owed gate at the bound did not keep the unchanged ladder: $(cat "$out")"
+  pass "a lane parked at a human-owed gate with an open decision climbs the ladder to FM_WEDGE_DEMAND_INSPECT_COUNT and is then rechecked on the long cadence in an unarmed home, while a crewmate-owed gate and an untold gate keep climbing"
+}
+
 # --- a wait record that does not carry every field is refused ----------------
 # wait_record joins its five fields with US and wedge_defer_wait parses them with
 # `IFS=<us> read`, so consecutive delimiters yield genuinely EMPTY fields and no
@@ -7411,6 +7532,7 @@ test_wedge_threshold_parked_gate_needs_an_unanswered_decision
 test_wedge_threshold_parked_gate_is_off_until_armed
 test_wedge_threshold_defers_to_a_worker_blocker
 test_wedge_threshold_worker_wait_is_off_until_armed
+test_wedge_threshold_caps_a_parked_decision_at_the_escalation_bound
 test_wedge_defer_refuses_a_half_filled_wait_record
 test_open_captain_call_bounds_stale_churn
 test_stale_churn_without_a_captain_call_still_alarms
