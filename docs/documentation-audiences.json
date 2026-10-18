@@ -578,6 +578,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/laya-stale-wake-triage.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/zellij-backend.md",
       "audience": "operator-current"
     },

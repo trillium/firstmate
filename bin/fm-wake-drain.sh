@@ -33,6 +33,9 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/fm-supervision-engine-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# Labels surfaced stale wakes at acknowledgement (docs/laya-stale-wake-triage.md).
+# shellcheck source=bin/fm-wake-decision-lib.sh
+. "$SCRIPT_DIR/fm-wake-decision-lib.sh"
 
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
@@ -43,6 +46,7 @@ RECOVERY_MARKER_TOKEN=
 RECOVERY_ACK_REQUIRED=false
 RECOVERY_ACK_MOVED=false
 ACK_THROUGH=
+ACK_LABEL_ROWS=
 ACK_GENERATION=
 ACK_REMOVED=0
 PRESENTED_MAX=0
@@ -824,6 +828,7 @@ cleanup() {
   local status=$?
   [ -z "$DRAIN_TMP" ] || rm -f -- "$DRAIN_TMP" 2>/dev/null || true
   [ -z "$DRAIN_VIEW_TMP" ] || rm -f -- "$DRAIN_VIEW_TMP" 2>/dev/null || true
+  [ -z "$ACK_LABEL_ROWS" ] || rm -f -- "$ACK_LABEL_ROWS" 2>/dev/null || true
   if [ "$DRAIN_LOCK_HELD" = true ]; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   fi
@@ -948,13 +953,23 @@ if [ -n "$ACK_THROUGH" ]; then
     exit 1
   fi
   DRAIN_TMP=
+  # Snapshot this actor's owned rows before they are consumed: the decision
+  # log labels exactly the surfaced stale wakes this acknowledgement retired.
+  ACK_LABEL_ROWS=$(mktemp "$STATE/.wake-rows.label.XXXXXX") || ACK_LABEL_ROWS=
   if [ "$ACTOR" = branch ]; then
+    [ -z "$ACK_LABEL_ROWS" ] || cat "$ELIGIBLE_ROWS_FILE" > "$ACK_LABEL_ROWS" 2>/dev/null || true
     consume_actor_rows_locked "$ELIGIBLE_ROWS_FILE" "$ACK_THROUGH" || exit 1
   else
+    [ -z "$ACK_LABEL_ROWS" ] || cat "$MAIN_ROWS_FILE" > "$ACK_LABEL_ROWS" 2>/dev/null || true
     consume_actor_rows_locked "$MAIN_ROWS_FILE" "$ACK_THROUGH" || exit 1
   fi
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
+  if [ -n "$ACK_LABEL_ROWS" ]; then
+    fm_wake_decision_label_through "$STATE" "$ACK_THROUGH" "$ACK_LABEL_ROWS" || true
+    rm -f "$ACK_LABEL_ROWS"
+    ACK_LABEL_ROWS=
+  fi
   if [ "$ACK_REMOVED" -eq 0 ] && [ "$PRESENTED_MAX" -gt "$ACK_THROUGH" ]; then
     # Nothing at or below the cutoff was this actor's to consume, while a
     # presented row above it is still waiting: the caller acknowledged an
