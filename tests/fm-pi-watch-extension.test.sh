@@ -277,6 +277,71 @@ EOF
   pass "Pi redundant tool call returns ownership guidance and spawns no second child"
 }
 
+test_pi_silent_owned_arm_is_replaced_on_repair_call() {
+  local repo home plugin log stop out status
+  repo="$TMP_ROOT/pi-silent-arm-root"
+  home="$TMP_ROOT/pi-silent-arm-home"
+  log="$TMP_ROOT/pi-silent-arm.log"
+  stop="$TMP_ROOT/pi-silent-arm.stop"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'arm\n' >> "${FM_ARM_LOG:?}"
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+trap 'exit 0' TERM INT
+while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_GUARD_GRACE=1 FM_STOP_FILE="$stop" node --input-type=module 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+let tool = null;
+const pi = {
+  on() {},
+  registerCommand() {},
+  registerTool(candidate) {
+    if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+  },
+  sendUserMessage: async () => {},
+};
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+const initial = await tool.execute("tool-call-first", {}, undefined, undefined, {});
+if (!initial.content[0]?.text.includes("started Pi extension arm child")) {
+  throw new Error(`initial call did not start the arm child: ${initial.content[0]?.text}`);
+}
+import { utimesSync } from "node:fs";
+await new Promise((resolve) => setTimeout(resolve, 1100));
+const beat = `${process.env.FM_HOME}/state/.last-watcher-beat`;
+writeFileSync(beat, "beat\n");
+const old = new Date(Date.now() - 3600 * 1000);
+utimesSync(beat, old, old);
+for (let i = 0; i < 100 && !existsSync(process.env.FM_ARM_LOG); i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+const repaired = await tool.execute("tool-call-repair", {}, undefined, undefined, {});
+if (/already owns an arm child/.test(repaired.content[0]?.text)) {
+  throw new Error(`stale-beat repair call was a no-op: ${repaired.content[0]?.text}`);
+}
+if (!repaired.content[0]?.text.includes("started Pi extension arm child")) {
+  throw new Error(`stale-beat repair call did not start a replacement arm: ${repaired.content[0]?.text}`);
+}
+await new Promise((resolve) => setTimeout(resolve, 300));
+const rows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
+if (rows.length !== 2) throw new Error(`expected exactly 2 arm starts, saw ${rows.length}`);
+writeFileSync(process.env.FM_STOP_FILE, "stop\n");
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "Pi repair call must replace an owned-but-silent arm (stale beat)"
+  [ -z "$out" ] || fail "Pi silent-arm test printed output: $out"
+  pass "Pi repair call replaces an owned-but-silent arm when the beat is stale"
+}
+
 test_pi_scheduled_retry_call_is_owned_noop() {
   local repo home plugin log out status
   repo="$TMP_ROOT/pi-scheduled-retry-root"
@@ -4396,6 +4461,7 @@ EOF
 test_pi_extension_reports_external_healthy_watcher
 test_pi_tool_returns_agent_tool_result
 test_pi_redundant_tool_call_is_owned_noop
+test_pi_silent_owned_arm_is_replaced_on_repair_call
 test_pi_scheduled_retry_call_is_owned_noop
 test_pi_actionable_close_starts_single_successor_before_delivery
 test_pi_actionable_output_waits_for_predecessor_close

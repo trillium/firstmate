@@ -35,7 +35,7 @@
 // consumption changes.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
@@ -161,6 +161,10 @@ const armReadyTimeoutMs = positiveInteger(
   process.platform === "win32" ? 35000 : 12000,
 );
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
+// A live arm child whose liveness beacon has not moved for this long is owned
+// but silent: the explicit repair call replaces it instead of reporting a no-op.
+// Matches the turn-end guard's default grace (bin/fm-guard.sh FM_GUARD_GRACE).
+const silentArmGraceMs = positiveInteger("FM_GUARD_GRACE", 300) * 1000;
 const repairOnlyHint = "call fm_watch_arm_pi again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - Pi session is shutting down";
 
@@ -200,6 +204,9 @@ function replacementCoordinatorFor(handoff: string): ReplacementCoordinator {
 const replacementCoordinator = replacementCoordinatorFor(actionableHandoff);
 const armReadiness = new WeakMap<ChildProcess, Promise<boolean>>();
 const armClose = new WeakMap<ChildProcess, Promise<void>>();
+const armStartedAt = new WeakMap<ChildProcess, number>();
+// Silent arms replaced by an explicit repair call; their close must not schedule a retry.
+const armReplaced = new WeakSet<ChildProcess>();
 const retiringGenerations = new Set<SessionGeneration>();
 // Children the extension itself asked to exit; their close is not a failure
 // of the successor and never earns a deferred retry.
@@ -958,6 +965,19 @@ export default function (pi: ExtensionAPI) {
     owner.retryTimer = timer;
   }
 
+  function armIsOwnedButSilent(owner: SessionGeneration): boolean {
+    const child = owner.child;
+    if (!child) return false;
+    const startedAt = armStartedAt.get(child) ?? Date.now();
+    if (Date.now() - startedAt < silentArmGraceMs) return false;
+    try {
+      // A missing beacon is not evidence of silence: a fresh arm may not have beaten yet.
+      return Date.now() - statSync(`${state}/.last-watcher-beat`).mtimeMs >= silentArmGraceMs;
+    } catch {
+      return false;
+    }
+  }
+
   function startArm(owner: SessionGeneration, predecessorArmPid = ""): ArmResult {
     if (!generationIsLive(owner)) return { ok: false, message: shuttingDownMessage };
     const ownership = lockOwnership();
@@ -996,6 +1016,7 @@ export default function (pi: ExtensionAPI) {
       stdio: ["ignore", "pipe", "pipe"],
     });
     owner.child = armChild;
+    armStartedAt.set(armChild, Date.now());
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -1048,6 +1069,7 @@ export default function (pi: ExtensionAPI) {
       resolveClosed();
       settleReadiness(false);
       releaseChild();
+      if (armReplaced.has(armChild)) return;
       const classification = classifyClose(stdout, stderr, code, signal);
       const predecessor = String(armChild.pid ?? "");
       if (classification.kind === "actionable") {
@@ -1181,6 +1203,15 @@ export default function (pi: ExtensionAPI) {
       return new Container();
     },
     execute: async () => {
+      if (armIsOwnedButSilent(generation)) {
+        const silent = generation.child;
+        if (silent) armReplaced.add(silent);
+        if (!(await retireArm(silent))) {
+          const message = "watcher: FAILED - Pi extension arm child is alive but silent and did not exit when retired";
+          return { content: [{ type: "text", text: message }], details: { ok: false, message } };
+        }
+        if (generation.child === silent) generation.child = null;
+      }
       const result = activateOwnedWatch(generation);
       return {
         content: [{ type: "text", text: result.message }],
