@@ -434,8 +434,12 @@ captain_held_silenced() {  # <status-line>
   status_is_captain_held "$1" && afk_record_present
 }
 
+# hash_pane: hex digest of stdin. BSD md5 and GNU md5sum both read stdin with
+# no flags; only the output shape differs (bare digest vs "digest  -"), so the
+# first field is the digest under either. No `-q`: Homebrew's coreutils can
+# install gmd5sum as `md5`, which rejects BSD flags and would fail every hash.
 hash_pane() {
-  if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi
+  if command -v md5 >/dev/null 2>&1; then md5; else md5sum; fi | cut -d' ' -f1
 }
 
 # window_is_busy: 0 (busy) iff the task's harness is PROVABLY working, through

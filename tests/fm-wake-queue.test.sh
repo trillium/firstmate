@@ -1250,6 +1250,14 @@ SH
   pass "structural signal enrichment is separate, deduped, home-local, and tier-zero for other wakes"
 }
 
+# file_has_exact_line <file> <line>: 0 when <file> holds a line equal to <line>.
+# awk instead of `grep -Fx` because BSD grep aborts with "out of memory" on a
+# multi-kilobyte fixed pattern, and the oversized-status cases below need one.
+# The line travels through the environment so awk never unescapes it.
+file_has_exact_line() {
+  FM_TEST_WANT_LINE="$2" awk 'BEGIN { w = ENVIRON["FM_TEST_WANT_LINE"] } $0 == w { f = 1 } END { exit !f }' "$1"
+}
+
 test_enrichment_preserves_all_unread_lines_and_status_file_failures() {
   local dir state out i raw_count expected
   dir=$(make_case complete-enrichment)
@@ -1278,12 +1286,12 @@ test_enrichment_preserves_all_unread_lines_and_status_file_failures() {
   [ "$raw_count" -eq 13 ] || fail "missing, unreadable, malformed, empty, or oversized status input hid a raw row"
 
   expected="wake annotation: latest wake-EVENT observed at drain, not current state: huge.status: $(cat "$state/huge.status")"
-  grep -Fx "$expected" "$out" >/dev/null \
+  file_has_exact_line "$out" "$expected" \
     || fail "the oversized unread status line was truncated or omitted"
   i=1
   while [ "$i" -le 8 ]; do
     expected="wake annotation: latest wake-EVENT observed at drain, not current state: many-$i.status: $(cat "$state/many-$i.status")"
-    grep -Fx "$expected" "$out" >/dev/null \
+    file_has_exact_line "$out" "$expected" \
       || fail "readable status many-$i was truncated or omitted"
     i=$((i + 1))
   done

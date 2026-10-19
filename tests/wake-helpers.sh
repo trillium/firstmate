@@ -353,12 +353,11 @@ is_live_non_zombie() {
   return 0
 }
 
+# hash_text <text>: same digest bin/fm-watch.sh's hash_pane computes. Flag-free
+# so BSD md5 and GNU md5sum (including Homebrew's gmd5sum installed as `md5`,
+# which rejects `-q`) both work; the first output field is the digest either way.
 hash_text() {
-  if command -v md5 >/dev/null 2>&1; then
-    printf '%s' "$1" | md5 -q
-  else
-    printf '%s' "$1" | md5sum | cut -d' ' -f1
-  fi
+  printf '%s' "$1" | { if command -v md5 >/dev/null 2>&1; then md5; else md5sum; fi; } | cut -d' ' -f1
 }
 
 dead_pid() {

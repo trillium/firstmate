@@ -266,9 +266,11 @@ _file_age() {  # seconds since mtime; very large if missing
   echo $(( $(_now) - m ))
 }
 
+# _hash_text: hex digest of $1. Flag-free so BSD md5 and GNU md5sum (including
+# Homebrew's gmd5sum installed as `md5`, which rejects `-q`) both work; the
+# first output field is the digest under either.
 _hash_text() {
-  if command -v md5 >/dev/null 2>&1; then printf '%s' "$1" | md5 -q
-  else printf '%s' "$1" | md5sum | cut -d ' ' -f1; fi
+  printf '%s' "$1" | { if command -v md5 >/dev/null 2>&1; then md5; else md5sum; fi; } | cut -d ' ' -f1
 }
 
 # --- presence-gating helpers (PURE-ish: side-effect-free reads of state) -----
