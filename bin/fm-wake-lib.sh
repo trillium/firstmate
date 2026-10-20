@@ -555,12 +555,26 @@ fm_lock_remove_stray_owner_link() {
 }
 
 fm_lock_claim_blocked_by_steal() {
-  local lockdir=$1 allowed_steal_owner=${2:-} steal
+  local lockdir=$1 allowed_steal_owner=${2:-} steal owner pid
+  case "$lockdir" in
+    *.steal|*.steal.*) return 1 ;;
+  esac
   steal="$lockdir.steal"
   [ -e "$steal" ] || [ -L "$steal" ] || return 1
   if [ -n "$allowed_steal_owner" ] && fm_lock_points_to_owner "$steal" "$allowed_steal_owner"; then
     return 1
   fi
+  if [ -L "$steal" ]; then
+    owner=$(fm_lock_link_owner "$steal" 2>/dev/null || true)
+  elif [ -d "$steal" ]; then
+    owner=$steal
+  else
+    return 1
+  fi
+  [ -n "$owner" ] || return 1
+  [ -d "$owner" ] || return 1
+  pid=$(cat "$owner/pid" 2>/dev/null || true)
+  fm_pid_alive "$pid" || return 1
   return 0
 }
 
@@ -654,12 +668,15 @@ fm_lock_mid_acquire_is_fresh() {
 # resolve to exactly one holder.
 fm_lock_reclaim_stale_plain_path() {
   local lockdir=$1 steal steal_owner rc
+  case "$lockdir" in
+    *.steal|*.steal.*) return 1 ;;
+  esac
   steal="$lockdir.steal"
   [ -L "$lockdir" ] && return 1
   [ -d "$lockdir" ] && return 1
   [ -e "$lockdir" ] || return 1
   fm_lock_mid_acquire_is_fresh "$lockdir" "" && return 1
-  if ! fm_lock_try_acquire "$steal"; then
+  if ! fm_lock_try_acquire_steal_mutex "$steal"; then
     return 1
   fi
   steal_owner=${FM_LOCK_OWNER_DIR:-}
@@ -1177,13 +1194,20 @@ fm_lock_reap_dead_link() {
       fi
       token=$tomb
     done
-    [ -n "$token" ] || return 1
+    if [ -z "$token" ]; then
+      if [ "$(fm_lock_link_owner "$lockdir" 2>/dev/null || true)" = "$owner" ] \
+        || fm_lock_points_to_owner "$lockdir" "$owner"; then
+        rm -f "$lockdir" 2>/dev/null || true
+      fi
+      return 0
+    fi
   fi
   tomb="$owner.reaped.$current"
   if [ "$token" != "$tomb" ]; then
     mv -- "$token" "$tomb" 2>/dev/null || return 1
   fi
-  if fm_lock_points_to_owner "$lockdir" "$owner"; then
+  if fm_lock_points_to_owner "$lockdir" "$owner" \
+    || [ "$(fm_lock_link_owner "$lockdir" 2>/dev/null || true)" = "$owner" ]; then
     rm -f "$lockdir" 2>/dev/null || true
   fi
   fm_lock_discard_owner "$tomb"

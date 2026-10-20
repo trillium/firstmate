@@ -452,6 +452,45 @@ test_lock_recovers_dead_nested_steal_chain() {
   pass "dead nested steal chain from an interrupted reclaim is recovered"
 }
 
+test_lock_recovers_dangling_nested_steal_chain() {
+  local dir state lockdir plain rc marker
+  dir=$(make_case lock-dangling-nested-steal-chain)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$(dead_pid)" > "$lockdir/pid"
+  ln -s "$state/nonexistent1" "$lockdir.steal"
+  ln -s "$state/nonexistent2" "$lockdir.steal.steal"
+  ln -s "$state/nonexistent3" "$lockdir.steal.steal.steal"
+
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 8
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" || rc=$?
+  [ "$rc" -eq 0 ] || fail "dangling nested steal chain kept the lock unrecoverable (rc=$rc)"
+  for marker in "$lockdir.steal" "$lockdir.steal.steal"; do
+    [ ! -e "$marker" ] && [ ! -L "$marker" ] || fail "dangling steal marker remained: $marker"
+  done
+
+  plain="$state/.plain.lock"
+  touch "$plain"
+  touch -t 200001010000 "$plain"
+  ln -s "$state/nonexistent_plain" "$plain.steal"
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 9
+    fm_lock_release "$2"
+  ' _ "$LIB" "$plain" || rc=$?
+  [ "$rc" -eq 0 ] || fail "stale plain file with dangling steal link could not be acquired (rc=$rc)"
+  [ ! -e "$plain.steal" ] && [ ! -L "$plain.steal" ] \
+    || fail "plain file steal marker remained: $plain.steal"
+
+  pass "dangling nested steal chain and dead links are recovered"
+}
+
 test_lock_reclaims_self_held_steal_mutex() {
   # A TERM that lands while this process holds the steal mutex runs the EXIT
   # path, which re-acquires the same dead-owner lock. The abandoned steal hold
@@ -1695,6 +1734,7 @@ test_lock_steals_dead_pid_lock
 test_lock_stale_steal_single_winner_under_concurrency
 test_lock_reclaims_dead_steal_owner_without_nested_markers
 test_lock_recovers_dead_nested_steal_chain
+test_lock_recovers_dangling_nested_steal_chain
 test_lock_steal_reap_cannot_remove_successor
 test_lock_reclaims_self_held_steal_mutex
 test_lock_resumes_own_interrupted_steal_reap
