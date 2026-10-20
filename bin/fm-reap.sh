@@ -450,7 +450,7 @@ classify_record() {
     blocked) set_class BLOCKED "ledger reads blocked; reported only"; return 0 ;;
     needs-decision) set_class NEEDS-DECISION "ledger reads needs-decision; reported only"; return 0 ;;
   esac
-  if [ "$E_KIND" = scout ] && [ "$E_VERB" = "done" ]; then
+  if [ "$E_KIND" = scout ] && { [ "$E_VERB" = "done" ] || [ "$E_VERB" = "resolved" ]; }; then
     if [ "$E_REPORT" -ne 1 ]; then
       set_class DEAD-UNLANDED "scout done without data/$id/report.md; reported only"
       return 0
@@ -465,7 +465,7 @@ classify_record() {
   case "$E_PR_STATE" in
     CLOSED) set_class PR-CLOSED "PR $E_PR_URL closed without merging; reported only"; return 0 ;;
     OPEN)
-      if [ "$E_KIND" = ship ] && [ "$E_VERB" = "done" ]; then
+      if [ "$E_KIND" = ship ] && { [ "$E_VERB" = "done" ] || [ "$E_VERB" = "resolved" ]; }; then
         if [ "$E_YOLO" = on ]; then
           "$CAPTAIN_HOLD_BIN" open "$id" >/dev/null 2>&1
           rc=$?
@@ -496,7 +496,7 @@ classify_record() {
     return 0
   fi
   case "$E_VERB" in
-    done|working|paused|'') ;;
+    done|resolved|working|paused|'') ;;
     *) set_class DEAD-UNLANDED "endpoint $E_ENDPOINT, ledger reads $E_VERB; reported only"; return 0 ;;
   esac
   if [ -n "$E_RELAUNCHED" ] && [ "$(sidecar_get "$id" escalated)" = 1 ]; then

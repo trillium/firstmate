@@ -311,6 +311,25 @@ test_scout_done_tears_down_only_with_a_report_and_verified_calls() {
   pass "fm-reap: a finished scout is torn down only once its report exists and its captain calls verify"
 }
 
+test_resolved_status_is_classified_terminal() {
+  local dir out
+  dir=$(make_home resolved)
+  add_record "$dir" scouted scout off
+  printf 'resolved [at=1]: report written\n' > "$dir/home/state/scouted.status"
+  mkdir -p "$dir/home/data/scouted"
+  printf '# findings\n' > "$dir/home/data/scouted/report.md"
+
+  add_record "$dir" ready ship on "$(pr_line)"
+  printf 'resolved [at=1]: PR https://github.com/acme/widgets/pull/7 checks green\n' > "$dir/home/state/ready.status"
+
+  out=$(run_reap "$dir" scan --act)
+  assert_contains "$(line_for "$out" scouted)" "SCOUT-DONE" "a resolved scout with a report is scout-done"
+  assert_contains "$(line_for "$out" ready)" "MERGE-DUE" "an open PR on a resolved ship is merge-due"
+  assert_line "^teardown scouted$" "$dir/actions.log" "a resolved scout with verified captain calls is torn down"
+  assert_line "^merge ready https://github.com/acme/widgets/pull/7$" "$dir/actions.log" "a resolved green unheld PR is merged"
+  pass "fm-reap: a resolved record is classified terminal and acted on"
+}
+
 # --- open PRs -----------------------------------------------------------------------
 
 test_merge_due_yolo_on_merges_only_green_unheld_prs() {
@@ -517,6 +536,7 @@ test_merged_pr_with_unlanded_work_is_never_torn_down
 test_skips_young_secondmate_and_captain_held_records
 test_ghost_slot_uses_record_only_teardown
 test_scout_done_tears_down_only_with_a_report_and_verified_calls
+test_resolved_status_is_classified_terminal
 test_merge_due_yolo_on_merges_only_green_unheld_prs
 test_merge_due_yolo_off_files_one_captain_hold
 test_closed_pr_is_reported_only
