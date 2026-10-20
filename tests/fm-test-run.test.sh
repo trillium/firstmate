@@ -1452,7 +1452,7 @@ test_concurrent_runs_are_ordered_longest_first() {
 # finishes. A hung script has to become a bounded failure, because an unbounded
 # suite is exactly what silently outruns its caller's invocation budget.
 test_stop_is_scoped_to_one_run() {
-  local tmp repo runner sleeper a_out b_out a_id b_pid w
+  local tmp repo runner sleeper a_out b_out a_id a_pid b_pid w
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-stop.XXXXXX")
   repo="$tmp/repo"
   runner="$repo/bin/fm-test-run.sh"
@@ -1466,6 +1466,7 @@ test_stop_is_scoped_to_one_run() {
   a_out="$tmp/a.out"
   b_out="$tmp/b.out"
   TMPDIR="$tmp" "$runner" "$sleeper" >"$a_out" 2>&1 &
+  a_pid=$!
   TMPDIR="$tmp" "$runner" "$sleeper" >"$b_out" 2>&1 &
   b_pid=$!
   w=0
@@ -1473,7 +1474,7 @@ test_stop_is_scoped_to_one_run() {
     sleep 0.1
     w=$((w + 1))
   done
-  a_id=$(TMPDIR="$tmp" "$runner" --stop | head -1 | awk '{print $1}')
+  a_id=$(TMPDIR="$tmp" "$runner" --stop | awk -v p="pid=$a_pid" '$2 == p {print $1}')
   [ -n "$a_id" ] || fail "--stop listed no live runs"
   TMPDIR="$tmp" "$runner" --stop "$a_id" >/dev/null || fail "--stop <run> failed"
   w=0
