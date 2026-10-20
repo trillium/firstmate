@@ -123,6 +123,11 @@
 # owner claim (below) names another task: this teardown is then records-only and
 # touches nothing under the slot, so the scan is skipped rather than stranding
 # the stale record and, with it, the claimant's own teardown.
+# A second exception: a record that is provably FINISHED and whose work the pool
+# already handed on is a leftover, not a collision. The scan ignores it only
+# when its worker is gone, the slot's checkout carries named work that is not
+# that record's, and the slot holds no uncommitted work - so ignoring it
+# cannot lose live or unlanded work. Every other reading still refuses.
 # That scan alone cannot prove THIS record is the current owner, because the task
 # that took the slot next may leave no record it can reach - its own worker may
 # have exited and its record been cleaned up, or it may live in a home this
@@ -2529,6 +2534,62 @@ collect_local_firstmate_states() {
   TREEHOUSE_OWNER_STATES=("${FM_LOCAL_FIRSTMATE_STATES[@]}")
 }
 
+# The branch a pool slot's checkout currently carries, or empty when the
+# checkout is on a detached HEAD or cannot be read.
+# A pool slot is handed on by checking out different work, so the branch it
+# carries says which task the slot belongs to now.
+teardown_slot_checked_out_branch() {  # <slot-dir>
+  local slot=$1 branch
+  branch=$(git -C "$slot" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 0
+  [ -n "$branch" ] || return 0
+  printf '%s' "$branch"
+}
+
+# True when another record naming this slot cannot own it any more.
+# The record scan refuses because returning the slot would kill that record's
+# processes and reset its copy. Three positive facts have to hold before a
+# record is ignored, and each one is read the way the rest of this script
+# already reads it:
+#   1. That record's worker is gone - its endpoint reads dead or missing - so
+#      it is not running and cannot be using the slot. An unreadable or
+#      ambiguous endpoint reads unknown and leaves the refusal in place.
+#   2. The slot's checkout carries named work that is not that record's: the
+#      checked-out branch differs from the branch the record recorded, and the
+#      branch does not name that record's task id either (a record that
+#      recorded no branch worked on a detached HEAD, so any named branch means
+#      the pool handed the slot on). Whatever that record left in the slot was
+#      already destroyed when the pool handed it on, which is the same
+#      reasoning the reassigned-slot path already uses.
+#   3. The slot carries no uncommitted work, so ignoring the record cannot
+#      lose edits that were never committed.
+# Any other reading leaves the refusal exactly as it is: one slot must never
+# be returned under a task that could still be holding live work in it.
+other_record_released_slot() {  # <other-meta> <other-id> <slot>
+  local other=$1 other_id=$2 slot=$3 backend window endpoint branch other_branch
+  # A record whose endpoint lives on another machine cannot be read here, so it
+  # is never treated as finished. Its remote home path does not exist locally,
+  # so it never reaches this scan in the first place, and this guard keeps it
+  # that way.
+  [ -z "$(fm_meta_get "$other" remote_host)" ] || return 1
+  backend=$(fm_backend_of_meta "$other")
+  window=$(fm_meta_get "$other" window)
+  [ -n "$window" ] || return 1
+  endpoint=$(fm_backend_agent_state "$backend" "$window")
+  case "$endpoint" in
+    dead|missing) ;;
+    *) return 1 ;;
+  esac
+  branch=$(teardown_slot_checked_out_branch "$slot")
+  [ -n "$branch" ] || return 1
+  other_branch=$(fm_meta_get "$other" branch)
+  [ "$other_branch" != "$branch" ] || return 1
+  case "$branch" in
+    */"$other_id" | "$other_id") return 1 ;;
+  esac
+  [ -z "$(git -C "$slot" status --porcelain 2>/dev/null)" ] || return 1
+  return 0
+}
+
 require_exclusive_worktree_slot_record() {
   local record_meta=$1 record_id=$2 record_state=$3 worktree=$4
   local slot state_dir other other_id field other_path other_slot
@@ -2554,6 +2615,13 @@ require_exclusive_worktree_slot_record() {
         [ -n "$other_path" ] || continue
         other_slot=$(canonical_existing_dir "$other_path") || continue
         [ "$other_slot" = "$slot" ] || continue
+        # A finished record whose slot was handed on is a leftover, not a
+        # collision. Ignoring it is safe only when it can hold nothing in this
+        # slot, so the release proof has to be positive on every count.
+        if other_record_released_slot "$other" "$other_id" "$other_slot"; then
+          echo "warning: task $record_id's recorded worktree $slot is also named by task $other_id, whose worker is gone and whose work the pool already handed on; that leftover record is ignored here." >&2
+          continue
+        fi
         echo "REFUSED: task $record_id's recorded worktree $slot is also task $other_id's recorded $field." >&2
         echo "Returning that pool slot would kill $other_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
         echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $other_id), then re-run teardown." >&2
