@@ -161,10 +161,10 @@ const armReadyTimeoutMs = positiveInteger(
   process.platform === "win32" ? 35000 : 12000,
 );
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
-// A live arm child whose liveness beacon has not moved for this long is owned
-// but silent: the explicit repair call replaces it instead of reporting a no-op.
-// Matches the turn-end guard's default grace (bin/fm-guard.sh FM_GUARD_GRACE).
-const silentArmGraceMs = positiveInteger("FM_GUARD_GRACE", 300) * 1000;
+// bin/fm-watch-arm.sh stop_home_watcher waits up to 5s for a TERMed watcher.
+// A stale-beat replacement has to outlast that wait, or the tool reports
+// failure while the arm is still tearing the wedged watcher down.
+const staleArmRetireTimeoutMs = positiveInteger("FM_PI_STALE_ARM_RETIRE_TIMEOUT_MS", 6000);
 const repairOnlyHint = "call fm_watch_arm_pi again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - Pi session is shutting down";
 
@@ -211,6 +211,10 @@ const retiringGenerations = new Set<SessionGeneration>();
 // Children the extension itself asked to exit; their close is not a failure
 // of the successor and never earns a deferred retry.
 const armRetired = new WeakSet<ChildProcess>();
+// A manual repair replaces this child itself. Its close must not also
+// schedule a retry, or that retry and the replacement both arm. A restoration
+// retire stays in armRetired only, so a late close after fallback still resumes.
+const armReplacementOwned = new WeakSet<ChildProcess>();
 const armRecovery = new WeakMap<ChildProcess, { generation: string; watcherPid: string }>();
 const armPendingActionable = new WeakMap<ChildProcess, PendingActionableClose>();
 
@@ -218,6 +222,22 @@ function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return Math.floor(value);
+}
+
+// Same integer-second comparison as fm_watcher_healthy: age < grace is fresh.
+// An absent beat is not stale. The arm may still be starting, and a missing
+// file must not kill that child. A recorded beat at or past FM_GUARD_GRACE
+// (the turn-end guard's own TTL, default 300s) means the owned arm is not
+// supervising, so a repair call has to replace it instead of no-opping.
+function recordedBeatIsStale(): boolean {
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(`${state}/.last-watcher-beat`).mtimeMs;
+  } catch {
+    return false;
+  }
+  const ageSeconds = Math.floor(Date.now() / 1000) - Math.floor(mtimeMs / 1000);
+  return ageSeconds >= positiveInteger("FM_GUARD_GRACE", 300);
 }
 
 function parentPid(pid: string): string {
@@ -894,14 +914,14 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
-  async function retireArm(armChild: ChildProcess | null): Promise<boolean> {
+  async function retireArm(armChild: ChildProcess | null, timeoutMs = armRetireTimeoutMs): Promise<boolean> {
     if (!armChild) return true;
     armRetired.add(armChild);
     armChild.kill("SIGTERM");
     const closed = armClose.get(armChild);
     if (!closed) return false;
     return new Promise((resolveRetired) => {
-      const timer = setTimeout(() => resolveRetired(false), armRetireTimeoutMs);
+      const timer = setTimeout(() => resolveRetired(false), timeoutMs);
       timer.unref();
       void closed.then(() => {
         clearTimeout(timer);
@@ -965,19 +985,6 @@ export default function (pi: ExtensionAPI) {
     owner.retryTimer = timer;
   }
 
-  function armIsOwnedButSilent(owner: SessionGeneration): boolean {
-    const child = owner.child;
-    if (!child) return false;
-    const startedAt = armStartedAt.get(child) ?? Date.now();
-    if (Date.now() - startedAt < silentArmGraceMs) return false;
-    try {
-      // A missing beacon is not evidence of silence: a fresh arm may not have beaten yet.
-      return Date.now() - statSync(`${state}/.last-watcher-beat`).mtimeMs >= silentArmGraceMs;
-    } catch {
-      return false;
-    }
-  }
-
   function startArm(owner: SessionGeneration, predecessorArmPid = ""): ArmResult {
     if (!generationIsLive(owner)) return { ok: false, message: shuttingDownMessage };
     const ownership = lockOwnership();
@@ -989,6 +996,8 @@ export default function (pi: ExtensionAPI) {
       };
     }
     publishGenerationOwner(owner, "active");
+    // A live child with a fresh beat is an ownership no-op. A stale beat is
+    // not handled here: repairOwnedWatch retires that child first.
     if (owner.child) {
       return {
         ok: true,
@@ -1081,6 +1090,10 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       if (!generationIsLive(owner)) return;
+      // repairOwnedWatch is already starting the replacement. A restoration
+      // retire is only in armRetired: once fallback has returned, that late
+      // close still has to schedule its own successor.
+      if (armReplacementOwned.has(armChild)) return;
       if (owner.restoring) {
         // The pipeline is still delivering the wake this successor was
         // started for. A verified successor that failed on its own keeps its
@@ -1159,10 +1172,36 @@ export default function (pi: ExtensionAPI) {
     await stopSessionGeneration(generation, replacement);
   });
 
+  // Manual repair entry (the tool and /fm-watch-arm-pi). The turn-end guard
+  // blocks while the recorded beat is stale even if this extension still holds
+  // an arm child. Returning the ownership no-op there makes the prescribed
+  // repair change nothing, so the guard fires again every turn. Retire that
+  // child and start a replacement instead.
+  async function repairOwnedWatch(owner: SessionGeneration): Promise<ArmResult> {
+    if (!generationIsLive(owner)) return { ok: false, message: shuttingDownMessage };
+    const staleChild = owner.child;
+    if (staleChild && recordedBeatIsStale()) {
+      const grace = positiveInteger("FM_GUARD_GRACE", 300);
+      armReplacementOwned.add(staleChild);
+      const retired = await retireArm(staleChild, staleArmRetireTimeoutMs);
+      if (!generationIsLive(owner)) return { ok: false, message: shuttingDownMessage };
+      // The child is still the live arm. Drop the mark so its later close
+      // can resume supervision, and report the repair as failed.
+      if (!retired && owner.child === staleChild) {
+        armReplacementOwned.delete(staleChild);
+        return {
+          ok: false,
+          message: `watcher: FAILED - Pi extension could not replace the arm child whose heartbeat is stale past ${grace}s`,
+        };
+      }
+    }
+    return activateOwnedWatch(owner);
+  }
+
   pi.registerCommand?.("fm-watch-arm-pi", {
     description: "Arm firstmate watcher supervision through the Pi extension instead of foreground bash.",
     handler: async (_args, ctx) => {
-      const result = activateOwnedWatch(generation);
+      const result = await repairOwnedWatch(generation);
       ctx.ui.notify(result.message, result.ok ? "info" : "warning");
     },
   });
@@ -1203,16 +1242,7 @@ export default function (pi: ExtensionAPI) {
       return new Container();
     },
     execute: async () => {
-      if (armIsOwnedButSilent(generation)) {
-        const silent = generation.child;
-        if (silent) armReplaced.add(silent);
-        if (!(await retireArm(silent))) {
-          const message = "watcher: FAILED - Pi extension arm child is alive but silent and did not exit when retired";
-          return { content: [{ type: "text", text: message }], details: { ok: false, message } };
-        }
-        if (generation.child === silent) generation.child = null;
-      }
-      const result = activateOwnedWatch(generation);
+      const result = await repairOwnedWatch(generation);
       return {
         content: [{ type: "text", text: result.message }],
         details: result,
