@@ -269,8 +269,13 @@ _file_age() {  # seconds since mtime; very large if missing
 }
 
 _hash_text() {
-  if command -v md5 >/dev/null 2>&1; then printf '%s' "$1" | md5 -q
-  else printf '%s' "$1" | md5sum | cut -d ' ' -f1; fi
+  if command -v md5sum >/dev/null 2>&1; then
+    printf '%s' "$1" | md5sum | cut -d' ' -f1
+  elif [ -x /sbin/md5 ]; then
+    printf '%s' "$1" | /sbin/md5 -q
+  elif command -v md5 >/dev/null 2>&1; then
+    printf '%s' "$1" | md5 | cut -d' ' -f1
+  fi
 }
 
 # --- presence-gating helpers (PURE-ish: side-effect-free reads of state) -----
