@@ -1,0 +1,39 @@
+test
+
+---
+
+⁣FIRSTMATE_OP: v1 turn-end-guard: TURN WOULD END BLIND - supervision is off. The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.
+
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  34 task(s) in flight, but no live watcher holds this home lock (last beat: 180s ago).
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/trilliumsmith/fm_home/firstmate/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/trilliumsmith/fm_home/firstmate/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+---
+
+test
+
+---
+
+⁣FIRSTMATE_OP: v1 turn-end-guard: TURN WOULD END BLIND - supervision is off. The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.
+
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  34 task(s) in flight, but no live watcher holds this home lock (last beat: 189s ago).
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/trilliumsmith/fm_home/firstmate/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/trilliumsmith/fm_home/firstmate/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+---
+
+wake: (1) run 'status show status-kdv' and log every agent action since the last poke with 'status comment status-kdv' (Done / In flight / Next / Blocked). (2) Any durable work (findings, decisions, results, follow-ups) not yet in a bead goes into the right bead NOW. (3) A turn where NO WORK was done is a violation: find and produce work. Inspect the 'projects' store (projects list / show), pick projects we personally own, and decide what can be taken on, made more durable, or improved in usability; dispatch or do it, non-destructive first. Also pull from task ready, ideas, questions, nightshift-tasks, review. (4) Keep supervising the fleet; record each new unit of work in its bead before the turn ends. (5) You may edit ~/.fm-nudge.text (re-read at every poke) to make this message clearer or the nudge service more usable; keep every rule above, and log any change to it in status-kdv.  (6) STANDING FOCUS: keep Sidecar moving every poke. Read project-yg4v (Sidecar: spec + REQUIREMENTS), check macbook-ops progress on the sidecar repo and runbooks-5vr, and unblock or dispatch the next step; log it in status-kdv. (7) STANDING FOCUS 2: keep the Talon everything-fuzzy-search palette moving every poke. Read project-7u7w (and idea-7d0b), check progress, dispatch or unblock the next step; log it in status-kdv.  (8) OVERNIGHT DIRECTIVE (captain 2026-10-18): every other agent turn, evaluate and plan usability improvement and onboarding for our projects (Parlay, Barterboo, Sidecar, palette, iPhone apps); file the plan as beads in the matching store and log it in status-kdv. (9) DESIGN REVIEW (captain 2026-10-18, runbooks-b6e): if you are IDLE, run it now; if you are BUSY, queue it as your very next task (file a task bead for it) and run it as soon as the current work finishes (idle-turn design review: be deeply curious about what is being built, design-review as many projects as possible, file beads, log in status-kdv). (10) ROBOTS QUEUE (captain 2026-10-18): the robots queue is not being handled; each poke, take the top open robots items (robots ready/list), diagnose or dispatch a fix, and close with evidence. (11) USAGE + SPEED METRICS (captain 2026-10-18): every poke, check usage metrics (run quota-axi; note window remaining vs time remaining) and our speed (tasks closed/PRs landed since last poke, agents idle vs busy, wakes handled). If usage is underspent for the time left, take on MORE work now: dispatch more ships/scouts, prefer Fable for planning and building, and do more review; do not waste the window. Log the numbers in status-kdv. (12) MORE WORK, MORE REVIEW (captain 2026-10-18): always keep the queue deep; review open PRs, scout reports, and fleet output every poke.
+
+---
+
+⁣FIRSTMATE_OP: v1 turn-end-guard: TURN WOULD END BLIND - supervision is off. The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.
+
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  TURN WOULD END BLIND - SUPERVISION IS OFF
+●  34 task(s) in flight, but no live watcher holds this home lock (last beat: 490s ago).
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /Users/trilliumsmith/fm_home/firstmate/.pi/extensions/fm-primary-turnend-guard.ts -e /Users/trilliumsmith/fm_home/firstmate/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
