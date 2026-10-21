@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.5",
+  "checkpoint_id": "01M5DX0CZ2P28BG8G87H6F1FBG",
+  "session_id": "01a1568e-e7a8-714d-9d55-cc845adbb323",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-21T00:15:34.17516Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 2,
+  "files_touched": [
+    "CHANGELOG.md"
+  ],
+  "agent": "Pi",
+  "model": "jev-1.13",
+  "turn_id": "bbb3acf0a52d",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 86970,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 246,
+    "api_call_count": 2
+  },
+  "session_metrics": {
+    "turn_count": 2
+  }
+}
