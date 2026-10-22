@@ -1,0 +1,154 @@
+{
+  "cli_version": "0.11.5",
+  "checkpoint_id": "01M5H6A0GZR8EXHR4C060RATD4",
+  "session_id": "56594426-f9a9-42ce-a82a-decaea47e705",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-22T06:55:57.977403Z",
+  "branch": "main",
+  "checkpoints_count": 367,
+  "save_step_count": 367,
+  "files_touched": [
+    "CHANGELOG.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-haiku-5-5",
+  "turn_id": "294201191c01",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 4118,
+    "cache_creation_tokens": 3627687,
+    "cache_read_tokens": 239117858,
+    "output_tokens": 920800,
+    "api_call_count": 1919
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01KXkFkMYuujj9s6gb2jh4F9",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "project-management"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "294201191c01",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 154,
+        "end": 155,
+        "entry_ids": [
+          "a804f955-1722-41bf-875d-bce1a55e7ed7"
+        ],
+        "tool_use_id": "toolu_01KXkFkMYuujj9s6gb2jh4F9"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01KXkFkMYuujj9s6gb2jh4F9"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: project-management",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_01YG67qcZ88QDDk24cSCq3rv",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "ask-user-authority"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "294201191c01",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 3045,
+        "end": 3046,
+        "entry_ids": [
+          "a83da79f-dad5-4d71-9afe-fa54743c2fab"
+        ],
+        "tool_use_id": "toolu_01YG67qcZ88QDDk24cSCq3rv"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01YG67qcZ88QDDk24cSCq3rv"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: ask-user-authority",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_015FEPdMGG2HRaWakL8xqwaG",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "validation-supervision"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "294201191c01",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 3046,
+        "end": 3047,
+        "entry_ids": [
+          "fe0153fb-4db6-4b16-b46e-b0e5be548a35"
+        ],
+        "tool_use_id": "toolu_015FEPdMGG2HRaWakL8xqwaG"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_015FEPdMGG2HRaWakL8xqwaG"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: validation-supervision",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_01C5NsXQEgEBkfdeF7tfGyPN",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "firstmate-self-repo"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "294201191c01",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 3376,
+        "end": 3377,
+        "entry_ids": [
+          "abf23eea-c280-4226-849e-c221c0253314"
+        ],
+        "tool_use_id": "toolu_01C5NsXQEgEBkfdeF7tfGyPN"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01C5NsXQEgEBkfdeF7tfGyPN"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: firstmate-self-repo",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 367
+  }
+}
