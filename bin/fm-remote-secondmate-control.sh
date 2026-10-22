@@ -70,14 +70,6 @@ REMOTE_HERDR_SESSION=${FM_REMOTE_HERDR_SESSION:-default}
 
 # shellcheck source=bin/fm-home-lib.sh
 . "$SCRIPT_DIR/fm-home-lib.sh"
-# shellcheck source=bin/fm-backend.sh
-. "$SCRIPT_DIR/fm-backend.sh"
-# shellcheck source=bin/fm-ff-lib.sh
-. "$SCRIPT_DIR/fm-ff-lib.sh"
-# shellcheck source=bin/fm-pending-reply-lib.sh
-. "$SCRIPT_DIR/fm-pending-reply-lib.sh"
-# shellcheck source=bin/fm-task-inbox-lib.sh
-. "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -94,9 +86,30 @@ require_home() {
   CONTROL_DATA="$TARGET_HOME/data/.parent-route"
 }
 
-validate_home() { # <id> [allow-absent]
-  local id=$1 allow_absent=${2:-no} marker
-  if [ ! -e "$TARGET_HOME" ] && [ ! -L "$TARGET_HOME" ] && [ "$allow_absent" = yes ]; then return 2; fi
+# Sourcing fm-wake-lib.sh through the libraries below creates "$FM_HOME/state",
+# so recognize an already-retired home before loading them rather than
+# fabricating an unseeded home that every later retirement then refuses.
+# The accepted arguments match the retire dispatcher's.
+if [ "${1:-}" = retire ]; then
+  require_home
+  if [ ! -e "$TARGET_HOME" ] && [ ! -L "$TARGET_HOME" ]; then
+    case "$#:${3:-}" in
+      2:|3:|3:--force) validate_id "$2"; printf 'already-retired: %s\n' "$2"; exit 0 ;;
+      *) usage ;;
+    esac
+  fi
+fi
+# shellcheck source=bin/fm-backend.sh
+. "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-ff-lib.sh
+. "$SCRIPT_DIR/fm-ff-lib.sh"
+# shellcheck source=bin/fm-pending-reply-lib.sh
+. "$SCRIPT_DIR/fm-pending-reply-lib.sh"
+# shellcheck source=bin/fm-task-inbox-lib.sh
+. "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+
+validate_home() { # <id>
+  local id=$1 marker
   [ -d "$TARGET_HOME" ] && [ ! -L "$TARGET_HOME" ] || die "remote secondmate home is unavailable or unsafe"
   [ -f "$TARGET_HOME/.fm-secondmate-home" ] && [ ! -L "$TARGET_HOME/.fm-secondmate-home" ] \
     || die "remote home is not a seeded secondmate home"
@@ -430,13 +443,9 @@ cmd_update() {
 }
 
 cmd_retire() {
-  local id=$1 force=${2:-} rc
+  local id=$1 force=${2:-}
   validate_id "$id"
-  validate_home "$id" yes || rc=$?
-  if [ "${rc:-0}" -eq 2 ]; then
-    printf 'already-retired: %s\n' "$id"
-    return 0
-  fi
+  validate_home "$id"
   [ -z "$force" ] || [ "$force" = --force ] || usage
   remote_endpoint_require "$id"
   FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \

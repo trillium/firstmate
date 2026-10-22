@@ -304,7 +304,7 @@ EOF
       "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" >/dev/null 2>&1 || true
     LAB_READY=0
   fi
-  { chmod -R +w "$TMP_ROOT" 2>/dev/null || true; rm -rf "$TMP_ROOT"; }
+  { find "$TMP_ROOT" -type d -exec chmod u+rwx {} + 2>/dev/null || true; rm -rf "$TMP_ROOT"; }
 }
 trap cleanup_all EXIT
 
