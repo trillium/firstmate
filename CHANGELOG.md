@@ -1,5 +1,71 @@
 # firstmate — Changelog
 
+## 2026-10-23 — session 8dd840ed
+
+Files: data/stores-converge-scout-q1/report.md
+## 2026-10-21 — session 56594426
+
+Files: config/hooks/pool-full-triage.sh, .claude/settings.local.json, data/projects.md, data/brain-tool-problems-scout/brief.md, data/upstream-pr-gate-runbook.md
+## 2026-10-19 — session 9a31ec4e
+
+Files: data/fb-commitments-inject-q1/nm-01M5AJD7Y112AASREN6ZSFKZM3-review.txt, data/fb-commitments-inject-q1/nm-01M5AJD7Y112AASREN6ZSFKZM3-test.txt
+## 2026-10-19 — session 956925ed
+
+Files: data/bd-store-resolution-scout-q1/report.md
+## 2026-10-19 — session e5c76039
+
+Files: data/bd-comment-readonly-scout-q1/report.md
+## 2026-10-19 — session e7323357
+
+Files: data/talon-powerspectrum-reverse/report.md
+## 2026-10-19 — session 8780f756
+
+Files: data/talon-powerspectrum-scout/report.md
+## 2026-10-19 — session 4e5c0c7e
+
+Files: data/talon-ort-split-scout/report.md
+## 2026-10-19 — session 5d937817
+
+Files: data/scout-talon-phone-asr/report.md
+## 2026-10-19 — session 423f20d6
+
+Files: data/md5-shadow-fix-q2/report.md
+## 2026-10-18 — session 96bbdf1f
+
+Files: data/robots-triage-q1/report.md
+## 2026-10-18 — session 5074733a
+
+Files: data/store-topology-q1/report.md
+## 2026-10-18 — session 0ff9f2d7
+
+Files: data/stale-panes-triage-q1/report.md
+## 2026-10-18 — session b70c6eb2
+
+Files: data/parlay-fable-review-q1/report.md
+## 2026-10-18 — session 2c5f99e6
+
+Files: data/displayd-design-review-q1/report.md
+## 2026-10-18 — session 7f7d16d3
+
+Files: data/parlay-design-review-q1/report.md
+## 2026-10-18 — session 0f297021
+
+Files: data/beads-bridge-design-review-q1/report.md
+## 2026-10-18 — session 79106441
+
+Files: data/forefront-design-review-q1/report.md
+## 2026-10-18 — session baebd884
+
+Files: data/forefront-backend-design-review-q1/report.md
+## 2026-10-18 — session 57477a5f
+
+Files: data/captains-deck-design-review-q1/report.md
+## 2026-10-18 — session b007f319
+
+Files: data/voicefirst-landing-design-review-q1/report.md
+## 2026-10-18 — session 750b2308
+
+Files: data/barter-design-review-q1/report.md
 ## 2026-10-14 — session 98ed3f28
 
 Files: data/vrms-2219-review/report.md
