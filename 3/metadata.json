@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.11.5",
+  "checkpoint_id": "01M5KTTPRPSBZDZ1GV7YAVEVWV",
+  "session_id": "3d576d46-6408-4d32-b375-8adb9c80e904",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-23T07:32:59.805323Z",
+  "branch": "main",
+  "checkpoints_count": 6,
+  "save_step_count": 7,
+  "files_touched": [
+    "CHANGELOG.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "01b0782ab434",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 1710,
+    "cache_creation_tokens": 679438,
+    "cache_read_tokens": 80020284,
+    "output_tokens": 203684,
+    "api_call_count": 673
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01EuZmK3hJBoBK1i9Z2PDcNf",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "harness-adapters"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "01b0782ab434",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 420,
+        "end": 421,
+        "entry_ids": [
+          "c18d691d-958a-415f-8265-151e9de1478a"
+        ],
+        "tool_use_id": "toolu_01EuZmK3hJBoBK1i9Z2PDcNf"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01EuZmK3hJBoBK1i9Z2PDcNf"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: harness-adapters",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 7
+  }
+}
