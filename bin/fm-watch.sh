@@ -307,8 +307,10 @@ fi
 POLL=${FM_POLL:-15}                   # seconds between cycles
 # The liveness beacon is touched once per cycle, immediately before the
 # terminal wait below (event_wait_or_sleep) as well as at the top of the next
-# one, so a healthy cycle's beacon can legitimately age up to POLL seconds
-# between touches. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
+# one, and again before each *.check.sh in a check sweep (a sweep over many
+# registered checks outlasts the stale grace even though every check is capped
+# at CHECK_TIMEOUT), so a healthy cycle's beacon can legitimately age up to POLL
+# seconds between touches. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
 # transitively above) is the single owner of the max(300, poll+60)
 # derivation - see docs/turnend-guard.md "Guard grace and the poll cadence".
 # This recomputes the library default above now that the real configured
@@ -3614,6 +3616,13 @@ while :; do
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
+      # Each check is bounded by CHECK_TIMEOUT but the sweep is not: a home with
+      # dozens of registered checks spends minutes here, far past the stale
+      # grace, and the top-of-cycle beacon touch cannot run until it ends. The
+      # beacon therefore advances before every check, so a sweep never ages it
+      # by more than one check's bound and a healthy watcher is never mistaken
+      # for a frozen one (robots-0clru).
+      touch "$STATE/.last-watcher-beat"
       is_pr_poll=0
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$FM_HOME" "$FM_ROOT" \
@@ -3636,7 +3645,13 @@ while :; do
           path=$FM_PR_POLL_SNAPSHOT_PATH
           number=$FM_PR_POLL_SNAPSHOT_NUMBER
           PR_POLL_CONTROL_LOCK="$STATE/.control-$id.lock"
-          fm_lock_acquire_wait "$PR_POLL_CONTROL_LOCK" || exit 1
+          # Bounded: a control script holding this lock must cost one skipped
+          # poll, which the next sweep retries, never a beacon that stops.
+          if ! fm_lock_acquire_wait_max "$PR_POLL_CONTROL_LOCK" "$CHECK_TIMEOUT"; then
+            PR_POLL_CONTROL_LOCK=
+            triage_log "control lock for $id stayed busy; skipping its PR poll until the next sweep"
+            continue
+          fi
           if ! fm_pr_poll_snapshot_matches "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
             pr_poll_control_release || exit 1
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
