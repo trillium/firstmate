@@ -1,5 +1,8 @@
 # firstmate — Changelog
 
+## 2026-10-25 — session 3eb1ffcc
+
+Files: data/pfw-index-ids-q1/report.md
 ## 2026-10-25 — session aa89c88e
 
 Files: data/robots-b5nfe-diagnose/report.md
