@@ -269,6 +269,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/urgent/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".greptile/rules.md",
       "audience": "maintainer-architecture"
     },
@@ -478,6 +482,10 @@
     },
     {
       "path": "docs/turnend-guard.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/urgency-protocol.md",
       "audience": "operator-current"
     },
     {
