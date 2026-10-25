@@ -529,6 +529,9 @@ fm_control_harness_turnend_auth_path() {  # <harness> <token>
 # empty, 1 otherwise.
 fm_control_composer_structurally_empty() {  # <backend> <target>
   local backend=$1 target=$2
+  # The caller reads the visual composer state inside a subshell, so the
+  # backend is not loaded in this shell yet; a failed load is "not proven".
+  fm_backend_source "$backend" || return 1
   case "$backend" in
     herdr)
       # Herdr's interactive integrations (OpenCode, Agy) set interactive_ready

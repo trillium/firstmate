@@ -1131,6 +1131,30 @@ test_grok_idle_footer_does_not_confirm_cancellation() {
   pass "fm-control interrupt: grok's idle footer does not confirm cancellation"
 }
 
+test_structural_composer_check_loads_its_own_backend() {
+  local out
+  # A fresh shell mirrors the real caller: the visual composer read runs in a
+  # subshell, so the herdr adapter is never loaded into the shell that then
+  # asks the structural question.
+  out=$(bash -c '
+    . "$1/bin/fm-backend.sh"; . "$1/bin/fm-control-lib.sh"
+    fm_control_composer_structurally_empty herdr bogus-target >/dev/null 2>&1
+    type -t fm_backend_herdr_parse_target' _ "$ROOT" 2>&1)
+  [ "$out" = "function" ] \
+    || fail "the structural composer check must source the backend it calls, got: $out"
+  # With the adapter's CLI stubbed after that load, an interactive-ready pane
+  # is proven empty without a live herdr.
+  bash -c '
+    . "$1/bin/fm-backend.sh"; . "$1/bin/fm-control-lib.sh"
+    fm_backend_source herdr || exit 3
+    fm_backend_herdr_parse_target() { FM_BACKEND_HERDR_SESSION=s; FM_BACKEND_HERDR_PANE=p; }
+    fm_backend_herdr_cli() { printf "%s" "{\"result\":{\"agent\":{\"interactive_ready\":true}}}"; }
+    fm_backend_source() { return 0; }
+    fm_control_composer_structurally_empty herdr default:s:p' _ "$ROOT" \
+    || fail "an interactive-ready herdr pane must be proven structurally empty"
+  pass "fm-control: the structural composer-empty check loads the herdr backend itself"
+}
+
 # --- 6. marker non-regression -----------------------------------------------
 
 test_secondmate_control_command_carries_no_marker() {
@@ -1310,3 +1334,4 @@ test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
 test_fm_send_still_marks_the_same_secondmate_task
 test_exit_records_generation_scoped_stop_marker_only_on_verified_exit
+test_structural_composer_check_loads_its_own_backend
