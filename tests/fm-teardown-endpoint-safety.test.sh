@@ -514,8 +514,11 @@ test_reused_pool_slot_refuses_before_touching_the_other_task() {
   assert_present "$dir/worktree/sentinel" "teardown reset a pool slot a second task record still holds"
   assert_present "$dir/home/state/$other.meta" "teardown removed the live task's record"
   assert_present "$dir/home/state/$id.meta" "teardown removed the stale task's record before refusing"
-  [ ! -s "$dir/runtime.log" ] \
-    || fail "teardown reached the runtime on a contested pool slot: $(cat "$dir/runtime.log")"
+  # The liveness read of the other record's endpoint is read-only; anything
+  # that changes the runtime or the slot would still be a failure.
+  if grep -Ev '^tmux <list-windows>' "$dir/runtime.log" | grep -q .; then
+    fail "teardown changed the runtime on a contested pool slot: $(cat "$dir/runtime.log")"
+  fi
   assert_contains "$(cat "$dir/stderr")" "$other" \
     "refusal should name the other task holding the slot"
   kill "$worker" 2>/dev/null || true
@@ -539,8 +542,9 @@ test_reused_pool_slot_refuses_before_touching_the_other_task() {
   [ "$rc" -ne 0 ] || fail "teardown returned a pool slot a secondmate home record still holds"
   assert_present "$dir/worktree/sentinel" "teardown reset a pool slot a secondmate home record still holds"
   assert_present "$dir/home/state/$other.meta" "teardown removed the secondmate record"
-  [ ! -s "$dir/runtime.log" ] \
-    || fail "teardown reached the runtime on a slot held by a secondmate home: $(cat "$dir/runtime.log")"
+  if grep -Ev '^tmux <list-windows>' "$dir/runtime.log" | grep -q .; then
+    fail "teardown changed the runtime on a slot held by a secondmate home: $(cat "$dir/runtime.log")"
+  fi
 
   # A second task record that is a hardlink of this one is still a second
   # claim on the slot, not this record reached through another spelling.
@@ -590,8 +594,9 @@ test_cross_home_pool_slot_collision_refuses() {
   assert_present "$dir/home/state/$id.meta" "cross-home collision removed stale metadata"
   assert_present "$second_home/state/$other.meta" "cross-home collision removed live metadata"
   assert_present "$dir/worktree/sentinel" "cross-home collision reset the shared slot"
-  [ ! -s "$dir/runtime.log" ] \
-    || fail "cross-home collision reached the runtime: $(cat "$dir/runtime.log")"
+  if grep -Ev '^tmux <list-windows>' "$dir/runtime.log" | grep -q .; then
+    fail "cross-home collision changed the runtime: $(cat "$dir/runtime.log")"
+  fi
   assert_contains "$(cat "$dir/stderr")" "$other" \
     "cross-home refusal should name the task holding the slot"
   pass "fm-teardown: a pool slot held by another firstmate home is never returned"
