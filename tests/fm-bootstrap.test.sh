@@ -325,7 +325,7 @@ ROWS
 }
 
 test_claude_user_attribution_diagnostic() {
-  local case_dir fakebin cfg out run
+  local case_dir fakebin cfg out
   case_dir="$TMP_ROOT/claude-attribution"
   mkdir -p "$case_dir/home/config" "$case_dir/cfg"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
