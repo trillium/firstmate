@@ -1,0 +1,20 @@
+{
+  "cli_version": "0.11.5",
+  "checkpoint_id": "01M5S75T65DHAJN2QV5K9AKEQC",
+  "session_id": "c0064fab-7c91-4a16-8801-c4cb08e31139",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-25T09:44:56.842273Z",
+  "branch": "fm/firstmate-main-reconcile-q1",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "tests/fm-teardown-endpoint-safety.test.sh"
+  ],
+  "agent": "Antigravity",
+  "model": "",
+  "turn_id": "9563386eedfb",
+  "checkpoint_transcript_start": 664,
+  "transcript_lines_at_start": 664,
+  "session_metrics": {
+    "turn_count": 3
+  }
+}
