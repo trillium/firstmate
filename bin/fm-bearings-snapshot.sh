@@ -111,6 +111,7 @@ FM_BEARINGS_SECONDMATES=${FM_BEARINGS_SECONDMATES:-20}
 FM_BEARINGS_GATES=${FM_BEARINGS_GATES:-20}
 FM_BEARINGS_REPORTS=${FM_BEARINGS_REPORTS:-20}
 FM_BEARINGS_RECORDED_PRS=${FM_BEARINGS_RECORDED_PRS:-20}
+FM_BEARINGS_NOT_DONE=${FM_BEARINGS_NOT_DONE:-20}
 FM_BEARINGS_UNHEALTHY=${FM_BEARINGS_UNHEALTHY:-20}
 FM_BEARINGS_PR_REPOS=${FM_BEARINGS_PR_REPOS:-10}
 FM_BEARINGS_PR_LIMIT=${FM_BEARINGS_PR_LIMIT:-20}
@@ -127,6 +128,7 @@ validate_bound FM_BEARINGS_SECONDMATES "$FM_BEARINGS_SECONDMATES"
 validate_bound FM_BEARINGS_GATES "$FM_BEARINGS_GATES"
 validate_bound FM_BEARINGS_REPORTS "$FM_BEARINGS_REPORTS"
 validate_bound FM_BEARINGS_RECORDED_PRS "$FM_BEARINGS_RECORDED_PRS"
+validate_bound FM_BEARINGS_NOT_DONE "$FM_BEARINGS_NOT_DONE"
 validate_bound FM_BEARINGS_UNHEALTHY "$FM_BEARINGS_UNHEALTHY"
 validate_bound FM_BEARINGS_PR_REPOS "$FM_BEARINGS_PR_REPOS"
 validate_bound FM_BEARINGS_PR_LIMIT "$FM_BEARINGS_PR_LIMIT"
@@ -138,7 +140,7 @@ usage: fm-bearings-snapshot.sh [--json] [--include-prs] [--fields <list>]
                                [--all-secondmates] [--all-landed]
                                [--all-reports] [--all-queued]
                                [--all-recorded-prs] [--all-unhealthy]
-                               [--all-pr-repos]
+                               [--all-pr-repos] [--all-not-done]
 
 Compact bearings projection over fm-fleet-snapshot.sh. TOON by default.
 Default collection performs bounded concurrent remote-ledger reads for registered
@@ -150,6 +152,8 @@ Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,
   secondmate_reconcile{id,spawn_gen,host,kind,ids},
   decisions_open{id,key,verb,summary,owner}, landed{id,what,artifact,owner},
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
+  not_done{home,id,title,state,since,why,needs} (captain-authorized work that is blocked,
+  unstarted, or stalled, projected from bin/fm-stalled-work.sh --json, which owns the contract),
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
@@ -166,7 +170,7 @@ For every registered secondmate, readable structured facts from its own home are
 Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
   --all-decisions (all open decisions and captain holds in the bounded snapshot),
   --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
-  --all-unhealthy, --all-pr-repos, --include-prs (adds candidate_prs).
+  --all-unhealthy, --all-pr-repos, --all-not-done, --include-prs (adds candidate_prs).
 Raise FM_BEARINGS_PR_LIMIT to expand per-repository open-PR results.
 EOF
 }
@@ -182,6 +186,7 @@ ALL_LANDED=0
 ALL_RECORDED_PRS=0
 ALL_UNHEALTHY=0
 ALL_PR_REPOS=0
+ALL_NOT_DONE=0
 FIELDS=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -196,6 +201,7 @@ while [ $# -gt 0 ]; do
     --all-recorded-prs) ALL_RECORDED_PRS=1 ;;
     --all-unhealthy) ALL_UNHEALTHY=1 ;;
     --all-pr-repos) ALL_PR_REPOS=1 ;;
+    --all-not-done) ALL_NOT_DONE=1 ;;
     --fields) shift; FIELDS=${1:-} ;;
     --fields=*) FIELDS=${1#--fields=} ;;
     -h|--help) usage; exit 0 ;;
@@ -345,6 +351,17 @@ EOF
   fi
 fi
 
+# --- not-done sweep (read-only; bin/fm-stalled-work.sh owns the contract) ----
+NOT_DONE='[]'
+NOT_DONE_UNREAD=0
+if ND_RAW=$(fm_run_timed 90 "$SCRIPT_DIR/fm-stalled-work.sh" --json 2>/dev/null) \
+  && printf '%s' "$ND_RAW" | jq -e '.not_done | type == "array"' >/dev/null 2>&1; then
+  NOT_DONE=$(printf '%s' "$ND_RAW" | jq -c '.not_done | map({home,id,title,state,since,why,needs})')
+  NOT_DONE_UNREAD=$(printf '%s' "$ND_RAW" | jq -r '.unavailable | length')
+else
+  NOT_DONE_UNREAD=-1
+fi
+
 # --- projection: canonical snapshot -> fm-bearings.v1 model (JSON) ----------
 BEARINGS_TODAY=${NOW%%T*}
 case "$BEARINGS_TODAY" in
@@ -365,6 +382,10 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson gates_n "$FM_BEARINGS_GATES" \
   --argjson reports_n "$FM_BEARINGS_REPORTS" \
   --argjson recorded_prs_n "$FM_BEARINGS_RECORDED_PRS" \
+  --argjson not_done_n "$FM_BEARINGS_NOT_DONE" \
+  --argjson not_done_all "$NOT_DONE" \
+  --argjson not_done_unread "$NOT_DONE_UNREAD" \
+  --argjson all_not_done "$ALL_NOT_DONE" \
   --argjson unhealthy_n "$FM_BEARINGS_UNHEALTHY" \
   --argjson include_prs "$INCLUDE_PRS" \
   --argjson all_in_flight "$ALL_IN_FLIGHT" \
@@ -647,6 +668,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
               + ($gates_all | newest_filed_first
                  | if $all_queued == 1 then . else .[:$gates_n] end)),
       reports: (if $all_reports == 1 then $reports_all else $reports_all[:$reports_n] end),
+      not_done: (if $all_not_done == 1 then $not_done_all else $not_done_all[:$not_done_n] end),
       recorded_prs: (if $all_recorded_prs == 1 then $recorded_prs_all else $recorded_prs_all[:$recorded_prs_n] end)
     }
   | . + (if ($unhealthy_all | length) > 0 then
@@ -689,6 +711,9 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         (if $all_decisions == 0 and $decisions_marked_deferred > 0 then {surface:("captain holds bucketed blocked, dated, or aged: \($decisions_marked_deferred)"), reveal:"--all-decisions"} else empty end),
         (if $all_queued == 0 and ($gates_all | length) > $gates_n then {surface:("gates showing \($gates_n) of \($gates_all | length)"), reveal:"--all-queued"} else empty end),
         (if $all_reports == 0 and ($reports_all | length) > $reports_n then {surface:("reports showing \($reports_n) of \($reports_all | length)"), reveal:"--all-reports"} else empty end),
+        (if $all_not_done == 0 and ($not_done_all | length) > $not_done_n then {surface:("not_done showing \($not_done_n) of \($not_done_all | length)"), reveal:"--all-not-done"} else empty end),
+        (if $not_done_unread == -1 then {surface:"not_done sweep could not run, so stalled work was not checked", reveal:"run bin/fm-stalled-work.sh"}
+         elif $not_done_unread > 0 then {surface:("not_done sources not read: \($not_done_unread)"), reveal:"run bin/fm-stalled-work.sh"} else empty end),
         (if $all_recorded_prs == 0 and ($recorded_prs_all | length) > $recorded_prs_n then {surface:("recorded_prs showing \($recorded_prs_n) of \($recorded_prs_all | length)"), reveal:"--all-recorded-prs"} else empty end),
         (if $all_unhealthy == 0 and ($unhealthy_all | length) > $unhealthy_n then {surface:("unhealthy_endpoints showing \($unhealthy_n) of \($unhealthy_all | length)"), reveal:"--all-unhealthy"} else empty end),
         (if $include_prs == 1 and $pr_repos_total > $pr_repos_shown then {surface:("PR repositories showing \($pr_repos_shown) of \($pr_repos_total)"), reveal:"--all-pr-repos"} else empty end),

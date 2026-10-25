@@ -149,9 +149,11 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
 
 1. **Captain's Call** - ONLY unsuppressed items that need the captain's own action now: a decision to make, a PR to approve or merge, a credential or login to provide, or a blocker only the captain can clear.
    Deferred or aged holds follow the presentation safety rule above instead.
+   After the decisions, render one line per snapshot `not_done` row as "Not done: <title> - <state> <since>: <why> - <needs>".
+   Disclose any `not_done` omitted entry, and never drop a row because an earlier digest already reported it.
    Include `contributions.captain` rows in this section, deduplicating any row already represented by its live captain hold or merge call.
    Show the other contribution actors only as counts beside the checked/known coverage, and disclose `captain_omitted`, `unmeasured_homes`, stale verdicts and checks with no verdict when nonzero.
-   Empty-state: "Nothing needs your action right now" is allowed only when `contributions.proven_clear` is true and the existing decision set is empty.
+   Empty-state: "Nothing needs your action right now" is allowed only when `contributions.proven_clear` is true and the existing decision set and `not_done` are empty.
    When the section is empty but coverage is incomplete, say that no decision is recorded and give the checked/known count; a missing coverage field is also unverified.
 2. **Recently Landed** - the bounded current recent-completions baseline: merged PRs, completed scouts, and finished local-only merges across the main fleet and every registered secondmate home.
    Empty-state: "No recent completions are in the current baseline."
