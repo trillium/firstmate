@@ -1207,11 +1207,12 @@ test_live_artifact_single_link_and_privacy_validation() {
   FM_HOME="$dir/home" "$REGISTER" custom > "$dir/register.out" 2> "$dir/register.err"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "custom check registration accepted a non-private source"
-  [ ! -e "$state/custom.check-trust" ] || fail "non-private custom check received a trust record"
-  chmod 0700 "$state/custom.check.sh"
-  FM_HOME="$dir/home" "$REGISTER" custom >/dev/null \
-    || fail "could not register private custom check fixture"
+  # Registration normalizes a non-private source to 0700 rather than leaving it
+  # armed but unregistered; only the later drift back to non-private must fail.
+  [ "$rc" -eq 0 ] || fail "custom check registration did not normalize a non-private source: $(cat "$dir/register.err")"
+  [ -e "$state/custom.check-trust" ] || fail "normalized custom check received no trust record"
+  fm_custom_check_registered "$state" custom \
+    || fail "normalized custom check was not registered"
   chmod 0755 "$state/custom.check.sh"
   ! fm_custom_check_registered "$state" custom \
     || fail "registered custom check remained authenticated after becoming non-private"
