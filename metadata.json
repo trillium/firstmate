@@ -1,0 +1,20 @@
+{
+  "cli_version": "0.11.5",
+  "checkpoint_id": "01M5SFXTX40HBAS34G4FNSDWYH",
+  "strategy": "manual-commit",
+  "branch": "fm/fm-control-herdr-ready-q1",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "bin/fm-control-lib.sh",
+    "tests/fm-control-relaunch.test.sh",
+    "tests/fm-control.test.sh"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
