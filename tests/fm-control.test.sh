@@ -1142,16 +1142,27 @@ test_structural_composer_check_loads_its_own_backend() {
     type -t fm_backend_herdr_parse_target' _ "$ROOT" 2>&1)
   [ "$out" = "function" ] \
     || fail "the structural composer check must source the backend it calls, got: $out"
-  # With the adapter's CLI stubbed after that load, an interactive-ready pane
-  # is proven empty without a live herdr.
-  bash -c '
+  # With the adapter's CLI stubbed after that load (the herdr 0.9.5 shape: no
+  # readiness field, just agent_status plus the pane text), an idle OpenCode
+  # whose prompt block is empty is proven empty without a live herdr, and one
+  # whose prompt row holds text is not.
+  # shellcheck disable=SC2016 # the probe body expands in the child shell
+  local probe='
     . "$1/bin/fm-backend.sh"; . "$1/bin/fm-control-lib.sh"
     fm_backend_source herdr || exit 3
     fm_backend_herdr_parse_target() { FM_BACKEND_HERDR_SESSION=s; FM_BACKEND_HERDR_PANE=p; }
-    fm_backend_herdr_cli() { printf "%s" "{\"result\":{\"agent\":{\"interactive_ready\":true}}}"; }
+    fm_backend_herdr_cli() {
+      case "$3" in
+        get) printf "%s" "{\"result\":{\"agent\":{\"agent\":\"opencode\",\"agent_status\":\"idle\"}}}" ;;
+        read) printf "\n  ┃\n  ┃  %s\n  ┃  Build · Model · high\n  ╹▀▀▀\n   /work/tree  ctrl+p commands\n" "$TYPED" ;;
+      esac
+    }
     fm_backend_source() { return 0; }
-    fm_control_composer_structurally_empty herdr default:s:p' _ "$ROOT" \
-    || fail "an interactive-ready herdr pane must be proven structurally empty"
+    fm_control_composer_structurally_empty herdr default:s:p'
+  TYPED='' bash -c "$probe" _ "$ROOT" \
+    || fail "an idle herdr OpenCode with an empty prompt block must be proven structurally empty"
+  TYPED='half-typed draft' bash -c "$probe" _ "$ROOT" \
+    && fail "an idle herdr OpenCode whose prompt row holds text must not be proven empty"
   pass "fm-control: the structural composer-empty check loads the herdr backend itself"
 }
 
