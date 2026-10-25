@@ -423,6 +423,108 @@ test_dead_worker_with_uncommitted_changes_is_never_relaunched_blindly_or_torn_do
   pass "fm-reap: a dead worker's uncommitted changes are reported and never acted on"
 }
 
+test_dead_done_and_captain_held_ships_are_never_relaunched() {
+  local dir out
+  dir=$(make_home done-and-held)
+  add_record "$dir" finished ship off
+  printf 'wip\n' > "$dir/finished.wt/wip.txt"
+  git -C "$dir/finished.wt" add wip.txt
+  git -C "$dir/finished.wt" commit -qm "unpushed deliverable"
+  printf 'done [at=1]: superseded without opening a PR\n' > "$dir/home/state/finished.status"
+
+  out=$(run_reap "$dir" scan --act)
+  assert_contains "$(line_for "$out" finished)" "DEAD-UNLANDED" "a done ship without a PR classifies as dead-unlanded"
+  assert_contains "$(line_for "$out" finished)" "ledger reads done; reported only" "a done ship is never relaunched"
+  [ ! -s "$dir/actions.log" ] || fail "a done ship reached an owner: $(cat "$dir/actions.log")"
+  out=$(run_reap "$dir" scan --actionable)
+  [ -z "$(line_for "$out" finished)" ] || fail "a done ship was reported actionable: $out"
+
+  add_record "$dir" heldwork ship off
+  printf 'working [at=1]: mid-flight\n' > "$dir/home/state/heldwork.status"
+  out=$(FM_FAKE_HOLD_OPEN_RC=0 run_reap "$dir" scan --act --task heldwork)
+  assert_contains "$(line_for "$out" heldwork)" "DEAD-UNLANDED" "a dead ship with an open backlog hold classifies as dead-unlanded"
+  assert_contains "$(line_for "$out" heldwork)" "captain hold open; reported only" "an open backlog hold blocks relaunch"
+  [ ! -s "$dir/actions.log" ] || fail "a captain-held ship reached an owner: $(cat "$dir/actions.log")"
+
+  out=$(FM_FAKE_HOLD_OPEN_RC=2 run_reap "$dir" scan --act --task heldwork)
+  assert_contains "$(line_for "$out" heldwork)" "UNSURE" "an unreadable captain-hold state fails closed as unsure"
+  [ ! -s "$dir/actions.log" ] || fail "an unsure captain-hold check reached an owner: $(cat "$dir/actions.log")"
+  pass "fm-reap: done ships and open captain holds in DEAD-UNLANDED are reported only, and unreadable hold state fails closed"
+}
+
+test_control_exit_marker_blocks_relaunch_and_escalation_without_blocking_reap() {
+  local dir out
+  dir=$(make_home control-exit)
+
+  # Exact fb-green-q1 geometry: open PR, paused status, stopped via real fm-control exit.
+  add_record "$dir" pausedpr ship off "spawn_gen=gen-1" "$(pr_line)"
+  printf 'paused [at=1]: validation running\n' > "$dir/home/state/pausedpr.status"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_TMUX_DIR="$dir/tmux" \
+    "$ROOT/bin/fm-control.sh" pausedpr exit >/dev/null \
+    || fail "real fm-control exit should succeed on the stopped tmux endpoint"
+  assert_present "$dir/home/state/pausedpr.control-exit" "fm-control exit did not record control-exit"
+
+  # Previously-relaunched worker stopped via fm-control exit must neither relaunch nor escalate.
+  add_record "$dir" priorrel ship off "spawn_gen=gen-a"
+  printf 'working [at=1]: resumed\n' > "$dir/home/state/priorrel.status"
+  printf 'relaunch_at=100\n' > "$dir/home/state/priorrel.reap"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_TMUX_DIR="$dir/tmux" \
+    "$ROOT/bin/fm-control.sh" priorrel exit >/dev/null \
+    || fail "real fm-control exit should succeed on priorrel"
+
+  out=$(run_reap "$dir" scan --act)
+  assert_contains "$(line_for "$out" pausedpr)" "stopped by fm-control exit" "paused open-PR worker stopped by exit is reported only"
+  assert_contains "$(line_for "$out" priorrel)" "stopped by fm-control exit" "previously-relaunched worker stopped by exit is reported only"
+  [ ! -s "$dir/actions.log" ] || fail "an intentionally-stopped worker reached an owner: $(cat "$dir/actions.log")"
+  assert_absent "$dir/home/state/.wake-queue" "an intentionally-stopped worker queued a relaunch or escalate wake"
+  out=$(run_reap "$dir" scan --actionable)
+  [ -z "$(line_for "$out" pausedpr)" ] || fail "pausedpr remained actionable after fm-control exit: $out"
+  [ -z "$(line_for "$out" priorrel)" ] || fail "priorrel remained actionable after fm-control exit: $out"
+  out=$(run_reap "$dir" report pausedpr)
+  assert_contains "$out" "stopped_at: " "report surfaces the control-exit timestamp"
+
+  # A new spawn_gen invalidates a stale exit marker so a real crash relaunches.
+  add_record "$dir" newgen ship off "spawn_gen=gen-1"
+  printf 'working [at=1]: mid-flight\n' > "$dir/home/state/newgen.status"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_TMUX_DIR="$dir/tmux" \
+    "$ROOT/bin/fm-control.sh" newgen exit >/dev/null
+  sed 's/^spawn_gen=gen-1$/spawn_gen=gen-2/' "$dir/home/state/newgen.meta" > "$dir/home/state/newgen.meta.tmp"
+  mv "$dir/home/state/newgen.meta.tmp" "$dir/home/state/newgen.meta"
+  out=$(run_reap "$dir" scan --act --task newgen)
+  assert_line "^control newgen relaunch --note " "$dir/actions.log" "a newer spawn_gen is not blocked by an older generation's exit marker"
+
+  # A corrupt or symlinked exit marker fails closed to UNSURE instead of relaunching.
+  : > "$dir/actions.log"
+  add_record "$dir" corruptexit ship off "spawn_gen=gen-c"
+  printf 'working [at=1]: mid-flight\n' > "$dir/home/state/corruptexit.status"
+  printf 'corrupt\n' > "$dir/home/state/corruptexit.control-exit"
+  out=$(run_reap "$dir" scan --act --task corruptexit)
+  assert_contains "$(line_for "$out" corruptexit)" "UNSURE" "a corrupt control-exit marker fails closed"
+  [ ! -s "$dir/actions.log" ] || fail "a corrupt control-exit marker reached an owner: $(cat "$dir/actions.log")"
+
+  # Intentional stop does NOT block LANDED teardown, SCOUT-DONE teardown, or MERGE-DUE hold.
+  add_record "$dir" landedexit ship off "spawn_gen=gen-l" "$(pr_line)"
+  land_record "$dir" landedexit
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_TMUX_DIR="$dir/tmux" \
+    "$ROOT/bin/fm-control.sh" landedexit exit >/dev/null
+  add_record "$dir" scoutexit scout off "spawn_gen=gen-s"
+  printf 'done [at=1]: report ready\n' > "$dir/home/state/scoutexit.status"
+  mkdir -p "$dir/home/data/scoutexit"
+  printf '# report\n' > "$dir/home/data/scoutexit/report.md"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_TMUX_DIR="$dir/tmux" \
+    "$ROOT/bin/fm-control.sh" scoutexit exit >/dev/null
+  add_record "$dir" mergeexit ship off "spawn_gen=gen-m" "$(pr_line 10)"
+  printf 'done [at=1]: PR ready\n' > "$dir/home/state/mergeexit.status"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_TMUX_DIR="$dir/tmux" \
+    "$ROOT/bin/fm-control.sh" mergeexit exit >/dev/null
+
+  out=$(run_reap "$dir" scan --act)
+  assert_line "^teardown landedexit$" "$dir/actions.log" "LANDED still tears down after fm-control exit"
+  assert_line "^teardown scoutexit$" "$dir/actions.log" "SCOUT-DONE still tears down after fm-control exit"
+  assert_line "^hold hold mergeexit --reason .*https://github.com/acme/widgets/pull/10" "$dir/actions.log" "MERGE-DUE still files a hold after fm-control exit"
+  pass "fm-reap: fm-control exit blocks DEAD-UNLANDED relaunch and escalation for that generation without blocking landed or ready classes"
+}
+
 # --- refusals -------------------------------------------------------------------------
 
 test_refused_action_is_not_retried_until_the_evidence_changes() {
@@ -542,6 +644,8 @@ test_merge_due_yolo_off_files_one_captain_hold
 test_closed_pr_is_reported_only
 test_dead_unlanded_relaunches_once_then_escalates
 test_dead_worker_with_uncommitted_changes_is_never_relaunched_blindly_or_torn_down
+test_dead_done_and_captain_held_ships_are_never_relaunched
+test_control_exit_marker_blocks_relaunch_and_escalation_without_blocking_reap
 test_refused_action_is_not_retried_until_the_evidence_changes
 test_staleness_rows_close_only_for_reaped_or_landed_orphans
 test_missing_staleness_command_skips_rows_loudly

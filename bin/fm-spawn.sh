@@ -5919,6 +5919,7 @@ if [ "$RELAUNCH" -eq 0 ]; then
     exit 1
   fi
   SPAWN_META_TMP=
+  rm -f "$STATE/$ID.control-exit"
 fi
 
 # Fuse the backlog In-flight transition into the publication that just created
@@ -5978,6 +5979,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_REPLACEMENT_PENDING=0
   SPAWN_META_PUBLISH_STARTED=0
   SPAWN_META_TMP=
+  rm -f "$STATE/$ID.control-exit"
 fi
 # A dispatch or relaunch keeps the per-task meta lock through launch delivery.
 # The backlog mutation is deliberately the final fallible commit below, so

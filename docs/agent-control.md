@@ -57,6 +57,7 @@ A stopped agent whose pane still shows the dialog text is not refused.
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.
+A verified `exit` writes `state/<id>.control-exit` keyed to the current `spawn_gen` so [`bin/fm-reap.sh`](../bin/fm-reap.sh) treats the dead endpoint as an intentional stop instead of an unlanded crash; spawn, relaunch, and teardown remove it.
 Removing a worktree, closing an endpoint, or discarding work stays with [`bin/fm-teardown.sh`](../bin/fm-teardown.sh), which owns the landed-work test.
 
 **`resume` is not a verb.**
@@ -66,7 +67,7 @@ A relaunch does take one session reference when the endpoint's own runtime recor
 
 ## Transactional relaunch
 
-`relaunch` is the only verb that changes durable records, so it runs as a transaction with a journal at `state/<id>.control-relaunch`, the prior record preserved beside it, and a ship or scout's prior instructions preserved when a progress note is appended.
+`relaunch` is the only verb that changes the task record, so it runs as a transaction with a journal at `state/<id>.control-relaunch`, the prior record preserved beside it, and a ship or scout's prior instructions preserved when a progress note is appended.
 
 1. **Resolve the profile.**
    An explicit `--harness`, `--model`, or `--effort` wins.

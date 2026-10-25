@@ -33,7 +33,8 @@
 #     backend and target. `alive` is final: class ALIVE, nothing is touched.
 #     dead or missing continues; ambiguous, unreadable, and unverified are
 #     class UNSURE. A tmux record with no window names no endpoint (missing).
-#   - ledger: the last event line of state/<id>.status and its verb.
+#   - ledger: the last event line of state/<id>.status and its verb, plus any
+#     state/<id>.control-exit record matching the current spawn_gen.
 #   - worktree: dirty = `git status --porcelain` minus the harness leftovers
 #     teardown ignores (.claude/ and .fm-*-turnend untracked files);
 #     unpushed = commits on HEAD not reachable from any FORGE remote-tracking
@@ -68,13 +69,18 @@
 #                  `fm-captain-hold.sh hold <id> --reason ...` naming the URL,
 #                  recorded in the sidecar so it is filed once; never a merge.
 #   PR-CLOSED      PR closed without merging; reported only.
-#   DEAD-UNLANDED  endpoint dead or missing with work not proven landed. Dirty
-#                  -> reported only. Clean with verb done, working, paused, or
-#                  no status -> `fm-control.sh <id> relaunch --note ...` at most
-#                  once per record; a later dead reading after that relaunch is
-#                  reported and escalated through one wake, never relaunched
-#                  again; once escalated it is report-only (no pending action,
-#                  absent from --actionable) until its evidence changes.
+#   DEAD-UNLANDED  endpoint dead or missing with work not proven landed. Dirty,
+#                  stopped by `fm-control.sh <id> exit` for the current
+#                  spawn_gen, verb done (or any verb other than working,
+#                  paused, or empty), or an open captain hold
+#                  (`fm-captain-hold.sh open <id>`) -> reported only. Clean
+#                  with verb working, paused, or no status and no exit marker
+#                  or open captain hold -> `fm-control.sh <id> relaunch
+#                  --note ...` at most once per record; a later dead reading
+#                  after that relaunch is reported and escalated through one
+#                  wake, never relaunched again; once escalated it is
+#                  report-only (no pending action, absent from --actionable)
+#                  until its evidence changes.
 #   BLOCKED, FAILED, NEEDS-DECISION  the ledger verb; reported only.
 #   UNSURE         any evidence the reaper cannot read; reported only.
 #   SKIP           see the skips above.
@@ -277,7 +283,7 @@ merged_into_default() {
 reset_evidence() {
   local v
   for v in E_KIND E_MODE E_YOLO E_BRANCH E_WT E_PROJ E_BACKEND E_TARGET \
-      E_ENDPOINT E_STATUS E_VERB E_WT_STATE E_DIRTY E_UNPUSHED E_HEAD \
+      E_ENDPOINT E_STATUS E_VERB E_STOPPED E_WT_STATE E_DIRTY E_UNPUSHED E_HEAD \
       E_PR_URL E_PR_STATE E_PR_CHECKS E_OWNER E_OWNER_ID E_OWNER_HOME \
       E_REPORT E_RELAUNCHED E_HOLD_FILED E_REFUSED CLASS TEXT ACTION ACTION_FP; do
     printf -v "$v" ''
@@ -379,6 +385,39 @@ read_slot() {  # <id>
   E_OWNER_HOME=$FM_TREEHOUSE_SLOT_OWNER_HOME
 }
 
+read_exit_marker() {  # <meta> <id>
+  local meta=$1 id=$2 f line lineno=0 header='' task='' exit_gen='' has_gen=0 exit_at=''
+  E_STOPPED=''
+  f="$STATE/$id.control-exit"
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+    return 0
+  fi
+  if [ ! -f "$f" ] || [ -L "$f" ] || [ ! -r "$f" ]; then
+    E_STOPPED=unsafe
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    if [ "$lineno" -eq 1 ]; then
+      header=$line
+      continue
+    fi
+    case "$line" in
+      task=*) task=${line#task=} ;;
+      spawn_gen=*) exit_gen=${line#spawn_gen=}; has_gen=1 ;;
+      at=*) exit_at=${line#at=} ;;
+    esac
+  done < "$f"
+  case "$exit_at" in ''|*[!0-9]*) E_STOPPED=unsafe; return 0 ;; esac
+  if [ "$header" != v1 ] || [ "$task" != "$id" ] || [ "$has_gen" -ne 1 ]; then
+    E_STOPPED=unsafe
+    return 0
+  fi
+  if [ "$exit_gen" = "$(fm_meta_get "$meta" spawn_gen)" ]; then
+    E_STOPPED=$exit_at
+  fi
+}
+
 read_record() {  # <meta> <id>
   local meta=$1 id=$2
   E_KIND=$(fm_meta_get "$meta" kind)
@@ -389,6 +428,7 @@ read_record() {  # <meta> <id>
   E_PROJ=$(fm_meta_get "$meta" project)
   E_STATUS=$(last_status_line "$STATE/$id.status")
   E_VERB=$(status_line_verb "$E_STATUS")
+  read_exit_marker "$meta" "$id"
   E_REPORT=0
   [ ! -s "$DATA/$id/report.md" ] || E_REPORT=1
   E_RELAUNCHED=$(sidecar_get "$id" relaunch_at)
@@ -495,9 +535,27 @@ classify_record() {
     set_class DEAD-UNLANDED "endpoint $E_ENDPOINT with uncommitted changes in $E_WT; never torn down, reported only"
     return 0
   fi
+  case "$E_STOPPED" in
+    unsafe)
+      set_class UNSURE "intentional-stop record $STATE/$id.control-exit cannot be read; nothing touched"
+      return 0
+      ;;
+    ?*)
+      set_class DEAD-UNLANDED "endpoint $E_ENDPOINT, stopped by fm-control exit at $E_STOPPED; reported only"
+      return 0
+      ;;
+  esac
   case "$E_VERB" in
-    done|resolved|working|paused|'') ;;
+    working|"${FM_CLASSIFY_PAUSED_VERB:-paused}"|'') ;;
     *) set_class DEAD-UNLANDED "endpoint $E_ENDPOINT, ledger reads $E_VERB; reported only"; return 0 ;;
+  esac
+  env FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+    FM_CONFIG_OVERRIDE="$CONFIG" "$CAPTAIN_HOLD_BIN" open "$id" >/dev/null 2>&1
+  rc=$?
+  case "$rc" in
+    0) set_class DEAD-UNLANDED "endpoint $E_ENDPOINT, captain hold open; reported only"; return 0 ;;
+    1) ;;
+    *) set_class UNSURE "endpoint $E_ENDPOINT, captain-hold state cannot be read; nothing touched"; return 0 ;;
   esac
   if [ -n "$E_RELAUNCHED" ] && [ "$(sidecar_get "$id" escalated)" = 1 ]; then
     set_class DEAD-UNLANDED "endpoint $E_ENDPOINT again after the one relaunch at $E_RELAUNCHED; already escalated, reported only"
@@ -511,7 +569,7 @@ classify_record() {
 }
 
 evidence_fingerprint() {
-  fingerprint "$CLASS|$ACTION|$E_VERB|$E_PR_STATE|$E_PR_CHECKS|$E_HEAD|$E_DIRTY|$E_UNPUSHED|$E_OWNER|$E_OWNER_ID|$E_ENDPOINT"
+  fingerprint "$CLASS|$ACTION|$E_VERB|$E_STOPPED|$E_PR_STATE|$E_PR_CHECKS|$E_HEAD|$E_DIRTY|$E_UNPUSHED|$E_OWNER|$E_OWNER_ID|$E_ENDPOINT"
 }
 
 # --- actions ------------------------------------------------------------------
@@ -831,7 +889,7 @@ report_record() {  # <id>
   printf 'id: %s\nkind: %s\nmode: %s\nyolo: %s\nbranch: %s\nworktree: %s\nproject: %s\n' \
     "$id" "$E_KIND" "$E_MODE" "$E_YOLO" "$E_BRANCH" "$E_WT" "$E_PROJ"
   printf 'backend: %s\ntarget: %s\nendpoint: %s\n' "$E_BACKEND" "$E_TARGET" "$E_ENDPOINT"
-  printf 'status: %s\nverb: %s\n' "$E_STATUS" "$E_VERB"
+  printf 'status: %s\nverb: %s\nstopped_at: %s\n' "$E_STATUS" "$E_VERB" "$E_STOPPED"
   printf 'worktree_state: %s\ndirty: %s\nunpushed: %s\nhead: %s\n' "$E_WT_STATE" "$E_DIRTY" "$E_UNPUSHED" "$E_HEAD"
   printf 'pr: %s\npr_state: %s\npr_checks: %s\n' "$E_PR_URL" "$E_PR_STATE" "$E_PR_CHECKS"
   printf 'slot_owner: %s\nslot_owner_id: %s\nslot_owner_home: %s\n' "$E_OWNER" "$E_OWNER_ID" "$E_OWNER_HOME"

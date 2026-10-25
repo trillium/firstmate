@@ -1214,6 +1214,55 @@ EOF
   pass "fm-control-lib: only a runtime's own recorded session has a relaunch resume form"
 }
 
+test_exit_records_generation_scoped_stop_marker_only_on_verified_exit() {
+  local dir out rc
+  dir=$(new_case exit-marker)
+  add_task "$dir" t1 claude
+  printf 'spawn_gen=gen-42\n' >> "$dir/home/state/t1.meta"
+  cp "$dir/home/state/t1.meta" "$dir/meta.before"
+
+  # Refused exit (stubborn agent that stays alive) must NOT record control-exit.
+  alive_as "$dir" claude
+  cat > "$dir/fake/stubborn-tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  display-message)
+    case "$*" in
+      *pane_tty*) printf '\n'; exit 0 ;;
+      *pane_current_command*) printf 'claude\n'; exit 0 ;;
+      *pane_current_path*) cat "$FM_FAKE_DIR/cwd"; printf '\n'; exit 0 ;;
+    esac ;;
+  list-windows) printf 'fm-t1\n'; exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fake/stubborn-tmux"
+  mkdir -p "$dir/stubborn-bin"
+  ln -sf "$dir/fake/stubborn-tmux" "$dir/stubborn-bin/tmux"
+  out=$(env PATH="$dir/stubborn-bin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_SETTLE_WAIT=0.02 FM_CONTROL_EXIT_WAIT=0.03 \
+    "$CONTROL" t1 exit 2>&1); rc=$?
+  expect_code 1 "$rc" "unconfirmed exit must fail closed"
+  assert_absent "$dir/home/state/t1.control-exit" "failed exit must not write control-exit"
+
+  # Verified live stop records v1 marker with current spawn_gen and leaves .meta untouched.
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "verified exit should succeed"$'\n'"$out"
+  assert_present "$dir/home/state/t1.control-exit" "verified exit must write control-exit"
+  cmp -s "$dir/meta.before" "$dir/home/state/t1.meta" || fail "exit must leave state/<id>.meta byte-identical"
+  grep -Fqx 'v1' "$dir/home/state/t1.control-exit" || fail "control-exit header"
+  grep -Fqx 'task=t1' "$dir/home/state/t1.control-exit" || fail "control-exit task"
+  grep -Fqx 'spawn_gen=gen-42' "$dir/home/state/t1.control-exit" || fail "control-exit spawn_gen"
+  grep -Fqx 'result=stopped' "$dir/home/state/t1.control-exit" || fail "control-exit stopped result"
+  grep -Eq '^at=[0-9][0-9]*$' "$dir/home/state/t1.control-exit" || fail "control-exit epoch"
+
+  # Idempotent already-stopped exit refreshes result=already-stopped.
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "already-stopped exit should succeed"$'\n'"$out"
+  grep -Fqx 'result=already-stopped' "$dir/home/state/t1.control-exit" || fail "control-exit already-stopped result"
+  pass "fm-control exit: records generation-scoped control-exit only after a verified exit"
+}
+
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
 test_devin_interrupt_invalidates_busy
@@ -1260,3 +1309,4 @@ test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
 test_fm_send_still_marks_the_same_secondmate_task
+test_exit_records_generation_scoped_stop_marker_only_on_verified_exit

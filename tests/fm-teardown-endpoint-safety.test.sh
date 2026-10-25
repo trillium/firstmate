@@ -1546,6 +1546,7 @@ test_record_only_retires_the_ghost_record_beside_its_claimant() {
     "window=firstmate:fm-claimant" "endpoint_task_id=claimant" \
     "worktree=$dir/worktree" "project=$dir/project" "kind=ship"
   printf 'refused_fp=abc\n' > "$dir/home/state/stale.reap"
+  printf 'v1\ntask=stale\nspawn_gen=\nresult=stopped\nat=1\n' > "$dir/home/state/stale.control-exit"
 
   # The ordinary gate is what jams: two records name one slot, so the stale one
   # cannot be torn down the usual way.
@@ -1556,11 +1557,13 @@ test_record_only_retires_the_ghost_record_beside_its_claimant() {
   set -e
   [ "$rc" -ne 0 ] || fail "ordinary teardown should refuse a slot two records name"
   assert_present "$dir/home/state/stale.meta" "ordinary teardown removed the record it refused"
+  assert_present "$dir/home/state/stale.control-exit" "ordinary teardown removed control-exit when it refused"
 
   set +e; run_record_only "$dir" stale; rc=$?; set -e
   [ "$rc" -eq 0 ] || fail "record-only teardown of a proved ghost failed: $(cat "$dir/stderr")"
   assert_reassigned_slot_left_alone "$dir" stale claimant "record-only ghost"
   assert_absent "$dir/home/state/stale.reap" "record-only teardown left the reaper's sidecar behind"
+  assert_absent "$dir/home/state/stale.control-exit" "record-only teardown left control-exit behind"
   assert_present "$dir/home/state/claimant.meta" "record-only teardown removed the claimant's record"
   assert_present "$dir/worktree/sentinel" "record-only teardown reset the claimant's slot"
   ! grep -Fq -- "--force" "$dir/stderr" \

@@ -3083,3 +3083,29 @@ JSON
 
 test_relaunch_proceeds_when_composer_is_unproven_but_interactive_ready
 test_away_branch_relaunch_accepts_existing_dispatchable_items
+
+test_relaunch_clears_control_exit_marker_only_when_published() {
+  local dir out rc=0
+  unset FM_FAKE_COMPOSER_READ_FAIL
+  dir=$(new_case exit-marker-clear rl81)
+  add_ship_task "$dir" rl81 claude
+
+  out=$(run_control "$dir" rl81 exit) || rc=$?
+  expect_code 0 "$rc" "exit before relaunch should succeed"$'\n'"$out"
+  assert_present "$dir/home/state/rl81.control-exit" "exit must write control-exit"
+
+  # Pre-stop refusal (missing --note for a ship) keeps the prior exit marker intact.
+  rc=0
+  out=$(run_control "$dir" rl81 relaunch) || rc=$?
+  expect_code 1 "$rc" "ship relaunch without --note must refuse"
+  assert_present "$dir/home/state/rl81.control-exit" "refused relaunch must preserve prior control-exit"
+
+  # Published replacement retires control-exit so the new incarnation can be reaped normally.
+  rc=0
+  out=$(run_control "$dir" rl81 relaunch --note "resume after intentional stop") || rc=$?
+  expect_code 0 "$rc" "relaunch after intentional stop should succeed"$'\n'"$out"
+  assert_absent "$dir/home/state/rl81.control-exit" "published relaunch must clear prior control-exit"
+  pass "fm-control relaunch: preserves control-exit on pre-stop refusal and retires it on publication"
+}
+
+test_relaunch_clears_control_exit_marker_only_when_published

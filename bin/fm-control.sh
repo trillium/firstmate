@@ -50,7 +50,10 @@
 #              always REFUSES: a task record carries no socket identity for its
 #              endpoint, so this verb cannot tell a destroyed window from one on
 #              a tmux server it cannot address, and it will not claim a stop it
-#              cannot see.
+#              cannot see. A verified exit records state/<id>.control-exit for
+#              the current spawn_gen so fm-reap treats the dead endpoint as an
+#              intentional stop rather than an unlanded crash; spawn, relaunch,
+#              and teardown retire it.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME worktree - and the same endpoint whenever that endpoint
 #              still exists - on the same or a newly chosen
@@ -788,6 +791,25 @@ do_exit() {
   printf 'stopped'
 }
 
+# Record a verified standalone `exit` so fm-reap distinguishes an operator stop
+# from a crashed incarnation. Keyed by spawn_gen so a published replacement
+# invalidates any stale marker even before its explicit removal.
+record_exit_marker() {  # <exit-result>
+  local result=$1 tmp gen at
+  gen=$(fm_meta_get "$META" spawn_gen)
+  at=$(date +%s)
+  tmp=$(mktemp "$STATE/.control-exit.XXXXXX" 2>/dev/null) \
+    || die "agent for $ID exited ($result), but could not create intentional-stop record in $STATE"
+  if ! {
+    chmod 600 "$tmp" 2>/dev/null \
+      && printf 'v1\ntask=%s\nspawn_gen=%s\nresult=%s\nat=%s\n' "$ID" "$gen" "$result" "$at" >"$tmp" \
+      && mv -f "$tmp" "$STATE/$ID.control-exit"
+  }; then
+    rm -f "$tmp"
+    die "agent for $ID exited ($result), but could not persist intentional-stop record $STATE/$ID.control-exit"
+  fi
+}
+
 # --- transactional relaunch -------------------------------------------------
 #
 # The transaction's durable record is state/<id>.control-relaunch, with the
@@ -1229,6 +1251,7 @@ case "$VERB" in
     ;;
   exit)
     result=$(do_exit)
+    record_exit_marker "$result"
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
