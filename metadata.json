@@ -3,7 +3,7 @@
   "checkpoint_id": "01M5S3SK0D0XWPZPRTCWTS02D7",
   "strategy": "manual-commit",
   "branch": "fm/firstmate-main-reconcile-q1",
-  "checkpoints_count": 6,
+  "checkpoints_count": 9,
   "files_touched": [
     "tests/fm-wake-queue.test.sh"
   ],
@@ -19,6 +19,12 @@
       "transcript": "/1/full.jsonl",
       "content_hash": "/1/content_hash.txt",
       "prompt": "/1/prompt.txt"
+    },
+    {
+      "metadata": "/2/metadata.json",
+      "transcript": "/2/full.jsonl",
+      "content_hash": "/2/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
