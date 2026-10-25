@@ -44,6 +44,9 @@
 #                       First, on every harness and away posture, it seeds the
 #                       outcome store's display tail copy when that is absent
 #                       (bin/fm-branch-outcome.sh seed-tail).
+#                       A NOT DONE subsection follows it (bin/fm-stalled-work.sh
+#                       --quiet --plain): captain-authorized work that is
+#                       blocked, unstarted, or stalled; silent when none.
 #   4. supervision-instructions - the one emitted operating block for the
 #                       detected primary harness.
 #   5. read-once contract - the do-not-re-read contract covering every source
@@ -816,6 +819,17 @@ else
   else
     printf '(no queued wakes)\n'
   fi
+fi
+
+# NOT DONE: captain-authorized work that is blocked, never started, or stalled
+# (bin/fm-stalled-work.sh owns the contract). Right after the wake queue so the
+# captain-facing reply covers it this turn; silent when nothing is waiting, and
+# the read-only sweep runs in a read-only session too.
+NOT_DONE_OUT=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" fm_run_timed 60 \
+  "$SCRIPT_DIR/fm-stalled-work.sh" --quiet --plain 2>/dev/null) || NOT_DONE_OUT=
+if [ -n "$NOT_DONE_OUT" ]; then
+  subsection "NOT DONE (captain-authorized work waiting)"
+  printf '%s\n' "$NOT_DONE_OUT"
 fi
 
 # --- 4. supervision operating instructions ----------------------------------

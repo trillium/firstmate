@@ -5,7 +5,8 @@
 # informational status lines, latest captain-facing statuses not covered by a
 # newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
 # a supervision-host home the supervision session's new and unprocessed
-# outcomes (BRANCH OUTCOMES), then assert liveness.
+# outcomes (BRANCH OUTCOMES), then on a heartbeat wake the NOT DONE list from
+# bin/fm-stalled-work.sh (its header owns the contract), then assert liveness.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
@@ -813,6 +814,20 @@ print_status_presentation() {  # [<deduped-raw-rows>]
   return "$rc"
 }
 
+# NOT DONE: captain-authorized work that is blocked, never started, or stalled.
+# Printed on a heartbeat wake only, so a long-quiet fleet re-surfaces it every
+# heartbeat without adding bytes to every signal wake. Silent when nothing is
+# waiting; the sweep is read-only and a failure here never fails the drain.
+print_not_done_section() {
+  local out
+  [ "$ACTOR" != branch ] || return 0
+  printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$3 == "heartbeat" { found = 1 } END { exit !found }' || return 0
+  [ -x "$SCRIPT_DIR/fm-stalled-work.sh" ] || return 0
+  out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" fm_run_timed 60 "$SCRIPT_DIR/fm-stalled-work.sh" --quiet --plain 2>/dev/null) || return 0
+  [ -n "$out" ] || return 0
+  printf 'NOT DONE (captain-authorized work waiting; tell the captain, repeat until each item moves or is dropped):\n%s\n' "$out"
+}
+
 # Names the lock holder's command and running time so a wedged holder is visible.
 describe_lock_holder() {
   local pid=$1 cmd age
@@ -1098,6 +1113,7 @@ printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --a
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
 (print_status_presentation "$RAW_ROWS") || true
+print_not_done_section
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
 assert_watcher_liveness
 exit "$BRANCH_OUTCOMES_RC"
