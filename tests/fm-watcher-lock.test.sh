@@ -1333,6 +1333,57 @@ test_arm_waits_for_peer_beacon_after_child_stands_down() {
   pass "arm attaches to a peer watcher after child stands down and surfaces a missing successor"
 }
 
+# Portable mtime in epoch seconds (never the `stat -f || stat -c` fallback).
+sweep_file_mtime() {
+  if [ "$(uname)" = Darwin ]; then stat -f %m "$1" 2>/dev/null; else stat -c %Y "$1" 2>/dev/null; fi
+}
+
+test_check_sweep_keeps_the_beacon_advancing() {
+  local dir state fakebin out pid i id beat now max_age=0 age
+  dir=$(make_case sweep-beacon)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  # Four registered checks of 3s each: a 12s sweep that, before the beacon was
+  # touched per check, left the beacon untouched for the whole sweep and so aged
+  # it past the stale grace in a home with dozens of checks (robots-0clru).
+  for id in a b c d; do
+    cat > "$state/$id.check.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 3
+SH
+    chmod 0700 "$state/$id.check.sh"
+    FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-check-register.sh" "$id" >/dev/null \
+      || fail "could not register slow check $id"
+  done
+  beat="$state/.last-watcher-beat"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=30 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 FM_SECONDMATE_LIVENESS_SECS=99999999 \
+    "$WATCH" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "$beat" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$beat" ] || { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; fail "watcher never wrote its beacon: $(cat "$out")"; }
+  # Sample through the sweep (about 12s): the beacon must never go stale for
+  # more than one check plus rounding, while the sweep is still running.
+  i=0
+  while [ "$i" -lt 100 ]; do
+    now=$(date +%s)
+    age=$(( now - $(sweep_file_mtime "$beat") ))
+    [ "$age" -le "$max_age" ] || max_age=$age
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$max_age" -le 5 ] || fail "beacon aged ${max_age}s during a sweep of 3s checks (only one check's span is allowed)"
+  [ ! -s "$out" ] || ! grep -q 'FAILED' "$out" || fail "watcher reported a failure during the sweep: $(cat "$out")"
+  pass "a check sweep touches the beacon before every check, so a long sweep never ages it"
+}
+
 test_arm_fails_loud_when_no_fresh_watcher_confirmable() {
   local dir state fakebin armout live armpid status
   dir=$(make_case arm-failed-stale)
@@ -1697,6 +1748,7 @@ test_arm_term_during_steal_waits_for_watcher_cleanup_trap
 test_arm_term_bounds_wait_for_stalled_startup
 test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
+test_check_sweep_keeps_the_beacon_advancing
 test_arm_fails_loud_when_no_fresh_watcher_confirmable
 test_cycle_exit_ledger_links_successor_and_stays_bounded
 test_stopped_watcher_is_live_but_stale_then_exit_is_classified

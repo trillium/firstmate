@@ -666,6 +666,50 @@ test_benign_cycle_end_with_live_watcher_is_silent() {
   pass "auto-arm: benign cycle end with a live watcher and fresh beacon stays silent across the next cycle"
 }
 
+test_lagging_live_watcher_that_beats_again_is_not_a_failure() {
+  local dir out status pid identity beater
+  dir=$(make_primary_dir "$TMP_ROOT/lagging-live")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" benign-live
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live watcher holder for lagging close"
+  record_watcher_lock "$dir" "$pid" "$identity"
+  # The beacon is stale when both attempts close, then the watcher finishes its
+  # bounded step and beats again inside the settle window.
+  touch -t 200001010000 "$dir/state/.last-watcher-beat"
+  ( sleep 1.5; touch "$dir/state/.last-watcher-beat" ) &
+  beater=$!
+  out=$(FM_CLAUDE_AUTOARM_SETTLE=15 run_autoarm "$dir" 2>/dev/null); status=$?
+  wait "$beater" 2>/dev/null || true
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$status" "a live watcher that beats again within the settle window must not be reported as a failure"
+  [ -z "$out" ] || fail "lagging live watcher produced an operator notice: $out"
+  [ "$(epoch_outcome "$dir")" = clean ] || fail "lagging live watcher must record outcome=clean, got: $(epoch_outcome "$dir")"
+  [ ! -e "$dir/state/.claude-autoarm-failure-notified" ] || fail "lagging live watcher left a failure-notice marker"
+  pass "auto-arm: a live watcher whose beacon lags then beats again is never reported as a failure"
+}
+
+test_frozen_live_watcher_still_reports_failure_after_settle() {
+  local dir out status pid identity
+  dir=$(make_primary_dir "$TMP_ROOT/frozen-live")
+  : > "$dir/state/task.meta"
+  write_arm_fixture "$dir" benign-live
+  sleep 60 &
+  pid=$!
+  identity=$(watcher_identity "$dir" "$pid") || fail "could not identify live watcher holder for frozen close"
+  record_watcher_lock "$dir" "$pid" "$identity"
+  touch -t 200001010000 "$dir/state/.last-watcher-beat"
+  out=$(FM_CLAUDE_AUTOARM_SETTLE=2 run_autoarm "$dir" 2>/dev/null); status=$?
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  expect_code 2 "$status" "a live watcher whose beacon never advances must still fail"
+  assert_contains "$out" "automatic supervision mechanism is broken" "a frozen live watcher must still report the failure"
+  [ "$(epoch_outcome "$dir")" = failed ] || fail "frozen live watcher must record outcome=failed, got: $(epoch_outcome "$dir")"
+  pass "auto-arm: a live watcher whose beacon stays frozen past the settle window still reports the failure"
+}
+
 test_positive_recovery_budget_contention_preserves_episode() {
   local dir out status pid identity holder
   dir=$(make_primary_dir "$TMP_ROOT/recovery-budget-contention")
@@ -1569,6 +1613,8 @@ test_failure_notice_marker_write_refuses_delivery_and_retries
 test_unverified_clean_close_exhausts_retries
 test_post_alarm_actionable_close_is_suppressed
 test_benign_cycle_end_with_live_watcher_is_silent
+test_lagging_live_watcher_that_beats_again_is_not_a_failure
+test_frozen_live_watcher_still_reports_failure_after_settle
 test_positive_recovery_budget_contention_preserves_episode
 test_owner_mutex_contention_preserves_failure_episode_reset
 test_arms_for_x_mode_poll_need_without_inflight

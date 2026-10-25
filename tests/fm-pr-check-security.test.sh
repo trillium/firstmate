@@ -3439,7 +3439,59 @@ SH
   pass "device re-record publication waits without rewriting its registration"
 }
 
+test_busy_control_lock_skips_the_poll_without_freezing_the_watcher() {
+  local dir state url watcher_pid holder_pid i beat1 beat2
+  url=https://github.com/o/r/pull/1
+  dir=$(make_case busy-control-lock-bounded)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a "$url"
+  seed_canonical_poll "$dir" task-a "$url"
+  cat > "$dir/control-holder.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+. "$FM_TEST_ROOT/bin/fm-wake-lib.sh"
+trap 'fm_lock_release "$FM_TEST_LOCK" || true' EXIT
+fm_lock_acquire_wait "$FM_TEST_LOCK"
+: > "$FM_TEST_ACQUIRED"
+while [ ! -e "$FM_TEST_RELEASE" ]; do sleep 0.01; done
+SH
+  chmod +x "$dir/control-holder.sh"
+  FM_TEST_ROOT="$ROOT" FM_TEST_LOCK="$state/.control-task-a.lock" \
+    FM_TEST_ACQUIRED="$dir/control-acquired" FM_TEST_RELEASE="$dir/control-release" \
+    "$dir/control-holder.sh" &
+  holder_pid=$!
+  for i in $(seq 1 100); do
+    [ -e "$dir/control-acquired" ] && break
+    sleep 0.02
+  done
+  [ -e "$dir/control-acquired" ] || fail "control lock holder did not acquire its lock"
+  FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_STATE=MERGED FM_TEST_CHECK_TIMEOUT=1 \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err" &
+  watcher_pid=$!
+  for i in $(seq 1 400); do
+    grep -q 'control lock for task-a stayed busy' "$state/.watch-triage.log" 2>/dev/null && break
+    sleep 0.05
+  done
+  if ! grep -q 'control lock for task-a stayed busy' "$state/.watch-triage.log" 2>/dev/null; then
+    kill "$watcher_pid" "$holder_pid" 2>/dev/null || true
+    wait "$watcher_pid" "$holder_pid" 2>/dev/null || true
+    fail "a busy control lock held the watcher instead of skipping the poll: $(cat "$dir/watch.err")"
+  fi
+  process_is_live_non_zombie "$watcher_pid" || fail "watcher exited while the control lock was busy"
+  beat1=$(perl -e 'print((stat shift)[9])' "$state/.last-watcher-beat" 2>/dev/null || echo 0)
+  sleep 2
+  beat2=$(perl -e 'print((stat shift)[9])' "$state/.last-watcher-beat" 2>/dev/null || echo 0)
+  kill "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+  : > "$dir/control-release"
+  wait "$holder_pid" || fail "control lock holder did not release its lock"
+  [ "$beat2" -gt "$beat1" ] || fail "beacon stopped advancing while the control lock was busy"
+  [ ! -s "$dir/gh.log" ] || fail "a skipped poll still queried the provider"
+  pass "a busy control lock skips its poll without freezing the watcher beacon"
+}
+
 test_parser_matrix
+test_busy_control_lock_skips_the_poll_without_freezing_the_watcher
 test_gitlab_merge_watch
 test_gerrit_merge_watch
 test_gerrit_arming_records_no_patch_set_revision
