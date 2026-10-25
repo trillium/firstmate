@@ -1,5 +1,11 @@
 # firstmate — Changelog
 
+## 2026-10-25 — session aa89c88e
+
+Files: data/robots-b5nfe-diagnose/report.md
+## 2026-10-25 — session 7be50bec
+
+Files: data/folder-trust-prompt-q1/report.md
 ## 2026-10-25 — session 02cc2d61
 
 Files: data/unlanded-worktrees-report/report.md, data/projects.md, .lavish/portageforward-watcher-decisions.html, .lavish/site/index.html, data/task-fuwnd/brief.md, data/herdr-pane-tags-repo/brief.md, projects/zensical-status/.gitignore, data/secondmates.md, data/voice-mod-security-review-q1/brief.md, data/tts-add-deepgram-tts-as-pluggable-backend-in-0d/brief.md
