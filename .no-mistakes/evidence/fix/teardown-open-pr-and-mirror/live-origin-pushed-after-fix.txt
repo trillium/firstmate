@@ -1,0 +1,23 @@
+== scenario: origin-pushed
+== remote-tracking refs:
+  refs/remotes/no-mistakes/fm/task-lab1
+  refs/remotes/origin/HEAD
+  refs/remotes/origin/fm/task-lab1
+  refs/remotes/origin/main
+== $ FM_HOME=$LAB bin/fm-teardown.sh task-lab1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A new version of treehouse is available: v3.1.2 → v3.1.6
+Run "treehouse update" to update
+
+worktree $LAB/wt is not managed by treehouse
+error: treehouse return failed for worktree $LAB/wt; teardown aborted
+== exit: 1
+== meta still present: yes
+== worktree commit still present: yes

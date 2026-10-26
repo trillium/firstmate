@@ -1,0 +1,14 @@
+### HEAD (with fix)
+ok - branch pushed only to the no-mistakes mirror is refused as unlanded
+ok - no-mistakes worktree with HEAD on origin is torn down (no regression)
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+ok - squash-merged + deleted-branch worktree (PR merged) is torn down (the fix)
+exit=0
+
+### BASE 30e185d1 script (without fix), same tests
+not ok - nm-mirror-only: teardown should refuse mirror-only work: expected exit 1, got 0
+ok - no-mistakes worktree with HEAD on origin is torn down (no regression)
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+ok - squash-merged + deleted-branch worktree (PR merged) is torn down (the fix)

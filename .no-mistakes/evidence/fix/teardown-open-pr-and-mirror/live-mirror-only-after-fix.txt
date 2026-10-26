@@ -1,0 +1,21 @@
+== scenario: mirror-only
+== remote-tracking refs:
+  refs/remotes/no-mistakes/fm/task-lab1
+  refs/remotes/origin/HEAD
+  refs/remotes/origin/main
+== $ FM_HOME=$LAB bin/fm-teardown.sh task-lab1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: worktree $LAB/wt has work not on any remote and not landed.
+unpushed commits:
+d68d623 lab work
+Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+== exit: 1
+== meta still present: yes
+== worktree commit still present: yes
