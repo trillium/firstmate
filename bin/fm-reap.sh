@@ -343,7 +343,7 @@ read_pr() {  # <meta> <id>
     return 0
   fi
   if [ "$FM_PR_META_PROVIDER" = github ] \
-     && fm_pr_github_read_record_with_gh_axi "${FM_PR_META_PATH%%/*}" "${FM_PR_META_PATH#*/}" "$FM_PR_META_NUMBER"; then
+     && fm_pr_github_read_record_with_gh_axi "$FM_PR_META_HOST" "${FM_PR_META_PATH%%/*}" "${FM_PR_META_PATH#*/}" "$FM_PR_META_NUMBER"; then
     E_PR_STATE=$FM_PR_RECORD_STATE
   else
     E_PR_STATE=unreadable
