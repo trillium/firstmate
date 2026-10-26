@@ -1,0 +1,7 @@
+ok - a missing herdr CLI is a human gap that --fix never claims to close
+ok - an absent launch agent is a fixable gap and the read-only run changes nothing
+ok - --fix installs the dedicated fm-remote launch agent without touching default
+ok - --fix is idempotent once the host is ready
+ok - a loaded and running launch agent must match the complete owned contract
+ok - a failed reload leaves stale effective launch-agent state unready
+not ok - --fix gave up on a transient EIO instead of retrying the bootstrap: expected exit 0, got 1

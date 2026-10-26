@@ -1,0 +1,6 @@
+transient EIO x2, live gui, drained              rc=0 bootstrap_attempts=3 last_out=ok
+EIO but no gui session (permanent)               rc=1 bootstrap_attempts=1 last_out=Bootstrap\ failed:\ 5:\ Input/output\ error
+already loaded (permanent)                       rc=1 bootstrap_attempts=1 last_out=Bootstrap\ failed:\ service\ already\ loaded
+other refusal (permanent)                        rc=1 bootstrap_attempts=1 last_out=Bootstrap\ failed:\ 37:\ Operation\ already\ in\ progress
+EIO while label never drains                     rc=1 bootstrap_attempts=1 last_out=Bootstrap\ failed:\ 5:\ Input/output\ error
+EIO persists past TRIES (bounded)                rc=1 bootstrap_attempts=4 last_out=Bootstrap\ failed:\ 5:\ Input/output\ error
