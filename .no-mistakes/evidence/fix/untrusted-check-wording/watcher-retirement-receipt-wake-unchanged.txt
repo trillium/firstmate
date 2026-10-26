@@ -1,0 +1,5 @@
+rc=0
+--- watcher stdout
+check: rejected unauthenticated PR poll retirement receipts: <case>/home/state/task-a.pr-poll-retirement
+--- state/.wake-queue
+1793053388	1	check	pr-poll-retirement	check: rejected unauthenticated PR poll retirement receipts: <case>/home/state/task-a.pr-poll-retirement

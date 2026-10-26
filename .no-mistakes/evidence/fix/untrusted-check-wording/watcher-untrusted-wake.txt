@@ -1,0 +1,7 @@
+$ FM_HOME=<lab> bin/fm-watch.sh   # lab state/ holds an unregistered rogue.check.sh
+--- watcher stdout (wake reason)
+check: rejected untrusted state checks: <lab>/state/rogue.check.sh
+--- state/.wake-queue row (epoch, seq, kind, KEY, reason)
+1793053316	1	check	untrusted-state-checks	check: rejected untrusted state checks: <lab>/state/rogue.check.sh
+--- did the rogue check run? (marker file RAN)
+ls: <lab>/RAN: No such file or directory
