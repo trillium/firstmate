@@ -1,0 +1,3 @@
+not ok - t3code secondmate teardown should succeed with lsof installed off PATH
+warning: T3 telemetry at http://127.0.0.1:57252 is not confirmed off; run the server that hosts Firstmate workers with T3CODE_TELEMETRY_ENABLED=false (docs/t3code-backend.md)
+REFUSED: cannot prove T3 secondmate t3smtdz1-claude0c83b440e's provider processes have left /private/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/fm-backend-t3code-tests.uThYCS/teardown-secondmate-claude/sm-home (lsof is unavailable); preserving the home and its records for retry: expected exit 0, got 1

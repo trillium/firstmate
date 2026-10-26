@@ -1,0 +1,3 @@
+held(agent PATH, real fallback): rc=0
+after close rc=1
+no lsof anywhere -> rc=0 (0 = fail-safe live)

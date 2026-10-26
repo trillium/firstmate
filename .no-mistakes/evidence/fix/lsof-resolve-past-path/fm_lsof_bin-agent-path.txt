@@ -1,0 +1,3 @@
+command -v lsof under agent PATH: []
+fm_lsof_bin: /usr/sbin/lsof
+fm_lsof_bin with no fallback rc=1

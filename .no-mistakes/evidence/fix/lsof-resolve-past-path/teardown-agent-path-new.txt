@@ -1,0 +1,7 @@
+ok - teardown retires a v1 presentation journal once its token workspace is confirmed gone
+ok - teardown retains a v1 presentation journal while its token workspace is still present
+ok - teardown retains a v1 presentation journal when the workspace query is ambiguous
+ok - a leaked descendant process rooted under the task's worktree is reaped by teardown, not left surviving
+ok - missing lsof falls back to reaping the tmux pane process group
+ok - an lsof installed off PATH (macOS /usr/sbin) still drives the leaked-process reap
+ok - an erroring lsof scan refuses teardown and preserves the task
