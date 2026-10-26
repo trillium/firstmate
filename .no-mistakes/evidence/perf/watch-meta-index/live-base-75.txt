@@ -1,0 +1,4 @@
+windows: 76  metas: 75
+beats=17 max_gap=23.4s open_gap_at_end=4.9s gaps=23.4,12.4,13.0,16.1,13.4,11.9,13.6,12.5,11.3,12.0,14.5,11.5
+watcher out:  err: 
+[base-toponly] lab torn down

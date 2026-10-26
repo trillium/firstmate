@@ -1,0 +1,4 @@
+windows: 76  metas: 75
+beats=28 max_gap=10.3s open_gap_at_end=0.8s gaps=10.3,3.0,2.9,2.9,3.0,2.0,3.0,3.9,2.2,3.0,4.0,3.0
+watcher out:  err: 
+[target-beat3] lab torn down
