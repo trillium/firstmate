@@ -1,0 +1,34 @@
+== lab: /var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-lab.kfKgRy  bin: /var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/tmp.gIEd4KPPXA
+== S0: warm-up watcher consumes first-start downtime recovery (steady-state live watcher)
+warm-up stayed live
+warm-up2 stayed live (steady state reached)
+== S1: start idle handling-successor watcher, then capture a note with fm-inbox.sh
+watcher live (pid 23055) before note
+fm-inbox.sh: queued 1793055938-05leCO
+  please continue the reminder work
+  firstmate will pick this up at its next check.
+watcher EXITED (woke). stdout:
+check: rearm-resurface
+queue rows:
+1793055938	1	check	inbox:1793055938-05leCO	check: captain inbox note 1793055938-05leCO - please continue the reminder work
+== S2: second watcher while row still queued and note still pending (must stay quiet)
+watcher stayed live 3s - no re-fire
+== S3: acknowledge note through fm-inbox.sh drain, then new watcher (must stay quiet)
+acked 1793055938-05leCO
+/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-lab.kfKgRy/state/inbox:
+handled
+
+/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-lab.kfKgRy/state/inbox/handled:
+1793055938-05leCO.note
+queue rows now:
+1793055938	1	check	inbox:1793055938-05leCO	check: captain inbox note 1793055938-05leCO - please continue the reminder work
+watcher stayed live 3s - handled note not surfaced
+== S4: adversarial orphan / hostile / unrelated / symlinked check keys (must stay quiet)
+queue rows:
+1793055938	1	check	inbox:1793055938-05leCO	check: captain inbox note 1793055938-05leCO - please continue the reminder work
+1793055952	2	check	other:thing	check: other:thing
+1793055953	3	check	inbox:no-such-note	check: inbox:no-such-note
+1793055953	4	check	inbox:../escape	check: inbox:../escape
+1793055953	5	check	inbox:symlinked	check: inbox:symlinked
+watcher stayed live 3s - none surfaced
+== lab removed

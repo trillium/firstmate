@@ -1,0 +1,16 @@
+## FIX test_inbox_note_wakes_live_handling_successor_once
+71825 67128 S    bash /Users/trilliumsmith/.no-mistakes/worktrees/ad28826778ca/01M5X75KBQSV98W9YKG8YNMNF0/bin/fm-watch.sh
+ok - a newly created inbox note wakes a live watcher exactly once while it stays queued
+exit=
+## FIX test_inbox_note_not_resurfaced_after_acknowledgement
+87002 79236 S    bash /Users/trilliumsmith/.no-mistakes/worktrees/ad28826778ca/01M5X75KBQSV98W9YKG8YNMNF0/bin/fm-watch.sh
+ok - an acknowledged inbox note is never surfaced again
+exit=
+## FIX test_inbox_note_handled_before_surfacing_stays_quiet
+91266 90571 S    bash /Users/trilliumsmith/.no-mistakes/worktrees/ad28826778ca/01M5X75KBQSV98W9YKG8YNMNF0/bin/fm-watch.sh
+ok - a queued row for an already-acknowledged note does not spend a wake
+exit=
+## FIX test_unrelated_check_keys_are_not_surfaced_by_the_note_scan
+96185 94348 S    bash /Users/trilliumsmith/.no-mistakes/worktrees/ad28826778ca/01M5X75KBQSV98W9YKG8YNMNF0/bin/fm-watch.sh
+ok - unrelated and orphaned check keys keep their prior watcher behavior
+exit=

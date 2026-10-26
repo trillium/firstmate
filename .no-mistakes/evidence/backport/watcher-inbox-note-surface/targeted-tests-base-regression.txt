@@ -1,0 +1,5 @@
+## BASE(30e185d) test_inbox_note_wakes_live_handling_successor_once
+not ok - the wake did not name the pending inbox note: check: rearm-resurface
+## BASE(30e185d) test_inbox_note_not_resurfaced_after_acknowledgement
+wait_for_exit: owned pid 61704 exceeded 100 polls; sending TERM
+not ok - the queued inbox note was not surfaced: 
