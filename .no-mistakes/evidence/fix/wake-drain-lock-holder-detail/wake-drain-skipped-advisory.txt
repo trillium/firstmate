@@ -1,0 +1,8 @@
+## Scenario 1: live wedged holder (argv0 contains printf specifiers) -> drain skipped
+holder pid=92624; ps: 92624 00:03 wedged-holder-%s-%n 60
+$ FM_STATE_OVERRIDE=$STATE FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 bin/fm-wake-drain.sh
+WAKE DRAIN SKIPPED: queue lock remains held by live pid 92624 (command: wedged-holder-%s-%n 60; running 00:04) after 1s; retry on the next drain.
+exit=0
+
+## Scenario 2: uncontended drain (no holder) unaffected
+exit=0

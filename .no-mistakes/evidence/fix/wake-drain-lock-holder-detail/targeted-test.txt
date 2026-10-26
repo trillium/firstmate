@@ -1,0 +1,1 @@
+ok - presentation lock waits are bounded and retriable without weakening acknowledgement atomicity
