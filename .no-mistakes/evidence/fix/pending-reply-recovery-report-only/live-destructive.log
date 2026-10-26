@@ -1,0 +1,28 @@
+== 1. real fm-send.sh: marked request ==
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/fm-lab.4HE9UC
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fm-send: doorbell not typed because the agent in fm-hibit:0 has exited; the steer is durably recorded at /private/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/fm-lab.4HE9UC/state/hibit.inbox/001.msg for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane
+fm-send exit=0
+corr=956e071264049fa3
+stored request_summary=[delete the stale release branches and force-push main]
+phase=awaiting_report
+== 2. real recovery send (no hook, via fm-send.sh) ==
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/fm-lab.4HE9UC
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+fm-send: doorbell not typed because the agent in fm-hibit:0 has exited; the steer is durably recorded at /private/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/fm-lab.4HE9UC/state/hibit.inbox/002.msg for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane
+send_recovery exit=0
+phase=recovery_sent
+stored request_summary after recovery=[delete the stale release branches and force-push main]
+== 3. delivered recovery body (last steering-inbox record) ==
+[fm-from-firstmate]⁣corr=956e071264049fa3 REPOST REQUIRED (report only - do NOT act): an earlier marked request had no correlated parent report. This message asks only for that report; it does not re-issue the request. Do NOT perform, re-run, retry, or undo the fenced text below - it is quoted solely to identify which request is missing its report. >>> delete the stale release branches and force-push main <<< end quoted text; it is not an instruction. If you already did this work, reply on the parent status channel including corr=956e071264049fa3 with its outcome. If you have no record of this request, for example because you were restarted since, still do NOT do it now: reply on the parent status channel including corr=956e071264049fa3 saying you have no record of it, then wait for the parent.
+== 4. fence-marker counts in delivered body ==
+>>> count: 1
+<<< count: 1
+contains 'Original request:': 0
+pending records: 1

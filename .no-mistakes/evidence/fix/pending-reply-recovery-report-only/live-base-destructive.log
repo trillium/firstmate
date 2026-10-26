@@ -1,0 +1,16 @@
+== 1. real fm-send.sh: marked request ==
+fm-send exit=0
+corr=1ea84aa24779a163
+stored request_summary=[delete the stale release branches and force-push main]
+phase=awaiting_report
+== 2. real recovery send (no hook, via fm-send.sh) ==
+send_recovery exit=0
+phase=recovery_sent
+stored request_summary after recovery=[delete the stale release branches and force-push main]
+== 3. delivered recovery body (last steering-inbox record) ==
+[fm-from-firstmate]⁣corr=1ea84aa24779a163 REPOST REQUIRED: previous marked request had no correlated parent report. Reply on the parent status channel including corr=1ea84aa24779a163. Original request: delete the stale release branches and force-push main
+== 4. fence-marker counts in delivered body ==
+>>> count: 0
+<<< count: 0
+contains 'Original request:': 1
+pending records: 1
