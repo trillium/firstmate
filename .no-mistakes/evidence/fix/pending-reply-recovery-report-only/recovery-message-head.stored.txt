@@ -1,0 +1,1 @@
+STORED request_summary: delete release-notes.txt and commit the deletion

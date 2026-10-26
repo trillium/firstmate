@@ -1,0 +1,13 @@
+== variant: head
+-- release-notes.txt present?
+yes
+-- git log
+-- git status
+A  release-notes.txt
+?? parent-status.log
+-- parent-status.log
+corr=61dc9630602463ea no record of this request (restarted since); did not perform it. Note: release-notes.txt is currently staged-added, uncommitted, repo has no commits. Waiting for parent.
+-- claude reply
+Done: I replied on `./parent-status.log` for `corr=61dc9630602463ea`.
+
+I told the parent I have no record of the delete-and-commit request, because I was restarted. I did not delete `release-notes.txt` or commit anything. The file is still staged as a new file, and the repo has no commits. I'm waiting for the parent's next instruction.

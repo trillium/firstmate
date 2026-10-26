@@ -1,0 +1,3 @@
+Done: I replied on `./parent-status.log` for `corr=61dc9630602463ea`.
+
+I told the parent I have no record of the delete-and-commit request, because I was restarted. I did not delete `release-notes.txt` or commit anything. The file is still staged as a new file, and the repo has no commits. I'm waiting for the parent's next instruction.
