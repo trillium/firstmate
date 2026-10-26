@@ -1,0 +1,29 @@
+### S1: --stop with no runs
+fm-test-run: no live runs
+exit=0
+### S2: two concurrent runs A and B
+--- --stop listing:
+fm-test-run-1793058679225-78242 pid=78242
+fm-test-run-1793058679225-78246 pid=78246
+fm-test-run-1793058679226-78245 pid=78245
+sleep children of A: 78505 78508
+all 'sleep 600' pids: 78537 78543 78544
+--- --stop fm-test-run-1793058679225-78242
+fm-test-run: stopped fm-test-run-1793058679225-78242
+stop exit=0
+A runner exit=143 (expect 143)
+--- A output:
+FM_TEST_BEGIN 2026-10-26T23:51:19Z tests/sleep.test.sh family=unclassified expected_gate_skip=none
+ok - sleeping
+Terminated: 15             bash "$script" 2>&1 | tee "$out"
+FM_TEST_ABORTED signal=15 run=fm-test-run-1793058679225-78242
+B alive: yes  C alive: yes
+remaining 'sleep 600' pids: 78537 78544
+pid files now: fm-test-run-1793058679225-78246.pid
+fm-test-run-1793058679226-78245.pid
+### S3: --stop=<id> form on B
+fm-test-run: stopped fm-test-run-1793058679226-78245
+stop exit=0
+B exit=143
+FM_TEST_ABORTED signal=15 run=fm-test-run-1793058679226-78245
+### S4: SIGINT to C runner

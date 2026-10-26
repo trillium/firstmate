@@ -1,0 +1,6 @@
+ok - a changed T3 fake or adapter selects the suites that read it beyond backend-dispatch
+ok - --stop kills one run, emits FM_TEST_ABORTED, spares siblings
+ok - a changed T3 fake or adapter selects the suites that read it beyond backend-dispatch
+ok - --stop kills one run, emits FM_TEST_ABORTED, spares siblings
+ok - a changed T3 fake or adapter selects the suites that read it beyond backend-dispatch
+ok - --stop kills one run, emits FM_TEST_ABORTED, spares siblings

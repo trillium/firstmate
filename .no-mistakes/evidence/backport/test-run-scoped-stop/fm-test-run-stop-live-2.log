@@ -1,0 +1,25 @@
+### S4: Ctrl-C in an interactive terminal (private tmux socket)
+fm-test-run-1793058787933-66032 pid=66032
+TMPDIR=/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-stop-live2.S1zBNx bin/fm-test-run.sh tests/sleep.test.sh; echo EXIT=$?; ls /var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-stop-live2.S
+1zBNx/fm-test-run-pids | wc -l
+bash-5.3$ TMPDIR=/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-stop-live2.S1zBNx bin/fm-test-run.sh tests/sleep.test.sh; echo EXIT=$?; ls /var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-st
+op-live2.S1zBNx/fm-test-run-pids | wc -l
+FM_TEST_BEGIN 2026-10-26T23:53:07Z tests/sleep.test.sh family=unclassified expected_gate_skip=none
+ok - sleeping
+^CFM_TEST_ABORTED signal=2 run=fm-test-run-1793058787933-66032
+EXIT=130
+       0
+bash-5.3$
+remaining sleep 600: []
+### S5: unknown id
+fm-test-run: no live run fm-test-run-0-1
+exit=1
+### S6: stale pid file whose pid was reused by an unrelated process
+pid file before: fm-test-run-1-67630.pid
+fm-test-run: no live run fm-test-run-1-67630
+stop exit=1
+unrelated pid 67630 alive: yes; pid files after: []
+### S7: normal completion removes pid file, no abort marker
+exit=0
+FM_TEST_ABORTED lines: 0
+pid files: []
