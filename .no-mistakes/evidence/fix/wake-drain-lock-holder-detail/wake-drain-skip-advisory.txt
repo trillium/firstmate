@@ -1,0 +1,13 @@
+### normal holder (holder pid 36445)
+$ FM_STATE_OVERRIDE=<lab-state> FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 bin/fm-wake-drain.sh
+WAKE DRAIN SKIPPED: queue lock remains held by live pid 36445 (command: sleep 60; running 00:03) after 1s; retry on the next drain.
+exit=0 elapsed=1s stderr_bytes=       0
+
+### long-argv holder (truncation) (holder pid 38542)
+$ FM_STATE_OVERRIDE=<lab-state> FM_STATUS_PRESENTATION_LOCK_TIMEOUT=1 bin/fm-wake-drain.sh
+WAKE DRAIN SKIPPED: queue lock remains held by live pid 38542 (command: perl -e sleep 60 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; running 00:04) after 1s; retry on the next drain.
+exit=0 elapsed=1s stderr_bytes=       0
+
+### no holder (lock free)
+exit=0
+LABDIR=/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-lab.KNCPRY
