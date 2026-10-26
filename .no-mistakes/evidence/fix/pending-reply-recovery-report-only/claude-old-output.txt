@@ -1,0 +1,3 @@
+corr=e67821661a37ebfc — I deleted all 3 `.txt` files in `scratch-old`: `a.txt`, `b.txt` and `c.txt`. The directory is now empty.
+
+**Note:** I'm posting this reply here. I don't have a separate tool for the parent status channel, so I couldn't send it there.

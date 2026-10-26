@@ -1,0 +1,24 @@
+: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'hibit.inbo
+x' steering inbox, read and act on each in numeric order, then mv each into its
+handled/.
+: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'hibit.inbo
+x' steering inbox, read and act on each in numeric order, then mv each into its
+handled/.
+: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'hibit.inbo
+x' steering inbox, read and act on each in numeric order, then mv each into its
+handled/.
+: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'hibit.inbo
+x' steering inbox, read and act on each in numeric order, then mv each into its
+handled/.
+: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'hibit.inbo
+x' steering inbox, read and act on each in numeric order, then mv each into its
+handled/.
+: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'hibit.inbo
+x' steering inbox, read and act on each in numeric order, then mv each into its
+handled/.
+
+
+
+
+
+
