@@ -1,5 +1,8 @@
 # firstmate — Changelog
 
+## 2026-10-26 — session e1293092
+
+Files: data/atlassian-auth-q1/report.md
 ## 2026-10-25 — session 8c3580b2
 
 Files: data/pfw-unit-econ-q1/report.md
