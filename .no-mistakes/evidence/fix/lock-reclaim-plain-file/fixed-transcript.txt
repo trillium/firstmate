@@ -1,0 +1,25 @@
+=== [fixed] S1 stale 0-byte plain .wake-queue.lock
+appended after 1s
+exit=0
+lock path: ls:  steal-markers: 0
+queue rows: 1
+=== [fixed] S2 fresh plain .wake-queue.lock (must wait out grace, then acquire)
+appended after 3s
+exit=0
+lock path: ls:  steal-markers: 0
+queue rows: 1
+=== [fixed] S3 live symlink holder (must not be stolen)
+waiter rc=124 (124=still waiting, correct)
+holder symlink intact: /private/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/tmp.Algw8K0XD7/state/.wake-queue.lock.owner.3GDvLa
+exit=0
+lock path: lrwxr-xr-x  steal-markers: 0
+=== [fixed] S4 40 concurrent try_acquire on stale plain file
+winners=1
+exit=0
+lock path: lrwxr-xr-x  steal-markers: 0
+=== [fixed] S5 adversarial: dead stealer left .steal + stale plain file
+/private/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/tmp.737dYHRmdy/state/.wake-queue.lock.steal.owner.KhK8AU
+dead stealer pid in .steal: 57401
+try rc=0 FM_LOCK_RECOVERED_PID=[] steal.steal exists=no
+exit=0
+lock path: lrwxr-xr-x  steal-markers: 0
