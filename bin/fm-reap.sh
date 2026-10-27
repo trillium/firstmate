@@ -409,6 +409,15 @@ set_class() {  # <class> <text> [<action>]
 # classify_record <id>: sets CLASS, TEXT, ACTION from the evidence globals.
 classify_record() {
   local id=$1 rc
+  # A cloud run keeps no local endpoint or worktree: only its PR says it is done.
+  if [ "$E_BACKEND" = cloud ]; then
+    case "$E_PR_STATE" in
+      MERGED) set_class LANDED "cloud run's PR merged -> fm-teardown.sh $id" teardown ;;
+      CLOSED) set_class PR-CLOSED "PR $E_PR_URL closed without merging; reported only" ;;
+      *) set_class ALIVE "cloud run in flight (PR ${E_PR_STATE:-none}); nothing to reap" ;;
+    esac
+    return 0
+  fi
   case "$E_ENDPOINT" in
     alive) set_class ALIVE "agent running at $E_BACKEND $E_TARGET; nothing to reap"; return 0 ;;
     dead|missing) ;;
