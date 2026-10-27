@@ -12,7 +12,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
-| Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
+| Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) and [herdr tab labels](#tab-labels-configtab-labels) |
 | Claude cloud runs and the cloud credit | [Cloud runs](#cloud-runs-configcloud-credit--configcloud-timeout) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
@@ -444,6 +444,21 @@ Any value other than `tmux`, `herdr`, `zellij`, `orca`, or `cmux` is rejected un
 `fm-spawn.sh` accepts `tmux`, `herdr`, `zellij`, `orca`, and `cmux` for ship and scout tasks; `backend=orca` and `backend=cmux` both still refuse `--secondmate` until secondmate launch semantics are designed for each.
 
 `codex-app` is not an accepted runtime backend yet; [`docs/codex-app-backend.md`](codex-app-backend.md) owns the Codex App boundary.
+
+### Tab labels (config/tab-labels)
+
+`config/tab-labels` is an optional, local, gitignored file that renames herdr tabs for display.
+Each line is `<task-id> <label>`, where the task id of a secondmate is its registered id, and everything after the id is the label, emoji included.
+Blank lines and lines starting with `#` are ignored.
+
+```
+macbook-ops 💎🧭 macbook-ops
+```
+
+Firstmate applies the label when it creates the tab at launch or respawn, and renames an adopted tab at relaunch, so it survives restarts.
+Without the file, or for an id it does not list, the tab keeps the default `fm-<id>` name, and other backends ignore the file.
+Herdr addresses panes by id, so the label is display only.
+Firstmate never writes a name for the primary session's own tab; that stays whatever the captain set.
 
 ### Liveness classification
 
