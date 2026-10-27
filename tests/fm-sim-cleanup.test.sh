@@ -55,6 +55,7 @@ SH
   cat > "$fakebin/xcrun" <<'SH'
 #!/usr/bin/env bash
 [ "${1:-}" = simctl ] || exit 0
+printf '%s\n' "$*" >> "$FM_FAKE_SIM_LOG.calls"
 case "${2:-}" in
   list)
     printf '== Devices ==\n-- iOS 26.3 --\n'
@@ -531,6 +532,12 @@ test_idle_scan_is_quiet_where_it_should_be() {
   boot "$case_dir" "$SIM_A"
   proc_booted "$case_dir" "$SIM_A" "2-00:00:00"
   assert_equals "" "$(run_idle "$case_dir" scan FM_FAKE_UNAME=Linux)" "the scan reported on a non-macOS host"
+  # With no launchd_sim process nothing is booted, so simctl is never consulted.
+  : > "$case_dir/ps"
+  : > "$case_dir/shutdown.log.calls"
+  assert_equals "" "$(run_idle "$case_dir" scan)" "the scan reported a simulator with no launchd_sim process"
+  assert_equals "" "$(cat "$case_dir/shutdown.log.calls")" "the scan called simctl although no simulator process runs"
+  proc_booted "$case_dir" "$SIM_A" "2-00:00:00"
   # A secondmate home never raises the host-level wake.
   env_for "$case_dir"
   mate="$case_dir/mate"

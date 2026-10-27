@@ -70,6 +70,10 @@ scan() {
   local hours threshold realert home_real root udid age last owners name line
   [ "$(uname -s)" = Darwin ] || return 0
   fm_sim_available || return 0
+  # A booted simulator always has a launchd_sim process. Without one there is
+  # nothing to flag, and skipping simctl avoids its multi-second cold start of
+  # CoreSimulatorService on every watcher check cycle of a host with no simulator.
+  ps -axo command= 2>/dev/null | awk 'index($0, "launchd_sim") {found = 1} END {exit !found}' || return 0
   home_real=$(cd "$FM_HOME" 2>/dev/null && pwd -P) || return 0
   root=$(fm_firstmate_root_home "$FM_HOME") || return 0
   [ "$root" = "$home_real" ] || return 0
