@@ -758,6 +758,7 @@ tests/fm-calm-claude-mod.test.sh 1252
 tests/fm-calm-pi-extension.test.sh 45128
 tests/fm-check-unregister.test.sh 464
 tests/fm-ci-workflow.test.sh 2073
+tests/fm-cloud-task.test.sh 20000
 tests/fm-cloud.test.sh 3000
 tests/fm-classify-corr-token.test.sh 49294
 tests/fm-classify-decision-key.test.sh 3336

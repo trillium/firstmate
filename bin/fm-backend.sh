@@ -67,7 +67,9 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # cmux is EXPERIMENTAL and spawn-capable, session-provider-only like
 # herdr/zellij - verified against the real 0.64.17 binary (docs/cmux-backend.md).
 # codex-app remains deliberately absent; see docs/codex-app-backend.md.
-FM_BACKEND_KNOWN="tmux herdr zellij orca cmux"
+# cloud is a record-only backend for bin/fm-cloud.sh runs: a Claude Code cloud
+# session has no local endpoint, so it is known but never spawn-capable.
+FM_BACKEND_KNOWN="tmux herdr zellij orca cmux cloud"
 FM_BACKEND_SPAWN="tmux herdr zellij orca cmux"
 
 # fm_backend_list_contains: whitespace-delimited membership without relying on
@@ -312,6 +314,7 @@ fm_backend_required_tools() {  # <backend>
     zellij) printf '%s' 'zellij jq treehouse' ;;
     cmux)   printf '%s' 'cmux jq treehouse' ;;
     orca)   printf '%s' 'orca' ;;
+    cloud)  printf '%s' 'claude git' ;;
     *) return 1 ;;
   esac
 }
@@ -417,6 +420,11 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
     echo "REFUSED: task endpoint identity has an invalid task id; preserving task state." >&2
     return 1
   esac
+  # A cloud run (bin/fm-cloud.sh) has no pane, window, or worktree to validate.
+  if [ "$(fm_backend_meta_exact_value "$meta" backend 2>/dev/null || true)" = cloud ]; then
+    FM_BACKEND_VALIDATED_BACKEND=cloud
+    return 0
+  fi
   window=$(fm_backend_meta_exact_value "$meta" window) || {
     echo "REFUSED: task $id has a missing, empty, or ambiguous window endpoint; preserving task state." >&2
     return 1
@@ -1068,6 +1076,8 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # empirically validated. Orca and cmux do not support secondmate spawns.
 fm_backend_agent_state() {  # <backend> <target>
   local backend=$1 target=$2
+  # A cloud run keeps no local agent, so its endpoint is authoritatively absent.
+  [ "$backend" != cloud ] || { printf 'missing'; return 0; }
   fm_backend_source "$backend" || { printf 'unverified'; return 0; }
   case "$backend" in
     tmux) fm_backend_tmux_agent_state "$target" ;;

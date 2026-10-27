@@ -13,6 +13,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
+| Claude cloud runs and the cloud credit | [Cloud runs](#cloud-runs-configcloud-credit--configcloud-timeout) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## FM_HOME
@@ -475,6 +476,7 @@ Task meta records `backend=` only for a non-default backend; an absent `backend=
 - A cmux task additionally records `cmux_workspace_id=` and `cmux_surface_id=`.
 
 - A fresh ship or scout task on a host with Xcode records `sim_baseline=`; see [idle iOS simulators](#idle-ios-simulators-configsim-idle-hours).
+- A cloud run additionally records `cloud_run=`, `cloud_session=`, and `cloud_url=` and has no `window=` or worktree; see [Cloud runs](#cloud-runs-configcloud-credit--configcloud-timeout).
 
 ### Task selectors
 
@@ -2312,6 +2314,31 @@ The two read files use different parsing rules:
 - In `config/voice-read-deny`, every line that is neither blank nor a `#` comment adds one substring.
 
 `FM_VOICE_RELAY` and `FM_VOICE_PYTHON` belong to the laptop rather than to a home, so they have no config file: `bin/fm-voice-client.py` requires the relay path as a flag or that variable and carries no default path.
+
+## Cloud runs (config/cloud-credit / config/cloud-timeout)
+
+A Claude Code cloud run is a dispatch route beside the local harnesses, launched with `bin/fm-cloud.sh launch --task <id>` ([guide](cloud-runs.md)).
+It is eligible for self-contained work in a GitHub repository whose commits are already pushed, and it is the preferred route for that work while the cloud credit is unexpired.
+It is not a runtime backend: it has no window or worktree, so `config/backend` and `FM_BACKEND` never select it, and its task meta records `backend=cloud`.
+Local work, unpushed commits, and anything that needs the home's private files stay on a local harness.
+
+`config/cloud-credit` records the prepaid credit as two lines:
+
+```text
+amount=249
+expires=2026-11-04
+```
+
+- `amount` is the dollar value, shown by the `credit` subcommand and `doctor`.
+- `expires` is a `YYYY-MM-DD` date; the credit counts as available through that whole day.
+- `bin/fm-cloud.sh credit` prints the days remaining and the runs launched, and `doctor` prints the same line.
+- An absent file reports the credit as not configured, a past date reports it expired, and a malformed date is reported rather than guessed.
+
+`config/cloud-timeout` is the minutes a cloud run may stay silent before its finish check wakes firstmate with a possibly-stuck line naming the session.
+It defaults to 240, and `FM_CLOUD_TIMEOUT_MINUTES` overrides the default when the file is absent.
+A value that is not a whole number falls back to the default.
+
+Both files are local, gitignored, and inherited by no secondmate.
 
 ## Environment variables
 

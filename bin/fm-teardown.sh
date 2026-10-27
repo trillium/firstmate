@@ -443,6 +443,16 @@ fi
 fm_lease_guard "$ID" "teardown (fm-teardown)"
 
 META="$STATE/$ID.meta"
+# A cloud run has no worktree, pane, or process to clean up; bin/fm-cloud.sh owns
+# its landed-work gate, check and record retirement, and backlog close.
+if [ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_meta_get "$META" backend)" = cloud ]; then
+  if [ "$RECORD_ONLY" = 1 ]; then
+    echo "error: invalid teardown request: --record-only does not apply to a cloud run" >&2
+    exit 2
+  fi
+  FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_DATA_OVERRIDE=$DATA FM_CONFIG_OVERRIDE=$CONFIG \
+    exec "$SCRIPT_DIR/fm-cloud.sh" teardown "$ID" ${FORCE:+"$FORCE"}
+fi
 TREEHOUSE_PROJECT_LOCK=
 TREEHOUSE_PROJECT_LOCK_HELD=0
 TREEHOUSE_SLOT_LOCK_REQUIRED=0
