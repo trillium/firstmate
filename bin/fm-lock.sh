@@ -20,6 +20,9 @@
 # bin/fm-startup-network.sh compares that pid across its deferred sweeps; a dead
 # recorded pid is reclaimed and rewritten to this session's anchor.
 #
+# In herdr, the outcome is also shown on the pane: lock held vs lock refused set
+# different sidebar tokens via bin/fm-lock-badge.sh (display-only, never fatal).
+#
 # Usage: fm-lock.sh           acquire; exit 1 unless ownership is verified
 #        fm-lock.sh status    print holder and liveness; always exits 0.
 #                             A held lock is not proof the holder is consuming
@@ -66,6 +69,10 @@ rm -f "$probe" 2>/dev/null || {
 }
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# Show the outcome on the herdr pane (bin/fm-lock-badge.sh); display-only, never fatal.
+lock_badge() {  # held|refused
+  "$SCRIPT_DIR/fm-lock-badge.sh" "$1" 2>/dev/null || true
+}
 CLAIM_LOCK="$STATE/.lock.acquire"
 CLAIM_LOCK_HELD=0
 # PHASE 0: committed/none. 1: sidecar mutated, line 1 not written. 2: line 1 written, not verified.
@@ -170,6 +177,7 @@ confirm_own_lock() {  # <recorded-pid>
     publish_lock_session_or_die
     commit_lock_session
     release_claim_lock
+    lock_badge held
     echo "lock acquired: harness pid $recorded"
     exit 0
   fi
@@ -181,6 +189,7 @@ confirm_own_lock() {  # <recorded-pid>
 
 refuse_live_owner() {  # <recorded-pid>
   local recorded
+  lock_badge refused
   if recorded=$(fm_session_lock_recorded_session_id "$STATE"); then
     echo "error: another live firstmate session holds the lock (pid $1, session $recorded); operate read-only until resolved" >&2
   else
@@ -272,4 +281,5 @@ if [ ! -f "$LOCK" ] || [ -L "$LOCK" ] || [ "$written" != "$me" ]; then
 fi
 commit_lock_session
 release_claim_lock
+lock_badge held
 echo "lock acquired: harness pid $me"

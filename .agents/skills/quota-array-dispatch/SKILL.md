@@ -17,6 +17,7 @@ This skill is the single owner of the completion-aware profile-array selection p
 `harness-adapters` owns harness verification, model/provider discovery, and effort fallback.
 `quota-axi` remains data-only: it publishes `spendPriority` as a comparable scalar and never recommends, selects, ranks, or infers a route.
 Do not add a daemon, opaque composite score, routing wrapper, hard-coded model-specific policy, or producer-side route recommendation.
+A Claude cloud run is not a candidate in a profile array: it spends a dated prepaid credit rather than a quota window, so the [cloud runs contract](../../../docs/configuration.md#cloud-runs-configcloud-credit--configcloud-timeout) decides when it is the preferred route before any array is ranked.
 The [worker helper](../../../bin/fm-quota-choose.sh) and [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-typesafe_api_key) own their deterministic mapping boundaries.
 
 ## Worker-side quota helper
