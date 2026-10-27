@@ -597,6 +597,8 @@ if [ -e "$STATE" ] || [ -L "$STATE" ]; then
     exit 1
   }
 fi
+# shellcheck source=bin/fm-tab-label-lib.sh
+. "$SCRIPT_DIR/fm-tab-label-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
@@ -3610,6 +3612,14 @@ W="fm-$ID"
 # tmux parses `.` in a target as the window/pane separator, so a dotted task id
 # needs a dot-free window name; fm_backend_validate_task_endpoint accepts it.
 [ "$BACKEND" = tmux ] && W=${W//./-}
+# An optional config/tab-labels entry renames a herdr tab at launch and relaunch
+# (docs/configuration.md "Tab labels"); herdr addresses panes by id, so the
+# label is display-only and every other backend keeps fm-<id>.
+TAB_LABEL=""
+if [ "$BACKEND" = herdr ]; then
+  TAB_LABEL=$(fm_tab_label_lookup "$CONFIG/tab-labels" "$ID")
+  [ -z "$TAB_LABEL" ] || W=$TAB_LABEL
+fi
 if [ "$RELAUNCH" -eq 1 ]; then
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
@@ -3625,6 +3635,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
     T=$RELAUNCH_TARGET
     WT_TARGET=$T
     SES=${T%%:*}
+    if [ -n "$TAB_LABEL" ] && [ -n "$HERDR_TAB_ID" ]; then
+      fm_backend_source herdr && fm_backend_herdr_tab_rename "$SES" "$HERDR_TAB_ID" "$TAB_LABEL" \
+        || echo "warning: could not apply tab label '$TAB_LABEL' to the adopted herdr tab for $ID" >&2
+    fi
   else
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
