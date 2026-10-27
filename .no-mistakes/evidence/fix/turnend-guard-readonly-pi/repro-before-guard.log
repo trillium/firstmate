@@ -1,0 +1,17 @@
+SETUP live synthetic owner= 30181 lock= 30181
+second-session acquisition rc=0 stdout='lock_rc=1\n' stderr='error: another live firstmate session holds the lock (pid 30181); operate read-only until resolved\n'
+nonowner autoarm rc=0 stdout='autoarm_rc=0\n' stderr=''
+nonowner stop 1 rc=0 stdout='{"systemMessage":"FIRSTMATE SUPERVISION IS OWNED BY ANOTHER LIVE SESSION: this read-only session cannot and should not arm or repair the watcher (lock owner pid 30181). Allowing this turn to end safely; the owning session must restore supervision."}\n' stderr=''
+nonowner stop 2 rc=0 stdout='{"systemMessage":"FIRSTMATE SUPERVISION IS OWNED BY ANOTHER LIVE SESSION: this read-only session cannot and should not arm or repair the watcher (lock owner pid 30181). Allowing this turn to end safely; the owning session must restore supervision."}\n' stderr=''
+nonowner stop 3 rc=0 stdout='{"systemMessage":"FIRSTMATE SUPERVISION IS OWNED BY ANOTHER LIVE SESSION: this read-only session cannot and should not arm or repair the watcher (lock owner pid 30181). Allowing this turn to end safely; the owning session must restore supervision."}\n' stderr=''
+nonowner stop 4 rc=0 stdout='{"systemMessage":"FIRSTMATE SUPERVISION IS OWNED BY ANOTHER LIVE SESSION: this read-only session cannot and should not arm or repair the watcher (lock owner pid 30181). Allowing this turn to end safely; the owning session must restore supervision."}\n' stderr=''
+nonowner stop 5 rc=0 stdout='{"systemMessage":"FIRSTMATE SUPERVISION IS OWNED BY ANOTHER LIVE SESSION: this read-only session cannot and should not arm or repair the watcher (lock owner pid 30181). Allowing this turn to end safely; the owning session must restore supervision."}\n' stderr=''
+FIXED repeated non-owner Stops: all five ended safely
+nonowner pi stop 1 rc=2 stdout='' stderr='usage: fm-turnend-guard.sh [--claude|--cursor]\n'
+Traceback (most recent call last):
+  File "/Users/trilliumsmith/.no-mistakes/worktrees/0121a550f8e1/01M5XB4MBJ7NS7T2Z7S05X04C0/tests/fm-turnend-foreign-owner-repro.py", line 197, in <module>
+    require(pi_result.returncode == 0, f"foreign-owner Pi Stop {number} must end safely")
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/trilliumsmith/.no-mistakes/worktrees/0121a550f8e1/01M5XB4MBJ7NS7T2Z7S05X04C0/tests/fm-turnend-foreign-owner-repro.py", line 144, in require
+    raise RuntimeError(message)
+RuntimeError: foreign-owner Pi Stop 1 must end safely
