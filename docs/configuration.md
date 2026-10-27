@@ -682,7 +682,7 @@ Nothing is shut down automatically; the wake carries the `xcrun simctl shutdown 
 Each simulator is reported again at most once per `FM_SIM_IDLE_REALERT_HOURS`.
 Only the root home's watcher raises it, so secondmate homes never duplicate the wake.
 
-The threshold is a positive number of hours in `config/sim-idle-hours` in the local root home, default `12`.
+The threshold is a positive whole number of hours in `config/sim-idle-hours` in the local root home, default `12`.
 The value `off` disables the check, and `FM_SIM_IDLE_HOURS` overrides the file for one run.
 An invalid value is reported on stderr and the default applies.
 
@@ -2362,7 +2362,7 @@ FM_HEARTBEAT_MAX=7200   # heartbeat backoff cap
 FM_INACTIVE_RECONCILE_SECS=900  # 60..1800-second watcher cadence and inactivity threshold; locked session start also requests an immediate scan in the deferred worker
 FM_INACTIVE_RECONCILE_BUDGET_SECS=10  # 1..30-second scan deadline; wedged-scan kill backstop follows one second later
 FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, Relay dispatch, or the idle-simulator scan)
-FM_SIM_IDLE_HOURS=      # hours a simulator may stay booted unused before an idle-simulator wake; overrides config/sim-idle-hours (default 12, "off" disables)
+FM_SIM_IDLE_HOURS=      # hours a simulator may stay booted before an idle-simulator wake; overrides config/sim-idle-hours (default 12, "off" disables)
 FM_SIM_IDLE_REALERT_HOURS=24   # quiet period before the same idle simulator is reported again
 FM_TASK_INBOX_GRACE_SECS=90   # seconds an unhandled steering-inbox message may sit before the watcher attempts doorbell delivery on an idle pane; also the minimum spacing between attempts
 FM_TASK_INBOX_RING_MAX=3      # watcher delivery attempts without an acknowledgement before the task surfaces as a stale wake for recovery
