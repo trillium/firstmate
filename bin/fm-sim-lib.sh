@@ -138,6 +138,63 @@ EOF
   return 1
 }
 
+# bin/fm-wake-lib.sh owns fm_local_firstmate_state_dirs. A tree that predates it
+# gets this equivalent walk of the root home's local secondmate registry, so the
+# cross-home protection below never silently shrinks to one home; the wake
+# library's definition replaces it wherever that library is also sourced.
+if ! declare -F fm_local_firstmate_state_dirs >/dev/null 2>&1; then
+  # shellcheck disable=SC2034 # FM_LOCAL_FIRSTMATE_ERROR is read by callers.
+  fm_local_firstmate_state_dirs() {  # <first-state>
+    local first=$1 root home reg line child known existing i=0
+    local -a homes
+    FM_LOCAL_FIRSTMATE_STATES=("$first")
+    FM_LOCAL_FIRSTMATE_ERROR=
+    root=$(fm_firstmate_root_home "$FM_HOME") || {
+      FM_LOCAL_FIRSTMATE_ERROR="cannot resolve the root Firstmate home"
+      return 1
+    }
+    homes=("$root")
+    while [ "$i" -lt "${#homes[@]}" ]; do
+      home=${homes[$i]}
+      i=$((i + 1))
+      known=0
+      for existing in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
+        if [ "$existing" = "$home/state" ] || [ "$existing" -ef "$home/state" ]; then
+          known=1
+        fi
+      done
+      [ "$known" = 1 ] || FM_LOCAL_FIRSTMATE_STATES+=("$home/state")
+      reg="$home/data/secondmates.md"
+      [ -e "$reg" ] || [ -L "$reg" ] || continue
+      [ -f "$reg" ] && [ ! -L "$reg" ] || {
+        FM_LOCAL_FIRSTMATE_ERROR="local Firstmate registry is unsafe at $reg"
+        return 1
+      }
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          "- "*)
+            secondmate_registry_parse_line "$line" || {
+              FM_LOCAL_FIRSTMATE_ERROR="malformed local Firstmate registry entry in $reg"
+              return 1
+            }
+            [ "$SECONDMATE_REGISTRY_REMOTE" -eq 0 ] || continue
+            child=$([ -d "$SECONDMATE_REGISTRY_HOME" ] &&
+              CDPATH='' cd -- "$SECONDMATE_REGISTRY_HOME" 2>/dev/null && pwd -P) || {
+              FM_LOCAL_FIRSTMATE_ERROR="registered local Firstmate home is unavailable: $SECONDMATE_REGISTRY_HOME"
+              return 1
+            }
+            known=0
+            for existing in "${homes[@]}"; do
+              [ "$existing" != "$child" ] || known=1
+            done
+            [ "$known" = 1 ] || homes+=("$child")
+            ;;
+        esac
+      done < "$reg"
+    done
+  }
+fi
+
 # Sets FM_SIM_PEER_STATES to the state directories whose live tasks count as
 # other users: every local Firstmate home when the registry can be walked,
 # otherwise only <state>. Returns 1 when the walk fails, so a caller keeps the
