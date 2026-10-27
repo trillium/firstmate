@@ -37,6 +37,13 @@ SH
 chmod +x "$FAKEBIN/claude"
 export FM_STUB_ARGS="$TMP_ROOT/args"
 
+# A gate remote listed first must never be chosen; origin is the fallback.
+GREPO="$TMP_ROOT/gaterepo"
+git init -q "$GREPO"; git -C "$GREPO" commit -q --allow-empty -m init
+git init -q --bare "$TMP_ROOT/gate.git"
+git -C "$GREPO" remote add no-mistakes "$TMP_ROOT/gate.git"
+git -C "$GREPO" remote add origin "$REMOTE"
+
 cloud() { PATH="$FAKEBIN:$PATH" FM_HOME="$TMP_ROOT/home" FM_STATE_OVERRIDE="$STATE_DIR" bash "$ROOT/bin/fm-cloud.sh" "$@"; }
 
 out=$(cloud launch --repo "$REPO" --environment ccpool_env1 "do the thing tskey-SUPERSECRET" 2>&1) || fail "launch failed: $out"
@@ -69,9 +76,21 @@ cloud launch --repo "$REPO" --file "$TMP_ROOT/p.txt" >/dev/null || fail "launch 
 assert_contains "$(cat "$FM_STUB_ARGS")" "--cloud file prompt" "--file supplies the prompt"
 pass "launch --file"
 
+out=$(cloud launch --repo "$GREPO" "gate remote case" 2>&1) || fail "launch (gate remote) failed: $out"
+assert_contains "$out" "claude/* branch on origin" "no upstream: origin is polled, not the gate remote"
+git -C "$GREPO" remote add fork "$REMOTE"
+git -C "$GREPO" config branch."$(git -C "$GREPO" rev-parse --abbrev-ref HEAD)".remote fork
+out=$(cloud launch --repo "$GREPO" "upstream case" 2>&1) || fail "launch (upstream) failed: $out"
+assert_contains "$out" "claude/* branch on fork" "the branch's upstream remote is polled"
+git -C "$GREPO" config branch."$(git -C "$GREPO" rev-parse --abbrev-ref HEAD)".remote no-mistakes
+out=$(cloud launch --repo "$GREPO" "gate upstream case" 2>&1) || fail "launch (gate upstream) failed: $out"
+assert_contains "$out" "claude/* branch on origin" "a gate-remote upstream is skipped"
+pass "result remote selection"
+
+failed_before=$(find "$STATE_DIR/cloud-runs" -name '*.run' | wc -l | tr -d ' ')
 FM_STUB_FAIL=1 cloud launch --repo "$REPO" "x" >/dev/null 2>&1; rc=$?
 assert_equals 1 "$rc" "a failing claude fails the launch"
-assert_equals 2 "$(find "$STATE_DIR/cloud-runs" -name '*.run' | wc -l | tr -d ' ')" "a failed launch records nothing"
+assert_equals "$failed_before" "$(find "$STATE_DIR/cloud-runs" -name '*.run' | wc -l | tr -d ' ')" "a failed launch records nothing"
 cloud launch >/dev/null 2>&1; rc=$?
 assert_equals 2 "$rc" "launch without a prompt is a usage error"
 cloud bogus >/dev/null 2>&1; rc=$?

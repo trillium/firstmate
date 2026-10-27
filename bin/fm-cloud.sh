@@ -22,7 +22,8 @@
 # warning from claude is repeated. The prompt text itself is never stored or printed. --branch is recorded as the
 # base branch and nothing else: this tool does not switch branches.
 #
-# status polls the recorded remote with `git ls-remote --heads` and prints each
+# status polls the recorded remote (the branch's upstream remote, else origin,
+# never the no-mistakes gate remote) with `git ls-remote --heads` and prints each
 # claude/* branch that is new or moved since launch; it reads only branch names
 # and commit ids. list prints one line per recorded run without touching the
 # network.
@@ -94,7 +95,15 @@ cmd_launch() {
   git -C "$repo" rev-parse --show-toplevel >/dev/null 2>&1 || die "not a git repository: $repo"
   repo=$(git -C "$repo" rev-parse --show-toplevel)
   local remote_name remote_url base before
-  remote_name=$(git -C "$repo" remote | head -n 1)
+  # Cloud sessions push to the forge, so poll the branch's upstream remote, else
+  # origin, else any remote - never the no-mistakes gate remote.
+  local cur_branch
+  cur_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  remote_name=$(git -C "$repo" config "branch.$cur_branch.remote" 2>/dev/null || true)
+  if [ -z "$remote_name" ] || [ "$remote_name" = no-mistakes ] || [ "$remote_name" = . ]; then
+    if git -C "$repo" remote | grep -qx origin; then remote_name=origin
+    else remote_name=$(git -C "$repo" remote | grep -vx no-mistakes | head -n 1 || true); fi
+  fi
   [ -n "$remote_name" ] || die "repository has no remote to poll for the result branch: $repo"
   remote_url=$(git -C "$repo" remote get-url "$remote_name")
   # A remote URL may embed credentials; keep only its host and path.
