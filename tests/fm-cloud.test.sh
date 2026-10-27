@@ -5,6 +5,7 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+export GIT_AUTHOR_NAME=fm-test GIT_AUTHOR_EMAIL=fm-test@example.invalid GIT_COMMITTER_NAME=fm-test GIT_COMMITTER_EMAIL=fm-test@example.invalid
 
 TMP_ROOT=$(fm_test_tmproot fm-cloud)
 FAKEBIN=$(fm_fakebin "$TMP_ROOT")
