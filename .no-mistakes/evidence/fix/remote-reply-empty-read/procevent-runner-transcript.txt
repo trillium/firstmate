@@ -1,0 +1,17 @@
+### AFTER (8dcbaf5f)
+source-id=remote-reply-ios
+registered: remote-reply-ios (remote-reply)
+armed: remote-reply-ios offset=0
+SOURCE                       ADAPTER      OWNER      PENDING
+remote-reply-ios             remote-reply live       0
+remote reads attempted in 8s:        7
+published results: 0
+### BEFORE (30e185d1 adapter)
+source-id=remote-reply-ios
+registered: remote-reply-ios (remote-reply)
+armed: remote-reply-ios offset=0
+SOURCE                       ADAPTER      OWNER      PENDING
+remote-reply-ios             remote-reply none       1
+remote reads attempted in 8s:        1
+published results: 1
+/private/tmp/fm-drv-run.7O8XBY/parent/state/procevent-inbox/remote-reply-ios.1.result bytes=       0

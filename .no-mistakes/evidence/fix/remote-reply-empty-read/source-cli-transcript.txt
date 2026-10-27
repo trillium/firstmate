@@ -1,0 +1,27 @@
+### AFTER (8dcbaf5f)
+== S1: remote read exits 0 with empty output (MODE=empty0)
+rc=75 stdout_bytes=0 stdout=[] watermark=[]
+== S2: genuine quiet window via real fm-remote-delta-read.sh
+rc=75 stdout_bytes=0 watermark=[1793059107]
+== S3: real reply line present in remote log
+rc=0
+schema=fm-remote-delta.v1
+status=delta
+path=state/parent-replies.status
+from_offset=0
+to_offset=46
+from_prefix_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+to_prefix_sha256=d36f1ca5731633e2bea3a26f9c543e4cdbabff6962809413b1f134a58fe3e835
+payload_sha256=d36f1ca5731633e2bea3a26f9c543e4cdbabff6962809413b1f134a58fe3e835
+payload_bytes=46
+reason=
+
+report=data/reply/report.md hello from remote
+### BEFORE (30e185d1 adapter)
+== S1: remote read exits 0 with empty output (MODE=empty0)
+rc=0 stdout_bytes=0 stdout=[] watermark=[]
+== S2: genuine quiet window via real fm-remote-delta-read.sh
+rc=64 stdout_bytes=51 watermark=[]
+== S3: real reply line present in remote log
+rc=64
+error: remote root is not a safe existing directory
