@@ -61,6 +61,11 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-nm-run-lib.sh" "$fake/bin/fm-nm-run-lib.sh"
   # fm-lock-lib.sh: teardown sources it for the shared lock-staleness proof.
   ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
+  # fm-stat-lib.sh: the shared stat-dialect owner. Not sourced by teardown itself,
+  # but fm-lock-lib.sh, fm-pr-lib.sh, fm-wake-lib.sh, and fm-x-lib.sh all source it,
+  # and each resolves it relative to its own BASH_SOURCE - which is the symlink here,
+  # so it must exist in THIS bin/, not just the real one.
+  ln -s "$ROOT/bin/fm-stat-lib.sh" "$fake/bin/fm-stat-lib.sh"
   # fm-gate-refuse-lib.sh: teardown sources it before any fleet mutation.
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
@@ -143,6 +148,9 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
   ln -s "$ROOT/bin/fm-nm-run-lib.sh" "$fake/bin/fm-nm-run-lib.sh"
   ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
+  # fm-stat-lib.sh: shared stat-dialect owner, required by the lock/pr/wake/x libs
+  # below for the same BASH_SOURCE reason as in make_fake_root.
+  ln -s "$ROOT/bin/fm-stat-lib.sh" "$fake/bin/fm-stat-lib.sh"
   # fm-gate-refuse-lib.sh: teardown sources it before any fleet mutation.
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
   # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
