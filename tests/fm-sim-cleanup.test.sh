@@ -372,6 +372,33 @@ test_teardown_keeps_a_simulator_a_live_peer_may_have_booted() {
   pass "teardown keeps a simulator a live peer, with or without a baseline, may have booted"
 }
 
+# A local secondmate home registered under the case's root home.
+add_mate_home() {  # <case-dir>
+  local mate="$1/mate"
+  mkdir -p "$mate/state" "$mate/config" "$mate/data"
+  printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$1/home" > "$mate/.fm-secondmate-parent"
+  printf -- '- mate - a local mate (home: %s; scope: project work; projects: project; added 2026-09-01)\n' "$mate" \
+    > "$1/home/data/secondmates.md"
+}
+
+test_teardown_counts_a_same_named_task_in_another_home() {
+  local case_dir out rc=0 baseline
+  for baseline in none "$SIM_B"; do
+    case_dir=$(make_case "teardown-same-id-$baseline")
+    add_mate_home "$case_dir"
+    write_live "$case_dir" fix-ci "sim_baseline=none"
+    fm_write_meta "$case_dir/mate/state/fix-ci.meta" "window=firstmate:fm-fix-ci" "kind=ship" "sim_baseline=$baseline"
+    boot "$case_dir" "$SIM_B"
+    rc=0
+    out=$(run_teardown "$case_dir" fix-ci) || rc=$?
+    expect_code 0 "$rc" "teardown failed: $out"
+    assert_equals "" "$(shut_down "$case_dir")" "teardown shut down a simulator a same-named task in a secondmate home may own (baseline $baseline): $out"
+    assert_contains "$out" "fix-ci in " "teardown did not name the same-named task with its home (baseline $baseline)"
+    assert_present "$case_dir/mate/state/fix-ci.meta" "teardown removed the same-named task in the secondmate home"
+  done
+  pass "a same-named task in another local home still counts as a possible owner"
+}
+
 test_teardown_without_a_baseline_or_xcode_is_a_no_op() {
   local case_dir out rc=0
   case_dir=$(make_case teardown-noop)
@@ -545,6 +572,7 @@ test_teardown_ignores_servers_builds_and_listing
 test_teardown_ignores_the_simulators_own_processes
 test_teardown_keeps_a_simulator_another_live_task_found_booted
 test_teardown_keeps_a_simulator_a_live_peer_may_have_booted
+test_teardown_counts_a_same_named_task_in_another_home
 test_teardown_without_a_baseline_or_xcode_is_a_no_op
 test_teardown_reports_a_shutdown_that_failed
 test_idle_scan_names_an_old_unused_simulator_and_its_possible_owners

@@ -152,18 +152,21 @@ fm_sim_peer_states() {  # <state>
 
 # Whether another live task (any local home, never a secondmate) recorded the
 # simulator in its baseline: it was already booted when that task started, so the
-# task may rely on it. Sets FM_SIM_CLAIM_TASK to that task's id.
-# Both <state-dir>/<self>.meta and a missing state dir are skipped.
-fm_sim_claimed_by_peer() {  # <udid> <self-id> <state>...
-  local udid=$1 self=$2 state meta id baseline
+# task may rely on it. Sets FM_SIM_CLAIM_TASK to that task's id, qualified with
+# its home outside the first <state>. Only <first-state>/<self>.meta is skipped
+# as self, so a same-named task in another home still counts; a missing state
+# dir is skipped.
+fm_sim_claimed_by_peer() {  # <udid> <self-id> <first-state> <state>...
+  local udid=$1 self=$2 first=$3 state meta id baseline
   shift 2
   FM_SIM_CLAIM_TASK=
   for state in "$@"; do
     for meta in "$state"/*.meta; do
       [ -f "$meta" ] || continue
-      id=$(basename "$meta" .meta)
-      [ "$id" != "$self" ] || continue
+      [ "$meta" != "$first/$self.meta" ] || continue
       [ "$(fm_sim_meta_get "$meta" kind)" != secondmate ] || continue
+      id=$(basename "$meta" .meta)
+      [ "$state" = "$first" ] || id="$id in $(dirname "$state")"
       baseline=$(fm_sim_meta_get "$meta" sim_baseline)
       case ",$baseline," in
         *",$udid,"*) FM_SIM_CLAIM_TASK=$id; return 0 ;;
@@ -173,21 +176,23 @@ fm_sim_claimed_by_peer() {  # <udid> <self-id> <state>...
   return 1
 }
 
-# Live tasks (any local home, never a secondmate) other than <self-id> that may
-# have booted the simulator: each one whose baseline does not list it, which
-# includes one that recorded no baseline. Sets FM_SIM_OWNERS to their ids,
-# comma-separated, and returns 1 when there are none.
-fm_sim_possible_owners() {  # <udid> <self-id> <state>...
-  local udid=$1 self=$2 state meta id
+# Live tasks (any local home, never a secondmate) other than
+# <first-state>/<self-id>.meta that may have booted the simulator: each one whose
+# baseline does not list it, which includes one that recorded no baseline. Sets
+# FM_SIM_OWNERS to their ids, comma-separated, each outside the first <state>
+# qualified with its home, and returns 1 when there are none.
+fm_sim_possible_owners() {  # <udid> <self-id> <first-state> <state>...
+  local udid=$1 self=$2 first=$3 state meta id
   shift 2
   FM_SIM_OWNERS=
   for state in "$@"; do
     for meta in "$state"/*.meta; do
       [ -f "$meta" ] || continue
-      id=$(basename "$meta" .meta)
-      [ "$id" != "$self" ] || continue
+      [ "$meta" != "$first/$self.meta" ] || continue
       [ "$(fm_sim_meta_get "$meta" kind)" != secondmate ] || continue
       case ",$(fm_sim_meta_get "$meta" sim_baseline)," in *",$udid,"*) continue ;; esac
+      id=$(basename "$meta" .meta)
+      [ "$state" = "$first" ] || id="$id in $(dirname "$state")"
       FM_SIM_OWNERS="${FM_SIM_OWNERS:+$FM_SIM_OWNERS, }$id"
     done
   done
