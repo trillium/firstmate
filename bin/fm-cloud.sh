@@ -17,7 +17,9 @@
 # session id and url parsed from the CLI's output, the repo and its remote, the
 # base branch, the expected result namespace (claude/*), the claude/* branch
 # heads that already existed at launch, and the prompt's length and sha256.
-# The prompt text itself is never stored or printed. --branch is recorded as the
+# claude needs a terminal for --cloud, so it runs under script(1); its output is
+# parsed from a private log that is deleted afterwards, and a branch-ahead
+# warning from claude is repeated. The prompt text itself is never stored or printed. --branch is recorded as the
 # base branch and nothing else: this tool does not switch branches.
 #
 # status polls the recorded remote with `git ls-remote --heads` and prints each
@@ -103,13 +105,31 @@ cmd_launch() {
 
   local args=(--cloud "$prompt")
   [ -z "$env_id" ] || args+=(--environment "$env_id")
-  local out rc=0
-  out=$( (cd "$repo" && claude "${args[@]}") 2>&1 </dev/null) || rc=$?
+  # claude refuses --cloud without a terminal, so run it under a pseudo-terminal
+  # with its output in a private log that is removed afterwards.
+  local log out rc=0
+  log=$(mktemp "${TMPDIR:-/tmp}/fm-cloud.XXXXXX") || die "cannot create a temporary log"
+  chmod 600 "$log"
+  if [ "$(uname -s)" = Darwin ]; then
+    (cd "$repo" && script -q "$log" claude "${args[@]}" </dev/null >/dev/null 2>&1) || rc=$?
+  else
+    local cmdline
+    cmdline=$(printf '%q ' claude "${args[@]}")
+    (cd "$repo" && script -qec "$cmdline" "$log" </dev/null >/dev/null 2>&1) || rc=$?
+  fi
+  out=$(LC_ALL=C sed -e $'s/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' -e 's/\r//g' "$log" 2>/dev/null || true)
+  rm -f "$log"
   [ "$rc" -eq 0 ] || { printf '%s\n' "$out" | tail -n 5 >&2; die "claude --cloud failed (exit $rc)"; }
+  if printf '%s\n' "$out" | grep -q 'requires an interactive terminal'; then
+    die "claude refused --cloud: no terminal available"
+  fi
+  local warn
+  warn=$(printf '%s\n' "$out" | grep -E 'commits? ahead of' | head -n 1 || true)
 
   local url session
   url=$(printf '%s\n' "$out" | grep -Eo 'https://claude\.ai/code/[A-Za-z0-9_./-]+' | head -n 1 || true)
   session=$(printf '%s\n' "$url" | sed -n 's#.*/\(session_[A-Za-z0-9_]*\).*#\1#p' | head -n 1)
+  [ -n "$session" ] || session=$(printf '%s\n' "$out" | grep -Eo 'claude --teleport session_[A-Za-z0-9]+' | grep -Eo 'session_[A-Za-z0-9]+' | head -n 1 || true)
   [ -n "$session" ] || session=$(printf '%s\n' "$out" | grep -Eo 'session_[A-Za-z0-9]+' | head -n 1 || true)
 
   local id now
@@ -135,6 +155,7 @@ cmd_launch() {
   printf 'session: %s\n' "${session:-unknown}"
   printf 'url: %s\n' "${url:-unknown}"
   printf 'result: claude/* branch on %s (poll: fm-cloud.sh status %s)\n' "$remote_name" "$id"
+  [ -z "$warn" ] || printf 'warning: %s\n' "$warn"
   [ -n "$session" ] || printf 'note: no session id found in the claude output; the run is recorded without one\n'
   return 0
 }

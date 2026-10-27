@@ -27,9 +27,12 @@ case "${1:-}" in
   --help) printf '  --cloud [d]\n  --environment <id>\n  --teleport [s]\n'; exit 0 ;;
 esac
 printf '%s\n' "$*" > "$FM_STUB_ARGS"
+[ -t 1 ] || { echo "--cloud requires an interactive terminal (piped stdout would silently ignore --cloud)" >&2; exit 1; }
 [ -z "${FM_STUB_FAIL:-}" ] || { echo "boom" >&2; exit 3; }
-echo "Created cloud session"
-echo "https://claude.ai/code/session_abc123XYZ"
+printf '\033[1mCreated cloud session\033[0m\n'
+echo "Branch main is 2 commits ahead of origin/main, so the cloud session starts without them"
+echo "View: https://claude.ai/code/session_abc123XYZ"
+echo "Resume with: claude --teleport session_abc123XYZ"
 SH
 chmod +x "$FAKEBIN/claude"
 export FM_STUB_ARGS="$TMP_ROOT/args"
@@ -38,6 +41,7 @@ cloud() { PATH="$FAKEBIN:$PATH" FM_HOME="$TMP_ROOT/home" FM_STATE_OVERRIDE="$STA
 
 out=$(cloud launch --repo "$REPO" --environment ccpool_env1 "do the thing tskey-SUPERSECRET" 2>&1) || fail "launch failed: $out"
 assert_contains "$out" "session: session_abc123XYZ" "launch prints the parsed session id"
+assert_contains "$out" "warning: Branch main is 2 commits ahead" "claude's branch-ahead warning is surfaced"
 assert_contains "$out" "url: https://claude.ai/code/session_abc123XYZ" "launch prints the url"
 assert_contains "$(cat "$FM_STUB_ARGS")" "--cloud do the thing" "claude gets --cloud and the prompt"
 assert_contains "$(cat "$FM_STUB_ARGS")" "--environment ccpool_env1" "claude gets --environment"
