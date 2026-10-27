@@ -372,11 +372,25 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target>
 # pointing at a retired generation. Prints zero or more absolute paths, one per
 # line: worktree-resident hook files and firstmate-owned state tokens only,
 # never a harness's own managed config.
+# True when firstmate itself wrote <worktree>/.claude/settings.local.json for
+# this task. Spawn never overwrites a settings file the project already has
+# (tracked or not): it routes the hooks through <state>/<id>.claude-settings.json
+# and --settings instead, so that record's presence, or the file being tracked,
+# means the worktree file is the project's and must survive cleanup untouched.
+fm_control_claude_local_settings_owned() {  # <worktree> <state-dir> <id>
+  local wt=${1-} state=${2-} id=${3-}
+  [ ! -e "$state/$id.claude-settings.json" ] || return 1
+  ! git -C "$wt" ls-files --error-unmatch .claude/settings.local.json >/dev/null 2>&1
+}
+
 fm_control_harness_wiring_paths() {  # <harness> <worktree> <state-dir> <id>
   local harness=${1-} wt=${2-} state=${3-} id=${4-}
   [ -n "$wt" ] && [ -n "$state" ] && [ -n "$id" ] || return 1
   case "$harness" in
-    claude) printf '%s\n' "$wt/.claude/settings.local.json" ;;
+    claude)
+      fm_control_claude_local_settings_owned "$wt" "$state" "$id" \
+        && printf '%s\n' "$wt/.claude/settings.local.json"
+      : ;;
     opencode) printf '%s\n' "$wt/.opencode/plugins/fm-busy-state.js" ;;
     pi|pi-signed) printf '%s\n' "$state/$id.pi-ext.ts" ;;
     omp) printf '%s\n' "$state/$id.omp-ext.ts" ;;

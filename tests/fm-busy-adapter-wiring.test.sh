@@ -289,6 +289,64 @@ test_claude_keep_ai_trailers_leaves_attribution_alone() {
   pass "claude worker settings omit the attribution-off keys when config/keep-ai-trailers is present"
 }
 
+test_claude_preexisting_settings_file_survives_spawn() {
+  local id out state wt tracked_json before launchlog
+  tracked_json='{"permissions":{"allow":["Bash(ls:*)"]}}'
+  for mode in tracked untracked; do
+    id=busy-cl-$mode
+    # The file is part of the project's base commit when tracked, so the pooled
+    # worktree's base refresh keeps it.
+    local cdir=$TMP_ROOT/claude-pre-$mode
+    CASE_DIR=$cdir HOME_DIR=$cdir/home PROJ_DIR=$cdir/project WT_DIR=$cdir/wt
+    FAKEBIN_DIR=$(make_spawn_fakebin "$cdir/fake" pi opencode claude codex gemini)
+    fm_test_spawn_home "$HOME_DIR" claude
+    fm_git_init_commit "$PROJ_DIR"
+    if [ "$mode" = tracked ]; then
+      mkdir -p "$PROJ_DIR/.claude"
+      printf '%s\n' "$tracked_json" >"$PROJ_DIR/.claude/settings.local.json"
+      git -C "$PROJ_DIR" add -f .claude/settings.local.json
+      git -C "$PROJ_DIR" -c user.name=t -c user.email=t@t commit -q -m "track settings"
+    fi
+    fm_git_add_origin "$PROJ_DIR" "$PROJ_DIR.origin.git"
+    git -C "$PROJ_DIR" worktree add --quiet -b "wt-pre-$mode" "$WT_DIR"
+    fm_test_spawn_brief "$HOME_DIR" "$id"
+    wt=$WT_DIR
+    state="$HOME_DIR/state"
+    if [ "$mode" = untracked ]; then
+      mkdir -p "$wt/.claude"
+      printf '%s\n' "$tracked_json" >"$wt/.claude/settings.local.json"
+      echo '.claude/settings.local.json' >>"$(git -C "$wt" rev-parse --git-path info/exclude)"
+    fi
+    before=$(cat "$wt/.claude/settings.local.json")
+    launchlog="$CASE_DIR/launch.log"
+    : >"$launchlog"
+    out=$(FM_FAKE_LAUNCH_LOG="$launchlog" run_spawn "$HOME_DIR" "$wt" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+    expect_code 0 $? "claude spawn over a $mode settings file should succeed: $out"
+    [ "$(cat "$wt/.claude/settings.local.json")" = "$before" ] \
+      || fail "$mode settings.local.json was modified by spawn"
+    if [ "$mode" = tracked ]; then
+      [ -z "$(git -C "$wt" status --porcelain)" ] || fail "tracked settings left the worktree dirty"
+    fi
+    assert_present "$state/$id.claude-settings.json" "hooks must ride a firstmate-owned settings file"
+    for ev in UserPromptSubmit Stop StopFailure SessionEnd; do
+      jq -e ".hooks[\"$ev\"]" "$state/$id.claude-settings.json" >/dev/null \
+        || fail "$mode: state settings file lacks $ev"
+    done
+    jq -e '.feedbackDrafts == "off"' "$state/$id.claude-settings.json" >/dev/null \
+      || fail "$mode: state settings file lost the inline launch settings"
+    if [ -s "$launchlog" ]; then
+      assert_contains "$(cat "$launchlog")" "--settings '$state/$id.claude-settings.json'" \
+        "launch must pass the state settings file"
+    fi
+    out=$(classify claude "$id" "$state")
+    [ "$out" = "busy fm-spawn" ] || fail "$mode: busy contract must still be armed, got '$out'"
+    out=$("$ROOT/bin/fm-teardown.sh" "$id" 2>&1 || true)
+    [ "$(cat "$wt/.claude/settings.local.json" 2>/dev/null)" = "$before" ] \
+      || fail "$mode: cleanup removed or changed the project's settings file: $out"
+  done
+  pass "a pre-existing claude settings.local.json survives spawn and cleanup byte-identical; hooks ride --settings"
+}
+
 test_claude_hooks_stale_incarnation_harmless() {
   local rec id=busy-cl-2 out state settings
   rec=$(make_spawn_case claude-stale claude "$id")
@@ -447,6 +505,7 @@ test_opencode_plugin_semantic_lifecycle
 test_claude_hooks_semantic_lifecycle
 test_claude_keep_ai_trailers_leaves_attribution_alone
 test_claude_hooks_stale_incarnation_harmless
+test_claude_preexisting_settings_file_survives_spawn
 test_gemini_hooks_semantic_lifecycle
 test_gemini_hooks_stale_incarnation_harmless
 test_raw_gemini_launch_has_no_semantic_wiring

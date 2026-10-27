@@ -408,7 +408,8 @@
 # park owns that home's supervision (docs/supervision-protocols/cursor.md).
 # claude is the one harness whose pre-launch setup can REFUSE the spawn: before
 # any per-task state exists, and before its worktree .claude/settings.local.json
-# hooks are written, every claude launch pre-registers the directory the pane
+# hooks are written (or, when the project already has that file, routed through
+# a state-dir --settings file instead of overwriting it), every claude launch pre-registers the directory the pane
 # starts in - the task worktree, or the secondmate home for a --secondmate spawn -
 # in the launching user's own Claude trust store through bin/fm-claude-trust.sh,
 # because Claude's interactive workspace-trust dialog gates a folder it has never
@@ -4592,6 +4593,7 @@ if [ "$KIND" != secondmate ]; then
     # hook command tolerates a refused event (|| true) so a stale-gen writer
     # can never break Claude's own lifecycle.
     mkdir -p "$WT/.claude"
+    CLAUDE_SETTINGS_FILE=
     busy_cmd_prefix="$(shell_quote "$FM_ROOT/bin/fm-busy-event.sh") apply $(shell_quote "$STATE_REAL") $(shell_quote "$ID")"
     busy_suffix="--gen $(shell_quote "$BUSY_GEN") --source claude-hook"
     j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
@@ -4606,10 +4608,16 @@ if [ "$KIND" != secondmate ]; then
     if [ "$KEEP_AI_TRAILERS" = 0 ]; then
       claude_attribution='"attribution":{"commit":"","pr":"","sessionUrl":false},"includeCoAuthoredBy":false,'
     fi
-    cat >"$WT/.claude/settings.local.json" <<EOF
-{${claude_attribution}"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
-EOF
-    exclude_path '.claude/settings.local.json'
+    CLAUDE_HOOKS_JSON='"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"'$j_submit'"}]}],"Stop":[{"hooks":[{"type":"command","command":"'$j_stop'"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"'$j_stopfail'"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"'$j_sessionend'"}]}]}'
+    if [ -e "$WT/.claude/settings.local.json" ] || [ -L "$WT/.claude/settings.local.json" ]; then
+      # The project already has its own settings.local.json (often tracked);
+      # never overwrite it. The hooks ride a firstmate-owned state file passed
+      # through --settings in the launch (CLAUDE_SETTINGS_FILE, applied below).
+      CLAUDE_SETTINGS_FILE="$STATE_REAL/$ID.claude-settings.json"
+    else
+      printf '{%s%s}\n' "$claude_attribution" "$CLAUDE_HOOKS_JSON" >"$WT/.claude/settings.local.json"
+      exclude_path '.claude/settings.local.json'
+    fi
     ;;
   devin)
     if [ "$RAW_LAUNCH" -eq 0 ]; then
@@ -5174,11 +5182,16 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 LAUNCH=${LAUNCH//__PIRESUME__/$RESUME_ARGS}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
-if [ "$KEEP_AI_TRAILERS" = 1 ]; then
-  LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/}
-else
-  LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/,'"attribution":{"commit":"","pr":"","sessionUrl":false}'}
+CLAUDE_ATTRIBUTION_JSON=
+[ "$KEEP_AI_TRAILERS" = 1 ] || CLAUDE_ATTRIBUTION_JSON=',"attribution":{"commit":"","pr":"","sessionUrl":false}'
+if [ -n "${CLAUDE_SETTINGS_FILE-}" ]; then
+  # claude takes one --settings value, so the file carries the hooks plus the
+  # inline launch settings it replaces.
+  printf '{"feedbackDrafts":"off"%s,%s}\n' "$CLAUDE_ATTRIBUTION_JSON" "$CLAUDE_HOOKS_JSON" >"$CLAUDE_SETTINGS_FILE"
+  CLAUDE_INLINE_SETTINGS="--settings '{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION__}'"
+  LAUNCH=${LAUNCH//"$CLAUDE_INLINE_SETTINGS"/"--settings $(shell_quote "$CLAUDE_SETTINGS_FILE")"}
 fi
+LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/$CLAUDE_ATTRIBUTION_JSON}
 if [ "$HARNESS" = rovo ]; then
   ROVOCONFIGOVERRIDE=$(rovo_config_override_flag "$EFFORT" "$DATA" "$STATE" "$ID") || {
     echo "error: could not resolve this task's home paths for rovo's allowedExternalPaths grant" >&2
