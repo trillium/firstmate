@@ -248,12 +248,13 @@ test_teardown_shuts_down_only_what_the_task_booted() {
   case_dir=$(make_case teardown-owned)
   boot "$case_dir" "$SIM_A" "$SIM_B"
   write_live "$case_dir" task-1 "sim_baseline=$SIM_A"
+  fm_write_meta "$case_dir/home/state/mate-1.meta" "window=firstmate:fm-mate-1" "kind=secondmate"
   out=$(run_teardown "$case_dir" task-1) || rc=$?
   expect_code 0 "$rc" "teardown failed: $out"
-  assert_equals "$SIM_B" "$(shut_down "$case_dir")" "teardown did not shut down exactly the simulator booted after the task started"
+  assert_equals "$SIM_B" "$(shut_down "$case_dir")" "teardown did not shut down exactly the simulator booted after the task started, or counted a secondmate as its owner"
   assert_contains "$out" "shut down simulator $SIM_B" "teardown did not report the simulator it shut down"
   assert_absent "$case_dir/home/state/task-1.meta" "teardown left the task record"
-  pass "teardown shuts down the simulator the task booted and leaves the pre-existing one"
+  pass "teardown shuts down the simulator the task booted, leaves the pre-existing one, and ignores secondmates"
 }
 
 test_teardown_keeps_a_simulator_a_running_tool_targets() {
@@ -278,7 +279,46 @@ test_teardown_keeps_every_candidate_while_unpinned_tooling_runs() {
   out=$(run_teardown "$case_dir" task-1) || rc=$?
   expect_code 0 "$rc" "teardown failed: $out"
   assert_equals "" "$(shut_down "$case_dir")" "teardown shut down a simulator while a name-targeted xcodebuild ran"
-  pass "teardown keeps every candidate while a tool that names no simulator is running"
+  assert_contains "$out" "names no simulator and may be testing on it" "teardown did not report why it kept the simulators"
+  pass "teardown keeps every candidate while a test run that names no simulator is running"
+}
+
+test_teardown_unpinned_test_drivers_each_protect() {
+  local case_dir out cmd n=0
+  for cmd in \
+    "xcodebuild test-without-building -xctestrun App.xctestrun" \
+    "xcodebuild build-for-testing -scheme App" \
+    "/Applications/Xcode.app/Contents/Developer/usr/bin/xctest App.xctest" \
+    "xcrun simctl spawn booted log stream" \
+    "xcrun simctl launch booted com.example.app" \
+    "/Applications/Xcode.app/Contents/Developer/usr/bin/simctl install booted App.app" \
+    "xcrun simctl io booted screenshot shot.png"; do
+    n=$((n + 1))
+    case_dir=$(make_case "teardown-driver-$n")
+    boot "$case_dir" "$SIM_B"
+    proc "$case_dir" 01:00 "$cmd"
+    write_live "$case_dir" task-1 "sim_baseline=none"
+    out=$(run_teardown "$case_dir" task-1) || true
+    assert_equals "" "$(shut_down "$case_dir")" "teardown shut down a simulator while '$cmd' ran"
+  done
+  pass "every test-driving command that names no simulator keeps the candidates booted"
+}
+
+test_teardown_ignores_servers_builds_and_listing() {
+  local case_dir out rc=0
+  case_dir=$(make_case teardown-non-drivers)
+  boot "$case_dir" "$SIM_B"
+  proc "$case_dir" 3-00:00:00 "/opt/homebrew/bin/appium --port 4723"
+  proc "$case_dir" 3-00:00:00 "/usr/local/bin/maestro studio"
+  proc "$case_dir" 02:00 "/usr/bin/swift-build --package-path Other"
+  proc "$case_dir" 02:00 "xcodebuild build -scheme App"
+  proc "$case_dir" 00:01 "xcrun simctl list devices booted"
+  proc "$case_dir" 00:01 "/Applications/Xcode.app/Contents/Developer/usr/bin/simctl list devices booted"
+  write_live "$case_dir" task-1 "sim_baseline=none"
+  out=$(run_teardown "$case_dir" task-1) || rc=$?
+  expect_code 0 "$rc" "teardown failed: $out"
+  assert_equals "$SIM_B" "$(shut_down "$case_dir")" "a server, a plain build, or a simctl listing kept an unused simulator booted: $out"
+  pass "servers, plain builds, and simctl listings never protect a simulator they do not name"
 }
 
 test_teardown_ignores_the_simulators_own_processes() {
@@ -297,15 +337,39 @@ test_teardown_ignores_the_simulators_own_processes() {
 test_teardown_keeps_a_simulator_another_live_task_found_booted() {
   local case_dir out rc=0
   case_dir=$(make_case teardown-peer)
-  boot "$case_dir" "$SIM_B" "$SIM_C"
+  boot "$case_dir" "$SIM_B"
   write_live "$case_dir" task-1 "sim_baseline=none"
   write_live "$case_dir" task-2 "sim_baseline=$SIM_B"
-  fm_write_meta "$case_dir/home/state/mate-1.meta" "window=firstmate:fm-mate-1" "kind=secondmate" "sim_baseline=$SIM_C"
   out=$(run_teardown "$case_dir" task-1) || rc=$?
   expect_code 0 "$rc" "teardown failed: $out"
-  assert_equals "$SIM_C" "$(shut_down "$case_dir")" "teardown ignored another live task's recorded boot, or honored a secondmate's"
+  assert_equals "" "$(shut_down "$case_dir")" "teardown ignored another live task's recorded boot"
   assert_contains "$out" "task task-2 found it already booted" "teardown did not name the task that relies on the simulator"
-  pass "teardown keeps a simulator another live task found booted, and ignores secondmates"
+  pass "teardown keeps a simulator another live task found booted"
+}
+
+test_teardown_keeps_a_simulator_a_live_peer_may_have_booted() {
+  local case_dir out rc=0
+  case_dir=$(make_case teardown-peer-booted)
+  # X and Y both start with nothing booted, then X boots SIM_B and sits between
+  # test runs: tearing down Y must not shut X's simulator down.
+  write_live "$case_dir" task-x "sim_baseline=none"
+  write_live "$case_dir" task-y "sim_baseline=none"
+  boot "$case_dir" "$SIM_B"
+  out=$(run_teardown "$case_dir" task-y) || rc=$?
+  expect_code 0 "$rc" "teardown failed: $out"
+  assert_equals "" "$(shut_down "$case_dir")" "teardown shut down a simulator a live peer task booted"
+  assert_contains "$out" "left simulator $SIM_B booted (live tasks that may have booted it: task-x)" "teardown did not name the peer that may own the simulator"
+
+  case_dir=$(make_case teardown-peer-no-baseline)
+  write_live "$case_dir" task-old
+  write_live "$case_dir" task-y "sim_baseline=none"
+  boot "$case_dir" "$SIM_C"
+  rc=0
+  out=$(run_teardown "$case_dir" task-y) || rc=$?
+  expect_code 0 "$rc" "teardown failed: $out"
+  assert_equals "" "$(shut_down "$case_dir")" "teardown shut down a simulator a live peer with no baseline may have booted"
+  assert_contains "$out" "live tasks that may have booted it: task-old" "teardown did not name the peer with no baseline"
+  pass "teardown keeps a simulator a live peer, with or without a baseline, may have booted"
 }
 
 test_teardown_without_a_baseline_or_xcode_is_a_no_op() {
@@ -356,7 +420,7 @@ test_idle_scan_names_an_old_unused_simulator_and_its_possible_owners() {
   out=$(run_idle "$case_dir" scan)
   assert_contains "$out" "$SIM_A" "the scan did not name the simulator booted for days"
   assert_contains "$out" "booted 122h" "the scan did not report how long the simulator has been booted"
-  assert_contains "$out" "tasks started before it booted: task-1" "the scan did not name the task that started before the simulator booted"
+  assert_contains "$out" "possible owners: task-1" "the scan did not name the task that started before the simulator booted"
   assert_not_contains "$out" "$SIM_B" "the scan named a simulator booted for one hour"
   assert_not_contains "$out" "task-2" "the scan named a task that found the simulator already booted as its owner"
   assert_equals "" "$(shut_down "$case_dir")" "the scan shut a simulator down"
@@ -372,7 +436,7 @@ test_idle_scan_orphan_and_threshold_config() {
   assert_equals "" "$out" "a 3h-old simulator was flagged under the 12h default"
   printf '2\n' > "$case_dir/home/config/sim-idle-hours"
   out=$(run_idle "$case_dir" scan)
-  assert_contains "$out" "no live task started before it booted" "an orphaned simulator was not reported as having no live task"
+  assert_contains "$out" "no live task may own it" "an orphaned simulator was not reported as having no live task"
   printf 'off\n' > "$case_dir/home/config/sim-idle-hours"
   assert_equals "" "$(run_idle "$case_dir" scan)" "config/sim-idle-hours=off did not disable the check"
   printf '2\n' > "$case_dir/home/config/sim-idle-hours"
@@ -383,14 +447,36 @@ test_idle_scan_orphan_and_threshold_config() {
   pass "the idle threshold comes from config, the environment overrides it, off disables it"
 }
 
-test_idle_scan_skips_a_simulator_in_use() {
+test_idle_scan_reports_why_it_kept_a_simulator() {
   local case_dir out
   case_dir=$(make_case idle-in-use)
   boot "$case_dir" "$SIM_A"
   proc_booted "$case_dir" "$SIM_A" "1-00:00:00"
   proc "$case_dir" 10:00 "xcrun simctl launch $SIM_A com.example.app"
-  assert_equals "" "$(run_idle "$case_dir" scan)" "a simulator a tool is launching an app on was flagged as idle"
-  pass "the idle scan skips a simulator a running tool uses"
+  write_live "$case_dir" task-1 "sim_baseline=none"
+  out=$(run_idle "$case_dir" scan)
+  assert_contains "$out" "$SIM_A has been booted 24h and was kept because a running simctl targets it (possible owners: task-1)" "the scan did not report why it kept a simulator a tool uses"
+  assert_not_contains "$out" "shut it down" "the scan offered to shut down a simulator a tool uses"
+
+  case_dir=$(make_case idle-unpinned)
+  boot "$case_dir" "$SIM_A"
+  proc_booted "$case_dir" "$SIM_A" "1-00:00:00"
+  proc "$case_dir" 10:00 "xcodebuild test -destination platform=iOS Simulator,name=iPhone 15 -scheme App"
+  out=$(run_idle "$case_dir" scan)
+  assert_contains "$out" "was kept because a running xcodebuild names no simulator and may be testing on it (no live task may own it)" "the scan stayed silent about a simulator an unpinned test run kept"
+  pass "the idle scan reports a simulator past the threshold that a running tool keeps, with the reason"
+}
+
+test_idle_scan_is_not_silenced_by_a_server() {
+  local case_dir out
+  case_dir=$(make_case idle-server)
+  boot "$case_dir" "$SIM_A"
+  proc_booted "$case_dir" "$SIM_A" "5-00:00:00"
+  proc "$case_dir" 5-00:00:00 "/opt/homebrew/bin/appium --port 4723"
+  proc "$case_dir" 5-00:00:00 "/usr/local/bin/maestro studio"
+  out=$(run_idle "$case_dir" scan)
+  assert_contains "$out" "$SIM_A has been booted 120h with nothing using it" "a long-lived server silenced the idle simulator wake"
+  pass "a long-lived appium or maestro server never silences the idle simulator wake"
 }
 
 test_idle_scan_alerts_once_until_the_quiet_period_passes() {
@@ -454,13 +540,17 @@ test_spawn_without_xcode_records_nothing
 test_teardown_shuts_down_only_what_the_task_booted
 test_teardown_keeps_a_simulator_a_running_tool_targets
 test_teardown_keeps_every_candidate_while_unpinned_tooling_runs
+test_teardown_unpinned_test_drivers_each_protect
+test_teardown_ignores_servers_builds_and_listing
 test_teardown_ignores_the_simulators_own_processes
 test_teardown_keeps_a_simulator_another_live_task_found_booted
+test_teardown_keeps_a_simulator_a_live_peer_may_have_booted
 test_teardown_without_a_baseline_or_xcode_is_a_no_op
 test_teardown_reports_a_shutdown_that_failed
 test_idle_scan_names_an_old_unused_simulator_and_its_possible_owners
 test_idle_scan_orphan_and_threshold_config
-test_idle_scan_skips_a_simulator_in_use
+test_idle_scan_reports_why_it_kept_a_simulator
+test_idle_scan_is_not_silenced_by_a_server
 test_idle_scan_alerts_once_until_the_quiet_period_passes
 test_idle_scan_is_quiet_where_it_should_be
 test_watcher_wakes_on_an_idle_simulator

@@ -660,15 +660,24 @@ Two parts keep that from going unnoticed on a Mac with Xcode; on any other host 
 ### Cleanup at teardown
 
 A new task records the simulators already booted as `sim_baseline=` in its task record (comma-separated UDIDs, or `none`).
-Teardown then runs `xcrun simctl shutdown <udid>` for each simulator booted after the task started that nothing else uses, and reports what it shut down or kept.
-A simulator is kept when a running `xcodebuild`, `xctest`, `simctl`, or similar tool names its UDID, when such a tool names no simulator at all (it may be using any of them), or when another live task in any local home recorded it in its own `sim_baseline=` because it found the simulator already booted.
+Teardown then runs `xcrun simctl shutdown <udid>` for each simulator booted after the task started that nothing else uses and no other live task may own, and reports what it shut down or kept.
+A simulator is kept when:
+
+- a running `xcodebuild`, `xctest`, `simctl`, `appium`, or similar tool names its UDID;
+- a test-driving command names no simulator at all, so it may be testing on any of them: `xcodebuild test`, `test-without-building`, or `build-for-testing`, `xctest`, or `simctl spawn`, `launch`, `install`, or `io`;
+- another live task in any local home recorded it in its own `sim_baseline=` because it found the simulator already booted;
+- or another live task in any local home may have booted it: its `sim_baseline=` does not list the simulator, or it recorded no `sim_baseline=` at all.
+
+Long-lived servers such as `appium` or `maestro`, plain builds such as `swift-build`, and `simctl list` never protect a simulator they do not name.
+Teardown therefore shuts down little while other tasks are live; the idle simulator wake covers what it leaves.
 A task with no `sim_baseline=` (an older task, or a host without Xcode) is never cleaned up after, a secondmate is never touched, and a shutdown that fails is reported without blocking cleanup.
 `bin/fm-sim-lib.sh` owns these rules.
 
 ### Idle simulator wake
 
 The watcher's slow check cadence (`FM_CHECK_INTERVAL`) also runs `bin/fm-sim-idle.sh`.
-When a simulator has been booted longer than the threshold with no running tool using it, firstmate gets a `check: idle simulator:` wake that names the simulator, how long it has been booted, and the live tasks that started before it booted.
+When a simulator has been booted longer than the threshold, firstmate gets a `check: idle simulator:` wake that names the simulator, how long it has been booted, and its possible owners: the live tasks whose `sim_baseline=` does not list it, including any with no `sim_baseline=`.
+A simulator no running tool uses gets the shutdown command; one a running tool still uses (by the rules above) is reported as kept, with the reason, so nothing holds a simulator past the threshold silently.
 Nothing is shut down automatically; the wake carries the `xcrun simctl shutdown <udid>` command for the captain to approve.
 Each simulator is reported again at most once per `FM_SIM_IDLE_REALERT_HOURS`.
 Only the root home's watcher raises it, so secondmate homes never duplicate the wake.

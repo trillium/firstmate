@@ -4,10 +4,12 @@
 #
 # A booted simulator holds gigabytes of memory, and a worker that forgot to shut
 # one down is invisible to every other check (teardown only cleans up what a
-# task booted while it was alive, bin/fm-sim-lib.sh). `scan` prints one line per
-# simulator that has been booted longer than the threshold with no running tool
-# using it, naming it and the live tasks that started before it booted (its
-# possible owners), and prints nothing otherwise. It reads, never shuts anything
+# task booted while it was alive and no other live task may own,
+# bin/fm-sim-lib.sh). `scan` prints one line per simulator that has been booted
+# longer than the threshold: one with no running tool using it names the live
+# tasks that may have booted it (its possible owners), and one a running tool
+# still uses says it was kept and why, so a simulator is never silently held past
+# the threshold. It prints nothing otherwise. It reads, never shuts anything
 # down: the captain decides, and `xcrun simctl shutdown <udid>` is the remedy.
 # `scan` records the lines it printed as pending; bin/fm-watch.sh calls `ack`
 # only after the wake is queued, which starts that simulator's re-alert quiet
@@ -17,8 +19,8 @@
 # overrides it), a positive integer, default 12; "off" disables the check. A
 # simulator is re-reported at most once per FM_SIM_IDLE_REALERT_HOURS (default
 # 24). Secondmate homes, hosts without xcrun, and non-macOS hosts print nothing,
-# so only the root home's watcher raises the wake. docs/configuration.md "Host
-# health" is the operator reference; bin/fm-watch.sh owns when it runs.
+# so only the root home's watcher raises the wake. docs/configuration.md "Idle iOS
+# simulators (config/sim-idle-hours)" is the operator reference; bin/fm-watch.sh owns when it runs.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,26 +66,6 @@ sim_name() {  # <udid>
     | sed -e "s/ *($1).*//" -e 's/^ *//'
 }
 
-# Live tasks (any local home, never a secondmate) that started before the
-# simulator booted, i.e. whose baseline does not list it.
-possible_owners() {  # <udid> <state>...
-  local udid=$1 state meta id out=
-  shift
-  for state in "$@"; do
-    for meta in "$state"/*.meta; do
-      [ -f "$meta" ] || continue
-      id=$(basename "$meta" .meta)
-      [ "$(fm_sim_meta_get "$meta" kind)" != secondmate ] || continue
-      case ",$(fm_sim_meta_get "$meta" sim_baseline)," in
-        *",$udid,"*) continue ;;
-        ,,) continue ;;
-      esac
-      out="${out:+$out, }$id"
-    done
-  done
-  printf '%s\n' "$out"
-}
-
 scan() {
   local hours threshold realert home_real root udid age last owners name line
   [ "$(uname -s)" = Darwin ] || return 0
@@ -109,15 +91,17 @@ scan() {
     [ -n "$udid" ] || continue
     age=$(fm_sim_boot_age "$udid") || continue
     [ "$age" -ge "$threshold" ] || continue
-    ! fm_sim_in_use "$udid" || continue
     last=$(cat "$DIR/$udid" 2>/dev/null || true)
     positive_int "$last" || last=
     [ -z "$last" ] || [ $((NOW - last)) -ge "$realert" ] || continue
-    owners=$(possible_owners "$udid" "${FM_SIM_PEER_STATES[@]}")
     name=$(sim_name "$udid")
-    line="simulator ${name:+$name }$udid has been booted $((age / 3600))h with nothing using it ("
-    if [ -n "$owners" ]; then line="${line}tasks started before it booted: $owners"; else line="${line}no live task started before it booted"; fi
-    printf '%s); shut it down with: xcrun simctl shutdown %s\n' "$line" "$udid"
+    line="simulator ${name:+$name }$udid has been booted $((age / 3600))h"
+    if fm_sim_possible_owners "$udid" "" "${FM_SIM_PEER_STATES[@]}"; then owners="possible owners: $FM_SIM_OWNERS"; else owners="no live task may own it"; fi
+    if fm_sim_in_use "$udid"; then
+      printf '%s and was kept because %s (%s); check it is still needed\n' "$line" "$FM_SIM_USE_REASON" "$owners"
+    else
+      printf '%s with nothing using it (%s); shut it down with: xcrun simctl shutdown %s\n' "$line" "$owners" "$udid"
+    fi
     printf '%s\n' "$udid" >> "$PENDING"
   done <<EOF2
 $FM_SIM_BOOTED

@@ -3,19 +3,20 @@
 #
 # Workers boot simulators for tests and nothing else shuts them down, so a
 # forgotten simulator holds gigabytes of memory for days. This file is the single
-# owner of three facts, and docs/configuration.md "Host health" is the operator
-# reference:
+# owner of three facts, and docs/configuration.md "Idle iOS simulators
+# (config/sim-idle-hours)" is the operator reference:
 #   - the baseline: bin/fm-spawn.sh records the simulators already booted when a
 #     fresh task starts as sim_baseline= in state/<id>.meta (comma-separated
 #     UDIDs, or "none" when Xcode is present and nothing was booted). The key is
 #     absent on a host without a usable xcrun, and a task with no baseline is
 #     never cleaned up after, because what pre-existed it cannot be told.
-#   - in use: whether a simulator is still needed (fm_sim_in_use and
-#     fm_sim_claimed_by_peer below).
+#   - in use: whether a simulator is still needed (fm_sim_in_use,
+#     fm_sim_claimed_by_peer, and fm_sim_possible_owners below).
 #   - cleanup: bin/fm-teardown.sh calls fm_sim_teardown_cleanup, which shuts down
-#     every simulator booted after the task started that nothing still uses.
-# bin/fm-host-health.sh reuses the in-use and age readers to flag simulators that
-# outlive their task. Nothing here kills a process; the only mutation is
+#     every simulator booted after the task started that nothing still uses and
+#     no other live task may own.
+# bin/fm-sim-idle.sh reuses the in-use, owner, and age readers to flag simulators
+# that outlive their task. Nothing here kills a process; the only mutation is
 # `xcrun simctl shutdown <udid>`.
 #
 # Every function is a no-op on a host without xcrun, so Linux and Xcode-less Macs
@@ -23,10 +24,12 @@
 
 FM_SIM_UUID_RE='[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}'
 
-# Commands that drive a simulator. A running one that names a UDID uses that
-# simulator; one that names none may be using any of them (an xcodebuild
-# -destination "name=iPhone 15" run), so it protects every candidate.
-FM_SIM_TOOLS='xcodebuild|xctest|xcrun|simctl|xcbeautify|swift-build|swift-test|idb|idb_companion|maestro|detox|applesimutils|appium'
+# Commands that drive a simulator, read through an `xcrun <tool>` prefix. A
+# running one that names a UDID uses that simulator. One that names none protects
+# every candidate only while it drives tests (an xcodebuild -destination
+# "name=iPhone 15" test run; see fm_sim_drives_tests); a long-lived server or a
+# plain build never does.
+FM_SIM_TOOLS='xcodebuild|xctest|simctl|xcbeautify|swift-build|swift-test|idb|idb_companion|maestro|detox|applesimutils|appium'
 
 fm_sim_available() {
   command -v xcrun >/dev/null 2>&1
@@ -84,23 +87,49 @@ fm_sim_boot_age() {  # <udid>
   fm_sim_etime_secs "$etime"
 }
 
+# Whether a command with no UDID may be driving tests on any simulator:
+# xcodebuild test, test-without-building, or build-for-testing; xctest; or
+# simctl spawn, launch, install, or io.
+fm_sim_drives_tests() {  # <tool> <args>...
+  local tool=$1 arg
+  shift
+  case "$tool" in
+    xctest) return 0 ;;
+    simctl) case "${1:-}" in spawn|launch|install|io) return 0 ;; esac ;;
+    xcodebuild)
+      for arg in "$@"; do
+        case "$arg" in test|test-without-building|build-for-testing) return 0 ;; esac
+      done ;;
+  esac
+  return 1
+}
+
 # Whether a running tool still needs the simulator. Sets FM_SIM_USE_REASON.
 fm_sim_in_use() {  # <udid>
-  local udid=$1 cmd base lc_udid
+  local udid=$1 cmd tool lc_udid
+  local -a words
   lc_udid=$(printf '%s' "$udid" | tr 'A-F' 'a-f')
   FM_SIM_USE_REASON=
   while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
-    base=${cmd%% *}
-    base=${base##*/}
-    [[ $base =~ ^($FM_SIM_TOOLS)$ ]] || continue
-    case "$cmd" in *' simctl list'*|*' simctl shutdown'*) continue ;; esac
+    read -ra words <<< "$cmd"
+    tool=${words[0]:-}
+    tool=${tool##*/}
+    if [ "$tool" = xcrun ]; then
+      words=("${words[@]:1}")
+      tool=${words[0]:-}
+      tool=${tool##*/}
+    fi
+    [[ $tool =~ ^($FM_SIM_TOOLS)$ ]] || continue
+    if [ "$tool" = simctl ]; then
+      case "${words[1]:-}" in list|shutdown) continue ;; esac
+    fi
     if printf '%s' "$cmd" | tr 'A-F' 'a-f' | grep -Fq "$lc_udid"; then
-      FM_SIM_USE_REASON="a running $base targets it"
+      FM_SIM_USE_REASON="a running $tool targets it"
       return 0
     fi
-    if ! printf '%s' "$cmd" | grep -Eq "$FM_SIM_UUID_RE"; then
-      FM_SIM_USE_REASON="a running $base names no simulator and may be using it"
+    if ! printf '%s' "$cmd" | grep -Eq "$FM_SIM_UUID_RE" && fm_sim_drives_tests "$tool" "${words[@]:1}"; then
+      FM_SIM_USE_REASON="a running $tool names no simulator and may be testing on it"
       return 0
     fi
   done <<EOF
@@ -144,8 +173,29 @@ fm_sim_claimed_by_peer() {  # <udid> <self-id> <state>...
   return 1
 }
 
+# Live tasks (any local home, never a secondmate) other than <self-id> that may
+# have booted the simulator: each one whose baseline does not list it, which
+# includes one that recorded no baseline. Sets FM_SIM_OWNERS to their ids,
+# comma-separated, and returns 1 when there are none.
+fm_sim_possible_owners() {  # <udid> <self-id> <state>...
+  local udid=$1 self=$2 state meta id
+  shift 2
+  FM_SIM_OWNERS=
+  for state in "$@"; do
+    for meta in "$state"/*.meta; do
+      [ -f "$meta" ] || continue
+      id=$(basename "$meta" .meta)
+      [ "$id" != "$self" ] || continue
+      [ "$(fm_sim_meta_get "$meta" kind)" != secondmate ] || continue
+      case ",$(fm_sim_meta_get "$meta" sim_baseline)," in *",$udid,"*) continue ;; esac
+      FM_SIM_OWNERS="${FM_SIM_OWNERS:+$FM_SIM_OWNERS, }$id"
+    done
+  done
+  [ -n "$FM_SIM_OWNERS" ]
+}
+
 # Teardown step: shut down the simulators this task booted that nothing still
-# uses, and report each outcome on stdout. Never fails the teardown.
+# uses and no other live task may own, and report each outcome on stdout. Never fails the teardown.
 fm_sim_teardown_cleanup() {  # <meta> <id> <state>
   local meta=$1 id=$2 state=$3 baseline udid
   baseline=$(fm_sim_meta_get "$meta" sim_baseline)
@@ -163,6 +213,8 @@ fm_sim_teardown_cleanup() {  # <meta> <id> <state>
       echo "teardown $id: left simulator $udid booted ($FM_SIM_USE_REASON)"
     elif fm_sim_claimed_by_peer "$udid" "$id" "${FM_SIM_PEER_STATES[@]}"; then
       echo "teardown $id: left simulator $udid booted (task $FM_SIM_CLAIM_TASK found it already booted)"
+    elif fm_sim_possible_owners "$udid" "$id" "${FM_SIM_PEER_STATES[@]}"; then
+      echo "teardown $id: left simulator $udid booted (live tasks that may have booted it: $FM_SIM_OWNERS)"
     elif xcrun simctl shutdown "$udid" >/dev/null 2>&1; then
       echo "teardown $id: shut down simulator $udid, booted after the task started"
     else
