@@ -64,7 +64,7 @@ test_fm_lock_reports_outcome() {
   ln -s /bin/bash "$dir/fakebin/claude"
   env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID PATH="$dir/fakebin:$PATH" HERDR_PANE_ID=%1 \
     HERDR_BIN_PATH="$dir/fakebin/herdr" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
-    "$dir/fakebin/claude" -c "$ROOT/bin/fm-lock.sh" >/dev/null 2>&1
+    "$dir/fakebin/claude" -c "$ROOT/bin/fm-lock.sh; :" >/dev/null 2>&1
   grep -q -- '--token lock_held=' "$dir/herdr.log" 2>/dev/null || { echo "log: $(cat "$dir/herdr.log" 2>/dev/null)"; fail "fm-lock.sh did not badge a free lock as held"; }
   # A live harness-named process that is not an ancestor of the next acquirer
   # holds the lock, so a second session is refused and badges read-only.
@@ -76,7 +76,7 @@ test_fm_lock_reports_outcome() {
   : > "$dir/herdr.log"
   env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID PATH="$dir/fakebin:$PATH" HERDR_PANE_ID=%1 \
     HERDR_BIN_PATH="$dir/fakebin/herdr" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
-    "$dir/fakebin/claude" -c "$ROOT/bin/fm-lock.sh" >/dev/null 2>&1
+    "$dir/fakebin/claude" -c "$ROOT/bin/fm-lock.sh; rc=\$?; :; exit \$rc" >/dev/null 2>&1
   rc=$?
   kill "$holder" 2>/dev/null
   [ "$rc" -ne 0 ] || fail "second session was not refused"
