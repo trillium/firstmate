@@ -91,6 +91,11 @@
 # session-start sweep could still close, while a journal bound to any other pane
 # - or a version 1 attempt whose workspace is still present or unreadable - may
 # name a live quarantined space and is retained for that sweep.
+# Once the endpoint is closed, a ship or scout teardown shuts down the iOS
+# simulators the task booted that nothing else uses (bin/fm-sim-lib.sh owns the
+# rules; docs/configuration.md "Idle iOS simulators" is the operator reference).
+# That step reports what it did, never fails the teardown, and does nothing for
+# a task without sim_baseline= or on a host without Xcode.
 # data/<id>/ is deliberately left in place: a successor spawn reads brief.md
 # from it.
 # Worktree-slot ownership (teardown-slot-collision): a treehouse pool slot is
@@ -357,7 +362,8 @@ for _teardown_source in \
   fm-nm-run-lib.sh \
   fm-wake-lib.sh \
   fm-path-lib.sh \
-  fm-lease-lib.sh
+  fm-lease-lib.sh \
+  fm-sim-lib.sh
 do
   teardown_require_source "$SCRIPT_DIR/$_teardown_source"
 done
@@ -382,6 +388,8 @@ unset _teardown_source
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
+# shellcheck source=bin/fm-sim-lib.sh
+. "$SCRIPT_DIR/fm-sim-lib.sh"
 # shellcheck source=bin/fm-secondmate-parent-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
 # shellcheck source=bin/fm-pending-reply-lib.sh
@@ -3893,6 +3901,9 @@ if [ "$KIND" = secondmate ]; then
   fi
   remove_secondmate_registry_entry "$ID"
 fi
+# The endpoint is closed, so no tool of this task still runs: shut down the
+# simulators it booted that nothing else uses (bin/fm-sim-lib.sh). Best effort.
+[ "$KIND" = secondmate ] || fm_sim_teardown_cleanup "$META" "$ID" "$STATE" || true
 remove_grok_turnend_auth "$STATE" "$ID" || exit 1
 remove_kimi_turnend_auth "$STATE" "$ID" || exit 1
 fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true

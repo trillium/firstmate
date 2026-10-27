@@ -474,6 +474,8 @@ Task meta records `backend=` only for a non-default backend; an absent `backend=
 
 - A cmux task additionally records `cmux_workspace_id=` and `cmux_surface_id=`.
 
+- A fresh ship or scout task on a host with Xcode records `sim_baseline=`; see [idle iOS simulators](#idle-ios-simulators-configsim-idle-hours).
+
 ### Task selectors
 
 Task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` resolve centrally through `fm_backend_resolve_selector`.
@@ -649,6 +651,40 @@ An inherited `data/captain-shared.md` counts in a secondmate's total but remains
 The internal [`/stow` skill](../.agents/skills/stow/SKILL.md) owns curation and its automatic secondmate cascade, which accounts every home against this same per-home allowance separately rather than against a fleet total.
 
 The helper's header owns exact parsing, publication, and report output mechanics.
+
+## Idle iOS simulators (config/sim-idle-hours)
+
+Workers boot iOS simulators for tests, and a forgotten booted simulator holds gigabytes of memory for days.
+Two parts keep that from going unnoticed on a Mac with Xcode; on any other host both do nothing.
+
+### Cleanup at teardown
+
+A new task records the simulators already booted as `sim_baseline=` in its task record (comma-separated UDIDs, or `none`).
+Teardown then runs `xcrun simctl shutdown <udid>` for each simulator booted after the task started that nothing else uses and no other live task may own, and reports what it shut down or kept.
+A simulator is kept when:
+
+- a running `xcodebuild`, `xctest`, `simctl`, `appium`, or similar tool names its UDID;
+- a test-driving command names no simulator at all, so it may be testing on any of them: `xcodebuild test`, `test-without-building`, or `build-for-testing`, `xctest`, or `simctl spawn`, `launch`, `install`, or `io`;
+- another live task in any local home recorded it in its own `sim_baseline=` because it found the simulator already booted;
+- or another live task in any local home may have booted it: its `sim_baseline=` does not list the simulator, or it recorded no `sim_baseline=` at all.
+
+Long-lived servers such as `appium` or `maestro`, plain builds such as `swift-build`, and `simctl list` never protect a simulator they do not name.
+Teardown therefore shuts down little while other tasks are live; the idle simulator wake covers what it leaves.
+A task with no `sim_baseline=` (an older task, or a host without Xcode) is never cleaned up after, a secondmate is never touched, and a shutdown that fails is reported without blocking cleanup.
+`bin/fm-sim-lib.sh` owns these rules.
+
+### Idle simulator wake
+
+The watcher's slow check cadence (`FM_CHECK_INTERVAL`) also runs `bin/fm-sim-idle.sh`.
+When a simulator has been booted longer than the threshold, firstmate gets a `check: idle simulator:` wake that names the simulator, how long it has been booted, and its possible owners: the live tasks whose `sim_baseline=` does not list it, including any with no `sim_baseline=`.
+A simulator no running tool uses gets the shutdown command; one a running tool still uses (by the rules above) is reported as kept, with the reason, so nothing holds a simulator past the threshold silently.
+Nothing is shut down automatically; the wake carries the `xcrun simctl shutdown <udid>` command for the captain to approve.
+Each simulator is reported again at most once per `FM_SIM_IDLE_REALERT_HOURS`.
+Only the root home's watcher raises it, so secondmate homes never duplicate the wake.
+
+The threshold is a positive whole number of hours in `config/sim-idle-hours` in the local root home, default `12`.
+The value `off` disables the check, and `FM_SIM_IDLE_HOURS` overrides the file for one run.
+An invalid value is reported on stderr and the default applies.
 
 ## Stow pass horizon (config/stow-pass-horizon)
 
@@ -2325,7 +2361,9 @@ FM_HEARTBEAT=600        # base seconds between heartbeat scans; no-change heartb
 FM_HEARTBEAT_MAX=7200   # heartbeat backoff cap
 FM_INACTIVE_RECONCILE_SECS=900  # 60..1800-second watcher cadence and inactivity threshold; locked session start also requests an immediate scan in the deferred worker
 FM_INACTIVE_RECONCILE_BUDGET_SECS=10  # 1..30-second scan deadline; wedged-scan kill backstop follows one second later
-FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, or Relay dispatch)
+FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, Relay dispatch, or the idle-simulator scan)
+FM_SIM_IDLE_HOURS=      # hours a simulator may stay booted before an idle-simulator wake; overrides config/sim-idle-hours (default 12, "off" disables)
+FM_SIM_IDLE_REALERT_HOURS=24   # quiet period before the same idle simulator is reported again
 FM_TASK_INBOX_GRACE_SECS=90   # seconds an unhandled steering-inbox message may sit before the watcher attempts doorbell delivery on an idle pane; also the minimum spacing between attempts
 FM_TASK_INBOX_RING_MAX=3      # watcher delivery attempts without an acknowledgement before the task surfaces as a stale wake for recovery
 FM_CHECK_TIMEOUT=30     # seconds allowed per slow check script

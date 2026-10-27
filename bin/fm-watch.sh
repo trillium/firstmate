@@ -112,6 +112,8 @@
 #                          that row stays queued, and never once the note is
 #                          acknowledged. Joined with `;` after any process-event
 #                          kinds above when more than one surfaces in a cycle
+#   check: idle simulator: <details>  an iOS simulator booted past config/sim-idle-hours,
+#                          unused or kept with the reason (bin/fm-sim-idle.sh)
 #   check: rejected untrusted state checks: <paths>
 #                          unsafe state checks were refused without execution
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
@@ -2887,6 +2889,19 @@ EOF
       fi
       pr_poll_control_release || exit 1
     done
+    # A simulator booted past its threshold, unused or kept with the reason
+    # (bin/fm-sim-idle.sh; silent unless one is found). Enqueue first, then ack,
+    # so a failed enqueue is reported again.
+    sim_idle_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+      "$SCRIPT_DIR/fm-sim-idle.sh" scan 2>/dev/null) || sim_idle_out=
+    if [ -n "$sim_idle_out" ]; then
+      reason="check: idle simulator: $(printf '%s' "$sim_idle_out" | paste -sd';' - | sed 's/;/; /g')"
+      fm_wake_append check sim-idle "$reason" || exit 1
+      FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
+        "$SCRIPT_DIR/fm-sim-idle.sh" ack >/dev/null 2>&1 || true
+      touch "$STATE/.last-check"
+      wake "$reason"
+    fi
     if [ -n "$rejected_checks" ]; then
       reason="check: rejected untrusted state checks:$rejected_checks"
       fm_wake_append check untrusted-state-checks "$reason" || exit 1
