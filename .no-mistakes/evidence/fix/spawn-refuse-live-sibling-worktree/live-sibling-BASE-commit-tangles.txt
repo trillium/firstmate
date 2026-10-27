@@ -1,0 +1,38 @@
+== scenario: live-sibling
+== lab tmux windows before spawn:
+  firstmate:bash cmd=bash cwd=$LAB/projects/demo
+  firstmate:fm-other-task cmd=claude cwd=$LAB/slots/sib
+== sibling meta:
+  window=firstmate:fm-other-task
+  worktree=$LAB/slots/sib
+  kind=ship
+  harness=claude
+  mode=no-mistakes
+  yolo=off
+== fm-spawn.sh output:
+  fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+  warning: $LAB/data/newtask/launch-brief.md records no ship branch; defaulting to legacy branch fm/newtask
+  warning: $LAB/data/newtask/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+  spawned newtask harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-newtask worktree=$LAB/slots/sib
+  EXIT=0
+== state/newtask.meta:
+  window=firstmate:fm-newtask
+  endpoint_task_id=newtask
+  worktree=$LAB/slots/sib
+  project=$LAB/projects/demo
+  harness=claude
+  approval_mode=bypass
+  kind=ship
+  mode=no-mistakes
+  yolo=off
+  branch=fm/newtask
+  tasktmp=/tmp/fm-newtask
+  model=sonnet
+  effort=default
+  busy_gen=g1793059485.3324.21582
+  spawn_gen=s1793059486.1402.8664
+== lab tmux windows after spawn:
+  firstmate:bash cmd=bash cwd=$LAB/projects/demo
+  firstmate:fm-other-task cmd=claude cwd=$LAB/slots/sib
+  firstmate:driver cmd=sleep cwd=/Users/trilliumsmith/.no-mistakes/worktrees/a4ec2a97b8f7/01M5XAEB040T8PP28SYBSMW0KN
+  firstmate:fm-newtask cmd=claude cwd=$LAB/slots/sib

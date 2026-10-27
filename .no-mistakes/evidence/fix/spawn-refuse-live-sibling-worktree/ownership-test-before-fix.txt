@@ -1,0 +1,6 @@
+warning: re-init: ignored --initial-branch=main
+On branch main
+nothing to commit, working tree clean
+fatal: destination path '/private/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T/fm-spawn-worktree-ownership.sPCwZC/sibling-task/project.origin.git' already exists and is not an empty directory.
+error: remote origin already exists.
+not ok - spawn into a live sibling task worktree succeeded - expected refusal

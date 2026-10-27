@@ -1,0 +1,22 @@
+== scenario: live-sibling-home
+== lab tmux windows before spawn:
+  firstmate:zsh cmd=bash cwd=$LAB/projects/demo
+  firstmate:fm-other-task cmd=claude cwd=$LAB/slots/sib
+== sibling meta:
+  window=firstmate:fm-other-task
+  home=$LAB/slots/sib
+  kind=secondmate
+  harness=claude
+== fm-spawn.sh output:
+  fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+  warning: $LAB/data/newtask/launch-brief.md records no ship branch; defaulting to legacy branch fm/newtask
+  warning: $LAB/data/newtask/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+  error: treehouse get yielded task other-task (recorded in state/other-task.meta) (resolved '$LAB/slots/sib'); refusing to launch into a worktree held by a live sibling task. Inspect target firstmate:fm-newtask
+  EXIT=1
+== state/newtask.meta:
+  (absent)
+== lab tmux windows after spawn:
+  firstmate:bash cmd=bash cwd=$LAB/projects/demo
+  firstmate:fm-other-task cmd=claude cwd=$LAB/slots/sib
+  firstmate:driver cmd=sleep cwd=/Users/trilliumsmith/.no-mistakes/worktrees/a4ec2a97b8f7/01M5XAEB040T8PP28SYBSMW0KN
+  firstmate:fm-newtask cmd=bash cwd=$LAB/slots/sib
