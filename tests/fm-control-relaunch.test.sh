@@ -89,6 +89,11 @@ case "${1:-}" in
     else
       printf '%s\n' "$payload" >> "$D/keys"
       case "$payload" in
+        "cd -- '"*"'")
+          # A shell obeys a cd: model it so the cwd poll sees the move.
+          cdp=${payload#"cd -- '"}; cdp=${cdp%"'"}
+          [ -f "$D/cd-ignored" ] || printf '%s' "$cdp" > "$D/cwd"
+          ;;
         'export GOTMPDIR='*)
           if [ -n "${FM_FAKE_TRACE_PREPARE:-}" ]; then
             : > "$FM_FAKE_TRACE_PREPARE"
@@ -1821,9 +1826,11 @@ test_launch_failure_keeps_the_prior_record_and_reports_it() {
   dir=$(new_case rollback rl13)
   add_ship_task "$dir" rl13 claude
   before=$(cat "$dir/home/state/rl13.meta")
-  # The endpoint's shell is not in the recorded worktree, so the launch owner
-  # refuses AFTER the previous agent has already been stopped.
+  # The endpoint's shell is not in the recorded worktree and ignores the cd back
+  # into it, so the launch owner refuses AFTER the previous agent has already
+  # been stopped.
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  : > "$dir/fake/cd-ignored"
   out=$(run_control "$dir" rl13 relaunch --harness codex --note "carry this forward"); rc=$?
   expect_code 1 "$rc" "a failed launch should fail closed"$'\n'"$out"
   assert_contains "$out" "no agent is running" "the failure should say no agent is running"
@@ -1844,6 +1851,7 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
   dir=$(new_case rollback-race rl30)
   add_ship_task "$dir" rl30 claude
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  : > "$dir/fake/cd-ignored"
   FM_FAKE_CWD_RACE_READY="$dir/cwd-race-ready" \
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
@@ -2352,17 +2360,46 @@ test_spawn_relaunch_refuses_an_unrecorded_task() {
   pass "fm-spawn --relaunch: an unrecorded task is refused"
 }
 
-test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
+test_spawn_relaunch_moves_a_pane_outside_the_worktree_back() {
   local dir out rc
   dir=$(new_case wrongcwd rl18)
   add_ship_task "$dir" rl18 claude
   printf 'zsh' > "$dir/fake/command"
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
   out=$(run_spawn "$dir" rl18 --relaunch --harness claude); rc=$?
-  expect_code 1 "$rc" "a pane outside the worktree should refuse"
-  assert_contains "$out" "not its recorded worktree" "the refusal should name the wrong location"
-  [ ! -s "$dir/fake/keys" ] || fail "a refused tmux relaunch must send nothing to the pane"
-  pass "fm-spawn --relaunch: refuses to start a replacement outside the copy holding its work"
+  expect_code 0 "$rc" "a pane outside the worktree should be moved back, not refused"$'\n'"$out"
+  grep -qF "cd -- '$dir/wt'" "$dir/fake/keys" || fail "the pane should have been told to cd into the recorded worktree"
+  pass "fm-spawn --relaunch: moves a drifted pane into the copy holding its work"
+}
+
+# A finished task's closed pane leaves its shell in the home directory.
+test_relaunch_from_a_shell_left_in_home_starts_in_the_worktree() {
+  local dir out rc
+  dir=$(new_case homecwd rl18h)
+  add_ship_task "$dir" rl18h claude
+  printf 'zsh' > "$dir/fake/command"
+  printf '%s' "$HOME" > "$dir/fake/cwd"
+  out=$(run_control "$dir" rl18h relaunch --note "rebase onto main"); rc=$?
+  expect_code 0 "$rc" "a relaunch from a shell in ~ should succeed"$'\n'"$out"
+  grep -qF "cd -- '$dir/wt'" "$dir/fake/keys" || fail "the shell should have been told to cd into the recorded worktree"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a replacement agent should be running"
+  pass "fm-control relaunch: a shell left in ~ is moved into the recorded worktree"
+}
+
+# A recorded worktree that is the project's primary checkout is refused before
+# the running agent is touched, so the refusal never strands the task.
+test_relaunch_refuses_a_primary_checkout_worktree_before_stopping() {
+  local dir out rc
+  dir=$(new_case primarywt rl18p)
+  add_ship_task "$dir" rl18p claude
+  sed -i.bak "s|^worktree=.*|worktree=$dir/proj|" "$dir/home/state/rl18p.meta"
+  printf '%s' "$HOME" > "$dir/fake/cwd"
+  out=$(run_control "$dir" rl18p relaunch --note "rebase"); rc=$?
+  expect_code 1 "$rc" "a primary-checkout worktree should refuse"
+  assert_contains "$out" "primary checkout" "the refusal should name the primary checkout"
+  ! grep -qx '/exit' "$dir/fake/literal" || fail "the agent must not be stopped before the refusal"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "the original agent must still be running"
+  pass "fm-control relaunch: a primary-checkout worktree is refused before the agent is stopped"
 }
 
 # --- 7. reclaiming a task whose endpoint is gone ----------------------------
@@ -3090,7 +3127,9 @@ test_spawn_relaunch_keeps_its_early_meta_lock_continuous
 test_spawn_relaunch_refuses_a_pending_authoritative_close
 test_spawn_relaunch_refuses_contradicting_flags
 test_spawn_relaunch_refuses_an_unrecorded_task
-test_spawn_relaunch_refuses_a_pane_outside_the_worktree
+test_spawn_relaunch_moves_a_pane_outside_the_worktree_back
+test_relaunch_from_a_shell_left_in_home_starts_in_the_worktree
+test_relaunch_refuses_a_primary_checkout_worktree_before_stopping
 test_tmux_refuses_a_window_missing_from_its_session
 test_tmux_refuses_a_session_that_cannot_be_found
 test_tmux_refuses_when_the_server_is_gone

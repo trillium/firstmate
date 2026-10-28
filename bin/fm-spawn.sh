@@ -100,9 +100,9 @@
 #   (`--secondmate`, driven by the session-start liveness sweep).
 #   Every fresh ship/scout launch and replacement explicitly enters the recorded
 #   worktree immediately before trust setup and brief delivery, and a pre-launch
-#   cwd check refuses any endpoint that still reports another copy; a Herdr shell
-#   that has drifted out of the recorded worktree is told once to return, and
-#   only a shell that will not go refuses.
+#   cwd check refuses any endpoint that still reports another copy; a shell
+#   that has drifted out of the recorded worktree (on any backend) is told once
+#   to return, and only a shell that will not go refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
@@ -5613,7 +5613,9 @@ elif [ "$RELAUNCH" -eq 1 ]; then
   # No worktree is acquired: the recorded one is reused as-is. What must be
   # proven instead is that the adopted endpoint's shell is actually sitting in
   # that worktree, so the replacement agent starts where the work is rather
-  # than wherever the pane happened to drift.
+  # than wherever the pane happened to drift. A shell that is elsewhere (for
+  # example a closed task pane's shell left in the home directory) is told once
+  # to return on every backend; only a shell that will not go refuses.
   relaunch_wt_real=$(real_path_or_raw "$WT")
   relaunch_seen=
   for _ in $(seq 1 10); do
@@ -5622,10 +5624,6 @@ elif [ "$RELAUNCH" -eq 1 ]; then
     /bin/sleep 0.5
   done
   if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
-    if [ "$BACKEND" != herdr ] && [ "$BACKEND" != rex ]; then
-      echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}', not its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
-      exit 1
-    fi
     relaunch_cd_path=${WT//\'/\'\\\'\'}
     spawn_send_text_line "$WT_TARGET" "cd -- '$relaunch_cd_path'" || {
       echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}' and could not be told to return to its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2

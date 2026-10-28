@@ -1108,7 +1108,7 @@ resolve_relaunch_profile() {
 # refuses outright when any of it cannot be established.
 CHECKPOINT_LINES=()
 safe_checkpoint() {
-  local wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta
+  local proj_rec wt_gd proj_cd wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta
   CHECKPOINT_LINES=()
   [ -n "$WT" ] || die "task $ID has no recorded worktree; refusing to relaunch without a recorded local copy to preserve"
   [ -d "$WT" ] || die "task $ID's recorded worktree $WT is missing; refusing to relaunch and lose track of its work"
@@ -1118,6 +1118,19 @@ safe_checkpoint() {
   wt_top_real=$(cd "$wt_top" 2>/dev/null && pwd -P) || wt_top_real=$wt_top
   [ "$wt_real" = "$wt_top_real" ] \
     || die "task $ID's recorded worktree $WT is not a worktree root (root is $wt_top); refusing to relaunch against an ambiguous checkout"
+  # fm-spawn moves a drifted endpoint into the recorded worktree, so the copy
+  # itself must be proven isolated here, before the agent is stopped: a
+  # recorded worktree that is the project's primary checkout can never be
+  # launched into.
+  if [ "$KIND" != secondmate ]; then
+    proj_rec=$(fm_meta_get "$META" project)
+    if [ -n "$proj_rec" ] && [ -d "$proj_rec" ]; then
+      wt_gd=$(git -C "$WT" rev-parse --absolute-git-dir 2>/dev/null) && wt_gd=$(cd "$wt_gd" 2>/dev/null && pwd -P) || wt_gd=
+      proj_cd=$(git -C "$proj_rec" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && proj_cd=$(cd "$proj_cd" 2>/dev/null && pwd -P) || proj_cd=
+      [ -z "$wt_gd" ] || [ -z "$proj_cd" ] || [ "$wt_gd" != "$proj_cd" ] \
+        || die "task $ID's recorded worktree $WT is the project's primary checkout, not an isolated copy; refusing to relaunch into it"
+    fi
+  fi
   if head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null); then
     :
   elif head_ref=$(git -C "$WT" symbolic-ref -q HEAD 2>/dev/null); then
