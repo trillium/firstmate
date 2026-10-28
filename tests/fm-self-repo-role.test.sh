@@ -536,6 +536,32 @@ test_brief_consent_flag_bounds() {
   pass "fm-brief.sh: --upstream-consent validates, scopes to ship tasks, and renders normalized"
 }
 
+test_brief_self_repo_gate_without_project_flag() {
+  local home out rc
+  home=$(make_role_home brief-noproj)
+  mkdir -p "$home/projects"
+  ln -s "$ROOT" "$home/projects/selfclone"
+  brief_np() {  # <id> <args...>
+    local id=$1
+    shift
+    FM_HOME="$home" FM_CONFIG_OVERRIDE="$home/config" FM_DATA_OVERRIDE="$home/data" \
+      "$BRIEF" "$id" selfclone "$@" 2>&1
+  }
+  out=$(brief_np brief-np-refuse --mode direct-PR); rc=$?
+  expect_code 1 "$rc" "a publishing brief for the registered firstmate clone must be refused without --project"
+  assert_contains "$out" "no publication authority" "the refusal must name the missing grant"
+  assert_absent "$home/data/brief-np-refuse/brief.md" "a refused scaffold must write no brief"
+
+  out=$(brief_np brief-np-local --mode local-only); rc=$?
+  expect_code 0 "$rc" "local-only publishes nothing and must scaffold (got: $out)"
+
+  if [ -n "$PUB_TARGET" ]; then
+    out=$(brief_np brief-np-consent --mode direct-PR --upstream-consent "$PUB_TARGET"); rc=$?
+    expect_code 0 "$rc" "recorded consent must let the scaffold through (got: $out)"
+  fi
+  pass "fm-brief.sh: the self-repository gate applies without --project via the REPO clone"
+}
+
 test_brief_self_repo_pre_gate() {
   local home out rc
   home=$(make_role_home brief-selfrepo)
@@ -734,6 +760,7 @@ test_secondmate_inherits_only_resolved_primary_role
 test_dod_block_renders_and_bounds_consent
 test_brief_consent_flag_bounds
 test_brief_self_repo_pre_gate
+test_brief_self_repo_gate_without_project_flag
 test_spawn_gate_on_self_repo
 test_spawn_consent_agreement
 test_promote_gate_on_self_repo

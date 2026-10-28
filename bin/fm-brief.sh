@@ -93,9 +93,9 @@
 # --project <dir> is the task's project directory, used to detect when a ship
 # brief would publish to firstmate's own repository: for such a task this
 # scaffold refuses a publishing mode that the home's role or recorded consent
-# does not authorize, before the contract exists. Pass it on every ship
-# scaffold so detection does not depend on the caller recognizing the repo;
-# bin/fm-spawn.sh repeats the check at launch regardless.
+# does not authorize, before the contract exists. Without it the same check
+# runs on the registered clone the REPO argument names; bin/fm-spawn.sh repeats
+# the check at launch regardless.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line, followed by " forge=gerrit shape=squash"
 # on Gerrit, " forge=forgejo" on Forgejo, or " forge=external" on an external
@@ -361,16 +361,26 @@ if [ "$UPSTREAM_CONSENT_SET" -eq 1 ]; then
   }
   UPSTREAM_CONSENT=$(fm_role_scope_norm "$UPSTREAM_CONSENT")
 fi
-# Self-repository pre-gate for a publishing ship brief: detectable only when
-# --project was passed, so the check runs here only then. bin/fm-spawn.sh
-# repeats it at launch with the resolved project path.
-if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -eq 1 ]; then
-  [ -n "$PROJECT_DIR" ] || {
+# Self-repository pre-gate for a publishing ship brief. The project is --project
+# when passed; otherwise it is the registered clone the REPO argument names, so
+# detection never depends on the caller passing --project. A REPO with no clone
+# in this home is not detectable here, and bin/fm-spawn.sh repeats the check at
+# launch with the resolved project path.
+GATE_PROJECT=$PROJECT_DIR
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -eq 0 ] && [ -n "${POS[1]:-}" ]; then
+  GATE_CLONE="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/${POS[1]#projects/}"
+  if [ -d "$GATE_CLONE" ]; then
+    GATE_PROJECT=$GATE_CLONE
+    PROJECT_DIR_SET=2
+  fi
+fi
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -ge 1 ]; then
+  [ -n "$GATE_PROJECT" ] || {
     echo "error: --project requires a non-empty directory" >&2
     exit 1
   }
   gate_rc=0
-  fm_role_gate_self_publish "$FM_HOME" "$CONFIG" "$PROJECT_DIR" "$FM_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
+  fm_role_gate_self_publish "$FM_HOME" "$CONFIG" "$GATE_PROJECT" "$FM_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
   case $gate_rc in
     0 | 2) ;;
     *)
