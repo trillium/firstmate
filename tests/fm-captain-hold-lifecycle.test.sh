@@ -4713,7 +4713,9 @@ test_archived_answered_hold_still_satisfies_the_gate() {
   fi
   assert_present "$home/state/$id.meta" "refused teardown removed investigation metadata"
 
-  printf 'decisions_reviewed=1\ndecision_keys=sample-never-held-call\n' >> "$home/state/$id.meta"
+  grep -v '^decisions_reviewed=\|^decision_keys=' "$home/state/$id.meta" > "$home/state/$id.meta.new"
+  printf 'decisions_reviewed=1\ndecision_keys=sample-never-held-call\n' >> "$home/state/$id.meta.new"
+  mv "$home/state/$id.meta.new" "$home/state/$id.meta"
   if run_captain "$home" verify "$id" > "$home/missing-verify.out" 2> "$home/missing-verify.err"; then
     fail "verify accepted an attested captain call that exists nowhere"
   fi

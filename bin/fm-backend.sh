@@ -420,6 +420,54 @@ fm_meta_get() {  # <meta-file> <key>
   printf '%s' "$value"
 }
 
+# fm_meta_get_exact: the single exact-value meta accessor.
+# Prints the value only when <meta-file> holds exactly one non-empty `key=`
+# line. Returns 1 when the file is absent, the key is absent or duplicated, or
+# the value is empty. Identity and endpoint readers use this instead of the
+# lenient fm_meta_get, so a duplicate key is a loud refusal rather than a
+# first-match vs last-match disagreement (robots-73la).
+fm_meta_get_exact() {  # <meta-file> <key>
+  local meta=$1 key=$2 count value
+  count=$(grep -c "^$key=" "$meta" 2>/dev/null || true)
+  [ "$count" = 1 ] || return 1
+  value=$(grep "^$key=" "$meta" | cut -d= -f2-)
+  [ -n "$value" ] || return 1
+  printf '%s' "$value"
+}
+
+# fm_meta_set: the single meta writer.
+# Atomically rewrites <meta-file> so it holds exactly one `key=value` line:
+# every prior `key=` line is dropped and the new line is appended, so duplicate
+# keys are impossible however often the writer runs. An empty or absent value
+# removes the key instead of writing an empty line, because fm_meta_get_exact
+# treats empty as unset. The rewrite preserves the file's mode. It does not take
+# the per-meta lock itself, because a caller that already holds it
+# (bin/fm-captain-hold.sh) must not deadlock; callers that need the read-modify-
+# write serialized hold fm_meta_lock_path's lock around the call. Returns 1
+# without touching the file when the key is not a slug-safe name, when key or
+# value spans lines, or when the meta file is absent or a symlink.
+fm_meta_set() {  # <meta-file> <key> [value]
+  local meta=$1 key=${2:-} value=${3:-} dir base tmp mode
+  case "$key" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  dir=${meta%/*}
+  base=${meta##*/}
+  [ "$dir" != "$meta" ] || dir=.
+  tmp=$(mktemp "$dir/.$base.fm-meta.XXXXXX") || return 1
+  mode=$(/usr/bin/stat -f %Lp "$meta" 2>/dev/null) || mode=$(stat -c %a "$meta" 2>/dev/null) || mode=
+  if ! { grep -v "^${key}=" "$meta" || true; } > "$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  if [ -n "$value" ]; then
+    printf '%s=%s\n' "$key" "$value" >> "$tmp" || { rm -f "$tmp"; return 1; }
+  fi
+  if [ -n "$mode" ]; then
+    chmod "$mode" "$tmp" || { rm -f "$tmp"; return 1; }
+  fi
+  mv -f "$tmp" "$meta" || { rm -f "$tmp"; return 1; }
+}
+
 # fm_backend_of_meta: the backend recorded in <meta-file>, defaulting to
 # `tmux` when the field is absent - the P1 compatibility contract.
 fm_backend_of_meta() {  # <meta-file>
@@ -452,12 +500,7 @@ fm_backend_target_of_meta() {  # <meta-file>
 # On success, sets FM_BACKEND_VALIDATED_BACKEND and
 # FM_BACKEND_VALIDATED_TARGET. On failure, prints one refusal and returns 1.
 fm_backend_meta_exact_value() {  # <meta-file> <key>
-  local meta=$1 key=$2 count value
-  count=$(grep -c "^$key=" "$meta" 2>/dev/null || true)
-  [ "$count" -eq 1 ] || return 1
-  value=$(grep "^$key=" "$meta" | cut -d= -f2-)
-  [ -n "$value" ] || return 1
-  printf '%s' "$value"
+  fm_meta_get_exact "$1" "$2"
 }
 
 fm_backend_endpoint_atom_valid() {  # <value>

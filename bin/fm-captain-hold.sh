@@ -234,6 +234,9 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+# shellcheck source=bin/fm-backend.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-wake-lib.sh"
@@ -869,7 +872,7 @@ write_hold_origin() {  # <task-id> <shown-body> <origin-or-empty>
 
 refuse_self_inventory() {
   local origin=$1 entry=$2 meta="$STATE/$1.meta"
-  if list_has_key "$(meta_value "$meta" decision_keys)" "$entry"; then
+  if list_has_key "$(fm_meta_get_exact "$meta" decision_keys 2>/dev/null || true)" "$entry"; then
     fail "origin $origin cannot be its own captain-call inventory entry; historical decision_keys in $meta still contains $entry; hold a separate captain task with --origin $origin, replace only $entry in the final decision_keys= line with that task id while preserving all other entries, then re-run complete $origin <task-id>"
   fi
   fail "origin $origin cannot be its own captain-call inventory entry; hold a separate captain task for the call and list that task"
@@ -1108,7 +1111,7 @@ command_hold() {
     [ -n "$title" ] || fail "--title is required to create task $id"
     validate_one_line title "$title"
     if [ -z "$repo" ] && [ -n "$origin" ] && [ -f "$STATE/$origin.meta" ]; then
-      repo=$(meta_value "$STATE/$origin.meta" project)
+      repo=$(fm_meta_get_exact "$STATE/$origin.meta" project 2>/dev/null || true)
       repo=${repo%/}
       repo=${repo##*/}
     fi
@@ -1920,7 +1923,7 @@ command_complete() {
     done
   fi
   if [ "$has_meta" = 1 ]; then
-    previous=$(meta_value "$meta" decision_keys)
+    previous=$(fm_meta_get_exact "$meta" decision_keys 2>/dev/null || true)
   fi
   keys=$(sorted_key_union "$previous" "$supplied")
   if [ -n "$keys" ]; then
@@ -1952,8 +1955,9 @@ EOF
   fi
 
   if [ "$has_meta" = 1 ]; then
-    if [ "$(meta_value "$meta" decisions_reviewed)" != 1 ] || [ "$previous" != "$keys" ]; then
-      printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$meta"
+    if [ "$(fm_meta_get_exact "$meta" decisions_reviewed 2>/dev/null || true)" != 1 ] || [ "$previous" != "$keys" ]; then
+      fm_meta_set "$meta" decisions_reviewed 1 || fail "could not record the decision inventory in $meta"
+      fm_meta_set "$meta" decision_keys "$keys" || fail "could not record the decision inventory in $meta"
     fi
     fm_lock_release "$CAPTAIN_META_LOCK"
     CAPTAIN_META_LOCK_HELD=0
@@ -1991,9 +1995,9 @@ command_verify() {
   meta="$STATE/$origin.meta"
   [ -f "$meta" ] || fail "origin metadata is absent: $meta"
   require_tasks_axi
-  reviewed=$(meta_value "$meta" decisions_reviewed)
+  reviewed=$(fm_meta_get_exact "$meta" decisions_reviewed 2>/dev/null || true)
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed captain-call inventory"
-  keys=$(meta_value "$meta" decision_keys)
+  keys=$(fm_meta_get_exact "$meta" decision_keys 2>/dev/null || true)
   if [ -n "$keys" ]; then
     while IFS= read -r entry; do
       [ -n "$entry" ] || continue
