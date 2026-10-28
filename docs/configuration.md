@@ -868,7 +868,7 @@ Create it with `touch "$FM_HOME/config/ready-after-green"`; remove it to restore
 It is off by default: without the flag, `bin/fm-pr-check.sh` publishes the line when it registers the PR, whatever the state of the checks.
 With the flag present and a `no-mistakes` task, registration still records the PR and arms the merge poll, but publishes the line only when the last `done` line in the child's status reports `PR <url> checks green` for that same PR, with any text around it.
 A registration made earlier publishes nothing, and registering again after the green report publishes the line.
-The `direct-PR` and `local-only` modes, where ready means opened for review, and Gerrit changes are unaffected.
+The `direct-PR` and `local-only` modes and Gerrit changes are unaffected.
 The child's own `done` line still reaches the parent through `bin/fm-inactive-reconcile.sh`.
 The flag is a home-local preference and is not inherited by secondmate homes; [`bin/fm-pr-check.sh`](../bin/fm-pr-check.sh) owns the mechanics.
 
