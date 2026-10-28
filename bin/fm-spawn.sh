@@ -5792,6 +5792,17 @@ fi
 spawn_enter_recorded_worktree
 spawn_assert_agent_worktree
 
+# Crew git identity: every firstmate-launched crew worktree commits as the
+# captain's GitHub noreply identity, never a personal address.
+# Local-only config in the isolated worktree, so global config and the
+# captain's own checkouts are untouched; user.name is left as-is.
+if [ "$KIND" != secondmate ]; then
+  git -C "$WT" config user.email "5898009+trillium@users.noreply.github.com" || {
+    echo "error: could not set crew git identity in '$WT'; $(spawn_endpoint_hint)" >&2
+    exit 1
+  }
+fi
+
 # Pre-register Claude's workspace trust for the directory this launch starts in,
 # at the first point that directory is known and before any per-task state is
 # created below. The dialog gates the pane before the brief is ever read, and it
