@@ -170,6 +170,8 @@ esac
 . "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-role-lib.sh
 . "$SCRIPT_DIR/fm-role-lib.sh"
+# shellcheck source=bin/fm-project-dir-lib.sh
+. "$SCRIPT_DIR/fm-project-dir-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 IFS= read -r -d '' CREWMATE_PAUSE_INSTRUCTIONS <<EOF || true
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
@@ -368,7 +370,7 @@ fi
 # launch with the resolved project path.
 GATE_PROJECT=$PROJECT_DIR
 if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -eq 0 ] && [ -n "${POS[1]:-}" ]; then
-  GATE_CLONE="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}/${POS[1]#projects/}"
+  GATE_CLONE=$(fm_project_dir_candidate "${POS[1]}" "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}")
   if [ -d "$GATE_CLONE" ]; then
     GATE_PROJECT=$GATE_CLONE
     PROJECT_DIR_SET=2

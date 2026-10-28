@@ -719,6 +719,8 @@ esac
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 
+# shellcheck source=bin/fm-project-dir-lib.sh
+. "$SCRIPT_DIR/fm-project-dir-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
@@ -3717,12 +3719,12 @@ resolved_existing_dir() {
   cd "$path" && pwd -P
 }
 
+# Resolve the <project-dir> positional to an existing clone, accepting what
+# fm-brief.sh accepts (bin/fm-project-dir-lib.sh owns the mapping): an absolute
+# or explicit relative path, "projects/<name>", or a bare <name> under $PROJECTS.
+# A name that resolves nowhere fails with a named error, not a raw `cd` failure.
 resolve_project_dir_arg() {
-  local path=$1
-  case "$path" in
-  projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
-  *) printf '%s\n' "$path" ;;
-  esac
+  fm_resolve_project_dir "$1" "$PROJECTS" project
 }
 
 path_is_ancestor_of() {
@@ -3901,7 +3903,10 @@ if [ "$KIND" = secondmate ]; then
     BRIEF="$DATA/$ID/brief.md"
   fi
 else
-  PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
+  # Two steps on purpose: nesting the resolve inside the `cd` substitution would
+  # swallow its failure (`cd ""` succeeds and silently yields the process cwd).
+  PROJ_DIR="$(resolve_project_dir_arg "$PROJ")" || exit 1
+  PROJ_ABS="$(cd "$PROJ_DIR" && pwd)" || exit 1
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
