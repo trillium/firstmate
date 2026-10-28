@@ -254,6 +254,11 @@
 #   launch does not stall on Pi's "Trust project folder?" dialog for that home
 #   path; --approve is session-scoped to the launch cwd and does not rewrite the
 #   operator's trust.json. Ordinary Pi worker launches never receive --approve.
+#   A ship or scout whose project declares MCP servers (.mcp.json, .pi/mcp.json,
+#   or .pi/mcp-adapter.json) instead receives --no-approve when that help
+#   advertises it, so Pi's MCP adapter blocks those servers without prompting
+#   rather than stalling on "Allow project MCP server"; a project without MCP
+#   config keeps Pi's default trust behavior.
 #   A missing selected executable refuses before endpoint creation, and pi-signed
 #   never falls back to pi.
 #   Devin is worker-only: --permission-mode dangerous and
@@ -500,9 +505,11 @@
 #                  state/<task-id>.claude-settings.json
 #     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
 #     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
-#     __PIAPPROVE__ optional --approve on a seeded Pi/pi-signed secondmate when
-#                  that executable advertises the flag (empty otherwise; session
-#                  trust for the launch cwd only, never a trust.json rewrite)
+#     __PIAPPROVE__ optional --approve on a seeded Pi/pi-signed secondmate, or
+#                  --no-approve on a ship or scout in a project that declares
+#                  MCP servers, when that executable advertises the flag (empty
+#                  otherwise; session trust for the launch cwd only, never a
+#                  trust.json rewrite)
 #     __PIEXCLUDE__ optional ` --exclude-tools '<comma-joined names>'` from
 #                  config/crew-exclude-tools on Pi/pi-signed ship and scout
 #                  launches (supplies its own leading space, empty otherwise)
@@ -2531,6 +2538,23 @@ pi_supports_approve() {
   printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:]])--approve([^[:alnum:]_-]|$)'
 }
 
+# Same probe shape for the decline form. Pi prints "--no-approve, -na".
+pi_supports_no_approve() {
+  local executable=$1 help
+  help=$("$executable" --help 2>&1) || return 1
+  printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:]])--no-approve([^[:alnum:]_-]|$)'
+}
+
+# True when the project declares MCP servers that Pi's MCP adapter treats as
+# project-scoped, which it would otherwise ask the worker to allow.
+project_declares_mcp_servers() {
+  local dir=$1 f
+  for f in .mcp.json .pi/mcp.json .pi/mcp-adapter.json; do
+    [ -e "$dir/$f" ] && return 0
+  done
+  return 1
+}
+
 # omp pre-launch model validation. `omp models --json` (omp 18.1.11) prints
 # {"models":[{"provider","id","selector":"<provider>/<id>",...}]} for built-in and
 # auto-discovered providers only; it never lists a provider an extension
@@ -3063,8 +3087,14 @@ pi | pi-signed)
   # the pane). Session-only --approve; never expand to a parent path or
   # rewrite the operator trust store.
   PI_APPROVE=
-  if [ "$KIND" = secondmate ] && pi_supports_approve "$PI_BIN"; then
-    PI_APPROVE=' --approve'
+  if [ "$KIND" = secondmate ]; then
+    if pi_supports_approve "$PI_BIN"; then
+      PI_APPROVE=' --approve'
+    fi
+  else
+    # Ship and scout: the project path is not known yet, so the MCP decline
+    # below is filled in once it is (see __PIMCPDECLINE__).
+    PI_APPROVE=' __PIMCPDECLINE__'
   fi
   LAUNCH=${LAUNCH//__PIAPPROVE__/$PI_APPROVE}
   PI_EXCLUDE=
@@ -6943,6 +6973,19 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RESUME_ARGS=$(relaunch_resume_args "$HARNESS" "$BACKEND" "$T") || RESUME_ARGS=
 fi
 LAUNCH=${LAUNCH//__PIRESUME__/$RESUME_ARGS}
+# A ship or scout in a project with project-scoped MCP servers would stop on one
+# "Allow project MCP server" dialog per server and idle until someone presses a
+# key. --no-approve declines project trust for this run, so Pi's MCP adapter
+# blocks those servers without asking; it never allows them.
+PI_MCP_DECLINE=
+case "$HARNESS" in
+pi | pi-signed)
+  if project_declares_mcp_servers "$PROJ_ABS" && pi_supports_no_approve "$PI_BIN"; then
+    PI_MCP_DECLINE='--no-approve'
+  fi
+  ;;
+esac
+LAUNCH=${LAUNCH//" __PIMCPDECLINE__"/${PI_MCP_DECLINE:+ $PI_MCP_DECLINE}}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
 # Every templated claude launch passes the settings file the claude wiring wrote
 # under state/ (hooks plus the feedback and attribution policy).

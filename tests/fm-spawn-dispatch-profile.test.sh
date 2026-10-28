@@ -25,8 +25,8 @@ if [ "${1:-}" = --help ]; then
   # 0.50.0 is a synthetic pre-approve probe; current defaults advertise both.
   case "${FM_FAKE_PI_VERSION:-0.84.0}" in
   0.50.0) printf '%s\n' 'Pi 0.50.0' 'Options: --help' ;;
-  0.82.0) printf '%s\n' 'Pi 0.82.0' 'Options: --help --approve' ;;
-  *) printf '%s\n' "Pi ${FM_FAKE_PI_VERSION:-0.84.0}" 'Options: --help --tui-mode <mode> --approve' ;;
+  0.82.0) printf '%s\n' 'Pi 0.82.0' 'Options: --help --approve --no-approve' ;;
+  *) printf '%s\n' "Pi ${FM_FAKE_PI_VERSION:-0.84.0}" 'Options: --help --tui-mode <mode> --approve --no-approve' ;;
   esac
 fi
 exit 0
@@ -1468,7 +1468,37 @@ test_pi_worker_launch_omits_seeded_home_approve() {
     "pi worker launch lost its regular TUI probe"
   assert_not_contains "$launch" "--approve" \
     "ordinary Pi worker launches must not receive secondmate seeded-home --approve"
+  assert_not_contains "$launch" "--no-approve" \
+    "a Pi worker in a project without MCP config keeps Pi's default trust behavior"
   pass "ordinary Pi worker launches omit --approve"
+}
+
+test_pi_worker_declines_project_mcp_servers() {
+  local rec id out status launch
+  id=profile-pi-worker-mcp-decline-z8h
+  rec=$(make_spawn_case profile-pi-worker-mcp-decline pi "$id")
+  read_case_record "$rec"
+  printf '%s\n' '{"mcpServers":{"probe":{"command":"true"}}}' > "$PROJ_DIR/.mcp.json"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "pi ship spawn in an MCP project should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular --no-approve" \
+    "pi worker in a project with MCP servers must decline project trust"
+  assert_not_contains "$launch" " --approve" "pi worker must never auto-approve project trust"
+
+  id=profile-pi-worker-mcp-old-z8i
+  rec=$(make_spawn_case profile-pi-worker-mcp-old pi "$id")
+  read_case_record "$rec"
+  printf '%s\n' '{"mcpServers":{"probe":{"command":"true"}}}' > "$PROJ_DIR/.mcp.json"
+  out=$(FM_TEST_PI_VERSION=0.50.0 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "pi without --no-approve must still spawn"
+  assert_not_contains "$(cat "$LAUNCH_LOG")" "approve" \
+    "pi without advertised --no-approve must omit the flag"
+  pass "Pi workers decline project MCP servers only when the project declares them"
 }
 
 test_pi_approve_probe_omits_unsupported_flag() {
@@ -2769,6 +2799,7 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_pi_seeded_secondmate_preapproves_project_trust
 test_pi_worker_launch_omits_seeded_home_approve
+test_pi_worker_declines_project_mcp_servers
 test_pi_approve_probe_omits_unsupported_flag
 test_pi_exclude_tools_reach_ship_and_scout_launches
 test_pi_exclude_tools_worker_registry_reports
