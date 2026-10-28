@@ -1,1 +1,0 @@
-mem=4294967296 pids=512 capdrop=[ALL] secopt=[no-new-privileges]

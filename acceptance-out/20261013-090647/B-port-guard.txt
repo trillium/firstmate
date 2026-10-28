@@ -1,2 +1,0 @@
-demo-bridge: port 3737 belongs to the real Beads Bridge; the demo must never use it
-rc=2

@@ -1,9 +1,0 @@
-{
- "workflow": "capture",
- "heard": "new task in ops: acceptance voice bead",
- "result": {
-  "store": "ops-demo",
-  "bead": "ops-xb5"
- },
- "title": "acceptance voice bead"
-}

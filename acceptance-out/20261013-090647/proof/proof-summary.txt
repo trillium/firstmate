@@ -1,5 +1,0 @@
-joined: alice(rw) bob(rw) carol(ro)
-tmux capture has alice output: true
-tmux capture has bob output:   true
-tmux capture has pytest result: true
-read-only marker executed:     false  (expected false)

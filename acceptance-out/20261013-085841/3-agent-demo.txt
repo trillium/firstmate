@@ -1,6 +1,0 @@
->> real Claude Code, MOCK model endpoint (http://127.0.0.1:8999), approved MCP: brain
-assistant: [mock model] Looking up oven notes in the Brain via the approved MCP tool.
-tool_use: mcp__brain__brain_search {"query":"oven"}
-tool_result received (1234 chars)
-assistant: [mock model] The Brain MCP search for 'oven' returned 3 id mentions. Top hit: brain-t002 'Recalibrate deck oven #2 thermostat' (blocked by brain-k002). This reply is scripted.
-result: [mock model] The Brain MCP search for 'oven' returned 3 id mentions. Top hit: brain-t002 'Recalibrate deck oven #2 thermostat' (blocked by brain-k002). This reply is scripted. [turns=2]

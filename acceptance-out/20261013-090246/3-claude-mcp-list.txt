@@ -1,5 +1,0 @@
-Checking MCP server health…
-
-brain: python3 /opt/studio/mcp/brain-mcp.py - ✔ Connected
-beads-bridge: http://127.0.0.1:3737/mcp (HTTP) - ⏸ Pending approval (run `claude` to approve)
-beads-bridge-demo: http://127.0.0.1:3838/mcp (HTTP) - ✔ Connected

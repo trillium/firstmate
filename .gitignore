@@ -13,3 +13,6 @@ __pycache__/
 config/
 
 .tools/
+
+# Generated acceptance run evidence
+acceptance-out/

@@ -1,1 +1,0 @@
-(real bridge not running; tests skipped)
