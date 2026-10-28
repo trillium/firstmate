@@ -1,0 +1,2 @@
+flowchart LR
+  A["before: test_drain_dedupes_obvious_duplicates counts all non-empty lines with awk 'NF' -> catches NOT DONE presentation lines on heartbeat -> fails: expected 2 deduped records, got 7"] --> B["after: count 5-field queue records with awk -F '\\t' 'NF == 5' matching all other wake queue tests -> passes with 2 deduped records"]
