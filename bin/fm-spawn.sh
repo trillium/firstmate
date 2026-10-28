@@ -404,7 +404,8 @@
 #   REX_SESSION REX_BLOCK REX_SERVER REX_BIN_DIR TERN_IDENTITY TERN_PANE
 #   TERN_PANE_SOCKET TERN_WINDOW_KEY TERN_WINDOW_SOCKET, plus the task
 #   marker FM_TASK_ID that ship and scout panes receive above, plus the
-#   non-interactive git editors GIT_EDITOR GIT_SEQUENCE_EDITOR (pane export),
+#   non-interactive git editors GIT_EDITOR GIT_SEQUENCE_EDITOR (pane export) and the crew
+#   identity GIT_AUTHOR_EMAIL GIT_COMMITTER_EMAIL (crew panes only),
 #   plus the compact-adviser kill switch COMPACT_ADVISER_DISABLE, which the floor also
 #   pins to 1 with a literal assignment so it survives the cleared environment
 #   even on a host that never had it set.
@@ -5792,17 +5793,6 @@ fi
 spawn_enter_recorded_worktree
 spawn_assert_agent_worktree
 
-# Crew git identity: every firstmate-launched crew worktree commits as the
-# captain's GitHub noreply identity, never a personal address.
-# Local-only config in the isolated worktree, so global config and the
-# captain's own checkouts are untouched; user.name is left as-is.
-if [ "$KIND" != secondmate ]; then
-  git -C "$WT" config user.email "5898009+trillium@users.noreply.github.com" || {
-    echo "error: could not set crew git identity in '$WT'; $(spawn_endpoint_hint)" >&2
-    exit 1
-  }
-fi
-
 # Pre-register Claude's workspace trust for the directory this launch starts in,
 # at the first point that directory is known and before any per-task state is
 # created below. The dialog gates the pane before the brief is ever read, and it
@@ -7257,13 +7247,14 @@ spawn_record_traceparent() {
   return "$status"
 }
 
+CREW_GIT_EMAIL="5898009+trillium@users.noreply.github.com"
 if [ "$BACKEND" = t3code ]; then
   # No pane to export into: the same facts, under the same conditions as the
   # pane path below, become the launch directory's harness config
   # (spawn_t3code_env_install). TRACEPARENT is delivered only once its meta
   # record exists, the same delivered-implies-recorded invariant the pane path
   # keeps by unsetting it when the record fails.
-  T3CODE_ENV=("GOTMPDIR=$TASK_TMP/gotmp" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true COMPACT_ADVISER_DISABLE=1 "FM_TASK_INBOX=$STATE_REAL/$ID.inbox")
+  T3CODE_ENV=("GOTMPDIR=$TASK_TMP/gotmp" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true "GIT_AUTHOR_EMAIL=$CREW_GIT_EMAIL" "GIT_COMMITTER_EMAIL=$CREW_GIT_EMAIL" COMPACT_ADVISER_DISABLE=1 "FM_TASK_INBOX=$STATE_REAL/$ID.inbox")
   if [ "$GIT_HOOKS_INSTALLED" = 1 ]; then
     T3CODE_ENV+=(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "GIT_CONFIG_VALUE_0=$GIT_HOOKS_DIR")
   fi
@@ -7304,6 +7295,13 @@ spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 # silent and indistinguishable from a thinking pane. `true` exits 0 without
 # touching the file, so git proceeds with the message or todo as written.
 spawn_send_text_line "$T" "export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true"
+# Crew commits carry the captain's GitHub noreply identity, never a personal
+# address. Scoped to the worker's environment: a treehouse worktree shares its
+# repository config with the primary clone, so a `git config` write here would
+# change every checkout of the project.
+if [ "$KIND" != secondmate ]; then
+  spawn_send_text_line "$T" "export GIT_AUTHOR_EMAIL=$CREW_GIT_EMAIL GIT_COMMITTER_EMAIL=$CREW_GIT_EMAIL"
+fi
 # Export the compact-adviser kill switch into the pane shell through the same
 # pre-launch channel, so later commands in that shell inherit it too. The launch
 # command independently establishes the value for the agent process itself.
@@ -7353,6 +7351,7 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
     TERM_PROGRAM REX_SESSION REX_BLOCK REX_SERVER REX_BIN_DIR \
     TERN_IDENTITY TERN_PANE TERN_PANE_SOCKET TERN_WINDOW_KEY TERN_WINDOW_SOCKET \
     FM_TASK_ID COMPACT_ADVISER_DISABLE LAVISH_AXI_HOST GIT_EDITOR GIT_SEQUENCE_EDITOR \
+    GIT_AUTHOR_EMAIL GIT_COMMITTER_EMAIL \
     $LAUNCH_ENV_FORWARD_NAMES; do
     if [ "$ORCA_LAUNCH_ENV_ENABLED" = 1 ]; then
       case $'\n'"$LAUNCH_ENV_NAMES"$'\n' in
