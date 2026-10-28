@@ -3445,6 +3445,16 @@ effort_flag_for_harness() {
   agy)
     # agy 1.2.0 --effort accepts exactly low|medium|high, so xhigh and max are
     # omitted rather than passed as known-bad values (record-and-omit).
+    # A catalog id that already ends in -low|-medium|-high pins its effort, and
+    # agy rejects --model <id> together with --effort ("conflicts with
+    # --effort"); interactive mode then falls back to the default model
+    # silently. Omit --effort for such ids and say so when it differs.
+    case "$model" in
+    *-low | *-medium | *-high)
+      [ "$model" = "${model%-*}-$effort" ] || echo "notice: agy model '$model' pins its own effort; omitting --effort '$effort'" >&2
+      return 0
+      ;;
+    esac
     case "$effort" in
     low | medium | high) printf -- '--effort %s ' "$(shell_quote "$effort")" ;;
     esac

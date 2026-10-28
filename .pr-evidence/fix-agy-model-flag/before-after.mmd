@@ -1,0 +1,7 @@
+flowchart LR
+  subgraph Before
+    A1["--model gemini-4-argon-high --effort medium"] --> B1["agy: conflicts with --effort"] --> C1["interactive silently falls back to Gemini 3.8 Flash"]
+  end
+  subgraph After
+    A2["--model gemini-4-argon-high --effort medium"] --> B2["fm-spawn omits --effort, prints notice"] --> C2["agy launches Gemini 4 Argon (High)"]
+  end

@@ -642,7 +642,7 @@ test_agy_launch_carries_the_brief_with_model_effort_and_autonomy() {
   assert_contains "$launch" "$FAKEBIN_DIR/agy" "agy launch did not pin the resolved absolute binary"
   assert_contains "$launch" "--prompt-interactive" "agy launch did not carry the brief via --prompt-interactive"
   assert_contains "$launch" "--model 'gemini-3.8-flash-low'" "agy launch did not carry the requested model"
-  assert_contains "$launch" "--effort 'low'" "agy launch did not carry the requested effort"
+  assert_not_contains "$launch" "--effort" "agy launch passed --effort alongside an id that pins its own effort"
   assert_contains "$launch" "--dangerously-skip-permissions" "agy launch omitted unattended autonomy"
   assert_contains "$launch" "env -u CLAUDECODE" "agy launch did not clear the inherited launcher marker"
   assert_not_contains "$launch" "__AGYBIN__" "agy launch left its binary placeholder unsubstituted"
@@ -653,6 +653,22 @@ test_agy_launch_carries_the_brief_with_model_effort_and_autonomy() {
   assert_grep 'model=gemini-3.8-flash-low' "$meta" "agy meta did not record its model"
   assert_grep 'effort=low' "$meta" "agy meta did not record its effort"
   pass "fm-spawn: agy launch carries brief, model, effort, and autonomy with cleared markers"
+}
+
+test_agy_effort_suffixed_model_omits_conflicting_effort() {
+  local id rec out rc launch
+  id="agy-pinned-z4-$$"
+  rec=$(make_agy_spawn_case pinned "$id")
+  read_agy_spawn_record "$rec"
+  out=$(run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
+    --model gemini-3.8-flash-high --effort medium 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "agy spawn with an effort-pinned model should succeed"
+  launch=$(cat "$CASE_DIR/launch.log")
+  assert_contains "$launch" "--model 'gemini-3.8-flash-high'" "agy launch lost the requested model"
+  assert_not_contains "$launch" "--effort" "agy launch passed --effort that agy rejects as conflicting with the model id"
+  assert_contains "$out" "pins its own effort" "agy spawn did not say it omitted the differing effort"
+  pass "fm-spawn: agy omits --effort for an effort-suffixed model id and says so"
 }
 
 test_agy_effort_xhigh_is_recorded_but_omitted() {
@@ -915,6 +931,7 @@ test_herdr_shell_first_with_live_registry_stays_live
 test_herdr_lone_unregistered_pane_is_agent_free
 test_herdr_malformed_and_failed_reads_stay_unknown
 test_agy_launch_carries_the_brief_with_model_effort_and_autonomy
+test_agy_effort_suffixed_model_omits_conflicting_effort
 test_agy_effort_xhigh_is_recorded_but_omitted
 test_agy_unlisted_model_refuses_before_pane_creation
 test_agy_unreachable_listing_launches_unvalidated
