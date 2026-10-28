@@ -4354,10 +4354,18 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]; 2 when the worktre
     # A local-only ship lands on the project's local default branch, never on
     # origin, so that branch is the base even when it has diverged from origin
     # (a private main that lacks a fork PR's merge commit, say).
-    default=$(default_branch "$worktree" 2>/dev/null) || {
-      echo "error: could not determine the local default branch for pooled worktree '$worktree'; refusing to launch a local-only ship from a potentially stale base" >&2
-      return 1
-    }
+    if [ -n "$base" ]; then
+      default=$base
+      git -C "$worktree" rev-parse --verify --quiet "refs/heads/$default^{commit}" >/dev/null 2>&1 || {
+        echo "error: local branch '$default' does not exist for pooled worktree '$worktree'; refusing to launch a local-only ship from a missing base" >&2
+        return 1
+      }
+    else
+      default=$(default_branch "$worktree" 2>/dev/null) || {
+        echo "error: could not determine the local default branch for pooled worktree '$worktree'; refusing to launch a local-only ship from a potentially stale base" >&2
+        return 1
+      }
+    fi
     spawn_worktree_reset_to "$worktree" "refs/heads/$default" "local '$default'" || return 1
     return 0
   fi

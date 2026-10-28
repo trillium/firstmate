@@ -1177,6 +1177,8 @@ test_named_base_branch_starts_from_that_branch() {
   status=$?
   [ "$status" -ne 0 ] || fail "a base branch on a local-only ship should refuse the spawn"
   assert_contains "$out" "mode=local-only" "the local-only refusal did not explain itself"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$INITIAL_SHA" ] \
+    || fail "a refused local-only --base-branch spawn moved the pooled worktree"
   pass "--base-branch picks the copy's starting point and is recorded; a missing or local-only base refuses"
 }
 
