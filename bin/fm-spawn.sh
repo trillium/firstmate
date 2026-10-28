@@ -348,11 +348,24 @@
 #   Only after this isolation check, every fresh ship or scout requires a clean
 #   task worktree. When an origin configuration is detected, spawn fetches it,
 #   resolves the current remote default branch (or uses --base-branch, described
-#   above), and resets to its tip. When none is detected, spawn skips that remote freshness check and launches from the
-#   clean worktree's current HEAD. Relaunch reuses the recorded worktree without
-#   fetching or resetting its base. An unreachable detected origin, unresolved
-#   default branch, or non-clean worktree refuses a fresh spawn rather than
-#   risking a PR based on stale history or discarding local work.
+#   above), and resets to its tip. A home that creates the default-off
+#   config/spawn-base-primary-checkout flag (docs/configuration.md) instead
+#   resets a local-only ship or a scout without --base-branch to that same
+#   branch in the primary checkout when it strictly contains origin's tip: a
+#   local-only project lands work there through bin/fm-merge-local.sh and never
+#   pushes, so origin stays frozen at the last push. A publishing mode
+#   (bin/fm-dod-lib.sh fm_mode_publishes) and a named base branch keep origin's
+#   tip, because that work is delivered against origin. Two branches that have
+#   diverged also keep origin's tip, with a note counting both sides. The
+#   primary's commit is read from the local object store, so nothing more is
+#   fetched, and every base this picks contains origin's tip, so the reset
+#   discards nothing the origin-only rule would have kept. When no origin
+#   configuration is detected, spawn skips that remote freshness check and
+#   launches from the clean worktree's current HEAD. Relaunch reuses the
+#   recorded worktree without fetching or resetting its base. An unreachable
+#   detected origin, unresolved default branch, or non-clean worktree refuses
+#   a fresh spawn rather than risking a PR based on stale history or
+#   discarding local work.
 #   A slot whose only deviation is a stale submodule gitlink is refused by that
 #   same clean check, but is reported as a stale checkout naming each submodule
 #   and both pins; nothing is converged or removed, and no remedy is suggested.
@@ -5112,7 +5125,7 @@ EOF
       [ -n "$WT" ] || { echo "error: treehouse get --lease did not report a worktree for $ID" >&2; exit 1; }
       validate_spawn_worktree "treehouse get --lease" "$WT (leased to $ID; once inspected, release it with 'treehouse return --force $WT' from $PROJ_ABS)"
       T3CODE_LEASED=1
-      freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" || {
+      freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" "$PROJ_ABS" "$MODE" || {
         if [ "$?" -eq 2 ]; then
           T3CODE_LEASED=0
           echo "error: $WT stays leased to $ID; once inspected, release it with 'treehouse return --force $WT' from $PROJ_ABS" >&2
@@ -5791,7 +5804,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != t3code ]; then
-  freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" || exit 1
+  freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" "$PROJ_ABS" "$MODE" || exit 1
 fi
 
 # Re-assert the durable task copy after either treehouse acquisition or endpoint
