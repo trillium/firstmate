@@ -1659,6 +1659,8 @@ wait_record() {  # <kind> <subject> <whom> <action> <age-record>
 # recheck absorbs each later threshold until the decision closes, after which the
 # empty fold hands the lane back to the ladder within one STALE_ESCALATE_SECS.
 WEDGE_BACKLOG_HOLD_KIND='captain hold'
+# The wedge-timer label of a busy pane past BUSY_TURN_MAX_SECS (busy_turn_bound_check).
+WEDGE_BUSY_BOUND_LABEL='busy (no completed turn)'
 wedge_wait_evidence() {  # <task> [<escalations-so-far>] -> one wait_record on stdout
   local task=$1 count=${2:-0} last until statusf run verb armed='' capped=''
   [ -n "$task" ] || return 1
@@ -1852,6 +1854,31 @@ wedge_defer_validating() {  # <window> <since-file> <triage-label> <idle-age> <t
   triage_log "absorbed $label (no-mistakes run $run validating ($step), idle ${age}s): $win"
 }
 
+# Reset ONE wedge escalation for a pane whose crew-state positively reads a busy
+# pane (the .pane-busy-<task> marker crew_absorb_class leaves from its own
+# read and the first-sight route stamps with the frame, so this spends no read): the agent is mid-turn, so the quiet screen is
+# liveness rather than a wedge candidate and the escalation count it earned means
+# nothing once the live reading is back. Unlike the deferrals above this ends the whole
+# episode (timer and count), so a pane that stops being busy and goes quiet again
+# climbs the ladder from 1. A busy pane past BUSY_TURN_MAX_SECS with no completed
+# turn is deliberately NOT covered: that bound exists because a hung foreground
+# call can hide behind a busy reading, so it keeps the unchanged ladder, as does
+# every pane whose crew-state is anything but a busy pane (a run-step included).
+# Returns 0 when it has handled the window, 1 to escalate on the unchanged path.
+wedge_defer_live_busy() {  # <window> <since-file> <triage-label> <idle-age> <task> <hash>
+  local win=$1 since_file=$2 label=$3 age=$4 task=$5 hash=$6 key
+  [ "$label" != "$WEDGE_BUSY_BOUND_LABEL" ] || return 1
+  [ -n "$task" ] || return 1
+  busy_turn_over_age "$task" && return 1
+  [ -n "$hash" ] && [ "$(cat "$STATE/.pane-busy-$task" 2>/dev/null || true)" = "$hash" ] || return 1
+  key=$(window_key "$win")
+  wedge_episode_end "$key"
+  clear_write_tracking "$key"
+  date +%s > "$since_file"
+  triage_log "absorbed $label (busy pane, idle ${age}s), timer and escalation count reset: $win"
+  return 0
+}
+
 # The question the wedge timer never asked before it alarmed: is there still an
 # agent here to BE wedged? A wedge is something stuck that might recover, so
 # re-alarming it earns its cost; an agent that is gone never moves again, its pane
@@ -2016,6 +2043,26 @@ wedge_defer_guard() {  # <window> <since-file> <triage-label> <idle-age> <guard-
   return 0
 }
 
+# 0 when the idle timer a terminal-status override armed has reached the wedge
+# threshold, the last status is a settled one (done, or a declared pause), and the
+# crew is no longer provably working. Only those two verbs: a blocked or failed
+# line with nothing running is a stuck crew, and keeps its timer. The crew-state
+# read is the costly one, so it is taken only once per STALE_ESCALATE_SECS (the
+# age of the timer), never on an ordinary poll; a missing or unreadable timer is
+# not evidence.
+terminal_override_evidence_gone() {  # <since-file> <task>
+  local since_file=$1 task=$2 since age last verb
+  [ -e "$since_file" ] || return 1
+  since=$(cat "$since_file" 2>/dev/null || true)
+  case "$since" in ''|*[!0-9]*) return 1 ;; esac
+  fm_epoch_seconds_to age
+  [ $(( age - since )) -ge "$STALE_ESCALATE_SECS" ] || return 1
+  last=$(last_status_line "$STATE/$task.status")
+  status_line_verb "$last" verb
+  case "$verb" in done|paused) ;; *) return 1 ;; esac
+  ! crew_is_provably_working "$task"
+}
+
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
@@ -2167,6 +2214,9 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           return 0
         fi
         if wedge_defer_validating "$win" "$since_file" "$label" "$age" "$task"; then
+          return 0
+        fi
+        if wedge_defer_live_busy "$win" "$since_file" "$label" "$age" "$task" "$hash"; then
           return 0
         fi
         if wedge_defer_t3code_running "$win" "$since_file" "$label" "$age"; then
@@ -2461,7 +2511,7 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
     handle_paused_stale "$win" "$task" "$h"
     return 0
   fi
-  wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task" "$h" "$dialog"
+  wedge_timer_check "$win" "$since_file" "$WEDGE_BUSY_BOUND_LABEL" "$escalation_file" "$task" "$h" "$dialog"
   return 1
 }
 
@@ -4360,6 +4410,16 @@ EOF
               mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
               wake "$stale_reason"
             fi
+          elif terminal_override_evidence_gone "$ssf" "$task"; then
+            # The timer was armed while the crew was provably working, and that
+            # evidence is gone: the run ended or the pane went idle, so the
+            # terminal status the log already surfaced is the whole story and
+            # nothing here is a wedge. Without this the timer outlives its
+            # evidence and escalates a finished crew every threshold.
+            rm -f "$ssf"
+            wedge_episode_end "$key"
+            clear_write_tracking "$key"
+            triage_log "absorbed stale (overridden terminal status no longer provably working, wedge timer retired): $w"
           elif [ -e "$ssf" ] \
             || { [ "$FM_WEDGE_MAX_ESCALATIONS" -gt 0 ] && [ -e "$STATE/.wedge-permanent-$key" ]; }; then
             # This exact hash was already overridden as provably-working - keep
@@ -4407,6 +4467,8 @@ EOF
                 # clear_pause_tracking, so this route is not a keep-count site.
                 wedge_episode_end "$key"
                 date +%s > "$ssf"
+                # A busy-pane reading belongs to the frame it was taken on.
+                [ ! -e "$STATE/.pane-busy-$task" ] || printf '%s' "$h" > "$STATE/.pane-busy-$task"
                 triage_log "absorbed non-terminal stale (provably working): $w"
                 ;;
               paused)

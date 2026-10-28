@@ -2574,14 +2574,33 @@ crew_absorb_class() {  # <id>
   local id=$1 line state src
   [ -n "$id" ] || { printf 'none'; return; }
   line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
-  case "$line" in state:*) ;; *) printf 'none'; return ;; esac
+  case "$line" in state:*) ;; *) _fm_pane_busy_record "$id" ''; printf 'none'; return ;; esac
   state=${line#state: }; state=${state%% *}
-  if [ "$state" = paused ]; then printf 'paused'; return; fi
+  if [ "$state" = paused ]; then _fm_pane_busy_record "$id" ''; printf 'paused'; return; fi
   if [ "$state" = working ]; then
     src=${line#*source: }; src=${src%% *}
-    case "$src" in run-step|pane) printf 'working'; return ;; esac
+    case "$src" in
+      run-step|pane)
+        _fm_pane_busy_record "$id" "$src"
+        printf 'working'; return ;;
+    esac
   fi
+  _fm_pane_busy_record "$id" ''
   printf 'none'
+}
+
+# Record, from the read crew_absorb_class already made, whether <id>'s last
+# current-state verdict was a busy pane (`working` from source `pane`): the marker
+# $STATE/.pane-busy-<id> exists exactly then. It costs nothing extra, and it is
+# what lets the wedge ladder ask "was this crew last read live-busy" without a
+# read of its own (an unarmed home's ladder spends none). A run-step verdict is
+# not a busy pane: a run can sit behind a stuck pipeline, so only the pane reading
+# is liveness in its own right.
+_fm_pane_busy_record() {  # <id> <source-or-empty>
+  local dir=${STATE:-${FM_STATE_OVERRIDE:-}}
+  [ -n "$dir" ] && [ -d "$dir" ] || return 0
+  if [ "$2" = pane ]; then : > "$dir/.pane-busy-$1" 2>/dev/null || true
+  else rm -f "$dir/.pane-busy-$1" 2>/dev/null || true; fi
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class
