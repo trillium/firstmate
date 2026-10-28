@@ -432,6 +432,58 @@ test_dirty_pool_refuses_without_discarding_work() {
   pass "a dirty pooled worktree is refused without discarding its local work"
 }
 
+test_pool_slot_head_ahead_of_origin_starts_from_local_main() {
+  local rec id out status local_tip
+  id='pool-local-main-ahead-r20'
+  rec=$(make_case local-main-ahead "$id")
+  read_case_record "$rec"
+  # A local-only landing advanced the project's main past origin/main; the slot
+  # still holds the older commit it was leased at.
+  printf 'local-only landing\n' > "$PROJECT_DIR/local-landing.txt"
+  git -C "$PROJECT_DIR" add local-landing.txt
+  git -C "$PROJECT_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm local-landing
+  git -C "$PROJECT_DIR" fetch --quiet origin
+  git -C "$PROJECT_DIR" merge --quiet --no-edit origin/main
+  local_tip=$(git -C "$PROJECT_DIR" rev-parse main)
+  [ "$local_tip" != "$(git -C "$PROJECT_DIR" rev-parse origin/main)" ] \
+    || fail "fixture did not put local main ahead of origin/main"
+
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  expect_code 0 "$status" "spawn should refresh a stale slot onto local main"$'\n'"$out"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$local_tip" ] \
+    || fail "slot did not start from the project's local main"
+  git -C "$POOL_DIR" checkout --quiet -b "fm/$id"
+  git -C "$PROJECT_DIR" merge-base --is-ancestor main "fm/$id" \
+    || fail "a branch created after spawn does not contain local main"
+  pass "a stale slot starts the ship branch from local main when it is ahead of origin"
+}
+
+test_originless_stale_slot_head_starts_from_local_main() {
+  local rec id out status stale unrelated
+  id='pool-originless-stale-r21'
+  rec=$(make_originless_case originless-stale "$id")
+  read_case_record "$rec"
+  # The slot holds an unrelated commit; the project's main is somewhere else.
+  git -C "$POOL_DIR" checkout --quiet --detach
+  printf 'unrelated\n' > "$POOL_DIR/unrelated.txt"
+  git -C "$POOL_DIR" add unrelated.txt
+  git -C "$POOL_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm unrelated
+  stale=$(git -C "$POOL_DIR" rev-parse HEAD)
+  printf 'landed\n' > "$PROJECT_DIR/landed.txt"
+  git -C "$PROJECT_DIR" add landed.txt
+  git -C "$PROJECT_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm landed
+  unrelated=$(git -C "$PROJECT_DIR" rev-parse main)
+  [ "$stale" != "$unrelated" ] || fail "fixture did not diverge slot HEAD from main"
+
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  expect_code 0 "$status" "spawn should launch the origin-less stale slot"$'\n'"$out"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$unrelated" ] \
+    || fail "ship branch base is the slot's stale HEAD, not local main"
+  pass "an origin-less slot holding an unrelated HEAD starts from local main"
+}
+
 test_unresolved_remote_default_refuses_pool() {
   local rec id out status before
   id='pool-unresolved-default-r5'
@@ -1192,6 +1244,8 @@ test_dirty_pool_refuses_without_discarding_work
 test_unresolved_remote_default_refuses_pool
 test_unreachable_origin_refuses_stale_pool_base
 test_originless_pool_launches_without_a_freshness_fetch
+test_pool_slot_head_ahead_of_origin_starts_from_local_main
+test_originless_stale_slot_head_starts_from_local_main
 test_originless_dirty_pool_refuses_without_discarding_work
 test_origin_config_without_url_refuses_pool
 test_empty_origin_config_section_refuses_pool

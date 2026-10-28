@@ -4337,7 +4337,7 @@ spawn_worktree_has_origin_config() { # <worktree>
 }
 
 freshen_spawn_worktree_base() { # <worktree> [<base-branch>]; 2 when the worktree is not clean
-  local worktree=$1 base=${2:-} default target expected actual status
+  local worktree=$1 base=${2:-} default target expected local_tip status
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
@@ -4355,6 +4355,10 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]; 2 when the worktre
       echo "error: pooled worktree '$worktree' has no origin, so it cannot start from base branch '$base'" >&2
       return 1
     }
+    # Nothing to fetch, but the slot may still hold a stale HEAD from an earlier
+    # lease; start from the project's local default branch rather than that HEAD.
+    default=$(default_branch "$worktree" 2>/dev/null) || return 0
+    spawn_worktree_reset_to "$worktree" "refs/heads/$default" "local '$default'" || return 1
     return 0
   fi
   if ! git -C "$worktree" fetch --quiet origin; then
@@ -4382,13 +4386,30 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]; 2 when the worktre
     echo "error: '$target' is not a commit for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   }
-  if ! git -C "$worktree" reset --hard "$target" >/dev/null; then
-    echo "error: could not reset pooled worktree '$worktree' to '$target'; refusing to launch from a potentially stale base" >&2
+  # The project's local branch is the real base: local-only landings advance it
+  # past origin, and every branch is later fast-forwarded onto it. Prefer it
+  # whenever it already contains the fetched origin tip.
+  local_tip=$(git -C "$worktree" rev-parse --verify --quiet "refs/heads/$default^{commit}" 2>/dev/null || true)
+  if [ -n "$local_tip" ] && [ "$local_tip" != "$expected" ] \
+    && git -C "$worktree" merge-base --is-ancestor "$expected" "$local_tip" 2>/dev/null; then
+    target="refs/heads/$default"
+  fi
+  spawn_worktree_reset_to "$worktree" "$target" "current '$target'" || return 1
+}
+
+spawn_worktree_reset_to() { # <worktree> <ref> <label>
+  local worktree=$1 ref=$2 label=$3 expected actual
+  expected=$(git -C "$worktree" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null) || {
+    echo "error: '$ref' is not a commit for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
+    return 1
+  }
+  if ! git -C "$worktree" reset --hard "$ref" >/dev/null; then
+    echo "error: could not reset pooled worktree '$worktree' to '$ref'; refusing to launch from a potentially stale base" >&2
     return 1
   fi
   actual=$(git -C "$worktree" rev-parse --verify --quiet HEAD 2>/dev/null || true)
   if [ "$actual" != "$expected" ]; then
-    echo "error: pooled worktree '$worktree' is at '${actual:-unknown}', not current '$target' ('$expected'); refusing to launch" >&2
+    echo "error: pooled worktree '$worktree' is at '${actual:-unknown}', not $label ('$expected'); refusing to launch" >&2
     return 1
   fi
 }
