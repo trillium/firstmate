@@ -1067,6 +1067,40 @@ SH
   pass "dispatch refuses held In-flight rows before relaunch"
 }
 
+test_relaunch_accepts_a_held_in_flight_row() {
+  local case_dir id data meta out rc=0
+  id=atomic-relaunch-held-in-flight-b16
+  case_dir=$(make_home relaunch-held-in-flight "$id")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  tasks-axi hold "$id" --reason "PR ready for the captain's merge call" --kind captain \
+    --file "$(backlog_of "$case_dir")" >/dev/null
+  write_task_meta "$case_dir" "$id" ship local-only
+  data="$(home_of "$case_dir")/data"
+  meta="$(home_of "$case_dir")/state/$id.meta"
+
+  out=$(
+    . "$ROOT/bin/fm-tasks-axi-lib.sh"
+    . "$ROOT/bin/fm-backlog-transition-lib.sh"
+    fm_backlog_row_probe "$data" "$id" || exit 3
+    fm_backlog_row_relaunchable "$FM_BACKLOG_ROW_STATE" || exit 4
+    fm_backlog_row_dispatchable "$FM_BACKLOG_ROW_STATE" && exit 5
+    fm_backlog_atomic_transition dispatch "$meta" "$data" "$id" "$(home_of "$case_dir")/state" 1
+  ) || rc=$?
+  [ "$rc" -eq 0 ] || fail "relaunch of a held In-flight row was refused (exit $rc): $out"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "relaunch of a held In-flight row changed the backlog state"
+
+  rc=0
+  out=$(
+    . "$ROOT/bin/fm-tasks-axi-lib.sh"
+    . "$ROOT/bin/fm-backlog-transition-lib.sh"
+    fm_backlog_atomic_transition dispatch "$meta" "$data" "$id" "$(home_of "$case_dir")/state" 0
+  ) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a non-relaunch dispatch accepted a held In-flight row"
+  pass "relaunch accepts a held In-flight row while a new dispatch still refuses it"
+}
+
 test_dispatch_reads_the_row_from_the_backlog_root() {
   local case_dir id out
   id=atomic-dispatch-root-b2
@@ -3077,6 +3111,7 @@ test_dispatch_refuses_a_pending_authoritative_close
 test_dispatch_refuses_a_held_row_before_creating_resources
 test_dispatch_refuses_a_blocked_row_before_creating_resources
 test_dispatch_refuses_a_held_in_flight_row_before_relaunch
+test_relaunch_accepts_a_held_in_flight_row
 test_dispatch_reads_the_row_from_the_backlog_root
 test_recovery_uses_the_parent_of_a_trailing_slash_data_record
 test_completion_targets_a_nested_relative_data_directory
