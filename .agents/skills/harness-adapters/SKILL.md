@@ -35,6 +35,12 @@ Never type an interrupt key or exit command through `fm-send`, where routing-mar
 Trust handling is complete only when inspection proves the target started processing its instructions; delivery success alone is not proof.
 Muse, Gemini, AGY, Devin, Command Code, Polytoken, and Cortex are verified only for crewmate and scout work, never a secondmate or primary.
 
+## Cloud runs
+
+A Claude Code cloud run (`../../../bin/fm-cloud.sh launch --task <id>`) is a dispatch route, not a harness adapter: it has no window, worktree, or trust dialog, and its task meta records `backend=cloud`.
+It is eligible for self-contained work in a GitHub repository whose commits are pushed, and it is preferred for that work while `config/cloud-credit` is unexpired; `../../../docs/cloud-runs.md` owns the procedure.
+Control a cloud task through `../../../bin/fm-cloud.sh` and `../../../bin/fm-teardown.sh`, never `fm-control` or `fm-send`.
+
 ## Detection
 
 `../../../bin/fm-harness.sh` prints firstmate's own harness from verified environment markers and process ancestry, and owns how they combine.

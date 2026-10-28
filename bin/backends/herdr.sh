@@ -2476,6 +2476,11 @@ fm_backend_herdr_agent_alive() {  # <target>
   esac
 }
 
+# fm_backend_herdr_tab_rename: set an existing tab's display label by id.
+fm_backend_herdr_tab_rename() {  # <session> <tab_id> <label>
+  fm_backend_herdr_cli "$1" tab rename "$2" "$3" >/dev/null
+}
+
 # fm_backend_herdr_create_task: create the task's tab (one pane) in
 # <container> ("session:workspace_id"). Herdr does NOT enforce label
 # uniqueness itself (verified: two tabs can share a label), so the duplicate

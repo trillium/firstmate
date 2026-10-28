@@ -61,6 +61,9 @@
 #   base_branch= in state/<id>.meta, which a relaunch reuses and later review and
 #   cleanup read; it is refused on secondmates and relaunches, and without it
 #   nothing changes.
+#   A fresh ship or scout launch on a host with Xcode also records sim_baseline=
+#   (the iOS simulators already booted; bin/fm-sim-lib.sh) so teardown can shut
+#   down only the ones the task booted; a relaunch keeps the original record.
 #   Ship/scout launches always put fm-dod-lib.sh's current worker role scope
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
@@ -874,6 +877,8 @@ if [ -e "$STATE" ] || [ -L "$STATE" ]; then
     exit 1
   }
 fi
+# shellcheck source=bin/fm-tab-label-lib.sh
+. "$SCRIPT_DIR/fm-tab-label-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
@@ -914,6 +919,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-project-capacity-lib.sh
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
+# shellcheck source=bin/fm-sim-lib.sh
+. "$SCRIPT_DIR/fm-sim-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
 # shellcheck source=bin/fm-omp-profile-lib.sh
@@ -4521,6 +4528,14 @@ W="fm-$ID"
 # tmux parses `.` in a target as the window/pane separator, so a dotted task id
 # needs a dot-free window name; fm_backend_validate_task_endpoint accepts it.
 [ "$BACKEND" = tmux ] && W=${W//./-}
+# An optional config/tab-labels entry renames a herdr tab at launch and relaunch
+# (docs/configuration.md "Tab labels"); herdr addresses panes by id, so the
+# label is display-only and every other backend keeps fm-<id>.
+TAB_LABEL=""
+if [ "$BACKEND" = herdr ]; then
+  TAB_LABEL=$(fm_tab_label_lookup "$CONFIG/tab-labels" "$ID")
+  [ -z "$TAB_LABEL" ] || W=$TAB_LABEL
+fi
 if [ "$RELAUNCH" -eq 1 ]; then
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
@@ -4536,6 +4551,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
     T=$RELAUNCH_TARGET
     WT_TARGET=$T
     SES=${T%%:*}
+    if [ -n "$TAB_LABEL" ] && [ -n "$HERDR_TAB_ID" ]; then
+      fm_backend_source herdr && fm_backend_herdr_tab_rename "$SES" "$HERDR_TAB_ID" "$TAB_LABEL" \
+        || echo "warning: could not apply tab label '$TAB_LABEL' to the adopted herdr tab for $ID" >&2
+    fi
   elif [ "$BACKEND" = rex ]; then
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -6046,7 +6065,7 @@ BUSY_GEN=
     # the flag omits (https://code.claude.com/docs/en/cli-reference), so the
     # home's tracked Stop guard and its settings.local.json both stay.
     claude_attribution_json=
-    [ "$KEEP_AI_TRAILERS" = 1 ] || claude_attribution_json=',"attribution":{"commit":"","pr":"","sessionUrl":false}'
+    [ "$KEEP_AI_TRAILERS" = 1 ] || claude_attribution_json=',"attribution":{"commit":"","pr":"","sessionUrl":false},"includeCoAuthoredBy":false'
     busy_cmd_prefix="$(shell_quote "$FM_ROOT/bin/fm-busy-event.sh") apply $(shell_quote "$STATE_REAL") $(shell_quote "$ID")"
     busy_suffix="--gen $(shell_quote "$BUSY_GEN") --source claude-hook"
     j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
@@ -6633,6 +6652,14 @@ else
   fi
 fi
 
+# The iOS simulators already booted when a fresh task starts, so teardown can
+# tell the ones the task booted from the ones it found (bin/fm-sim-lib.sh).
+# Empty without a usable xcrun; a relaunch keeps the original record.
+SIM_BASELINE=
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
+  SIM_BASELINE=$(fm_sim_baseline_value)
+fi
+
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 [ "$BACKEND" = t3code ] && META_WINDOW=$W
@@ -6697,6 +6724,7 @@ preserve_relaunch_meta() {
   [ -z "$OMP_PROFILE_PIN" ] || echo "omp_profile=$OMP_PROFILE_PIN"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
+  [ -z "$SIM_BASELINE" ] || echo "sim_baseline=$SIM_BASELINE"
   # Default-off writes no traceparent= line.
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;

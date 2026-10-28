@@ -641,6 +641,12 @@ TASK_SECTION=${TASK_SECTION%$'\n'}
 # Rule 2 governs file edits, so it does not prohibit pool administration.
 # The secondmate charter deliberately omits this rule because a secondmate
 # legitimately allocates and returns slots for crewmates in its own home.
+# One shared string keeps the ship and scout no-attribution rule identical.
+IFS= read -r -d '' SHARED_ATTRIBUTION_RULE <<'EOF' || true
+8. Never add agent attribution of any kind to commits, PR titles or bodies, or review comments: no `Co-Authored-By: <agent>` trailer, no "Generated with ..." footer, no model names; if the harness adds one automatically, amend it out before pushing.
+EOF
+SHARED_ATTRIBUTION_RULE=${SHARED_ATTRIBUTION_RULE%$'\n'}
+
 IFS= read -r -d '' SHARED_INFRA_RULE <<'EOF' || true
 7. Never administer infrastructure that every lane shares. Two things are shared:
    - The `no-mistakes` daemon - one instance serving every lane/home, so stopping, restarting, or
@@ -723,12 +729,14 @@ $CREWMATE_PAUSE_INSTRUCTIONS
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 $SHARED_NO_CD_RULE
+$SHARED_ATTRIBUTION_RULE
 
 $WAIT_BLOCK$INBOX_SECTION
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
+$(fm_visual_evidence_block report "$ID")
 $LAVISH_LINE
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
@@ -804,6 +812,7 @@ $ASK_USER_BLOCK
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 $SHARED_NO_CD_RULE
+$SHARED_ATTRIBUTION_RULE
 
 $WAIT_BLOCK$INBOX_SECTION
 

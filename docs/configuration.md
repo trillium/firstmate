@@ -12,8 +12,9 @@ Start with the directory layout, then use the setting reference for the behavior
 | Worker permissions, accounts, or environment | [Codex approval review](#codex-automatic-approval-review), [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [Codex permission mode](#codex-permission-mode-configcodex-permission-mode), [persistent managed-policy failover](#persistent-managed-policy-failover), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and its [Orca environment source](#orca-environment-source-configlaunch-env-tmux-session) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [record export](#record-export-configrecord-export-root), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
-| Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
+| Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) and [herdr tab labels](#tab-labels-configtab-labels) |
 | Review bots on owned GitHub pull requests | [Contribution review bots](#contribution-review-bots-configcontribution-review-bots) |
+| Claude cloud runs and the cloud credit | [Cloud runs](#cloud-runs-configcloud-credit--configcloud-timeout) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
 
 ## FM_HOME
@@ -481,6 +482,21 @@ Any value other than `tmux`, `herdr`, `zellij`, `orca`, `cmux`, `paseo`, `rex`, 
 
 `codex-app` is not an accepted runtime backend yet; [`docs/codex-app-backend.md`](codex-app-backend.md) owns the Codex App boundary.
 
+### Tab labels (config/tab-labels)
+
+`config/tab-labels` is an optional, local, gitignored file that renames herdr tabs for display.
+Each line is `<task-id> <label>`, where the task id of a secondmate is its registered id, and everything after the id is the label, emoji included.
+Blank lines and lines starting with `#` are ignored.
+
+```
+macbook-ops 💎🧭 macbook-ops
+```
+
+Firstmate applies the label when it creates the tab at launch or respawn, and renames an adopted tab at relaunch, so it survives restarts.
+Without the file, or for an id it does not list, the tab keeps the default `fm-<id>` name, and other backends ignore the file.
+Herdr addresses panes by id, so the label is display only.
+Firstmate never writes a name for the primary session's own tab; that stays whatever the captain set.
+
 ### Liveness classification
 
 The session-start secondmate liveness sweep and the watcher's secondmate liveness tick use the recovery-grade `fm_backend_agent_state` classifier where verified.
@@ -521,6 +537,9 @@ Task meta records `backend=` only for a non-default backend; an absent `backend=
 - A t3code task additionally records `t3_thread_id=` and `t3_project_id=`, with `window=fm-<id>` kept as the shared firstmate alias.
 
 - A tern task additionally records `tern_session_id=`, `tern_tab_id=`, and `tern_block_id=`.
+
+- A fresh ship or scout task on a host with Xcode records `sim_baseline=`; see [idle iOS simulators](#idle-ios-simulators-configsim-idle-hours).
+- A cloud run additionally records `cloud_run=`, `cloud_session=`, and `cloud_url=` and has no `window=` or worktree; see [Cloud runs](#cloud-runs-configcloud-credit--configcloud-timeout).
 
 ### Task selectors
 
@@ -993,6 +1012,40 @@ Budget overrun, unsafe or unreadable inputs, missing required tracked owner file
 That one line goes out through the shared per-line digest cut, so an over-long finding set carries the repo's `[truncated]` marker instead of ending mid-finding, while deduplication keeps comparing the full uncapped set.
 Older bulk learning files remain reference-only; this monitor neither loads nor merges them.
 A reported review need is only a recommendation, not cleanup authority.
+
+## Idle iOS simulators (config/sim-idle-hours)
+
+Workers boot iOS simulators for tests, and a forgotten booted simulator holds gigabytes of memory for days.
+Two parts keep that from going unnoticed on a Mac with Xcode; on any other host both do nothing.
+
+### Cleanup at teardown
+
+A new task records the simulators already booted as `sim_baseline=` in its task record (comma-separated UDIDs, or `none`).
+Teardown then runs `xcrun simctl shutdown <udid>` for each simulator booted after the task started that nothing else uses and no other live task may own, and reports what it shut down or kept.
+A simulator is kept when:
+
+- a running `xcodebuild`, `xctest`, `simctl`, `appium`, or similar tool names its UDID;
+- a test-driving command names no simulator at all, so it may be testing on any of them: `xcodebuild test`, `test-without-building`, or `build-for-testing`, `xctest`, or `simctl spawn`, `launch`, `install`, or `io`;
+- another live task in any local home recorded it in its own `sim_baseline=` because it found the simulator already booted;
+- or another live task in any local home may have booted it: its `sim_baseline=` does not list the simulator, or it recorded no `sim_baseline=` at all.
+
+Long-lived servers such as `appium` or `maestro`, plain builds such as `swift-build`, and `simctl list` never protect a simulator they do not name.
+Teardown therefore shuts down little while other tasks are live; the idle simulator wake covers what it leaves.
+A task with no `sim_baseline=` (an older task, or a host without Xcode) is never cleaned up after, a secondmate is never touched, and a shutdown that fails is reported without blocking cleanup.
+`bin/fm-sim-lib.sh` owns these rules.
+
+### Idle simulator wake
+
+The watcher's slow check cadence (`FM_CHECK_INTERVAL`) also runs `bin/fm-sim-idle.sh`.
+When a simulator has been booted longer than the threshold, firstmate gets a `check: idle simulator:` wake that names the simulator, how long it has been booted, and its possible owners: the live tasks whose `sim_baseline=` does not list it, including any with no `sim_baseline=`.
+A simulator no running tool uses gets the shutdown command; one a running tool still uses (by the rules above) is reported as kept, with the reason, so nothing holds a simulator past the threshold silently.
+Nothing is shut down automatically; the wake carries the `xcrun simctl shutdown <udid>` command for the captain to approve.
+Each simulator is reported again at most once per `FM_SIM_IDLE_REALERT_HOURS`.
+Only the root home's watcher raises it, so secondmate homes never duplicate the wake.
+
+The threshold is a positive whole number of hours in `config/sim-idle-hours` in the local root home, default `12`.
+The value `off` disables the check, and `FM_SIM_IDLE_HOURS` overrides the file for one run.
+An invalid value is reported on stderr and the default applies.
 
 ## Stow pass horizon (config/stow-pass-horizon)
 
@@ -1537,7 +1590,7 @@ This applies only to agents Firstmate launches; the captain's own primary Firstm
 ### Commit attribution
 
 The optional local, gitignored `config/keep-ai-trailers` presence flag opts this home into keeping AI co-author trailers on its launched workers.
-With the flag absent, every Claude command line Firstmate builds carries inline `--settings` JSON with `"attribution":{"commit":"","pr":"","sessionUrl":false}`, every Devin worker config sets `"attribution": false`, and every fleet launch appends a worker-scoped `GIT_CONFIG` `core.hooksPath` entry pointing at `state/<id>.git-hooks`, where git's `commit-msg` hook strips known AI trailers even when a runtime injects them after the typed message.
+With the flag absent, every Claude command line Firstmate builds carries inline `--settings` JSON with `"attribution":{"commit":"","pr":"","sessionUrl":false}` plus the deprecated `"includeCoAuthoredBy":false`, bootstrap prints a self-healing `ATTRIBUTION:` line when a claude primary's own user settings still attribute, every Devin worker config sets `"attribution": false`, and every fleet launch appends a worker-scoped `GIT_CONFIG` `core.hooksPath` entry pointing at `state/<id>.git-hooks`, where git's `commit-msg` hook strips known AI trailers even when a runtime injects them after the typed message.
 The entry follows any `GIT_CONFIG_*` entries the worker inherits, so an inherited scoped `credential.helper` still applies to the worker and to the repository's own hooks, such as a git-lfs `pre-push`; an inherited `GIT_CONFIG_COUNT` that is not a decimal number, or that leaves no room for another entry within Git's signed int, stops the launch before the worker runs.
 T3 Code owns its provider command and cannot carry Claude's inline setting, but its per-worktree environment overlay selects the same Git hook; [`t3code-backend.md`](t3code-backend.md#active-limits) owns that backend limit.
 When the flag is present, Claude launches omit those attribution-off settings, Devin worker configs keep the user config's `attribution` setting (Devin's default is on), and fleet launches do not install or select the strip hooks, so Git uses the repository's configured hooks directly.
@@ -2963,6 +3016,31 @@ The two read files use different parsing rules:
 
 `FM_VOICE_RELAY` and `FM_VOICE_PYTHON` belong to the laptop rather than to a home, so they have no config file: `bin/fm-voice-client.py` requires the relay path as a flag or that variable and carries no default path.
 
+## Cloud runs (config/cloud-credit / config/cloud-timeout)
+
+A Claude Code cloud run is a dispatch route beside the local harnesses, launched with `bin/fm-cloud.sh launch --task <id>` ([guide](cloud-runs.md)).
+It is eligible for self-contained work in a GitHub repository whose commits are already pushed, and it is the preferred route for that work while the cloud credit is unexpired.
+It is not a runtime backend: it has no window or worktree, so `config/backend` and `FM_BACKEND` never select it, and its task meta records `backend=cloud`.
+Local work, unpushed commits, and anything that needs the home's private files stay on a local harness.
+
+`config/cloud-credit` records the prepaid credit as two lines:
+
+```text
+amount=249
+expires=2026-11-04
+```
+
+- `amount` is the dollar value, shown by the `credit` subcommand and `doctor`.
+- `expires` is a `YYYY-MM-DD` date; the credit counts as available through that whole day.
+- `bin/fm-cloud.sh credit` prints the days remaining and the runs launched, and `doctor` prints the same line.
+- An absent file reports the credit as not configured, a past date reports it expired, and a malformed date is reported rather than guessed.
+
+`config/cloud-timeout` is the minutes a cloud run may stay silent before its finish check wakes firstmate with a possibly-stuck line naming the session.
+It defaults to 240, and `FM_CLOUD_TIMEOUT_MINUTES` overrides the default when the file is absent.
+A value that is not a whole number falls back to the default.
+
+Both files are local, gitignored, and inherited by no secondmate.
+
 ## Environment variables
 
 Runtime tuning via environment variables (defaults shown):
@@ -3020,7 +3098,9 @@ FM_HEARTBEAT=600        # base seconds between heartbeat scans; no-change heartb
 FM_HEARTBEAT_MAX=7200   # heartbeat backoff cap
 FM_INACTIVE_RECONCILE_SECS=900  # 60..1800-second watcher cadence and inactivity threshold; locked session start also requests an immediate scan in the deferred worker
 FM_INACTIVE_RECONCILE_BUDGET_SECS=10  # 1..30-second scan deadline; wedged-scan kill backstop follows one second later
-FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, or Relay dispatch)
+FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, Relay dispatch, or the idle-simulator scan)
+FM_SIM_IDLE_HOURS=      # hours a simulator may stay booted before an idle-simulator wake; overrides config/sim-idle-hours (default 12, "off" disables)
+FM_SIM_IDLE_REALERT_HOURS=24   # quiet period before the same idle simulator is reported again
 FM_TASK_INBOX_GRACE_SECS=90   # seconds an unhandled steering-inbox message may sit before the watcher attempts doorbell delivery on an idle endpoint; also the minimum spacing between attempts
 FM_TASK_INBOX_RING_MAX=3      # watcher delivery attempts without an acknowledgement before the task surfaces as a stale wake for recovery
 FM_TASK_INBOX_BUSY_MAX=2      # consecutive busy-deferred due polls before a stuck-busy stale wake; 1..999999999, at most 9 decimal digits, otherwise 2; policy: bin/fm-task-inbox-lib.sh
@@ -3090,6 +3170,7 @@ FM_WAKE_DECISION_LOG_KEEP_LINES=4000     # newest decision and label rows kept w
 FM_WAKE_DECISION_PENDING_MAX_ROWS=500    # newest surfaced stale wakes kept awaiting their acknowledgement label
 FM_WATCHER_STALE_GRACE=300   # defaults to FM_GUARD_GRACE if set, else the poll-derived grace (docs/turnend-guard.md "Guard grace and the poll cadence"); seconds before a fresh arm refuses a live holder's stale beacon (attached arms: FM_WATCHER_STALL_BOUND)
 FM_WATCHER_STALL_BOUND=       # live-holder stall bound; default and arm/re-arm behavior: docs/turnend-guard.md "Guard grace and the poll cadence"
+FM_WATCHER_BEAT_INTERVAL=30   # seconds after which a still-running watcher cycle re-touches its liveness beacon from its per-window and per-check loops (docs/turnend-guard.md "Guard grace and the poll cadence")
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_WATCHER_CLEANUP_LOCK_BOUND=   # optional watcher EXIT marker-lock wait; default and validation: docs/watcher-continuity.md
 FM_TURNEND_CHURN_ABSORB_SECS=900   # longest one endpoint's bare turn-ends may be deferred on pane-churn evidence alone; only consulted when config/turnend-churn-absorb is present
