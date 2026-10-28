@@ -2885,7 +2885,11 @@ while :; do
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
-      watcher_beat_due
+      # Unconditional, not watcher_beat_due: each check is bounded by
+      # CHECK_TIMEOUT but the sweep is not, so the beacon advances before every
+      # check and a sweep never ages it by more than one check's bound
+      # (robots-0clru; tests/fm-watcher-lock.test.sh pins it).
+      watcher_beat
       is_pr_poll=0
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$FM_HOME" "$FM_ROOT" \

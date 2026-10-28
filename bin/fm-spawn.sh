@@ -4647,7 +4647,7 @@ if [ "$KIND" != secondmate ]; then
     # hook command tolerates a refused event (|| true) so a stale-gen writer
     # can never break Claude's own lifecycle.
     claude_attribution_json=
-    [ "$KEEP_AI_TRAILERS" = 1 ] || claude_attribution_json=',"attribution":{"commit":"","pr":"","sessionUrl":false}'
+    [ "$KEEP_AI_TRAILERS" = 1 ] || claude_attribution_json=',"attribution":{"commit":"","pr":"","sessionUrl":false},"includeCoAuthoredBy":false'
     busy_cmd_prefix="$(shell_quote "$FM_ROOT/bin/fm-busy-event.sh") apply $(shell_quote "$STATE_REAL") $(shell_quote "$ID")"
     busy_suffix="--gen $(shell_quote "$BUSY_GEN") --source claude-hook"
     j_submit=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event user-prompt-submit 2>/dev/null || true")
@@ -5224,7 +5224,7 @@ LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
 if [ "$KEEP_AI_TRAILERS" = 1 ]; then
   CLAUDE_ATTRIBUTION_JSON=
 else
-  CLAUDE_ATTRIBUTION_JSON=',"attribution":{"commit":"","pr":"","sessionUrl":false}'
+  CLAUDE_ATTRIBUTION_JSON=',"attribution":{"commit":"","pr":"","sessionUrl":false},"includeCoAuthoredBy":false'
 fi
 # A task worker's settings (hooks included) live in the state file the claude
 # wiring wrote; a secondmate has no busy wiring, so it keeps the inline JSON.
