@@ -52,6 +52,29 @@
 # the pin. Pi ranks a root's stored credentials above environment variables,
 # and the check refuses a provider the root has not stored, so a pinned Pi
 # launch unsets nothing.
+#
+# A home that spends several Claude subscriptions declares them instead in
+# config/claude-accounts: one entry per line, each `ordinary` or an absolute
+# path exactly as config/claude-account would hold it, with no blank lines,
+# duplicates, or control characters, and an optional final newline. The list is
+# opt-in in the same way: absent, nothing here changes. Present, it replaces the
+# home-wide pin, which must then be absent, and every Claude ship or scout
+# launch names one declared entry with --account; Firstmate chooses it at
+# intake (bin/fm-claude-account-quota.sh measures each entry) and never
+# defaults to the first entry, another entry, or the ambient account. The named
+# entry passes the same root, raw-command, and sign-in refusals as a pin and is
+# recorded as account=, which a ship or scout relaunch reuses unless an
+# explicit --account moves it. A local secondmate's agent never draws from the
+# list: it needs its own per-secondmate pin.
+#
+# A Claude root may also hold an optional setup-token file, <root>/.oauth-token
+# (claude setup-token output, an inference-only token). It is the one
+# credential this library injects after the shed: a regular, non-symlink file
+# owned by the caller, mode 0600, holding one line of non-space printable
+# bytes. The sign-in check and the launch then give that one root
+# CLAUDE_CODE_OAUTH_TOKEN read from the file, so the token is never in argv,
+# task records, or output. A present file that fails those rules refuses the
+# launch; it is never skipped. Pi roots and `ordinary` never read it.
 
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
@@ -63,6 +86,13 @@ FM_WORKER_ACCOUNT_CHECK_SECONDS=${FM_WORKER_ACCOUNT_CHECK_SECONDS:-30}
 # Claude Platform on AWS and Bedrock Mantle switches from
 # code.claude.com/docs/en/env-vars).
 FM_WORKER_ACCOUNT_CLAUDE_SHED="CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY CLAUDE_CODE_USE_ANTHROPIC_AWS CLAUDE_CODE_USE_MANTLE ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_PROFILE ANTHROPIC_FEDERATION_RULE_ID"
+
+# The sh body that runs a command with CLAUDE_CODE_OAUTH_TOKEN read from the
+# file named by its first argument, so a setup token reaches only that process's
+# environment and never its argv. Used as: sh -c "$FM_WORKER_ACCOUNT_TOKEN_EXEC"
+# _ <token-file> <command> [<argument>...]
+# shellcheck disable=SC2016  # Expands in the inner sh, not here.
+FM_WORKER_ACCOUNT_TOKEN_EXEC='CLAUDE_CODE_OAUTH_TOKEN=$(cat -- "$1") || exit 1; export CLAUDE_CODE_OAUTH_TOKEN; shift; exec "$@"'
 
 # fm_worker_account_file <harness>
 # Prints the pin file name for a pinnable runner; returns 1 for any other.
@@ -173,6 +203,70 @@ fm_worker_account_resolve() {
   printf '%s\t%s\t%s\n' "$declared" "$root" "${token#*$'\t'}"
 }
 
+# fm_worker_account_list <harness> <config-dir>
+# Prints the entries config/claude-accounts declares, one per line, for a
+# Claude launch. Prints nothing and returns 0 for another runner or when the
+# list is absent. On a malformed or unreadable list prints one error naming the
+# file and returns 1.
+fm_worker_account_list() {
+  local harness=$1 cfg="$2/claude-accounts" out rc
+  [ "$harness" = claude ] || return 0
+  out=$(perl -MErrno=ENOENT -e '
+    my ($f) = @ARGV;
+    unless (lstat $f) {
+      exit 3 if $! == ENOENT;
+      print STDERR "error: cannot inspect configuration source at $f: $!\n";
+      exit 4;
+    }
+    (-f $f && -r _) or exit 5;
+    open(my $fh, "<", $f) or exit 5;
+    my $body = do { local $/; <$fh> } // "";
+    $body =~ /\A(?:(?:ordinary|\/[^\x00-\x1f\x7f]*)\n)*(?:ordinary|\/[^\x00-\x1f\x7f]*)\n?\z/ or exit 6;
+    my %seen;
+    for my $entry (split /\n/, $body) {
+      exit 7 if $seen{$entry}++;
+      print $entry, "\n";
+    }
+  ' -- "$cfg")
+  rc=$?
+  case "$rc" in
+  0) printf '%s\n' "$out" ;;
+  3) return 0 ;;
+  4) return 1 ;;
+  5)
+    echo "error: config/claude-accounts must be a readable regular file: $cfg" >&2
+    return 1
+    ;;
+  7)
+    echo "error: config/claude-accounts declares the same account twice: $cfg" >&2
+    return 1
+    ;;
+  *)
+    echo "error: config/claude-accounts must hold one account per line, each 'ordinary' or an absolute path, with no blank lines or control characters: $cfg" >&2
+    return 1
+    ;;
+  esac
+}
+
+# fm_worker_account_relaunch_request <harness> <config-dir> <prior-harness> <recorded-account> <explicit-account> [<secondmate-id>]
+# Prints the declared account a relaunch asks fm_worker_account_select for:
+# the explicit one when given, otherwise the task's recorded account when the
+# home declares config/claude-accounts and a Claude ship or scout stays on
+# Claude. Prints nothing otherwise, so a relaunch without a list re-reads the
+# pin exactly as before. Returns 1 when the explicit account holds a control
+# character or the list cannot be read.
+fm_worker_account_relaunch_request() {
+  local harness=$1 config=$2 prior=$3 recorded=$4 explicit=$5 mate=${6:-} listed
+  fm_worker_account_request_valid "$explicit" || return 1
+  if [ -n "$explicit" ] || [ -n "$mate" ]; then
+    printf '%s\n' "$explicit"
+    return 0
+  fi
+  listed=$(fm_worker_account_list "$harness" "$config") || return 1
+  [ -n "$listed" ] && [ "$prior" = claude ] || return 0
+  printf '%s\n' "$recorded"
+}
+
 # fm_worker_account_pi_provider <model>
 # Prints the provider an explicit Pi --model <provider>/<id> names. Returns 1,
 # silently, for anything else, so no caller can fall back to a guess.
@@ -187,11 +281,70 @@ fm_worker_account_pi_provider() {
   esac
 }
 
+# fm_worker_account_token_state <root>
+# Classifies the optional setup-token file <root>/.oauth-token without ever
+# printing its content. Returns 0 when it is present and valid, 3 when the
+# root is empty or holds no such file, and 1 (one error printed, naming the
+# file but never the token) when it exists but is unusable: not a regular
+# file, a symlink, not owned by the caller, readable or writable by group or
+# other, empty, or more than one line or holding whitespace or control bytes.
+fm_worker_account_token_state() {
+  local root=$1
+  [ -n "$root" ] || return 3
+  perl -MErrno=ENOENT -e '
+    my ($f) = @ARGV;
+    my @st = lstat $f;
+    unless (@st) {
+      exit 3 if $! == ENOENT;
+      print STDERR "error: cannot inspect the setup-token file $f: $!\n";
+      exit 1;
+    }
+    if (-l _ || !-f _) {
+      print STDERR "error: the setup-token file $f must be a regular file, not a symlink or directory\n";
+      exit 1;
+    }
+    if ($st[4] != $<) {
+      print STDERR "error: the setup-token file $f must be owned by the user running Firstmate\n";
+      exit 1;
+    }
+    if ($st[2] & 077) {
+      printf STDERR "error: the setup-token file %s has mode %04o; run chmod 600 on it so only its owner can read it\n", $f, $st[2] & 07777;
+      exit 1;
+    }
+    open(my $fh, "<", $f) or do { print STDERR "error: cannot read the setup-token file $f\n"; exit 1; };
+    my $body = do { local $/; <$fh> } // "";
+    unless ($body =~ /\A[^\x00-\x20\x7f]+\n?\z/) {
+      print STDERR "error: the setup-token file $f must hold one line with no spaces or control characters\n";
+      exit 1;
+    }
+  ' -- "$root/.oauth-token"
+}
+
+# fm_worker_account_token_launch_prefix <root>
+# Prints the launch assignment that gives a token-backed root its setup token:
+# CLAUDE_CODE_OAUTH_TOKEN="$(cat -- '<file>')", expanded by the worker pane's
+# own shell, so the token itself is never in the text Firstmate builds, logs,
+# or records. Prints nothing when the root has no token file; returns 1 when
+# the file is unusable. Callers place it after fm_worker_account_claude_shed.
+fm_worker_account_token_launch_prefix() {
+  local root=$1 rc quoted
+  fm_worker_account_token_state "$root"
+  rc=$?
+  case "$rc" in
+  0) ;;
+  3) return 0 ;;
+  *) return 1 ;;
+  esac
+  quoted=${root//\'/\'\\\'\'}
+  # shellcheck disable=SC2016  # The substitution is for the worker pane's shell.
+  printf 'CLAUDE_CODE_OAUTH_TOKEN="$(cat -- %s)"\n' "'$quoted/.oauth-token'"
+}
+
 # fm_worker_account_check <harness> <declared> <root> <executable> [<provider>] [<setting>]
 # Returns 0 only when the runner's own check says the selected root is signed
 # in for this launch; otherwise prints one error and returns 1.
 fm_worker_account_check() {
-  local harness=$1 declared=$2 root=$3 executable=$4 provider=${5:-} setting=${6:-} out verdict name
+  local harness=$1 declared=$2 root=$3 executable=$4 provider=${5:-} setting=${6:-} out verdict name tokenrc
   [ -n "$setting" ] || setting="config/$(fm_worker_account_file "$harness")"
   local -a clean=(env -i "HOME=${HOME:-}" "PATH=${PATH:-}")
   for name in TMPDIR USER LOGNAME; do
@@ -200,6 +353,18 @@ fm_worker_account_check() {
   case "$harness" in
   claude)
     [ -z "$root" ] || clean+=("CLAUDE_CONFIG_DIR=$root")
+    tokenrc=0
+    fm_worker_account_token_state "$root" || tokenrc=$?
+    [ "$tokenrc" -ne 1 ] || return 1
+    if [ "$tokenrc" -eq 0 ]; then
+      if fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" "${clean[@]}" \
+        sh -c "$FM_WORKER_ACCOUNT_TOKEN_EXEC" _ \
+        "$root/.oauth-token" "$executable" auth status >/dev/null 2>&1 </dev/null; then
+        return 0
+      fi
+      echo "error: $setting pins Claude workers to $root, whose setup token in $root/.oauth-token is not accepted (claude auth status); run claude setup-token again and replace the file, or change the pin" >&2
+      return 1
+    fi
     if fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" "${clean[@]}" \
       "$executable" auth status >/dev/null 2>&1 </dev/null; then
       return 0
@@ -239,30 +404,91 @@ fm_worker_account_check() {
   return 0
 }
 
-# fm_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>] [<secondmate-id>]
+# fm_worker_account_request_valid <account>
+# Refuses an --account value holding a control character. Declared entries
+# never hold one, and a newline would otherwise split the value before the
+# whole-entry membership check or the account= record sees it.
+fm_worker_account_request_valid() {
+  case "$1" in
+  *[[:cntrl:]]*)
+    echo "error: --account must name one config/claude-accounts entry exactly, with no control characters" >&2
+    return 1
+    ;;
+  esac
+}
+
+# fm_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>] [<secondmate-id>] [<account>]
 # The whole launch-time decision. Prints nothing for an unpinned runner, so
-# the caller keeps today's launch unchanged. For a pinned one prints
-# "declared<TAB>root<TAB>provider", where provider is the Pi launch model's
-# own (empty for Claude), after the model guard and the sign-in check pass. On
-# refusal prints one error and returns 1. bin/fm-spawn.sh runs it before any
-# endpoint exists, and bin/fm-control.sh before a relaunch stops the live
-# agent.
+# the caller keeps today's launch unchanged. For a pinned one, or a Claude
+# ship or scout launching on a declared config/claude-accounts entry named by
+# <account>, prints "declared<TAB>root<TAB>provider", where provider is the
+# Pi launch model's own (empty for Claude), after the model guard and the
+# sign-in check pass. On refusal prints one error and returns 1.
+# bin/fm-spawn.sh runs it before any endpoint exists, and bin/fm-control.sh
+# before a relaunch stops the live agent.
 fm_worker_account_select() {
-  local harness=$1 config=$2 model=$3 executable=$4 raw=${5:-} mate=${6:-}
-  local selection declared root providers word provider='' selected_config setting
+  local harness=$1 config=$2 model=$3 executable=$4 raw=${5:-} mate=${6:-} account=${7:-}
+  local selection declared root providers word provider='' selected_config setting listed count
+  fm_worker_account_request_valid "$account" || return 1
+  if [ -n "$account" ] && [ "$harness" != claude ]; then
+    echo "error: --account names one of config/claude-accounts and applies to Claude workers only, not $harness" >&2
+    return 1
+  fi
+  if [ -n "$account" ] && [ -n "$mate" ]; then
+    echo "error: --account applies to ships and scouts; secondmate $mate launches on its own config/secondmate-accounts/$mate/claude-account pin" >&2
+    return 1
+  fi
+  listed=$(fm_worker_account_list "$harness" "$config") || return 1
+  if [ -z "$listed" ] && [ -n "$account" ]; then
+    echo "error: --account '$account' needs config/claude-accounts, which this home does not declare" >&2
+    return 1
+  fi
+  if [ -n "$listed" ] && { [ -e "$config/claude-account" ] || [ -L "$config/claude-account" ]; }; then
+    echo "error: config/claude-accounts and config/claude-account are both present; keep the account list or the single pin, not both" >&2
+    return 1
+  fi
   selected_config=$(fm_worker_account_config "$harness" "$config" "$mate") || return 1
   setting="config/$(fm_worker_account_file "$harness")"
   [ "$selected_config" = "$config" ] || setting="$selected_config/$(fm_worker_account_file "$harness")"
-  selection=$(fm_worker_account_resolve "$harness" "$selected_config" "$setting") || return 1
-  if [ -z "$selection" ]; then
-    [ "$selected_config" = "$config" ] && return 0
-    echo "error: secondmate account pin disappeared during selection: $setting" >&2
+  if [ -n "$listed" ] && [ -n "$mate" ] && [ "$selected_config" = "$config" ]; then
+    echo "error: config/claude-accounts chooses accounts for ships and scouts only; secondmate $mate needs its own pin in config/secondmate-accounts/$mate/claude-account" >&2
     return 1
+  elif [ -n "$listed" ] && [ -z "$mate" ]; then
+    setting=config/claude-accounts
+    if [ -z "$account" ]; then
+      count=$(printf '%s\n' "$listed" | wc -l | tr -d ' ')
+      echo "error: config/claude-accounts declares $count Claude accounts, so a Claude ship or scout launch must name one with --account; bin/fm-claude-account-quota.sh measures each, and Firstmate never picks a default" >&2
+      return 1
+    fi
+    declared=
+    while IFS= read -r word; do
+      [ "$word" != "$account" ] || { declared=$account; break; }
+    done <<< "$listed"
+    [ -n "$declared" ] || {
+      echo "error: account '$account' is not declared in config/claude-accounts; name a declared entry with --account" >&2
+      return 1
+    }
+    declared=$account
+    root=$account
+    [ "$declared" != ordinary ] || root=
+    if [ -n "$root" ] && { [ ! -d "$root" ] || [ ! -r "$root" ] || [ ! -x "$root" ]; }; then
+      # shellcheck disable=SC2088  # Literal text for the refusal.
+      echo "error: $setting must name readable, searchable existing directories (ordinary means ~/.claude with CLAUDE_CONFIG_DIR unset): $root" >&2
+      return 1
+    fi
+    providers=
+  else
+    selection=$(fm_worker_account_resolve "$harness" "$selected_config" "$setting") || return 1
+    if [ -z "$selection" ]; then
+      [ "$selected_config" = "$config" ] && return 0
+      echo "error: secondmate account pin disappeared during selection: $setting" >&2
+      return 1
+    fi
+    declared=${selection%%$'\t'*}
+    root=${selection#*$'\t'}
+    providers=${root#*$'\t'}
+    root=${root%%$'\t'*}
   fi
-  declared=${selection%%$'\t'*}
-  root=${selection#*$'\t'}
-  providers=${root#*$'\t'}
-  root=${root%%$'\t'*}
   if [ "$harness" = claude ]; then
     for word in $raw; do
       case "$word" in
