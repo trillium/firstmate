@@ -391,7 +391,7 @@ test_claude_keep_ai_trailers_leaves_attribution_alone() {
   : >"$HOME_DIR/config/keep-ai-trailers"
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
   expect_code 0 $? "claude spawn with keep-ai-trailers should succeed: $out"
-  settings="$WT_DIR/.claude/settings.local.json"
+  settings="$HOME_DIR/state/$id.claude-settings.json"
   jq -e . "$settings" >/dev/null || fail "claude hook settings are not valid JSON under keep-ai-trailers"
   jq -e 'has("attribution") or has("includeCoAuthoredBy") | not' "$settings" >/dev/null \
     || fail "config/keep-ai-trailers must leave attribution settings out of the worker settings"

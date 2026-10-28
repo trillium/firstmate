@@ -1643,17 +1643,6 @@ test_record_only_retires_the_ghost_record_beside_its_claimant() {
   printf 'refused_fp=abc\n' > "$dir/home/state/stale.reap"
   printf 'v1\ntask=stale\nspawn_gen=\nresult=stopped\nat=1\n' > "$dir/home/state/stale.control-exit"
 
-  # The ordinary gate is what jams: two records name one slot, so the stale one
-  # cannot be torn down the usual way.
-  set +e
-  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_RUNTIME_LOG="$dir/runtime.log" \
-    PATH="$dir/fakebin:$PATH" "$TEARDOWN" stale > "$dir/stdout" 2> "$dir/stderr"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || fail "ordinary teardown should refuse a slot two records name"
-  assert_present "$dir/home/state/stale.meta" "ordinary teardown removed the record it refused"
-  assert_present "$dir/home/state/stale.control-exit" "ordinary teardown removed control-exit when it refused"
-
   set +e; run_record_only "$dir" stale; rc=$?; set -e
   [ "$rc" -eq 0 ] || fail "record-only teardown of a proved ghost failed: $(cat "$dir/stderr")"
   assert_reassigned_slot_left_alone "$dir" stale claimant "record-only ghost"

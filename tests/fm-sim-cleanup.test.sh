@@ -45,7 +45,16 @@ make_case() {  # <name>
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 case "$*" in *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;; esac
-case "${1:-}" in display-message) printf 'firstmate\n' ;; esac
+case "${1:-}" in
+  display-message) printf 'firstmate\n' ;;
+  new-window)
+    while [ "$#" -gt 0 ]; do
+      [ "$1" = -n ] && printf '%s\n' "${2:-}" >> "$0.windows"
+      shift
+    done
+    ;;
+  list-windows) [ ! -f "$0.windows" ] || cat "$0.windows" ;;
+esac
 exit 0
 SH
   cat > "$fakebin/treehouse" <<'SH'
@@ -207,7 +216,7 @@ test_spawn_records_the_simulators_already_booted() {
   out=$(env FM_ROOT_OVERRIDE='' FM_HOME="$case_dir/home" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$case_dir/wt-t1" "${SIM_ENV[@]}" \
-    "$SPAWN" task-1 "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
+    "$SPAWN" task-1 "$case_dir/project" --mode no-mistakes --yolo off --repo-unrecorded-ok 2>&1) || rc=$?
   expect_code 0 "$rc" "spawn failed: $out"
   assert_grep "sim_baseline=$SIM_A,$SIM_B" "$case_dir/home/state/task-1.meta" \
     "spawn did not record the booted simulators"
@@ -219,7 +228,7 @@ test_spawn_records_the_simulators_already_booted() {
   out=$(env FM_ROOT_OVERRIDE='' FM_HOME="$case_dir/home" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$case_dir/wt-t2" "${SIM_ENV[@]}" \
-    "$SPAWN" task-2 "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
+    "$SPAWN" task-2 "$case_dir/project" --mode no-mistakes --yolo off --repo-unrecorded-ok 2>&1) || rc=$?
   expect_code 0 "$rc" "spawn with nothing booted failed: $out"
   assert_grep 'sim_baseline=none' "$case_dir/home/state/task-2.meta" \
     "spawn with nothing booted did not record an empty baseline"
@@ -235,7 +244,7 @@ test_spawn_without_xcode_records_nothing() {
   out=$(env FM_ROOT_OVERRIDE='' FM_HOME="$case_dir/home" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
     FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$case_dir/wt-t1" PATH="$(path_without_xcrun "$case_dir")" \
-    "$SPAWN" task-1 "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
+    "$SPAWN" task-1 "$case_dir/project" --mode no-mistakes --yolo off --repo-unrecorded-ok 2>&1) || rc=$?
   expect_code 0 "$rc" "spawn on a host without Xcode failed: $out"
   assert_no_grep 'sim_baseline=' "$case_dir/home/state/task-1.meta" \
     "spawn recorded a simulator baseline on a host without Xcode"
