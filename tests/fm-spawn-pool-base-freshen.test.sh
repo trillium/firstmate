@@ -459,6 +459,34 @@ test_pool_slot_head_ahead_of_origin_starts_from_local_main() {
   pass "a stale slot starts the ship branch from local main when it is ahead of origin"
 }
 
+test_local_only_diverged_local_main_is_the_base() {
+  local rec id out status local_tip
+  id='pool-local-only-diverged-r22'
+  rec=$(make_case local-only-diverged "$id")
+  read_case_record "$rec"
+  # origin/main advanced (a fork PR merged on GitHub) while local main took an
+  # equivalent change under a different hash, so neither contains the other.
+  printf 'must survive a newly spawned branch\n' > "$PROJECT_DIR/advanced-main.txt"
+  git -C "$PROJECT_DIR" add advanced-main.txt
+  git -C "$PROJECT_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm equivalent-landing
+  git -C "$PROJECT_DIR" fetch --quiet origin
+  local_tip=$(git -C "$PROJECT_DIR" rev-parse main)
+  git -C "$PROJECT_DIR" merge-base --is-ancestor origin/main main \
+    && fail "fixture did not diverge local main from origin/main"
+  git -C "$PROJECT_DIR" merge-base --is-ancestor main origin/main \
+    && fail "fixture did not diverge local main from origin/main"
+
+  out=$(run_spawn "$id" --mode local-only --yolo off)
+  status=$?
+  expect_code 0 "$status" "a local-only spawn should launch from a diverged local main"$'\n'"$out"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$local_tip" ] \
+    || fail "a local-only ship did not start from the diverged local main"
+  git -C "$POOL_DIR" checkout --quiet -b "fm/$id"
+  git -C "$PROJECT_DIR" merge-base --is-ancestor main "fm/$id" \
+    || fail "a local-only branch created after spawn does not contain local main"
+  pass "a local-only ship starts from local main even when it has diverged from origin"
+}
+
 test_originless_stale_slot_head_starts_from_local_main() {
   local rec id out status stale unrelated
   id='pool-originless-stale-r21'
@@ -1245,6 +1273,7 @@ test_unresolved_remote_default_refuses_pool
 test_unreachable_origin_refuses_stale_pool_base
 test_originless_pool_launches_without_a_freshness_fetch
 test_pool_slot_head_ahead_of_origin_starts_from_local_main
+test_local_only_diverged_local_main_is_the_base
 test_originless_stale_slot_head_starts_from_local_main
 test_originless_dirty_pool_refuses_without_discarding_work
 test_origin_config_without_url_refuses_pool
