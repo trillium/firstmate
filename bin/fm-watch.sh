@@ -115,7 +115,9 @@
 #   check: idle simulator: <details>  an iOS simulator booted past config/sim-idle-hours,
 #                          unused or kept with the reason (bin/fm-sim-idle.sh)
 #   check: rejected untrusted state checks: <paths>
-#                          unsafe state checks were refused without execution
+#                          unsafe state checks were refused without execution;
+#                          raised once per distinct rejected set (paths, mode,
+#                          mtime), then kept in state/.rejected-checks
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
 #                          invalid pending retirements were preserved without
 #                          running a check or removing poll artifacts
@@ -2902,11 +2904,30 @@ EOF
       touch "$STATE/.last-check"
       wake "$reason"
     fi
+    # The rejected set is raised once per distinct set (paths plus each file's
+    # mode and mtime) and again only when that set changes; the durable record
+    # $STATE/.rejected-checks stays quiet but visible in the session-start
+    # digest (robots-xug0n).
+    rejected_record="$STATE/.rejected-checks"
     if [ -n "$rejected_checks" ]; then
-      reason="check: rejected untrusted state checks:$rejected_checks"
-      fm_wake_append check untrusted-state-checks "$reason" || exit 1
-      touch "$STATE/.last-check"
-      wake "$reason"
+      rejected_sig=
+      for c in $rejected_checks; do
+        rejected_sig="${rejected_sig}${c} mode=$(fm_pr_file_mode "$c") mtime=$(stat_mtime "$c")"$'\n'
+      done
+      rejected_sig=$(printf '%s' "$rejected_sig" | LC_ALL=C sort)
+      if [ "$(cat "$rejected_record" 2>/dev/null)" != "$rejected_sig" ]; then
+        reason="check: rejected untrusted state checks:$rejected_checks"
+        fm_wake_append check untrusted-state-checks "$reason" || exit 1
+        if printf '%s\n' "$rejected_sig" > "$rejected_record.tmp.$$"; then
+          mv -f "$rejected_record.tmp.$$" "$rejected_record"
+        else
+          rm -f "$rejected_record.tmp.$$"
+        fi
+        touch "$STATE/.last-check"
+        wake "$reason"
+      fi
+    else
+      rm -f "$rejected_record"
     fi
     touch "$STATE/.last-check"
     if [ -n "$contribution_check_output" ]; then
