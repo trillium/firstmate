@@ -6985,7 +6985,10 @@ test_inbox_note_wakes_live_handling_successor_once() {
   dir=$(make_case inbox-note-live); state="$dir/state"; out="$dir/watch.out"
   FM_WATCH_HANDLING_SUCCESSOR=1 procevent_watch_bg "$dir" "$out"
   pid=$!
-  wait_live "$pid" 15 || fail "the idle handling-successor watcher did not stay live"
+  # A completed poll cycle, not a fixed liveness budget: a note queued while the
+  # watcher is still in its startup recovery check is announced as
+  # rearm-resurface instead of as the pending note this test asserts on.
+  wait_poll_cycle "$state" "$pid" || fail "the idle handling-successor watcher did not stay live"
   id=$(inbox_note "$dir" "continue the reminder work") || fail "fm-inbox.sh note failed"
   [ -n "$id" ] || fail "fm-inbox.sh printed no note id"
   wait_for_exit "$pid" 100 \
