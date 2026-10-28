@@ -502,6 +502,41 @@ EOF
   pass "fm-merge-local: a registry change cannot redirect an in-flight local-only task"
 }
 
+# The recorded branch can go stale when the worker commits to a different one.
+# Landing the stale branch is a no-op that must not be reported as success.
+test_local_merge_refuses_a_stale_recorded_branch() {
+  local home proj wt id main before out status
+  home="$TMP_ROOT/local-merge-stale/home"
+  proj="$TMP_ROOT/local-merge-stale/proj"
+  wt="$TMP_ROOT/local-merge-stale/wt"
+  id=local-merge-stale-e4
+  mkdir -p "$home/state" "$home/data" "$proj"
+  git -C "$proj" init -q || fail "could not initialize stale-branch fixture"
+  git -C "$proj" config user.email test@example.com
+  git -C "$proj" config user.name test
+  printf 'base\n' > "$proj/base"
+  git -C "$proj" add base || fail "could not stage stale-branch fixture base"
+  git -C "$proj" commit -qm base || fail "could not commit stale-branch fixture base"
+  main=$(git -C "$proj" branch --show-current)
+  git -C "$proj" branch "fm/$id" || fail "could not create stale recorded branch"
+  git -C "$proj" worktree add -q -b "fm/other-$id" "$wt" || fail "could not create task worktree"
+  printf 'work\n' > "$wt/work"
+  git -C "$wt" add work || fail "could not stage worker commit"
+  git -C "$wt" -c user.email=test@example.com -c user.name=test commit -qm work \
+    || fail "could not commit worker work"
+  printf 'project=%s\nmode=local-only\nbranch=fm/%s\nworktree=%s\n' "$proj" "$id" "$wt" \
+    > "$home/state/$id.meta"
+  before=$(git -C "$proj" rev-parse HEAD)
+  status=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$MERGE_LOCAL" "$id" 2>&1) || status=$?
+  [ "$status" -ne 0 ] || fail "local merge reported success for a stale recorded branch: $out"
+  assert_contains "$out" "fm/$id" "refusal did not name the recorded branch"
+  assert_contains "$out" "fm/other-$id" "refusal did not name the branch the worker is on"
+  [ "$(git -C "$proj" rev-parse HEAD)" = "$before" ] \
+    || fail "refused local merge still moved $main"
+  pass "fm-merge-local: a stale recorded branch is refused instead of landing nothing"
+}
+
 # A registered name may contain spaces, and the lookup must match the whole
 # name rather than only its first whitespace-delimited token (issue #1977).
 # The longer "foo bar" row is listed before the "foo" row so a leading-prefix
@@ -1752,6 +1787,7 @@ test_promotion_delivers_the_real_definition_of_done
 test_promotion_persists_the_selected_ship_branch
 test_promotion_branch_command_is_shell_safe
 test_local_merge_uses_the_recorded_ship_branch
+test_local_merge_refuses_a_stale_recorded_branch
 test_project_mode_matches_whole_multiword_names
 test_project_mode_maps_the_conditional_policy
 test_project_mode_binds_the_forge_orthogonally

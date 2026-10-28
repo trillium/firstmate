@@ -104,6 +104,27 @@ git -C "$PROJ" rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null || { e
 
 DEFAULT=$(default_branch) || { echo "error: cannot determine default branch for $PROJ; expected origin/HEAD, main, or master" >&2; exit 1; }
 
+# The recorded branch must be the one the worker actually committed to: a stale
+# record would "merge" a branch that holds none of the worker's work and report
+# success. Refuse rather than guess which branch was meant.
+WT=$(grep '^worktree=' "$META" | cut -d= -f2- || true)
+if [ -n "$WT" ] && git -C "$WT" rev-parse --git-dir >/dev/null 2>&1; then
+  wt_branch=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  if [ -n "$wt_branch" ] && [ "$wt_branch" != "$BRANCH" ]; then
+    echo "REFUSED: task $ID records ship branch '$BRANCH' but its worktree is on '$wt_branch'." >&2
+    echo "Nothing was merged. Correct the recorded branch or have the crewmate switch branches, then retry." >&2
+    exit 1
+  fi
+  wt_head=$(git -C "$WT" rev-parse --verify --quiet HEAD 2>/dev/null || true)
+  if [ -n "$wt_head" ] \
+    && git -C "$PROJ" merge-base --is-ancestor "$BRANCH" "$DEFAULT" \
+    && ! git -C "$PROJ" merge-base --is-ancestor "$wt_head" "$DEFAULT"; then
+    echo "REFUSED: merging '$BRANCH' into $DEFAULT would change nothing, but the worktree HEAD (${wt_head:0:8}, branch '${wt_branch:-detached}') holds commits not in $DEFAULT." >&2
+    echo "Nothing was merged. Correct the recorded branch '$BRANCH', then retry." >&2
+    exit 1
+  fi
+fi
+
 # The project's main checkout must be on its default branch and clean, so the
 # fast-forward lands predictably (firstmate never writes here otherwise).
 cur=$(git -C "$PROJ" symbolic-ref --short HEAD 2>/dev/null || echo "")
