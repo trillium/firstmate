@@ -4145,6 +4145,19 @@ EOF
     dialog=$(fm_composer_blocking_dialog "$tail40") || dialog=
     [ -n "$dialog" ] || clear_dialog_suffix "$task"
     h=$(printf '%s' "$tail40" | hash_pane)
+    # Org-disabled early detection, ahead of ordinary busy/stale classification:
+    # a pane showing Claude Code's org-subscription-disabled error is wedged
+    # before its first turn and can never self-recover, so waiting out staleness
+    # escalation only burns the captain's time. Append a blocked line to the
+    # task's status file; the status scan above wakes firstmate on it, so it can
+    # relaunch on an account that still has access. Keyed on the pane hash so a
+    # pane that keeps rendering the same error is reported once, not every cycle.
+    if [ -n "$task" ] && fm_busy_org_disabled "$tail40" \
+      && [ "$(cat "$STATE/.org-disabled-surfaced-$key" 2>/dev/null || true)" != "$h" ]; then
+      printf 'blocked [at=%s] [key=org-disabled]: worker launched on an account whose organization has disabled Claude Code access; relaunch it on an account that still has access\n' \
+        "$(date +%s)" >> "$STATE/$task.status" 2>/dev/null || true
+      printf '%s' "$h" > "$STATE/.org-disabled-surfaced-$key"
+    fi
     hf="$STATE/.hash-$key"
     cf="$STATE/.count-$key"
     sf="$STATE/.stale-$key"

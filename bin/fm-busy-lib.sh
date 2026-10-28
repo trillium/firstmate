@@ -1255,3 +1255,16 @@ fm_busy_is_busy() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
     *) return 1 ;;
   esac
 }
+
+# FM_BUSY_ORG_DISABLED_PATTERN: exact substring Claude Code renders when it is
+# launched on an account whose organization has disabled subscription access.
+# That pane can never start a first turn, so the watcher detects it early in the
+# stale loop and appends a blocked status line instead of waiting out ordinary
+# staleness escalation.
+FM_BUSY_ORG_DISABLED_PATTERN='Your organization has disabled Claude subscription access for Claude Code'
+
+# fm_busy_org_disabled: 0 iff <tail_content> contains the org-disabled error
+# string, 1 otherwise.
+fm_busy_org_disabled() {  # <tail_content>
+  printf '%s' "${1-}" | grep -qF "$FM_BUSY_ORG_DISABLED_PATTERN"
+}
