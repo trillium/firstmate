@@ -15,6 +15,7 @@ set -u
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TMP_ROOT=$(fm_test_tmproot fm-worker-account)
 unset LAVISH_AXI_HOST ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN PI_CODING_AGENT_DIR OPENAI_API_KEY
 
@@ -27,7 +28,18 @@ make_account_fakes() {
 #!/usr/bin/env bash
 if [ "\${1:-}" = auth ] && [ "\${2:-}" = status ]; then
   printf '%s\n' "\${CLAUDE_CONFIG_DIR-unset}" >> '$dir/claude-checks'
-  [ -z "\${ANTHROPIC_API_KEY:-}\${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || exit 0
+  # Like the real claude, an environment token is read offline and selected as
+  # the oauth_token method; the REJECTED sentinel stands for a signed-out result.
+  if [ -n "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    printf 'token-check args=%s\n' "\$*" >> '$dir/claude-token-checks'
+    if [ "\$CLAUDE_CODE_OAUTH_TOKEN" = sk-ant-oat01-REJECTED ]; then
+      printf '{"loggedIn":false,"authMethod":"none"}\n'
+      exit 1
+    fi
+    printf '{"loggedIn":true,"authMethod":"oauth_token"}\n'
+    exit 0
+  fi
+  [ -z "\${ANTHROPIC_API_KEY:-}" ] || exit 0
   [ -f "\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}/.credentials.json" ]
   exit
 fi
@@ -36,6 +48,7 @@ fi
   printf 'ANTHROPIC_API_KEY=%s\n' "\${ANTHROPIC_API_KEY-unset}"
   printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "\${CLAUDE_CODE_OAUTH_TOKEN-unset}"
   printf 'CLAUDE_CODE_USE_BEDROCK=%s\n' "\${CLAUDE_CODE_USE_BEDROCK-unset}"
+  printf 'ARGS=%s\n' "\$*"
 } > '$dir/claude-worker'
 SH
   cat > "$fakebin/pi" <<SH
@@ -486,6 +499,173 @@ test_remote_secondmate_account_override_refuses_locally() {
   pass "a remote route refuses a primary-side account override instead of silently ignoring it"
 }
 
+TOKEN_SENTINEL=sk-ant-oat01-FAKETOKENSENTINEL0123456789
+
+# make_token_file <path> [body] [mode]: a setup-token file for the fake claude.
+make_token_file() {
+  mkdir -p "$(dirname "$1")"
+  printf '%s\n' "${2:-$TOKEN_SENTINEL}" > "$1"
+  chmod "${3:-600}" "$1"
+}
+
+# assert_no_token_anywhere <id> <out>: the token value must not reach the spawn
+# output, the task record, the status files, or the staged launch text.
+assert_no_token_anywhere() {
+  local id=$1 out=$2 f
+  assert_not_contains "$out" "$TOKEN_SENTINEL" "the spawn output must never carry the token"
+  assert_not_contains "$(cat "$CASE/launch.log")" "$TOKEN_SENTINEL" "the launch text must never carry the token"
+  for f in "$HOME_DIR/state/$id.meta" "$HOME_DIR/state/$id.status"; do
+    [ ! -e "$f" ] || assert_no_grep "$TOKEN_SENTINEL" "$f" "$f must never carry the token"
+  done
+  for f in /tmp/fm-"$id"+*; do
+    [ ! -d "$f" ] || ! grep -rqF "$TOKEN_SENTINEL" "$f" || fail "a staged launch file carried the token"
+  done
+}
+
+test_token_pin_launches_with_the_token_for_that_worker_only() {
+  local out rc id=acct-token
+  new_case token-pin claude
+  make_token_file "$CASE/tokens/max100.token"
+  printf 'token:%s\n' "$CASE/tokens/max100.token" > "$HOME_DIR/config/claude-account"
+  out=$(spawn_ship "$id"); rc=$?
+  expect_code 0 "$rc" "a Claude spawn pinned to a setup token should succeed: $out"
+  assert_contains "$out" "account=token:max100.token" "the spawn should report only the token file's basename"
+  assert_not_contains "$out" "$CASE/tokens" "the spawn should not report the token file's directory"
+  assert_grep "account=token:max100.token" "$HOME_DIR/state/$id.meta" "the task record should carry the token pin's basename"
+  assert_no_token_anywhere "$id" "$out"
+  [ "$(cat "$CASE/claude-checks")" = unset ] \
+    || fail "the token sign-in check must run with CLAUDE_CONFIG_DIR unset: $(cat "$CASE/claude-checks")"
+  [ "$(cat "$CASE/claude-token-checks")" = "token-check args=auth status" ] \
+    || fail "the token check should run claude auth status with the token in its environment only: $(cat "$CASE/claude-token-checks")"
+  assert_contains "$(cat "$HOME_DIR/user-home/.claude.json" 2>/dev/null)" "$WT" \
+    "token-pinned trust should land in the default ~/.claude.json store"
+  assert_absent "$CASE/ambient-claude/.claude.json" "the ambient Claude store must not receive the trust entry"
+  assert_contains "$(cat "$CASE/launch.log")" "fm-claude-token-exec.sh" "the launch should run through the token exec helper"
+  assert_contains "$(cat "$CASE/launch.log")" "$CASE/tokens/max100.token" "the launch should name the token file, not its content"
+  run_pane
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=$TOKEN_SENTINEL" "$CASE/claude-worker" "the worker should receive the pinned token"
+  assert_grep "CLAUDE_CONFIG_DIR=unset" "$CASE/claude-worker" "a token pin must drop an ambient CLAUDE_CONFIG_DIR"
+  assert_grep "ANTHROPIC_API_KEY=unset" "$CASE/claude-worker" "an ambient API key must not outrank the token"
+  assert_grep "CLAUDE_CODE_USE_BEDROCK=unset" "$CASE/claude-worker" "an ambient cloud-provider switch must not outrank the token"
+  ! grep '^ARGS=' "$CASE/claude-worker" | grep -qF "$TOKEN_SENTINEL" || fail "the token must not be a worker argument"
+  pass "a token pin launches the worker with the token for that worker only, and the token reaches no output or record"
+}
+
+test_token_pin_refusals_never_print_the_token() {
+  local out rc id=acct-token-bad n=0 body
+  new_case token-refusals claude
+  printf 'token:%s\n' "$CASE/tokens/t.token" > "$HOME_DIR/config/claude-account"
+  # unreadable-by-others rule: a group/world-readable file holding a real token
+  make_token_file "$CASE/tokens/t.token" "$TOKEN_SENTINEL" 644
+  out=$(spawn_ship "$id-mode"); rc=$?
+  expect_code 1 "$rc" "a group- or world-readable token file must refuse"
+  assert_refused_before_launch "$id-mode" "$out" "is readable by group or other"
+  assert_not_contains "$out" "$TOKEN_SENTINEL" "a refusal must never print the token"
+  rm -f "$CASE/tokens/t.token"
+  out=$(spawn_ship "$id-missing"); rc=$?
+  expect_code 1 "$rc" "a missing token file must refuse"
+  assert_refused_before_launch "$id-missing" "$out" "the token file $CASE/tokens/t.token does not exist"
+  : > "$CASE/tokens/t.token"; chmod 600 "$CASE/tokens/t.token"
+  out=$(spawn_ship "$id-empty"); rc=$?
+  expect_code 1 "$rc" "an empty token file must refuse"
+  assert_refused_before_launch "$id-empty" "$out" "is empty"
+  for body in "$TOKEN_SENTINEL two" "$TOKEN_SENTINEL"$'\n'"$TOKEN_SENTINEL"; do
+    n=$((n + 1))
+    printf '%s\n' "$body" > "$CASE/tokens/t.token"
+    out=$(spawn_ship "$id-multi-$n"); rc=$?
+    expect_code 1 "$rc" "a token file holding more than one token must refuse"
+    assert_refused_before_launch "$id-multi-$n" "$out" "must hold one token with no spaces or line breaks"
+    assert_not_contains "$out" "$TOKEN_SENTINEL" "a refusal must never print the token"
+  done
+  rm -f "$CASE/tokens/t.token"
+  mkdir "$CASE/tokens/t.token"
+  out=$(spawn_ship "$id-dir"); rc=$?
+  expect_code 1 "$rc" "a directory in place of the token file must refuse"
+  assert_refused_before_launch "$id-dir" "$out" "is not a regular file"
+  rmdir "$CASE/tokens/t.token"
+  make_token_file "$CASE/tokens/t.token" sk-ant-oat01-REJECTED
+  out=$(spawn_ship "$id-rejected"); rc=$?
+  expect_code 1 "$rc" "a token claude does not report as signed in must refuse"
+  assert_refused_before_launch "$id-rejected" "$out" "does not report it as the signed-in credential"
+  for body in 'token:relative/t.token' 'token:' 'token: /abs/t.token'; do
+    printf '%s\n' "$body" > "$HOME_DIR/config/claude-account"
+    out=$(spawn_ship "$id-form"); rc=$?
+    expect_code 1 "$rc" "malformed token pin '$body' must refuse"
+    assert_refused_before_launch "$id-form" "$out" "token:<absolute path of a setup-token file>"
+  done
+  pass "a token pin refuses a loose, missing, empty, multi-token, non-file, rejected, or malformed file without printing the token"
+}
+
+test_raw_claude_command_receives_the_token_pin() {
+  local out rc id=acct-token-raw
+  new_case token-raw claude
+  make_token_file "$CASE/tokens/max100.token"
+  printf 'token:%s\n' "$CASE/tokens/max100.token" > "$HOME_DIR/config/claude-account"
+  out=$(spawn_ship "$id" --harness "FOO=1 claude --print raw"); rc=$?
+  expect_code 0 "$rc" "a raw Claude spawn under a token pin should succeed: $out"
+  assert_contains "$out" "account=token:max100.token" "a raw Claude spawn should report the token pin"
+  assert_no_token_anywhere "$id" "$out"
+  run_pane
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=$TOKEN_SENTINEL" "$CASE/claude-worker" "a raw Claude worker should receive the pinned token"
+  assert_grep "ARGS=--print raw" "$CASE/claude-worker" "the raw command's own arguments must survive"
+  out=$(spawn_ship "$id-override" --harness "CLAUDE_CODE_OAUTH_TOKEN=other claude --print raw"); rc=$?
+  expect_code 1 "$rc" "a raw command setting its own token must refuse under a pin"
+  assert_refused_before_launch "$id-override" "$out" "the raw launch command sets CLAUDE_CODE_OAUTH_TOKEN"
+  pass "a raw Claude launch command receives the token pin and cannot override it"
+}
+
+test_token_pin_in_a_secondmate_account_file() {
+  local out rc id=acct-token-sm
+  new_case token-secondmate claude
+  signed_in_claude_root "$CASE/primary"
+  make_token_file "$CASE/tokens/mate.token"
+  printf '%s\n' "$CASE/primary" > "$HOME_DIR/config/claude-account"
+  mkdir -p "$HOME_DIR/config/secondmate-accounts/$id"
+  printf 'token:%s\n' "$CASE/tokens/mate.token" > "$HOME_DIR/config/secondmate-accounts/$id/claude-account"
+  out=$(spawn_account_secondmate "$id"); rc=$?
+  expect_code 0 "$rc" "a secondmate with its own token pin should launch: $out"
+  assert_contains "$out" "account=token:mate.token" "the per-mate token pin must override the primary's root"
+  assert_not_contains "$out" "$TOKEN_SENTINEL" "the secondmate spawn must never print the token"
+  run_pane
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=$TOKEN_SENTINEL" "$CASE/claude-worker" "the mate must receive its pinned token"
+  assert_grep "CLAUDE_CONFIG_DIR=unset" "$CASE/claude-worker" "the mate must not receive the primary's root"
+  out=$(spawn_account_secondmate acct-token-other); rc=$?
+  expect_code 0 "$rc" "another mate must keep the primary's pin: $out"
+  run_pane
+  assert_grep "CLAUDE_CONFIG_DIR=$CASE/primary" "$CASE/claude-worker" "another mate must not receive the token override"
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=unset" "$CASE/claude-worker" "another mate must not receive the token"
+  pass "a per-secondmate token pin applies to that mate alone"
+}
+
+test_relaunch_check_and_exec_helper() {
+  local out rc
+  new_case helper claude
+  make_token_file "$CASE/tokens/h.token"
+  # The relaunch pre-stop check is the same select call, with no raw command.
+  out=$( (
+    # shellcheck source=bin/fm-worker-account-lib.sh
+    . "$REPO_ROOT/bin/fm-worker-account-lib.sh"
+    printf 'token:%s\n' "$CASE/tokens/h.token" > "$HOME_DIR/config/claude-account"
+    PATH="$FAKEBIN:$PATH" fm_worker_account_select claude "$HOME_DIR/config" "" claude "" ""
+  ) 2>&1); rc=$?
+  expect_code 0 "$rc" "the relaunch sign-in check under a token pin should pass: $out"
+  assert_contains "$out" "token:h.token" "the selection should name the token pin by basename"
+  assert_not_contains "$out" "$TOKEN_SENTINEL" "the selection must never carry the token"
+  # The exec helper alone: exports for the command, refuses without echoing.
+  # shellcheck disable=SC2016  # The command runs in the exec helper's shell.
+  out=$("$REPO_ROOT/bin/fm-claude-token-exec.sh" \
+    "$CASE/tokens/h.token" sh -c 'printf "%s" "$CLAUDE_CODE_OAUTH_TOKEN"'); rc=$?
+  expect_code 0 "$rc" "the exec helper should run the command"
+  [ "$out" = "$TOKEN_SENTINEL" ] || fail "the exec helper should export the token to the command"
+  chmod 644 "$CASE/tokens/h.token"
+  out=$("$REPO_ROOT/bin/fm-claude-token-exec.sh" \
+    "$CASE/tokens/h.token" sh -c 'echo ran' 2>&1); rc=$?
+  expect_code 1 "$rc" "the exec helper must refuse a loose token file"
+  assert_not_contains "$out" "$TOKEN_SENTINEL" "the exec helper must never print the token"
+  assert_not_contains "$out" "ran" "the exec helper must not run the command after a refusal"
+  pass "the relaunch check and the exec helper handle a token pin without exposing the token"
+}
+
 test_secondmate_account_override
 test_secondmate_account_refusals
 test_remote_secondmate_account_override_refuses_locally
@@ -502,5 +682,10 @@ test_raw_claude_command_receives_the_pin
 test_raw_claude_account_override_refuses_under_a_pin
 test_raw_claude_account_override_is_kept_without_a_pin
 test_local_secondmate_reads_the_launching_home_pin
+test_token_pin_launches_with_the_token_for_that_worker_only
+test_token_pin_refusals_never_print_the_token
+test_raw_claude_command_receives_the_token_pin
+test_token_pin_in_a_secondmate_account_file
+test_relaunch_check_and_exec_helper
 
 echo "# all fm-worker-account tests passed"

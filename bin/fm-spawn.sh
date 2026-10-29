@@ -481,9 +481,12 @@
 #   refuses before any endpoint, worktree, or record exists when the file is
 #   malformed, the root is unusable, or the runner's own check says it is not
 #   signed in. A pinned Claude launch sheds the environment credentials Claude
-#   ranks above the root's login; a pinned Pi launch needs --model
-#   <provider>/<id> for a declared provider and also carries --provider, and a
-#   raw Pi command refuses. The pin is recorded as account= (and Pi's
+#   ranks above the root's login; a `token:<file>` Claude pin selects a
+#   `claude setup-token` token instead of a root and runs the agent through
+#   bin/fm-claude-token-exec.sh, so the token value is never launch text, an
+#   argument, or a record (it reports account=token:<basename>); a pinned Pi
+#   launch needs --model <provider>/<id> for a declared provider and also
+#   carries --provider, and a raw Pi command refuses. The pin is recorded as account= (and Pi's
 #   account_provider=) in the task record and on the spawned line. A local
 #   secondmate first checks config/secondmate-accounts/<id>/<runner>-account
 #   in this launching home, then falls back to its home-wide pin when absent.
@@ -3247,11 +3250,11 @@ if [ "$BACKEND" = t3code ]; then
   fi
 fi
 if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
-  if [ -n "$WORKER_ACCOUNT_ROOT" ]; then
-    export CLAUDE_CONFIG_DIR=$WORKER_ACCOUNT_ROOT
-  else
-    unset CLAUDE_CONFIG_DIR
-  fi
+  # A setup-token pin (root token:<file>) selects no config root, like ordinary.
+  case "$WORKER_ACCOUNT_ROOT" in
+  token:* | '') unset CLAUDE_CONFIG_DIR ;;
+  *) export CLAUDE_CONFIG_DIR=$WORKER_ACCOUNT_ROOT ;;
+  esac
 fi
 
 secondmate_registry_value() {
@@ -7113,11 +7116,15 @@ esac
 if [ -n "$WORKER_ACCOUNT" ]; then
   case "$HARNESS" in
   claude)
-    if [ -n "$WORKER_ACCOUNT_ROOT" ]; then
-      LAUNCH="$(fm_worker_account_claude_shed) CLAUDE_CONFIG_DIR=$(shell_quote "$WORKER_ACCOUNT_ROOT") $LAUNCH"
-    else
-      LAUNCH="$(fm_worker_account_claude_shed) -u CLAUDE_CONFIG_DIR $LAUNCH"
-    fi
+    case "$WORKER_ACCOUNT_ROOT" in
+    token:*)
+      # The exec helper reads the token file and exports the token for the
+      # agent alone, so the token is never launch text, an argument, or a record.
+      LAUNCH="$(fm_worker_account_claude_shed) -u CLAUDE_CONFIG_DIR $(shell_quote "$FM_ROOT/bin/fm-claude-token-exec.sh") $(shell_quote "${WORKER_ACCOUNT_ROOT#token:}") $LAUNCH"
+      ;;
+    '') LAUNCH="$(fm_worker_account_claude_shed) -u CLAUDE_CONFIG_DIR $LAUNCH" ;;
+    *) LAUNCH="$(fm_worker_account_claude_shed) CLAUDE_CONFIG_DIR=$(shell_quote "$WORKER_ACCOUNT_ROOT") $LAUNCH" ;;
+    esac
     ;;
   pi | pi-signed)
     LAUNCH="PI_CODING_AGENT_DIR=$(shell_quote "$WORKER_ACCOUNT_ROOT") $LAUNCH"

@@ -5,7 +5,7 @@
 # environment credentials a pinned Claude launch sheds.
 #
 # docs/configuration.md "Worker account pin" owns the operator-facing contract.
-# Sourced by bin/fm-spawn.sh and bin/fm-control.sh.
+# Sourced by bin/fm-spawn.sh, bin/fm-control.sh, and bin/fm-claude-token-exec.sh.
 #
 # Pinnable runners, each a credential store inside a root its vendor lets a
 # process select:
@@ -21,6 +21,17 @@
 # is set, even $HOME/.claude; for Pi it is $HOME/.pi/agent. Any other value is
 # one absolute path to an existing readable, searchable directory. Firstmate
 # never copies credentials or changes a global login.
+#
+# A Claude pin can instead be `token:<absolute path>`: a `claude setup-token`
+# long-lived OAuth token kept in an owner-only (0600) file, for a second
+# subscription that has no config root of its own. The launch leaves
+# CLAUDE_CONFIG_DIR unset like `ordinary`, sheds the same credentials, and runs
+# the agent through bin/fm-claude-token-exec.sh, which reads the file and
+# exports CLAUDE_CODE_OAUTH_TOKEN for that one process. The token value is
+# never an argument, never in the staged launch text, and never in a task
+# record, status line, or diagnostic: only the file's path and basename are.
+# Its resolved root is `token:<path>` and its declared (reported) name is
+# `token:<basename>`.
 #
 # A Pi root can hold several provider identities, so config/pi-account names
 # the root on line 1 and the providers that home may spend on line 2,
@@ -38,7 +49,10 @@
 # The sign-in check asks the runner itself, with only HOME, PATH, TMPDIR,
 # USER, LOGNAME, and the selected root in its environment, so a credential
 # variable left in the caller cannot answer for a root that has no login:
-#   Claude: `claude auth status`, which exits 0 only when signed in.
+#   Claude: `claude auth status`, which exits 0 only when signed in. A token
+#           pin runs it through bin/fm-claude-token-exec.sh so the token is in
+#           that check's environment and nowhere else, and requires its JSON
+#           to report loggedIn with authMethod oauth_token.
 #   Pi:     `pi auth check --provider <p> --json --no-refresh`; status "ready"
 #           passes. `pi auth check` loads no extensions, so it answers
 #           not_ready/provider_not_found for an extension-registered provider,
@@ -57,6 +71,7 @@
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
 
 FM_WORKER_ACCOUNT_CHECK_SECONDS=${FM_WORKER_ACCOUNT_CHECK_SECONDS:-30}
+FM_WORKER_ACCOUNT_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # Credentials Claude Code ranks above the /login stored in its config root
 # (code.claude.com/docs/en/authentication, "Authentication precedence"; the
@@ -74,9 +89,63 @@ fm_worker_account_file() {
   esac
 }
 
+# fm_worker_account_token_load <file>
+# Prints the setup token held in <file> and nothing else, so the only caller
+# that may let the output reach a process environment is
+# bin/fm-claude-token-exec.sh; every other caller discards it. Status: 0 ok, 3
+# missing, 4 not a regular file, 5 unreadable, 6 readable by group or other,
+# 7 owned by another user, 8 empty, 9 not one run of printable characters.
+# The file is followed through a symbolic link, and its own mode decides.
+fm_worker_account_token_load() {
+  perl -e '
+    my ($f) = @ARGV;
+    my @st = stat $f or exit 3;
+    -f _ or exit 4;
+    $st[4] == $> or exit 7;
+    ($st[2] & 077) == 0 or exit 6;
+    open(my $fh, "<", $f) or exit 5;
+    my $body = do { local $/; <$fh> } // "";
+    $body =~ s/\A\s+//;
+    $body =~ s/\s+\z//;
+    length $body or exit 8;
+    $body =~ /\A[\x21-\x7e]+\z/ or exit 9;
+    print $body;
+  ' -- "$1"
+}
+
+# fm_worker_account_token_refusal <status> <file> <setting>
+# Prints the one refusal for a non-zero fm_worker_account_token_load status.
+# It names the file and the reason, never any of the file's content.
+fm_worker_account_token_refusal() {
+  local why
+  case "$1" in
+  3) why="does not exist" ;;
+  4) why="is not a regular file" ;;
+  5) why="is not readable" ;;
+  6) why="is readable by group or other; run chmod 600 on it" ;;
+  7) why="is owned by another user" ;;
+  8) why="is empty; write the output of claude setup-token into it" ;;
+  *) why="must hold one token with no spaces or line breaks" ;;
+  esac
+  echo "error: $3 pins Claude workers to a setup token, but the token file $2 $why" >&2
+}
+
+# fm_worker_account_token_validate <file> <setting>
+# Returns 0 when the token file is usable; otherwise prints one refusal and
+# returns 1. The token itself is read and discarded.
+fm_worker_account_token_validate() {
+  local rc
+  fm_worker_account_token_load "$1" >/dev/null
+  rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  fm_worker_account_token_refusal "$rc" "$1" "$2"
+  return 1
+}
+
 # fm_worker_account_read <harness> <file>
 # Prints "declared<TAB>providers" for a valid pin, where declared is
-# `ordinary` or the absolute path and providers is empty for Claude. The final
+# `ordinary`, the absolute path, or (Claude only) `token:` plus the absolute
+# path of a setup-token file, and providers is empty for Claude. The final
 # newline is optional; any other control byte, including a CR, is malformed.
 # Parses bytes before the shell can drop NULs or trailing newlines; paths are
 # literal, never shell expressions. Returns 0 on success, 3 when the file does
@@ -94,7 +163,7 @@ fm_worker_account_read() {
     open(my $fh, "<", $f) or exit 5;
     my $body = do { local $/; <$fh> } // "";
     if ($harness eq "claude") {
-      $body =~ /\A(ordinary|\/[^\x00-\x1f\x7f]*)\n?\z/ or exit 6;
+      $body =~ /\A(ordinary|(?:token:)?\/[^\x00-\x1f\x7f]*)\n?\z/ or exit 6;
       print $1, "\t";
     } else {
       $body =~ /\A(ordinary|\/[^\x00-\x1f\x7f]*)\n([A-Za-z0-9][A-Za-z0-9._-]*(?: +[A-Za-z0-9][A-Za-z0-9._-]*)*)\n?\z/ or exit 6;
@@ -148,13 +217,22 @@ fm_worker_account_resolve() {
     if [ "$file" = pi-account ]; then
       echo "error: $setting must hold 'ordinary' or one absolute path on line 1 and the providers this home may spend on line 2, separated by spaces, with no other lines or control characters: $cfg" >&2
     else
-      echo "error: $setting must hold 'ordinary' or one absolute path on a single line with no control characters: $cfg" >&2
+      echo "error: $setting must hold 'ordinary', one absolute path, or token:<absolute path of a setup-token file> on a single line with no control characters: $cfg" >&2
     fi
     return 1
     ;;
   esac
   declared=${token%%$'\t'*}
   root=$declared
+  case "$declared" in
+  token:*)
+    # Resolved root is the full token:<path>; the reported name is only the
+    # file's basename, which is all that reaches a task record or digest.
+    fm_worker_account_token_validate "${declared#token:}" "$setting" || return 1
+    printf '%s\t%s\t%s\n' "token:${declared##*/}" "$declared" ""
+    return 0
+    ;;
+  esac
   # shellcheck disable=SC2088  # The fallbacks are literal text for the refusal.
   case "$harness" in
   claude) fallback='~/.claude with CLAUDE_CONFIG_DIR unset' ;;
@@ -199,6 +277,19 @@ fm_worker_account_check() {
   done
   case "$harness" in
   claude)
+    case "$root" in
+    token:*)
+      # Claude reads the token offline, so this proves the token is present
+      # and is the credential Claude selects, not that Anthropic accepts it.
+      out=$(fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" "${clean[@]}" \
+        "$FM_WORKER_ACCOUNT_LIB_DIR/fm-claude-token-exec.sh" "${root#token:}" \
+        "$executable" auth status 2>/dev/null </dev/null) &&
+        [ "$(printf '%s\n' "$out" | jq -r 'select(type == "object") | "\(.loggedIn) \(.authMethod)"' 2>/dev/null)" = "true oauth_token" ] &&
+        return 0
+      echo "error: $setting pins Claude workers to the setup token in ${root#token:}, but claude auth status does not report it as the signed-in credential; create a new one with claude setup-token, or change the pin" >&2
+      return 1
+      ;;
+    esac
     [ -z "$root" ] || clean+=("CLAUDE_CONFIG_DIR=$root")
     if fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" "${clean[@]}" \
       "$executable" auth status >/dev/null 2>&1 </dev/null; then

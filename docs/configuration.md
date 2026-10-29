@@ -1491,7 +1491,7 @@ Both files are local and gitignored.
 
 ### File format and provider selection
 
-`config/claude-account` holds one line: `ordinary`, or the absolute path of an existing Claude config directory.
+`config/claude-account` holds one line: `ordinary`, the absolute path of an existing Claude config directory, or `token:<absolute path of a setup-token file>` (see [Setup-token pin](#setup-token-pin)).
 `config/pi-account` holds that same root on line 1 and, on line 2, the providers this home may spend, separated by spaces, for example `openai-codex anthropic`.
 
 A final newline is optional; any other line, a relative path, or a control character such as a CR refuses.
@@ -1518,6 +1518,28 @@ A pinned Claude launch also unsets the environment credentials Claude ranks abov
 Pi ranks a root's stored logins above environment variables, so a pinned Pi launch unsets nothing.
 
 A home that authenticates Claude through environment credentials on purpose should leave the pin absent.
+
+### Setup-token pin
+
+`token:<absolute path>` runs Claude workers on a long-lived `claude setup-token` credential, for example a second account's extra inference bucket, without a second interactive login.
+It works in `config/claude-account` and in every [per-secondmate `claude-account` file](#per-secondmate-account-pins), and applies to ships, scouts, secondmates, raw Claude launch commands, and relaunches exactly as a config-directory pin does.
+
+The token file holds the token alone (surrounding whitespace is ignored), is a regular file owned by the user, and has mode `0600` (no group or other access).
+`claude-setup-token` writes `~/.config/claude-tokens/<account>.token` in that shape.
+A missing, empty, unreadable, non-regular, group- or other-readable, foreign-owned, or multi-token file refuses the launch with a message naming the setting and the file, never its content.
+
+A token-pinned launch is otherwise a normal Claude launch with the same adapter wiring, hooks, settings, and done and idle signals.
+It unsets `CLAUDE_CONFIG_DIR` and every credential variable a pinned launch unsets, then runs the worker through [`bin/fm-claude-token-exec.sh`](../bin/fm-claude-token-exec.sh), which reads the file and exports `CLAUDE_CODE_OAUTH_TOKEN` for that one process only.
+The launch text carries the helper and file path, never the token, so the value does not appear in argv, the staged launch file, task records, status lines, or the digest.
+The spawn prints and records `account=token:<file basename>`.
+A raw Claude launch command that sets `CLAUDE_CODE_OAUTH_TOKEN` itself still refuses under any pin.
+
+The sign-in check reads the file the same way and requires `claude auth status` to report `oauth_token` as the signed-in method, without printing the token.
+A revoked or expired token passes this offline check and fails when the worker first calls the API; replace the file with a new `claude setup-token` result.
+
+Dispatch quota: `quota-axi` reads Claude windows only with `--allow-claude-inference` and files a token-authenticated reading under accountKey `default`, the same row as the home's ambient Claude account.
+Dispatch therefore cannot yet rank the token account as its own lane; see the `quota-array-dispatch` skill for how accountKeys are matched.
+Ranking it separately needs `quota-axi` to emit a distinct accountKey for a token credential and `bin/fm-quota-axi-lib.sh` (`quota_lane`) to select that key from the active pin.
 
 ### Failures, reporting, and inheritance
 

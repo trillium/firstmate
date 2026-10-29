@@ -686,6 +686,8 @@ skip-runner: pi-signed is not installed, so its pin check was not exercised
 
 The guard submits no prompt and spends no tokens, so it runs by default wherever a runner is installed; rerun it after every Claude or Pi upgrade.
 
+The `token:<file>` pin check relies on `claude auth status` with `CLAUDE_CODE_OAUTH_TOKEN` set reporting `loggedIn: true` and `authMethod: oauth_token` offline (exit 0), and exiting 1 with no credential; it was probed with a synthetic token on 2026-10-29, and `tests/fm-worker-account.test.sh` pins the fake runner to that shape. The live guard above does not exercise it, because no real setup-token is available to a test.
+
 ## Secondmate busy contract
 
 Verified 2026-09-22 on this host with Claude Code 2.1.278, OpenCode 1.18.31, Pi 0.86.1, and Grok 1.0.40.
