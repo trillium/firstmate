@@ -150,21 +150,20 @@ setup_home() {  # <name> -> echoes a fresh home dir with an empty state/
 
 # A seeded remote secondmate home the executed host-local leg validates and
 # writes into: identity marker, Firstmate-checkout shape, and a parent-route
-# endpoint record on Herdr in the configured remote-secondmate session
-# (FM_REMOTE_HERDR_SESSION, default `default`).
+# endpoint record on Herdr in the dedicated fm-remote session.
 setup_remote_secondmate_home() {  # <name> -> echoes remote home dir
   local rh="$TMP_ROOT/$1-rhome"
   mkdir -p "$rh/state/parent-route" "$rh/bin"
   printf 'rsm\n' > "$rh/.fm-secondmate-home"
   printf '# remote secondmate home fixture\n' > "$rh/AGENTS.md"
   fm_write_meta "$rh/state/parent-route/rsm.meta" \
-    "window=default:p1" \
+    "window=fm-remote:p1" \
     "worktree=-" \
     "project=-" \
     "backend=herdr" \
     "endpoint_task_id=rsm" \
     "harness=claude" \
-    "herdr_session=default" \
+    "herdr_session=fm-remote" \
     "herdr_workspace_id=w1" \
     "herdr_tab_id=t1" \
     "herdr_pane_id=p1"
@@ -178,7 +177,7 @@ setup_remote_parent_home() {  # <name> <remote-home> -> echoes home dir
   home=$(setup_home "$1")
   mkdir -p "$home/data"
   fm_write_meta "$home/state/rsm.meta" \
-    "window=default:p1" \
+    "window=fm-remote:p1" \
     "endpoint_task_id=rsm" \
     "harness=claude" \
     "kind=secondmate" \
@@ -187,8 +186,8 @@ setup_remote_parent_home() {  # <name> <remote-home> -> echoes home dir
     "remote_host=remote-mac" \
     "remote_root=/remote/root" \
     "remote_backend=herdr" \
-    "remote_herdr_session=default" \
-    "remote_target=default:p1"
+    "remote_herdr_session=fm-remote" \
+    "remote_target=fm-remote:p1"
   cat > "$home/data/secondmates.md" <<EOF
 - rsm - remote test domain (host: remote-mac; root: /remote/root; home: $2; scope: remote testing; projects: alpha; added 2026-08-02)
 EOF

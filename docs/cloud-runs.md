@@ -14,7 +14,7 @@ Run `bin/fm-cloud.sh doctor` first; it checks that the installed `claude` CLI su
 
 ## Cloud runs as a dispatch route
 
-A cloud run suits self-contained work in a GitHub repository whose commits are pushed, and it is preferred for that work while `config/cloud-credit` is unexpired ([configuration](configuration.md#cloud-runs-configcloud-credit--configcloud-timeout)).
+A cloud run suits self-contained work in a GitHub repository whose commits are pushed, and it is preferred for that work while `config/cloud-credit` is unexpired.
 
 1. Add the backlog item and write the instructions with `bin/fm-brief.sh`, which leaves `data/<id>/brief.md`.
 2. Run `bin/fm-cloud.sh launch --task <id> --repo <dir>`.

@@ -253,11 +253,19 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/lavish/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/process-event-sources/SKILL.md",
       "audience": "agent-runtime"
     },
     {
       "path": ".agents/skills/project-management/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/pulse-page/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -282,6 +290,10 @@
     },
     {
       "path": ".agents/skills/updatefirstmate/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/urgent/SKILL.md",
       "audience": "agent-runtime"
     },
     {
@@ -369,6 +381,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/examples/com.firstmate.primary-failover.plist",
+      "audience": "operator-example"
+    },
+    {
       "path": "docs/examples/process-event-extension/file-signal.mjs",
       "audience": "operator-example"
     },
@@ -415,6 +431,10 @@
     {
       "path": "docs/gitlab-merge-watch.md",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/cloud-runs.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/fleet-ledger.md",
@@ -523,6 +543,10 @@
     {
       "path": "docs/opencode-2-plugin-port-scope.md",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/urgency-protocol.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/usage-warner.md",
@@ -651,6 +675,10 @@
     {
       "path": ".agents/skills/validation-supervision/SKILL.md",
       "audience": "agent-runtime"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "audience": "public-product"
     }
   ]
 }
