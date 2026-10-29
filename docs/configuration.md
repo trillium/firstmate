@@ -2693,7 +2693,7 @@ The operator supplies trust and required consent facts, not hashes.
 **Working state and cleanup**
 
 `state/extensions/<extension-id>/` is created when binding performs its initial handshake and is that package's home-local working namespace for later verification and invocation.
-`state/extension-invocations/` contains private host-owned exact process-group cleanup records only while an enabled package invocation is starting or running; retirement and reconciliation retain their existing owners until those records prove the group extinct.
+`state/extension-invocations/` contains private host-owned invocation cleanup records, including residue retained after interruption; [extension cleanup safety](extension-bindings.md#executable-protocol) owns their recovery rules.
 
 This integrity boundary does not sandbox trusted same-user code, so bind only a package trusted to run with the operator's operating-system access.
 
@@ -3100,7 +3100,7 @@ Raising the confirm window lengthens every supervision cycle and delays wake del
 
 **Report launch failures**
 
-A source that can never start is reported as `failed=` with a non-zero exit on every `reconcile`, rather than counted as `started` and retried silently as though it were healthy, so a wedged source stays visible instead of presenting as armed.
+A detached launch that never confirms is reported as `failed=` with a non-zero exit on every `reconcile`, rather than counted as `started` and retried silently as though it were healthy, so a wedged source stays visible instead of presenting as armed.
 The `failed=` count reaches only the command's caller because `bin/fm-watch.sh` discards `reconcile` output and exit status.
 For that reason, `reconcile` also publishes a durable `check` wake once per failure episode, with key `procevent:<id>:launch-failed:<registration-identity>-<episode-nonce>`.
 Later cycles stay silent for that episode until a launch confirms.
@@ -3115,6 +3115,13 @@ A later fresh failure gets a fresh key, because the watcher never re-surfaces a 
   A runner that was merely slow to claim needs no operator action.
 - A source stranded on a claim nothing may automatically displace is announced the same way, once per stranded claim generation, as described above.
 - `bin/fm-watch.sh` surfaces both under their own headlines - `process-event source stranded` and `process-event source failed to start` - rather than as a captured result.
+
+An extension invocation cleanup refusal prevents a replacement launch and increments `uncertain=` instead of `failed=`.
+It also publishes one durable wake per source failure episode using the `launch-failed` key family and `process-event source failed to start` headline.
+The payload points to the extension host's cleanup diagnostic in the source's home and effective state root, without copying package diagnostics into the wake.
+Reconciliation preserves the registration and retries cleanup on later cycles.
+Successful reconciliation cleanup, an attached start that acquires the claim, or reconciliation observing a live owner clears the cleanup announcement marker, so another refusal on the same registration receives a fresh wake key.
+Retirement removes the marker as well.
 
 **Reject unusable settings**
 
