@@ -720,31 +720,108 @@ test_open_captain_call_bounds_stale_churn() {
 # The other half of the same bound, and the one that decides whether widening the
 # wait was safe: the identical fixtures with NO hold must keep alarming on every
 # new hash, on both branches.
+# bounded by test_surfaced_terminal_status_repeat_absorbed_then_resurfaced.
 test_stale_churn_without_a_captain_call_still_alarms() {
-  local spec name line dir state out capture round wakes
+  local name line dir state out capture round wakes
   command -v tasks-axi >/dev/null 2>&1 \
     || fail "tasks-axi is required (unheld stale alarm)"
+  name=unheld-worker-line
+  line='working: still tidying the branch'
+  dir=$(make_hold_home "$name" "$line" nohold) \
+    || fail "[$name] could not build an unheld backlog fixture"
+  state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
+  round=1
+  while [ "$round" -le 2 ]; do
+    hold_watch_surface "$dir" "$out" "$capture" "idle, elapsed ${round}s" \
+      || fail "[$name] an unheld stale window stopped alarming on round $round"
+    wakes=$(hold_stale_wakes "$state")
+    [ "$wakes" -eq 1 ] \
+      || fail "[$name] round $round produced $wakes wakes instead of one"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge round $round"
+    round=$((round + 1))
+  done
+  pass "a stale window with no open captain call keeps alarming on every new hash"
+}
+
+# Phase 0 of docs/laya-stale-wake-triage.md: a terminal status with no captain
+# call alarms on first sight, then its repeat sightings (new pane hashes under
+# the same, already-presented status log) are absorbed for one re-surface
+# window, re-alarm once the window elapses, and any status append starts a new
+# window that alarms on first sight. Every verdict lands in the decision log,
+# and the acknowledgement labels each surfaced wake.
+test_surfaced_terminal_status_repeat_absorbed_then_resurfaced() {
+  local spec name line dir state out capture throttle wakes log triage
+  command -v tasks-axi >/dev/null 2>&1 \
+    || fail "tasks-axi is required (terminal repeat stale bound)"
   for spec in \
-    'unheld-delivery|done: PR https://example.invalid/pull/1 checks green' \
-    'unheld-blocker|blocked: cannot reach the release host' \
-    'unheld-worker-line|working: still tidying the branch'
+    'repeat-delivery|done: PR https://example.invalid/pull/1 checks green' \
+    'repeat-blocker|blocked: cannot reach the release host' \
+    'repeat-decision|needs-decision [key=pick-host]: host A or host B'
   do
     name=${spec%%|*}; line=${spec#*|}
     dir=$(make_hold_home "$name" "$line" nohold) \
       || fail "[$name] could not build an unheld backlog fixture"
     state="$dir/state"; out="$dir/watch.out"; capture="$dir/pane.txt"
-    round=1
-    while [ "$round" -le 2 ]; do
-      hold_watch_surface "$dir" "$out" "$capture" "idle, elapsed ${round}s" \
-        || fail "[$name] an unheld stale window stopped alarming on round $round"
-      wakes=$(hold_stale_wakes "$state")
-      [ "$wakes" -eq 1 ] \
-        || fail "[$name] round $round produced $wakes wakes instead of one"
-      ack_stopped_cycle "$state" || fail "[$name] could not acknowledge round $round"
-      round=$((round + 1))
-    done
+    throttle="$state/.paused-resurfaced-$(hold_key)"
+    log="$state/.wake-decisions.jsonl"
+    triage="$state/.watch-triage.log"
+
+    # First sight alarms exactly as before, and is logged as a surface verdict.
+    hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 1s' \
+      || fail "[$name] first sight of an unheld terminal status did not surface"
+    wakes=$(hold_stale_wakes "$state")
+    [ "$wakes" -eq 1 ] || fail "[$name] first sight produced $wakes wakes instead of one"
+    grep -q '"event":"decision".*"verdict":"surface","rule":"terminal-surface","seq":1,' "$log" 2>/dev/null \
+      || fail "[$name] the first surface was not logged as a terminal-surface decision"
+    grep -q '"times_surfaced":0,' "$log" || fail "[$name] the first surface did not log zero prior surfaces"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the first surface"
+    grep -q '"event":"label".*"seq":1,.*"label":"noop",' "$log" \
+      || fail "[$name] acknowledging an untouched task did not log a noop label"
+
+    # Repeat sightings of the same presented status are absorbed and logged.
+    hold_watch_churn "$dir" "$out" "$capture" 'idle, tick' 2 \
+      || fail "[$name] watcher exited during pane churn instead of supervising through it"
+    wakes=$(hold_stale_wakes "$state")
+    [ "$wakes" -eq 0 ] \
+      || fail "[$name] a repeat of the surfaced status re-alarmed $wakes time(s) inside the window"
+    grep -q 'absorbed stale (repeat of an already-surfaced unchanged terminal status)' "$triage" \
+      || fail "[$name] the absorbed repeat left no triage-log line"
+    grep -q '"verdict":"absorb","rule":"terminal-repeat","seq":null,' "$log" \
+      || fail "[$name] the absorbed repeat was not logged as a terminal-repeat decision"
+    grep -q '"rule":"terminal-repeat".*"surfaced_unchanged":true,"times_surfaced":1,' "$log" \
+      || fail "[$name] the absorbed repeat did not log the surfaced-unchanged feature"
+
+    # The bound is a delay, never a silence: an elapsed window re-alarms once.
+    [ -e "$throttle" ] || fail "[$name] the first alarm recorded no re-surface cadence to elapse"
+    grep -q '^terminal-surfaced:' "$throttle" \
+      || fail "[$name] the recorded cadence is not the terminal-surfaced declaration"
+    set_mtime "$(( $(date +%s) - 5000 ))" "$throttle"
+    hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 9s' \
+      || fail "[$name] the surfaced status did not re-surface once its window elapsed"
+    wakes=$(hold_stale_wakes "$state")
+    [ "$wakes" -eq 1 ] \
+      || fail "[$name] elapsed re-surface window produced $wakes wakes instead of one"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the re-surface"
+
+    # A status append is a new state: its signal presents it, and its first
+    # stale sighting still alarms instead of inheriting the old window.
+    printf 'needs-decision [key=after-%s]: keep or revert\n' "$name" >> "$state/held-merge.status"
+    hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 9s' \
+      || fail "[$name] the appended status line produced no signal"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the signal"
+    hold_watch_surface "$dir" "$out" "$capture" 'idle, elapsed 12s' \
+      || fail "[$name] the first stale sighting of the appended status did not alarm"
+    wakes=$(hold_stale_wakes "$state")
+    [ "$wakes" -eq 1 ] \
+      || fail "[$name] the appended status produced $wakes stale wakes instead of one"
+    ack_stopped_cycle "$state" || fail "[$name] could not acknowledge the appended status"
+    hold_watch_churn "$dir" "$out" "$capture" 'idle, later tick' 1 \
+      || fail "[$name] watcher exited during the second churn"
+    wakes=$(hold_stale_wakes "$state")
+    [ "$wakes" -eq 0 ] \
+      || fail "[$name] a repeat of the appended status re-alarmed $wakes time(s)"
   done
-  pass "a stale window with no open captain call keeps alarming on every new hash"
+  pass "a surfaced unchanged terminal status alarms once, absorbs repeats, re-surfaces after the window, and re-alarms on change"
 }
 
 
@@ -1479,6 +1556,7 @@ fm_test_run \
   test_live_paused_until_controls_recheck_time \
   test_open_captain_call_bounds_stale_churn \
   test_stale_churn_without_a_captain_call_still_alarms \
+  test_surfaced_terminal_status_repeat_absorbed_then_resurfaced \
   test_failed_wake_append_does_not_arm_the_captain_hold_throttle \
   test_reheld_captain_call_starts_its_own_resurface_window \
   test_secondmate_paused_resurfaces_in_normal_mode \

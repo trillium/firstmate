@@ -93,9 +93,9 @@
 # --project <dir> is the task's project directory, used to detect when a ship
 # brief would publish to firstmate's own repository: for such a task this
 # scaffold refuses a publishing mode that the home's role or recorded consent
-# does not authorize, before the contract exists. Pass it on every ship
-# scaffold so detection does not depend on the caller recognizing the repo;
-# bin/fm-spawn.sh repeats the check at launch regardless.
+# does not authorize, before the contract exists. Without it the same check
+# runs on the registered clone the REPO argument names; bin/fm-spawn.sh repeats
+# the check at launch regardless.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line, followed by " forge=gerrit shape=squash"
 # on Gerrit, " forge=forgejo" on Forgejo, or " forge=external" on an external
@@ -170,6 +170,8 @@ esac
 . "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-role-lib.sh
 . "$SCRIPT_DIR/fm-role-lib.sh"
+# shellcheck source=bin/fm-project-dir-lib.sh
+. "$SCRIPT_DIR/fm-project-dir-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 IFS= read -r -d '' CREWMATE_PAUSE_INSTRUCTIONS <<EOF || true
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
@@ -361,16 +363,26 @@ if [ "$UPSTREAM_CONSENT_SET" -eq 1 ]; then
   }
   UPSTREAM_CONSENT=$(fm_role_scope_norm "$UPSTREAM_CONSENT")
 fi
-# Self-repository pre-gate for a publishing ship brief: detectable only when
-# --project was passed, so the check runs here only then. bin/fm-spawn.sh
-# repeats it at launch with the resolved project path.
-if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -eq 1 ]; then
-  [ -n "$PROJECT_DIR" ] || {
+# Self-repository pre-gate for a publishing ship brief. The project is --project
+# when passed; otherwise it is the registered clone the REPO argument names, so
+# detection never depends on the caller passing --project. A REPO with no clone
+# in this home is not detectable here, and bin/fm-spawn.sh repeats the check at
+# launch with the resolved project path.
+GATE_PROJECT=$PROJECT_DIR
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -eq 0 ] && [ -n "${POS[1]:-}" ]; then
+  GATE_CLONE=$(fm_project_dir_candidate "${POS[1]}" "${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}")
+  if [ -d "$GATE_CLONE" ]; then
+    GATE_PROJECT=$GATE_CLONE
+    PROJECT_DIR_SET=2
+  fi
+fi
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ "$PROJECT_DIR_SET" -ge 1 ]; then
+  [ -n "$GATE_PROJECT" ] || {
     echo "error: --project requires a non-empty directory" >&2
     exit 1
   }
   gate_rc=0
-  fm_role_gate_self_publish "$FM_HOME" "$CONFIG" "$PROJECT_DIR" "$FM_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
+  fm_role_gate_self_publish "$FM_HOME" "$CONFIG" "$GATE_PROJECT" "$FM_ROOT" "$UPSTREAM_CONSENT" || gate_rc=$?
   case $gate_rc in
     0 | 2) ;;
     *)
@@ -641,6 +653,12 @@ TASK_SECTION=${TASK_SECTION%$'\n'}
 # Rule 2 governs file edits, so it does not prohibit pool administration.
 # The secondmate charter deliberately omits this rule because a secondmate
 # legitimately allocates and returns slots for crewmates in its own home.
+# One shared string keeps the ship and scout no-attribution rule identical.
+IFS= read -r -d '' SHARED_ATTRIBUTION_RULE <<'EOF' || true
+8. Never add agent attribution of any kind to commits, PR titles or bodies, or review comments: no `Co-Authored-By: <agent>` trailer, no "Generated with ..." footer, no model names; if the harness adds one automatically, amend it out before pushing.
+EOF
+SHARED_ATTRIBUTION_RULE=${SHARED_ATTRIBUTION_RULE%$'\n'}
+
 IFS= read -r -d '' SHARED_INFRA_RULE <<'EOF' || true
 7. Never administer infrastructure that every lane shares. Two things are shared:
    - The `no-mistakes` daemon - one instance serving every lane/home, so stopping, restarting, or
@@ -723,12 +741,14 @@ $CREWMATE_PAUSE_INSTRUCTIONS
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 $SHARED_NO_CD_RULE
+$SHARED_ATTRIBUTION_RULE
 
 $WAIT_BLOCK$INBOX_SECTION
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
+$(fm_visual_evidence_block report "$ID")
 $LAVISH_LINE
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 Only when the reviewed inventory is empty, run \`FM_HOME=$(shell_quote "$FM_HOME") bash $(shell_quote "$FM_ROOT/bin/fm-captain-hold.sh") complete $(shell_quote "$ID") --none\`.
@@ -808,6 +828,7 @@ $ASK_USER_BLOCK
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 $SHARED_NO_CD_RULE
+$SHARED_ATTRIBUTION_RULE
 
 $WAIT_BLOCK$INBOX_SECTION
 

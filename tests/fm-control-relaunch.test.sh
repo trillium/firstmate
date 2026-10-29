@@ -89,6 +89,11 @@ case "${1:-}" in
     else
       printf '%s\n' "$payload" >> "$D/keys"
       case "$payload" in
+        "cd -- '"*"'")
+          # A shell obeys a cd: model it so the cwd poll sees the move.
+          cdp=${payload#"cd -- '"}; cdp=${cdp%"'"}
+          [ -f "$D/cd-ignored" ] || printf '%s' "$cdp" > "$D/cwd"
+          ;;
         'export GOTMPDIR='*)
           if [ -n "${FM_FAKE_TRACE_PREPARE:-}" ]; then
             : > "$FM_FAKE_TRACE_PREPARE"
@@ -1168,6 +1173,7 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'sm3\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sm3 "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
     echo "window=fmses:fm-sm3"
@@ -1414,6 +1420,7 @@ test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'sm6\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sm6 "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
     echo "window=fmses:fm-sm6"
@@ -1455,6 +1462,7 @@ test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'sm7\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sm7 "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
     echo "window=fmses:fm-sm7"
@@ -1493,6 +1501,7 @@ test_explicit_secondmate_harness_ignores_configured_profile_axes() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'sm4\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sm4 "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
     echo "window=fmses:fm-sm4"
@@ -1734,6 +1743,34 @@ test_missing_worktree_refuses_before_stopping_anything() {
   pass "fm-control relaunch: an unaccountable local copy refuses before the agent is touched"
 }
 
+# robots-ojlw: a restart must never put a worker back in a primary home or a
+# repository's primary checkout; the recorded worktree is the only launch cwd.
+test_relaunch_refuses_a_recorded_worktree_that_is_the_primary_home() {
+  local dir out rc
+  dir=$(new_case homewt rl11)
+  add_ship_task "$dir" rl11 claude
+  sed -i.bak "s#^worktree=.*#worktree=$dir/home#" "$dir/home/state/rl11.meta"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl11 --relaunch 2>&1); rc=$?
+  expect_code 1 "$rc" "a worktree that is the primary home should refuse"
+  assert_contains "$out" "primary home or checkout" "the refusal should name the primary home"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must launch nothing"
+  pass "fm-spawn --relaunch: a recorded worktree that is the primary home refuses"
+}
+
+test_relaunch_refuses_a_recorded_worktree_that_is_the_project_primary_checkout() {
+  local dir out rc
+  dir=$(new_case projwt rl12)
+  add_ship_task "$dir" rl12 claude
+  sed -i.bak "s#^worktree=.*#worktree=$dir/proj#" "$dir/home/state/rl12.meta"
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl12 --relaunch 2>&1); rc=$?
+  expect_code 1 "$rc" "a worktree that is the project primary checkout should refuse"
+  assert_contains "$out" "primary home or checkout" "the refusal should name the primary checkout"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must launch nothing"
+  pass "fm-spawn --relaunch: a recorded worktree that is the project primary checkout refuses"
+}
+
 test_missing_instructions_refuse_before_stopping_anything() {
   local dir out rc
   dir=$(new_case nobrief rl11)
@@ -1789,9 +1826,11 @@ test_launch_failure_keeps_the_prior_record_and_reports_it() {
   dir=$(new_case rollback rl13)
   add_ship_task "$dir" rl13 claude
   before=$(cat "$dir/home/state/rl13.meta")
-  # The endpoint's shell is not in the recorded worktree, so the launch owner
-  # refuses AFTER the previous agent has already been stopped.
+  # The endpoint's shell is not in the recorded worktree and ignores the cd back
+  # into it, so the launch owner refuses AFTER the previous agent has already
+  # been stopped.
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  : > "$dir/fake/cd-ignored"
   out=$(run_control "$dir" rl13 relaunch --harness codex --note "carry this forward"); rc=$?
   expect_code 1 "$rc" "a failed launch should fail closed"$'\n'"$out"
   assert_contains "$out" "no agent is running" "the failure should say no agent is running"
@@ -1812,6 +1851,7 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
   dir=$(new_case rollback-race rl30)
   add_ship_task "$dir" rl30 claude
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
+  : > "$dir/fake/cd-ignored"
   FM_FAKE_CWD_RACE_READY="$dir/cwd-race-ready" \
     run_control "$dir" rl30 relaunch --harness codex --note "preserve concurrent metadata" \
       > "$dir/control.out" &
@@ -1947,6 +1987,7 @@ test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'sm1\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sm1 "$dir/smhome"
   printf '# charter\n' > "$dir/smhome/data/charter.md"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   printf 'window=x:fm-c1\n' > "$dir/smhome/state/c1.meta"
@@ -2018,6 +2059,7 @@ test_secondmate_checkpoint_refuses_unreadable_child_state() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state/bad.meta"
   printf 'sm5\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sm5 "$dir/smhome"
   {
     echo "window=fmses:fm-sm5"
     echo "endpoint_task_id=sm5"
@@ -2061,6 +2103,7 @@ test_secondmate_checkpoint_ignores_a_vanished_scratch_find_walk() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'sm6\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sm6 "$dir/smhome"
   printf '# charter\n' > "$dir/smhome/data/charter.md"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   printf 'window=x:fm-c1\n' > "$dir/smhome/state/c1.meta"
@@ -2317,17 +2360,46 @@ test_spawn_relaunch_refuses_an_unrecorded_task() {
   pass "fm-spawn --relaunch: an unrecorded task is refused"
 }
 
-test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
+test_spawn_relaunch_moves_a_pane_outside_the_worktree_back() {
   local dir out rc
   dir=$(new_case wrongcwd rl18)
   add_ship_task "$dir" rl18 claude
   printf 'zsh' > "$dir/fake/command"
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
   out=$(run_spawn "$dir" rl18 --relaunch --harness claude); rc=$?
-  expect_code 1 "$rc" "a pane outside the worktree should refuse"
-  assert_contains "$out" "not its recorded worktree" "the refusal should name the wrong location"
-  [ ! -s "$dir/fake/keys" ] || fail "a refused tmux relaunch must send nothing to the pane"
-  pass "fm-spawn --relaunch: refuses to start a replacement outside the copy holding its work"
+  expect_code 0 "$rc" "a pane outside the worktree should be moved back, not refused"$'\n'"$out"
+  grep -qF "cd -- '$dir/wt'" "$dir/fake/keys" || fail "the pane should have been told to cd into the recorded worktree"
+  pass "fm-spawn --relaunch: moves a drifted pane into the copy holding its work"
+}
+
+# A finished task's closed pane leaves its shell in the home directory.
+test_relaunch_from_a_shell_left_in_home_starts_in_the_worktree() {
+  local dir out rc
+  dir=$(new_case homecwd rl18h)
+  add_ship_task "$dir" rl18h claude
+  printf 'zsh' > "$dir/fake/command"
+  printf '%s' "$HOME" > "$dir/fake/cwd"
+  out=$(run_control "$dir" rl18h relaunch --note "rebase onto main"); rc=$?
+  expect_code 0 "$rc" "a relaunch from a shell in ~ should succeed"$'\n'"$out"
+  grep -qF "cd -- '$dir/wt'" "$dir/fake/keys" || fail "the shell should have been told to cd into the recorded worktree"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a replacement agent should be running"
+  pass "fm-control relaunch: a shell left in ~ is moved into the recorded worktree"
+}
+
+# A recorded worktree that is the project's primary checkout is refused before
+# the running agent is touched, so the refusal never strands the task.
+test_relaunch_refuses_a_primary_checkout_worktree_before_stopping() {
+  local dir out rc
+  dir=$(new_case primarywt rl18p)
+  add_ship_task "$dir" rl18p claude
+  sed -i.bak "s|^worktree=.*|worktree=$dir/proj|" "$dir/home/state/rl18p.meta"
+  printf '%s' "$HOME" > "$dir/fake/cwd"
+  out=$(run_control "$dir" rl18p relaunch --note "rebase"); rc=$?
+  expect_code 1 "$rc" "a primary-checkout worktree should refuse"
+  assert_contains "$out" "primary checkout" "the refusal should name the primary checkout"
+  ! grep -qx '/exit' "$dir/fake/literal" || fail "the agent must not be stopped before the refusal"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "the original agent must still be running"
+  pass "fm-control relaunch: a primary-checkout worktree is refused before the agent is stopped"
 }
 
 # --- 7. reclaiming a task whose endpoint is gone ----------------------------
@@ -2482,6 +2554,9 @@ case "${1:-} ${2:-}" in
   'agent get')
     if [ -f "$D/herdr-agent-registration" ]; then
       cat "$D/herdr-agent-registration"
+    elif [ -s "$D/herdr-agent-live" ]; then
+      # A case staged the live agent's own answer.
+      cat "$D/herdr-agent-live"
     elif [ -f "$D/herdr-agent-live" ]; then
       # The agent came back with its server. Nothing here is reclaimable.
       printf '{"result":{"agent":{"agent_status":"idle"}}}\n'
@@ -2489,6 +2564,10 @@ case "${1:-} ${2:-}" in
       # A pane that comes back holding no agent is the adoptable state.
       printf '{"error":{"code":"agent_not_found"}}\n'
     fi
+    exit 0 ;;
+  'agent read')
+    # The pane text a case staged; an unstaged pane reads back nothing.
+    [ -f "$D/herdr-agent-screen" ] && cat "$D/herdr-agent-screen"
     exit 0 ;;
   'pane process-info')
     # A retained registration with a shell-only pane models an exited agent
@@ -2513,9 +2592,17 @@ case "${1:-} ${2:-}" in
       ". '"*"'") staged=${payload#". '"}; staged=${staged%"'"}; [ ! -f "$staged" ] || payload=$(cat "$staged") ;;
     esac
     case "$payload" in
+      '/exit')
+        # The harness's exit command: the live agent leaves its pane behind.
+        if [ -s "$D/herdr-agent-live" ]; then
+          mv "$D/herdr-agent-live" "$D/herdr-agent-registration"
+        fi ;;
+    esac
+    case "$payload" in
       *'encode launch-brief'* | *'Firstmate operational input waiting: read'*)
         printf '%s\n' "$payload" > "$D/launched-command"
-        : > "$D/herdr-agent-live" ;;
+        : > "$D/herdr-agent-live"
+        rm -f "$D/herdr-agent-registration" ;;
     esac
     exit 0 ;;
   'workspace list')
@@ -3015,6 +3102,8 @@ test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch
 test_cursor_session_binding_is_retired_on_a_harness_switch
 test_missing_worktree_refuses_before_stopping_anything
+test_relaunch_refuses_a_recorded_worktree_that_is_the_primary_home
+test_relaunch_refuses_a_recorded_worktree_that_is_the_project_primary_checkout
 test_missing_instructions_refuse_before_stopping_anything
 test_checkpoint_refusal_leaves_the_record_byte_identical
 test_checkpoint_refuses_uninspectable_head_and_status
@@ -3038,7 +3127,9 @@ test_spawn_relaunch_keeps_its_early_meta_lock_continuous
 test_spawn_relaunch_refuses_a_pending_authoritative_close
 test_spawn_relaunch_refuses_contradicting_flags
 test_spawn_relaunch_refuses_an_unrecorded_task
-test_spawn_relaunch_refuses_a_pane_outside_the_worktree
+test_spawn_relaunch_moves_a_pane_outside_the_worktree_back
+test_relaunch_from_a_shell_left_in_home_starts_in_the_worktree
+test_relaunch_refuses_a_primary_checkout_worktree_before_stopping
 test_tmux_refuses_a_window_missing_from_its_session
 test_tmux_refuses_a_session_that_cannot_be_found
 test_tmux_refuses_when_the_server_is_gone
@@ -3053,4 +3144,75 @@ test_herdr_reclaim_of_a_secondmate_names_its_own_owner
 test_herdr_rebind_failure_from_a_plain_shell_names_the_real_cause
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
+
+# Herdr 0.9.5 publishes no interactive-readiness field: `agent get` carries
+# only agent_status, so emptiness is proven from an idle agent whose OpenCode
+# prompt block (left-bar rows above the Build footer) holds nothing.
+opencode_screen() {  # <typed-text-or-empty>
+  printf '\n  \xe2\x94\x83\n  \xe2\x94\x83  %s\n' "$1"
+  printf '  \xe2\x94\x83  Build \xc2\xb7 Model \xc2\xb7 high\n'
+  printf '  \xe2\x95\xb9\xe2\x96\x80\xe2\x96\x80\xe2\x96\x80\n   /work/tree    ctrl+p commands\n'
+}
+
+test_relaunch_proceeds_when_composer_is_unproven_but_idle_with_empty_prompt_block() {
+  local dir out rc=0
+  herdr_case_or_skip idle-empty-prompt rl80 fmlab '%7' || return 0
+  dir=$HERDR_CASE_DIR
+  rm -f "$dir/fake/herdr-stopped"
+  cat > "$dir/fake/herdr-agent-live" <<'JSON'
+{"result":{"agent":{"agent":"opencode","agent_status":"idle","pane_id":"%7"}}}
+JSON
+  opencode_screen '' > "$dir/fake/herdr-agent-screen"
+
+  out=$(FM_FAKE_COMPOSER_READ_FAIL=1 run_control "$dir" rl80 relaunch --note "preserve") || rc=$?
+
+  expect_code 0 "$rc" "a relaunch must proceed when an idle OpenCode shows an empty prompt block"$'\n'"$out"
+  assert_not_contains "$out" "not proven empty" "should not fail with unproven empty"
+  pass "fm-control relaunch: an idle agent with an empty OpenCode prompt block overrides an unproven composer"
+}
+
+test_relaunch_refuses_when_idle_prompt_block_holds_text() {
+  local dir out rc=0
+  herdr_case_or_skip idle-typed-prompt rl82 fmlab '%7' || return 0
+  dir=$HERDR_CASE_DIR
+  rm -f "$dir/fake/herdr-stopped"
+  cat > "$dir/fake/herdr-agent-live" <<'JSON'
+{"result":{"agent":{"agent":"opencode","agent_status":"idle","pane_id":"%7"}}}
+JSON
+  opencode_screen 'half-typed draft' > "$dir/fake/herdr-agent-screen"
+
+  out=$(FM_FAKE_COMPOSER_READ_FAIL=1 run_control "$dir" rl82 relaunch --note "preserve") || rc=$?
+
+  [ "$rc" -ne 0 ] || fail "a relaunch must refuse when the idle prompt block holds text"$'\n'"$out"
+  pass "fm-control relaunch: an idle agent whose prompt block holds text is still refused"
+}
+
+test_relaunch_proceeds_when_composer_is_unproven_but_idle_with_empty_prompt_block
+test_relaunch_refuses_when_idle_prompt_block_holds_text
 test_away_branch_relaunch_accepts_existing_dispatchable_items
+
+test_relaunch_clears_control_exit_marker_only_when_published() {
+  local dir out rc=0
+  unset FM_FAKE_COMPOSER_READ_FAIL
+  dir=$(new_case exit-marker-clear rl81)
+  add_ship_task "$dir" rl81 claude
+
+  out=$(run_control "$dir" rl81 exit) || rc=$?
+  expect_code 0 "$rc" "exit before relaunch should succeed"$'\n'"$out"
+  assert_present "$dir/home/state/rl81.control-exit" "exit must write control-exit"
+
+  # Pre-stop refusal (missing --note for a ship) keeps the prior exit marker intact.
+  rc=0
+  out=$(run_control "$dir" rl81 relaunch) || rc=$?
+  expect_code 1 "$rc" "ship relaunch without --note must refuse"
+  assert_present "$dir/home/state/rl81.control-exit" "refused relaunch must preserve prior control-exit"
+
+  # Published replacement retires control-exit so the new incarnation can be reaped normally.
+  rc=0
+  out=$(run_control "$dir" rl81 relaunch --note "resume after intentional stop") || rc=$?
+  expect_code 0 "$rc" "relaunch after intentional stop should succeed"$'\n'"$out"
+  assert_absent "$dir/home/state/rl81.control-exit" "published relaunch must clear prior control-exit"
+  pass "fm-control relaunch: preserves control-exit on pre-stop refusal and retires it on publication"
+}
+
+test_relaunch_clears_control_exit_marker_only_when_published

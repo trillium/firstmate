@@ -915,6 +915,13 @@ fm_busy_agy_tail_busy() {
     | grep -qiE 'esc[[:space:]]+to[[:space:]]+cancel'
 }
 
+# fm_busy_agy_tail_idle: 0 when the pinned status row shows agy's idle
+# `? for shortcuts` token. Callers test busy first; the two rows are exclusive.
+fm_busy_agy_tail_idle() {
+  grep -v '^[[:space:]]*$' | tail -12 \
+    | grep -qF '? for shortcuts'
+}
+
 # --- launch-prompt signatures (fm_busy_launch_prompt_parked) ----------------
 #
 # Each function consumes a captured pane tail on stdin (the caller's whole
@@ -1187,10 +1194,13 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
           return 0
         fi
       fi
-      # Best-effort like rovo: a long turn can scroll the busy marker out of
-      # the captured tail, so its absence means "can't tell," never idle.
+      # The busy marker and the idle status row share the pinned bottom row,
+      # so the idle row's presence with no busy marker is a positive idle
+      # signal; without either, a scrolled-out tail still means "can't tell."
       if printf '%s' "$tail40" | fm_busy_agy_tail_busy; then
         printf 'busy agy-regex'
+      elif printf '%s' "$tail40" | fm_busy_agy_tail_idle; then
+        printf 'idle agy-regex'
       else
         printf 'unknown agy-regex'
       fi
@@ -1244,4 +1254,17 @@ fm_busy_is_busy() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
     busy\ *|unknown\ t3code-native) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# FM_BUSY_ORG_DISABLED_PATTERN: exact substring Claude Code renders when it is
+# launched on an account whose organization has disabled subscription access.
+# That pane can never start a first turn, so the watcher detects it early in the
+# stale loop and appends a blocked status line instead of waiting out ordinary
+# staleness escalation.
+FM_BUSY_ORG_DISABLED_PATTERN='Your organization has disabled Claude subscription access for Claude Code'
+
+# fm_busy_org_disabled: 0 iff <tail_content> contains the org-disabled error
+# string, 1 otherwise.
+fm_busy_org_disabled() {  # <tail_content>
+  printf '%s' "${1-}" | grep -qF "$FM_BUSY_ORG_DISABLED_PATTERN"
 }

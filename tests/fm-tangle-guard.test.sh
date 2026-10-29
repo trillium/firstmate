@@ -167,6 +167,9 @@ test_spawn_isolation_abort() {
   fakebin=$(make_spawn_fakebin "$TMP_ROOT/spawn-fake")
   # The assertions concern identity, not how long an unchanged cwd is polled.
   fm_test_fake_sleep_noop "$fakebin"
+  # The spawn's polling waits call /bin/sleep directly, so the shim above cannot
+  # shorten the worktree discovery deadline; shrink it through its own knobs.
+  export FM_SPAWN_WT_POLLS=3 FM_SPAWN_WT_POLL_INTERVAL=0.05
   # A genuine isolated linked worktree of the project, detached on the default.
   git -C "$proj" worktree add -q --detach "$TMP_ROOT/spawn-wt" >/dev/null 2>&1
   # The non-git case must BE non-git wherever this suite runs. A directory under
@@ -203,6 +206,66 @@ test_spawn_isolation_abort() {
   assert_contains "$out" "spawned ok-isolated-ff6" "isolated spawn did not report success"
   assert_not_contains "$out" "isolated worktree" "isolated spawn wrongly tripped the guard"
   pass "fm-spawn: aborts unless the resolved worktree is a genuine, isolated worktree"
+}
+
+# --- GUARD 1b: fm-spawn secondmate-marker hygiene ---------------------------
+
+# A treehouse pool slot is reused for BOTH secondmate homes and crewmate task
+# worktrees, and `treehouse return` restores tracked content without touching
+# gitignored files - so a slot that once held a secondmate home comes back still
+# carrying its .fm-secondmate-home marker. bin/fm-primary-scope-lib.sh
+# force-includes any marked root as a primary home (docs/turnend-guard.md), so
+# that leftover marker makes every primary-only guard fire inside an ordinary
+# task worktree. The discriminator is identity, never shape: a genuine secondmate
+# home is a linked worktree too, so the fact that the leased slot is a linked
+# worktree proves nothing about whether the marker is stale.
+test_spawn_clears_stale_secondmate_marker() {
+  local home proj fakebin out status wt_stale wt_live wt_parent marker
+  home="$TMP_ROOT/spawn-marker-home"
+  mkdir -p "$home/data"
+  proj=$(make_repo "$TMP_ROOT/spawn-marker-proj")
+  fakebin=$(make_spawn_fakebin "$TMP_ROOT/spawn-marker-fake")
+
+  wt_stale="$TMP_ROOT/spawn-marker-stale"
+  wt_live="$TMP_ROOT/spawn-marker-live"
+  wt_parent="$TMP_ROOT/spawn-marker-parent"
+  git -C "$proj" worktree add -q --detach "$wt_stale" >/dev/null 2>&1
+  git -C "$proj" worktree add -q --detach "$wt_live" >/dev/null 2>&1
+  git -C "$proj" worktree add -q --detach "$wt_parent" >/dev/null 2>&1
+  printf 'retired-mate\n' > "$wt_stale/.fm-secondmate-home"
+  printf 'livemate\n' > "$wt_live/.fm-secondmate-home"
+  printf 'unregistered-child\n' > "$wt_parent/.fm-secondmate-home"
+  printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$home" \
+    > "$wt_parent/.fm-secondmate-parent"
+  mkdir -p "$home/data"
+  printf -- '- livemate - test fixture (home: %s; scope: test fixture; projects: ; added 2026-08-05)\n' \
+    "$(cd "$wt_live" && pwd -P)" >> "$home/data/secondmates.md"
+
+  # Stale: no registry entry and no parent binding, so the marker is a leftover.
+  # The spawn proceeds and the slot is restored to a plain task worktree.
+  out=$(run_spawn "$home" marker-stale-gg7 "$proj" "$wt_stale" "$fakebin"); status=$?
+  expect_code 0 "$status" "spawn into a slot with a stale marker should proceed"
+  assert_absent "$wt_stale/.fm-secondmate-home" "stale secondmate marker was not cleared"
+  assert_contains "$out" "cleared a stale secondmate-home marker" \
+    "clearing a stale marker must be reported"
+
+  # Live: the marker names a secondmate this home still registers, so the pool
+  # handed out a provisioned home. That is a refusal, not something to clean up -
+  # and the home must keep its identity.
+  out=$(run_spawn "$home" marker-live-hh8 "$proj" "$wt_live" "$fakebin"); status=$?
+  expect_code 1 "$status" "spawn into a registered secondmate's home should abort"
+  assert_contains "$out" "live secondmate home" "live-home spawn lacked the refusal error"
+  assert_present "$wt_live/.fm-secondmate-home" "refused spawn destroyed a live home's marker"
+  assert_absent "$home/state/marker-live-hh8.meta" "aborted spawn must not record meta"
+
+  # Parent binding present: the home belongs to another parent's tree, so this
+  # home's registry cannot see it. Refuse on the binding alone.
+  out=$(run_spawn "$home" marker-parent-ii9 "$proj" "$wt_parent" "$fakebin"); status=$?
+  expect_code 1 "$status" "spawn into a home with a parent binding should abort"
+  assert_contains "$out" "live secondmate home" "parent-bound spawn lacked the refusal error"
+  assert_present "$wt_parent/.fm-secondmate-home" "refused spawn destroyed a bound home's marker"
+
+  pass "fm-spawn: clears a leftover secondmate marker, refuses a still-provisioned home"
 }
 
 # --- GUARD 1c: fm-spawn tmux window construction ----------------------------
@@ -307,4 +370,5 @@ test_guard_banner
 test_bootstrap_line
 test_brief_assertion_precedes_branch
 test_spawn_isolation_abort
+test_spawn_clears_stale_secondmate_marker
 test_spawn_tmux_window_construction

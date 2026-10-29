@@ -101,6 +101,11 @@ fi
 exit 1
 SH
   chmod +x "$fakebin/tmux"
+  # The heartbeat's reaper dry run (bin/fm-reap.sh) would otherwise read the
+  # host's real staleness store through PATH; a fake that fails its list keeps
+  # every case hermetic.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/staleness"
+  chmod +x "$fakebin/staleness"
   make_fake_crew_state "$fakebin" >/dev/null
   printf '%s\n' "$dir"
 }
@@ -381,10 +386,12 @@ is_live_non_zombie() {
 }
 
 hash_text() {
-  if command -v md5 >/dev/null 2>&1; then
-    printf '%s' "$1" | md5 -q
-  else
+  if command -v md5sum >/dev/null 2>&1; then
     printf '%s' "$1" | md5sum | cut -d' ' -f1
+  elif [ -x /sbin/md5 ]; then
+    printf '%s' "$1" | /sbin/md5 -q
+  elif command -v md5 >/dev/null 2>&1; then
+    printf '%s' "$1" | md5 | cut -d' ' -f1
   fi
 }
 
@@ -395,3 +402,36 @@ dead_pid() {
   done
   printf '%s\n' "$p"
 }
+
+test_hash_text_rejects_dash_q() {
+  local dir fakebin out
+  [ -n "${TMP_ROOT:-}" ] || TMP_ROOT=$(fm_test_tmproot fm-wake-helpers)
+  dir=$(make_case hash-text-rejects-dash-q)
+  fakebin="$dir/fakebin"
+  cat > "$fakebin/md5" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = "-q" ]; then
+    echo "md5: invalid option -- 'q'" >&2
+    exit 1
+  fi
+done
+if command -v md5sum >/dev/null 2>&1; then
+  exec md5sum "$@"
+elif [ -x /sbin/md5 ]; then
+  h=$(/sbin/md5 -q)
+  printf '%s  -\n' "$h"
+else
+  printf '5d41402abc4b2a76b9719d911017c592  -\n'
+fi
+SH
+  chmod +x "$fakebin/md5"
+  out=$(PATH="$fakebin:$PATH" hash_text "hello")
+  [ "$out" = "5d41402abc4b2a76b9719d911017c592" ] \
+    || fail "hash_text with md5 rejecting -q returned '$out', expected 5d41402abc4b2a76b9719d911017c592"
+  pass "hash_text helper returns expected hash when md5 rejects -q"
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  test_hash_text_rejects_dash_q
+fi

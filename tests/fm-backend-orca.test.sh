@@ -565,7 +565,7 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
     || fail "spawn did not send Orca a readable staged launch command"
   launch=$(cat "$staged")
   add_dirs="--add-dir '$(cd "$state" && pwd -P)/operational-inbox' --add-dir '$(cd "$state" && pwd -P)/$id.inbox' --add-dir '$(cd "$data" && pwd -P)/$id' --add-dir '$(cd "$ROOT" && pwd -P)/.agents/skills'"
-  assert_contains "$launch" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions $add_dirs --settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}'" \
+  assert_contains "$launch" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions $add_dirs --settings '$(cd "$state" && pwd -P)/$id.claude-settings.json'" \
     "the staged launch sent through Orca did not select the Claude harness"
   rm -rf "/tmp/fm-$id" "$(dirname "$staged")"
   pass "fm-spawn.sh --backend orca: reuses implicit terminal, records metadata, launches harness"
@@ -584,6 +584,10 @@ test_spawn_refuses_orca_secondmate_before_home_mutation() {
   printf 'firstmate\n' > "$subhome/AGENTS.md"
   printf 'claude\n' > "$config/crew-harness"
   touch "$state/.last-watcher-beat"
+  # The refusal under test is orca's, so the spawn has to get past the earlier
+  # registry-binding precondition a --secondmate spawn requires of its launching
+  # home - the same binding bin/fm-home-seed.sh writes before a real launch.
+  fm_register_secondmate "$data/secondmates.md" "$id" "$subhome"
   set +e
   out=$( FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_SPAWN_NO_GUARD=1 \

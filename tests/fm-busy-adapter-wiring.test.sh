@@ -350,12 +350,14 @@ test_claude_hooks_semantic_lifecycle() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
   expect_code 0 $? "claude spawn should succeed: $out"
   state="$HOME_DIR/state"
-  settings="$WT_DIR/.claude/settings.local.json"
+  settings="$state/$id.claude-settings.json"
   assert_present "$settings" "claude spawn did not write hook settings"
   jq -e . "$settings" >/dev/null || fail "claude hook settings are not valid JSON"
   for ev in UserPromptSubmit Stop StopFailure SessionEnd; do
     jq -e ".hooks[\"$ev\"]" "$settings" >/dev/null || fail "claude hook settings lack $ev"
   done
+  jq -e '.attribution.commit == "" and .attribution.pr == "" and .includeCoAuthoredBy == false' "$settings" >/dev/null \
+    || fail "claude worker settings must switch commit/PR attribution off (attribution and includeCoAuthoredBy)"
 
   out=$(classify claude "$id" "$state")
   [ "$out" = "busy fm-spawn" ] || fail "seed after spawn must be 'busy fm-spawn', got '$out'"
@@ -381,6 +383,21 @@ test_claude_hooks_semantic_lifecycle() {
   pass "claude hooks open on UserPromptSubmit and close on Stop, StopFailure, and SessionEnd"
 }
 
+test_claude_keep_ai_trailers_leaves_attribution_alone() {
+  local rec id=busy-cl-3 out settings
+  rec=$(make_spawn_case claude-keep-trailers claude "$id")
+  read_case_record "$rec"
+  mkdir -p "$HOME_DIR/config"
+  : >"$HOME_DIR/config/keep-ai-trailers"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "claude spawn with keep-ai-trailers should succeed: $out"
+  settings="$HOME_DIR/state/$id.claude-settings.json"
+  jq -e . "$settings" >/dev/null || fail "claude hook settings are not valid JSON under keep-ai-trailers"
+  jq -e 'has("attribution") or has("includeCoAuthoredBy") | not' "$settings" >/dev/null \
+    || fail "config/keep-ai-trailers must leave attribution settings out of the worker settings"
+  pass "claude worker settings omit the attribution-off keys when config/keep-ai-trailers is present"
+}
+
 test_claude_hooks_stale_incarnation_harmless() {
   local rec id=busy-cl-2 out state settings
   rec=$(make_spawn_case claude-stale claude "$id")
@@ -388,7 +405,7 @@ test_claude_hooks_stale_incarnation_harmless() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
   expect_code 0 $? "claude spawn should succeed: $out"
   state="$HOME_DIR/state"
-  settings="$WT_DIR/.claude/settings.local.json"
+  settings="$state/$id.claude-settings.json"
   "$ROOT/bin/fm-busy-event.sh" arm "$state" "$id" >/dev/null
   run_claude_hook "$settings" UserPromptSubmit \
     || fail "a stale-gen hook must still exit 0 so Claude's lifecycle is never broken"
@@ -423,6 +440,30 @@ run_gemini_hook() {  # <settings.json> <hook-event>
   cmd=$(jq -r ".hooks[\"$2\"][0].hooks[0].command" "$1")
   [ -n "$cmd" ] && [ "$cmd" != null ] || fail "no $2 hook command in $1"
   sh -c "$cmd"
+}
+
+test_claude_spawn_leaves_a_tracked_project_settings_file_alone() {
+  local rec id=busy-cl-3 out state before
+  rec=$(make_spawn_case claude-tracked claude "$id")
+  read_case_record "$rec"
+  # Track the file on the project's default branch and publish it to origin,
+  # which is what the spawn rebases the pooled worktree onto.
+  mkdir -p "$PROJ_DIR/.claude"
+  printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$PROJ_DIR/.claude/settings.local.json"
+  git -C "$PROJ_DIR" add -f .claude/settings.local.json
+  git -C "$PROJ_DIR" -c user.name=t -c user.email=t@t commit -q -m "track claude settings"
+  git -C "$PROJ_DIR" push -q origin HEAD
+  before=$(cat "$PROJ_DIR/.claude/settings.local.json")
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "claude spawn should succeed: $out"
+  state="$HOME_DIR/state"
+  [ "$(cat "$WT_DIR/.claude/settings.local.json" 2>/dev/null)" = "$before" ] \
+    || fail "spawn rewrote the project's tracked .claude/settings.local.json"
+  [ -z "$(git -C "$WT_DIR" status --porcelain)" ] \
+    || fail "claude spawn dirtied the worktree: $(git -C "$WT_DIR" status --porcelain)"
+  jq -e '.hooks.Stop and .hooks.UserPromptSubmit' "$state/$id.claude-settings.json" >/dev/null \
+    || fail "hooks were not delivered through the state-dir settings file"
+  pass "claude spawn delivers hooks without touching a tracked project settings.local.json"
 }
 
 test_gemini_hooks_semantic_lifecycle() {
@@ -961,7 +1002,9 @@ test_kimi_and_grok_install_no_unverified_wiring
 test_opencode_plugin_semantic_lifecycle
 test_opencode_plugin_v2_execution_lifecycle
 test_claude_hooks_semantic_lifecycle
+test_claude_keep_ai_trailers_leaves_attribution_alone
 test_claude_hooks_stale_incarnation_harmless
+test_claude_spawn_leaves_a_tracked_project_settings_file_alone
 test_gemini_hooks_semantic_lifecycle
 test_gemini_hooks_stale_incarnation_harmless
 test_raw_gemini_launch_has_no_semantic_wiring

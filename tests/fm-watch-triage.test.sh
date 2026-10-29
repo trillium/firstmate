@@ -4494,6 +4494,120 @@ test_procevent_marker_failure_exits_and_replays() {
   pass "marker failure exits through the shared wake owner, releases its lock, and replays later"
 }
 
+# --- captain inbox notes: an unacknowledged note wakes a live watcher ---------
+# bin/fm-inbox.sh queues `check inbox:<id>` rows. A watcher armed as a handling
+# successor never takes the recovery re-announcement path, so these rows must be
+# surfaced by the per-cycle queue scan, once, while the note is unacknowledged.
+
+inbox_note() {  # <dir> <text...> -> prints the new note id
+  local dir=$1 out
+  shift
+  out=$(FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" "$ROOT/bin/fm-inbox.sh" note -- "$@") || return 1
+  printf '%s\n' "$out" | sed -n 's/^queued //p' | head -1
+}
+
+inbox_ack_through_drain() {  # <dir>: drain, then acknowledge what it presented
+  local state=$1/state
+  ack_stopped_cycle "$state" >/dev/null 2>&1
+}
+
+test_inbox_note_wakes_live_handling_successor_once() {
+  local dir state out pid id second drain_out
+  dir=$(make_case inbox-note-live); state="$dir/state"; out="$dir/watch.out"
+  FM_WATCH_HANDLING_SUCCESSOR=1 procevent_watch_bg "$dir" "$out"
+  pid=$!
+  # A completed poll cycle, not a fixed liveness budget: a note queued while the
+  # watcher is still in its startup recovery check is announced as
+  # rearm-resurface instead of as the pending note this test asserts on.
+  wait_poll_cycle "$state" "$pid" || fail "the idle handling-successor watcher did not stay live"
+  id=$(inbox_note "$dir" "continue the reminder work") || fail "fm-inbox.sh note failed"
+  [ -n "$id" ] || fail "fm-inbox.sh printed no note id"
+  wait_for_exit "$pid" 100 \
+    || fail "a live watcher never surfaced the newly created inbox note: $(cat "$out")"
+  grep -F "check: captain inbox note pending: inbox:$id" "$out" >/dev/null \
+    || fail "the wake did not name the pending inbox note: $(cat "$out")"
+  [ "$(grep -c "captain inbox note pending" "$out")" = 1 ] \
+    || fail "the inbox note was announced more than once in one wake"
+  [ "$(awk -F '\t' -v k="inbox:$id" '$4 == k' "$state/.wake-queue" | wc -l | tr -d ' ')" = 1 ] \
+    || fail "the durable queue does not hold exactly one row for the note"
+
+  # Still unacknowledged: another watcher must not fire for the same queued row.
+  second="$dir/second.out"
+  FM_WATCH_HANDLING_SUCCESSOR=1 procevent_watch_bg "$dir" "$second"
+  pid=$!
+  if wait_for_exit "$pid" 15; then
+    fail "an already-surfaced inbox note re-fired on the next watcher: $(cat "$second")"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+
+  drain_out="$dir/drain.out"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain of the surfaced note failed"
+  grep -F "inbox:$id" "$drain_out" >/dev/null || fail "the surfaced note was not presented by the drain"
+  pass "a newly created inbox note wakes a live watcher exactly once while it stays queued"
+}
+
+test_inbox_note_not_resurfaced_after_acknowledgement() {
+  local dir state out pid id second
+  dir=$(make_case inbox-note-ack); state="$dir/state"; out="$dir/watch.out"
+  id=$(inbox_note "$dir" "acknowledge me") || fail "fm-inbox.sh note failed"
+  FM_WATCH_HANDLING_SUCCESSOR=1 procevent_watch_bg "$dir" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "the queued inbox note was not surfaced: $(cat "$out")"
+  grep -F "captain inbox note pending: inbox:$id" "$out" >/dev/null \
+    || fail "the queued inbox note was not named: $(cat "$out")"
+
+  # Acknowledge it the supported way: the note moves to handled/ and the drain
+  # acknowledgement consumes the queue row.
+  mkdir -p "$state/inbox/handled"
+  mv "$state/inbox/$id.note" "$state/inbox/handled/$id.note" || fail "could not acknowledge the note"
+  inbox_ack_through_drain "$dir" || fail "the drain acknowledgement failed"
+  [ ! -s "$state/.wake-queue" ] || fail "the acknowledged row stayed queued"
+
+  second="$dir/second.out"
+  FM_WATCH_HANDLING_SUCCESSOR=1 procevent_watch_bg "$dir" "$second"
+  pid=$!
+  if wait_for_exit "$pid" 15; then
+    fail "an acknowledged inbox note was surfaced again: $(cat "$second")"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  pass "an acknowledged inbox note is never surfaced again"
+}
+
+test_inbox_note_handled_before_surfacing_stays_quiet() {
+  local dir state out pid id
+  dir=$(make_case inbox-note-handled-first); state="$dir/state"; out="$dir/watch.out"
+  id=$(inbox_note "$dir" "already handled") || fail "fm-inbox.sh note failed"
+  mkdir -p "$state/inbox/handled"
+  mv "$state/inbox/$id.note" "$state/inbox/handled/$id.note" || fail "could not acknowledge the note"
+  FM_WATCH_HANDLING_SUCCESSOR=1 procevent_watch_bg "$dir" "$out"
+  pid=$!
+  if wait_for_exit "$pid" 15; then
+    fail "a note acknowledged before surfacing still woke the watcher: $(cat "$out")"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  pass "a queued row for an already-acknowledged note does not spend a wake"
+}
+
+test_unrelated_check_keys_are_not_surfaced_by_the_note_scan() {
+  local dir state out pid
+  dir=$(make_case inbox-unrelated-keys); state="$dir/state"; out="$dir/watch.out"
+  append_wake "$state" check "other:thing" "check: some other queued check"
+  append_wake "$state" check "inbox:no-such-note" "check: captain inbox note no-such-note - orphan"
+  append_wake "$state" check "inbox:../escape" "check: captain inbox note ../escape - hostile"
+  FM_WATCH_HANDLING_SUCCESSOR=1 procevent_watch_bg "$dir" "$out"
+  pid=$!
+  if wait_for_exit "$pid" 15; then
+    fail "an unrelated queued check key woke a handling-successor watcher: $(cat "$out")"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$(wc -l < "$state/.wake-queue" | tr -d ' ')" = 3 ] || fail "an unrelated queued row was altered"
+  pass "unrelated and orphaned check keys keep their prior watcher behavior"
+}
+
 # --- heartbeat: no-change absorbed, backstop surfaces a missed status --------
 
 test_heartbeat_no_change_absorbed() {
@@ -4526,6 +4640,28 @@ test_heartbeat_no_change_absorbed() {
     || fail "routine heartbeat classification did not commit its captured endpoint"
   reap "$pid"
   pass "a heartbeat with no captain-relevant change is absorbed and backs off the cadence"
+}
+
+# --- heartbeat: a record the reaper can clear fires the heartbeat ------------
+
+test_heartbeat_reap_candidate_fires() {
+  local dir state fakebin out pid
+  dir=$(make_case heartbeat-reap); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  printf 'working: routine heartbeat history\n' > "$state/routine.status"
+  printf '%s' "$(seen_sig "$state/routine.status")" > "$state/.seen-routine_status"
+  # A reaper whose dry run names one pending action; the watcher only reads it.
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\nprintf "ghost GHOST slot reassigned -> fm-teardown.sh ghost --record-only\\n"\n' \
+    "$dir/reap.calls" > "$fakebin/fm-reap.sh"
+  chmod +x "$fakebin/fm-reap.sh"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_WATCH_REAP_BIN="$fakebin/fm-reap.sh" \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a reap candidate did not fire the heartbeat"
+  grep -Fx "heartbeat" "$out" >/dev/null || fail "reap candidate did not exit with a heartbeat wake: $(cat "$out")"
+  grep -q "heartbeat" "$state/.wake-queue" || fail "reap candidate did not enqueue a heartbeat wake"
+  grep -q -- "scan --actionable" "$dir/reap.calls" || fail "the watcher should only ask the reaper for its dry run: $(cat "$dir/reap.calls" 2>/dev/null)"
+  ! grep -qE -- "(^| )--act( |$)" "$dir/reap.calls" || fail "the watcher must never run the reaper with --act: $(cat "$dir/reap.calls")"
+  pass "a heartbeat fires when the reaper's dry run names a pending action, and the watcher never acts itself"
 }
 
 test_heartbeat_backstop_surfaces_a_masked_status() {
@@ -4904,6 +5040,7 @@ fm_test_run \
   test_unknown_alive_stale_is_bounded_after_its_first_alarm \
   test_unknown_alive_stale_without_progress_keeps_surfacing \
   test_turn_ended_trailing_newline_prior_hash_surfaced \
+  test_hash_text_rejects_dash_q \
   test_secondmate_turn_ended_churning_pane_surfaced \
   test_turn_ended_colliding_window_key_surfaced \
   test_turn_ended_duplicate_endpoint_records_surfaced \
@@ -4982,7 +5119,12 @@ fm_test_run \
   test_procevent_surface_serializes_with_drain \
   test_procevent_surface_crash_boundaries \
   test_procevent_marker_failure_exits_and_replays \
+  test_inbox_note_wakes_live_handling_successor_once \
+  test_inbox_note_not_resurfaced_after_acknowledgement \
+  test_inbox_note_handled_before_surfacing_stays_quiet \
+  test_unrelated_check_keys_are_not_surfaced_by_the_note_scan \
   test_heartbeat_no_change_absorbed \
+  test_heartbeat_reap_candidate_fires \
   test_heartbeat_backstop_surfaces_unsurfaced_status \
   test_heartbeat_backstop_surfaces_a_masked_status \
   test_beacon_stays_fresh_while_absorbing \

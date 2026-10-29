@@ -645,12 +645,26 @@ fm_lock_remove_stray_owner_link() {
 }
 
 fm_lock_claim_blocked_by_steal() {
-  local lockdir=$1 allowed_steal_owner=${2:-} steal
+  local lockdir=$1 allowed_steal_owner=${2:-} steal owner pid
+  case "$lockdir" in
+    *.steal|*.steal.*) return 1 ;;
+  esac
   steal="$lockdir.steal"
   [ -e "$steal" ] || [ -L "$steal" ] || return 1
   if [ -n "$allowed_steal_owner" ] && fm_lock_points_to_owner "$steal" "$allowed_steal_owner"; then
     return 1
   fi
+  if [ -L "$steal" ]; then
+    owner=$(fm_lock_link_owner "$steal" 2>/dev/null || true)
+  elif [ -d "$steal" ]; then
+    owner=$steal
+  else
+    return 1
+  fi
+  [ -n "$owner" ] || return 1
+  [ -d "$owner" ] || return 1
+  pid=$(cat "$owner/pid" 2>/dev/null || true)
+  fm_pid_alive "$pid" || return 1
   return 0
 }
 
@@ -730,6 +744,46 @@ fm_lock_mid_acquire_is_fresh() {
       ;;
   esac
   return 1
+}
+
+# A lock path is a symlink to an owner directory, so a lock path that is
+# neither a symlink nor a directory is never a legitimate live lock - it is
+# garbage left behind by a process that opened the path as a plain file
+# (observed: an out-of-repo bridge holding its own flock fd on the path).
+# Reclaim it once it is older than the staleness window so waiters stop
+# spinning on it forever; a fresh one is still respected so a mid-acquire
+# window is never stolen. The removal runs under the steal mutex with its
+# guards re-verified after acquisition, so a rival that just created a live
+# lock can never have it unlinked from under it and racing reclaimers still
+# resolve to exactly one holder.
+fm_lock_reclaim_stale_plain_path() {
+  local lockdir=$1 steal steal_owner rc
+  case "$lockdir" in
+    *.steal|*.steal.*) return 1 ;;
+  esac
+  steal="$lockdir.steal"
+  [ -L "$lockdir" ] && return 1
+  [ -d "$lockdir" ] && return 1
+  [ -e "$lockdir" ] || return 1
+  fm_lock_mid_acquire_is_fresh "$lockdir" "" && return 1
+  if ! fm_lock_try_acquire_steal_mutex "$steal"; then
+    return 1
+  fi
+  steal_owner=${FM_LOCK_OWNER_DIR:-}
+  if [ -L "$lockdir" ] || [ -d "$lockdir" ] || [ ! -e "$lockdir" ] || fm_lock_mid_acquire_is_fresh "$lockdir" ""; then
+    fm_lock_release "$steal"
+    FM_LOCK_OWNER_DIR=
+    return 1
+  fi
+  rm -f "$lockdir" 2>/dev/null || true
+  rc=1
+  if fm_lock_try_create "$lockdir" "$steal_owner"; then
+    rc=0
+  else
+    FM_LOCK_OWNER_DIR=
+  fi
+  fm_lock_release "$steal"
+  return "$rc"
 }
 
 fm_lock_recheck_stale_owner() {
@@ -1277,13 +1331,20 @@ fm_lock_reap_dead_link() {
       fi
       token=$tomb
     done
-    [ -n "$token" ] || return 1
+    if [ -z "$token" ]; then
+      if [ "$(fm_lock_link_owner "$lockdir" 2>/dev/null || true)" = "$owner" ] \
+        || fm_lock_points_to_owner "$lockdir" "$owner"; then
+        rm -f "$lockdir" 2>/dev/null || true
+      fi
+      return 0
+    fi
   fi
   tomb="$owner.reaped.$current"
   if [ "$token" != "$tomb" ]; then
     mv -- "$token" "$tomb" 2>/dev/null || return 1
   fi
-  if fm_lock_points_to_owner "$lockdir" "$owner"; then
+  if fm_lock_points_to_owner "$lockdir" "$owner" \
+    || [ "$(fm_lock_link_owner "$lockdir" 2>/dev/null || true)" = "$owner" ]; then
     rm -f "$lockdir" 2>/dev/null || true
   fi
   fm_lock_discard_owner "$tomb"
@@ -1319,6 +1380,14 @@ fm_lock_try_acquire() {
   fi
 
   fm_current_pid current || return 1
+  # A stale plain file (or other non-directory, non-symlink path) at the lock
+  # path can never become a live lock on its own; reclaim it under the steal
+  # mutex so a live lock is never unlinked and racing reclaimers still yield
+  # exactly one holder.
+  if fm_lock_reclaim_stale_plain_path "$lockdir"; then
+    return 0
+  fi
+
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
   if [ -n "$pid" ] && [ "$pid" = "$current" ]; then
     # The recorded holder is THIS very process. Single-threaded bash can only

@@ -379,6 +379,8 @@ test_kimi_launch_then_send_is_verified() {
     || fail "kimi spawn did not type a short line sourcing its staged launch command"
   assert_grep "export GOTMPDIR=$task_tmp/gotmp" "$CASE_DIR/tmux-calls.log" \
     "kimi spawn did not export its Go temp directory into the pane"
+  assert_grep "export GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true" "$CASE_DIR/tmux-calls.log" \
+    "kimi spawn did not export non-interactive git editors into the pane"
   assert_grep "export FM_TASK_ID=$id" "$CASE_DIR/tmux-calls.log" \
     "kimi spawn did not mark the pane with its task id"
   assert_grep 'BEGIN FIRSTMATE KIMI TURN-END HOOK' "$HOME_DIR/.kimi-code/config.toml" \

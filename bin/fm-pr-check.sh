@@ -32,6 +32,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-backend.sh
+. "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
@@ -156,7 +158,7 @@ fi
 # bin/fm-pr-merge.sh reads a GitLab or Forgejo head live at merge time for the
 # same reason, and treats a recorded value that disagrees as stale rather than
 # authoritative.
-WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
+WT=$(fm_meta_get_exact "$META" worktree 2>/dev/null || true)
 PR_HEAD=
 if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
   if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \

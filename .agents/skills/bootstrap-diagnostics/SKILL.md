@@ -1,7 +1,7 @@
 ---
 name: bootstrap-diagnostics
 description: >-
-  Load when the session-start digest's bootstrap or network-checks section, or a standalone bin/fm-bootstrap.sh or bin/fm-startup-network.sh run, prints an actionable diagnostic line - MISSING, MISSING_MANUAL, OUTDATED, PRESENTATION_UNAVAILABLE, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, HOME_SUMMARY, BACKLOG_RECONCILE, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, or FMX - or reports that an interrupted backlog cleanup may have left an endpoint or local copy.
+  Load when the session-start digest's bootstrap or network-checks section, or a standalone bin/fm-bootstrap.sh or bin/fm-startup-network.sh run, prints an actionable diagnostic line - MISSING, MISSING_MANUAL, OUTDATED, PRESENTATION_UNAVAILABLE, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, HOME_SUMMARY, BACKLOG_RECONCILE, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, ATTRIBUTION, or FMX - or reports that an interrupted backlog cleanup may have left an endpoint or local copy.
   A silent bootstrap section, or any other BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -43,8 +43,9 @@ When any diagnostic needs captain attention, report the plain consequence and re
 - `FLEET_SYNC: <repo>: skipped: <reason>` - a benign one-off skip (offline, no origin, local-only); bootstrap continued, investigate only if it blocks work.
   A skip can also report the bounded fleet-refresh timeout (`FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT`, or a fleet-size-aware default with a 20 second floor); a timeout never blocks startup.
   `skipped: registry entry does not resolve to a delivery posture` is the one skip that is not one-off: the clone is left alone on every bootstrap until `data/projects.md` is corrected, so run the printed `bin/fm-project-mode.sh <repo>` to read the refusal and fix the entry.
-- `FLEET_SYNC: <repo>: recovered: <detail>` - the clone had drifted onto a clean detached HEAD holding no unique commits and the sync self-healed it (re-attached the default branch and fast-forwarded); no action needed, it is reported only so the self-heal is visible.
-- `FLEET_SYNC: <repo>: STUCK: on <state>, N commits behind <base> - needs attention` - the clone is dirty, on a non-default branch, detached with unique commits, or diverged, so the sync left it untouched (never forcing or discarding); it will keep falling behind until you look.
+- `FLEET_SYNC: <repo>: recovered: <detail>` - the clone had drifted off its default branch in a way the sync could prove safe, so it self-healed; no action needed, it is reported only so the self-heal is visible.
+  `re-attached <default>` means the clone was on a clean detached HEAD holding no unique commits, and `left merged branch <b> for <default>` means it was parked on a branch that is gone from origin and whose work is already contained in the default branch.
+- `FLEET_SYNC: <repo>: STUCK: on <state>, N commits behind <base> - needs attention` - the clone is dirty, detached with unique commits, diverged, or on a non-default branch whose work could not be proved already landed, so the sync left it untouched (never forcing or discarding); it will keep falling behind until you look.
   A loud STUCK, especially a growing N across bootstraps, means that clone needs hands-on attention; dispatch a crewmate or resolve it before it strands work.
 - `HOME_SUMMARY: this home has never published state/home-summary.json` or `... has not been republished since <stamp>` - this home's structured summary publication has failed repeatedly, and the line carries the failure count and the newest recorded reason from `state/.home-summary-refresh.log`.
   Publication is deliberately best-effort, so it cannot change another session-start, spawn, teardown, or watcher-poll result, and the watcher runs it detached so a slow attempt cannot delay the liveness beacon.
@@ -75,5 +76,7 @@ When any diagnostic needs captain attention, report the plain consequence and re
   An unsafe-outbox variant requires path and file-type inspection before any retry.
 - `NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>` - secondmate convergence changed a running home's loaded instructions or inherited config, but the deterministic `fm-send.sh fm-<id>` re-read nudge failed.
   Inspect the reason, keep the pending marker under `state/.secondmate-nudge-pending/` intact, and rerun session start after the endpoint or metadata issue is fixed so bootstrap can retry the exact same marked send on the same local or remote route.
+- `ATTRIBUTION: claude user settings still attribute commits/PRs; fix: <command>` - this session's own Claude user settings would add Co-Authored-By trailers and generated-with footers to the captain's commits and PRs.
+  The captain has asked for no agent attribution anywhere, so run the printed one-line fix (it merges attribution-off into the settings file and keeps every other key) without a consent round, then rerun session start to confirm the line is gone; `bin/fm-bootstrap.sh`'s header owns the exact condition.
 - `FMX: X mode on ...` / `FMX: X mode off ...` - bootstrap confirmed or removed the local Relay poll artifacts (`docs/configuration.md` "Relay (.env)"); the emitted line still carries Relay's former `X mode` wording.
   Only when a running watcher needs the cadence transition applied immediately, restart the home-scoped watcher through the emitted harness supervision protocol; bootstrap deliberately never restarts the watcher itself.

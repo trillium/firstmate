@@ -5760,6 +5760,169 @@ EOF
   pass "OpenCode turn-end guard survives an encoder that never reads stdin"
 }
 
+test_pi_stale_beat_rearm_stops_turnend_guard_loop() {
+  local repo home plugin log stop out status watch_path guard wake_lib
+  repo="$TMP_ROOT/pi-stale-beat-root"
+  home="$TMP_ROOT/pi-stale-beat-home"
+  log="$TMP_ROOT/pi-stale-beat-arm.log"
+  stop="$TMP_ROOT/pi-stale-beat.stop"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  git init -q "$repo"
+  : > "$repo/AGENTS.md"
+  : > "$home/state/task.meta"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  watch_path=$(cd "$ROOT/bin" && pwd)/fm-watch.sh
+  guard="$ROOT/bin/fm-turnend-guard.sh"
+  wake_lib="$ROOT/bin/fm-wake-lib.sh"
+  repo=$(cd "$repo" && pwd)
+  home=$(cd "$home" && pwd)
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'pid=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+trap 'exit 0' TERM INT
+while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.05; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(
+    PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
+      FM_STATE_OVERRIDE="$home/state" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" \
+      FM_GUARD_GRACE=30 GUARD="$guard" WATCH_PATH="$watch_path" WAKE_LIB="$wake_lib" \
+      node --input-type=module 2>&1 <<'EOF'
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+
+const state = process.env.FM_STATE_OVERRIDE;
+const home = process.env.FM_HOME;
+const log = process.env.FM_ARM_LOG;
+let tool = null;
+const pi = {
+  on() {},
+  registerCommand() {},
+  registerTool(candidate) {
+    if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+  },
+  sendUserMessage: async () => {},
+};
+writeFileSync(`${state}/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+if (!tool) throw new Error("Pi watch tool was not registered");
+
+function armPids() {
+  if (!existsSync(log)) return [];
+  return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => {
+    const match = line.match(/^pid=([0-9]+)$/);
+    if (!match) throw new Error(`unexpected arm row: ${line}`);
+    return match[1];
+  });
+}
+
+async function waitForPids(count) {
+  for (let i = 0; i < 100; i += 1) {
+    const pids = armPids();
+    if (pids.length >= count) return pids;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`expected ${count} arm rows, got ${armPids().join(",") || "(none)"}`);
+}
+
+function publishWatcher(pid) {
+  const lock = `${state}/.watch.lock`;
+  mkdirSync(lock, { recursive: true });
+  const identity = spawnSync(
+    "bash",
+    ["-c", '. "$1"; fm_pid_identity "$2"', "fm", process.env.WAKE_LIB, pid],
+    { encoding: "utf8" },
+  );
+  if (identity.status !== 0 || !identity.stdout.trim()) {
+    throw new Error(`could not identify watcher ${pid}: ${identity.stderr || identity.stdout}`);
+  }
+  writeFileSync(`${lock}/pid`, `${pid}\n`);
+  writeFileSync(`${lock}/fm-home`, `${home}\n`);
+  writeFileSync(`${lock}/watcher-path`, `${process.env.WATCH_PATH}\n`);
+  writeFileSync(`${lock}/pid-identity`, identity.stdout.endsWith("\n") ? identity.stdout : `${identity.stdout}\n`);
+}
+
+function runGuard() {
+  const result = spawnSync("bash", [process.env.GUARD, "--pi"], {
+    input: '{"stop_hook_active":false}\n',
+    encoding: "utf8",
+    env: process.env,
+  });
+  return { status: result.status, stderr: result.stderr || "", stdout: result.stdout || "" };
+}
+
+const first = await tool.execute("tool-call-stale-first", {}, undefined, undefined, {});
+if (!first.content[0]?.text.includes("started Pi extension arm child")) {
+  throw new Error(`initial call did not start the arm child: ${first.content[0]?.text}`);
+}
+const [firstPid] = await waitForPids(1);
+publishWatcher(firstPid);
+const beat = `${state}/.last-watcher-beat`;
+writeFileSync(beat, "");
+const staleAt = Math.floor(Date.now() / 1000) - 120;
+utimesSync(beat, staleAt, staleAt);
+
+const blocked = runGuard();
+if (blocked.status !== 2) {
+  throw new Error(`guard did not block on the stale beat (status ${blocked.status}): ${blocked.stderr}`);
+}
+if (!blocked.stderr.includes("TURN WOULD END BLIND") || !blocked.stderr.includes("no live watcher holds this home lock")) {
+  throw new Error(`guard block lacked the blind-turn banner: ${blocked.stderr}`);
+}
+
+const repaired = await tool.execute("tool-call-stale-repair", {}, undefined, undefined, {});
+const repairedText = repaired.content[0]?.text || "";
+if (repairedText.includes("already owns an arm child")) {
+  throw new Error(`stale-beat repair was a no-op: ${repairedText}`);
+}
+if (!repairedText.includes("started Pi extension arm child")) {
+  throw new Error(`stale-beat repair did not start a replacement: ${repairedText}`);
+}
+const pids = await waitForPids(2);
+if (pids.length !== 2) throw new Error(`repair spawned ${pids.length} arms: ${pids.join(",")}`);
+publishWatcher(pids[1]);
+writeFileSync(beat, "");
+
+const allowed = runGuard();
+if (allowed.status !== 0) {
+  throw new Error(`guard still blocked after the replacement (status ${allowed.status}): ${allowed.stderr}`);
+}
+if (allowed.stderr.includes("TURN WOULD END BLIND")) {
+  throw new Error(`guard repeated the blind-turn banner after repair: ${allowed.stderr}`);
+}
+
+const settled = await tool.execute("tool-call-stale-settled", {}, undefined, undefined, {});
+if (!settled.content[0]?.text.includes("already owns an arm child")) {
+  throw new Error(`fresh-beat call did not return the ownership no-op: ${settled.content[0]?.text}`);
+}
+const after = armPids();
+if (after.length !== 2) throw new Error(`fresh-beat call spawned another arm: ${after.join(",")}`);
+const quiet = runGuard();
+if (quiet.status !== 0 || quiet.stderr.includes("TURN WOULD END BLIND")) {
+  throw new Error(`guard looped after the fresh beat (status ${quiet.status}): ${quiet.stderr}`);
+}
+process.exit(0);
+EOF
+  )
+  status=$?
+  # The extension's process-exit hook stops the arm it still owns. Reap any
+  # child that logged a pid and is still alive.
+  if [ -f "$log" ]; then
+    while IFS= read -r row; do
+      pid=${row#pid=}
+      case "$pid" in ''|*[!0-9]*) continue ;; esac
+      kill -TERM "$pid" 2>/dev/null || true
+    done < "$log"
+  fi
+  expect_code 0 "$status" "a stale beat must make fm_watch_arm_pi replace the arm so the turn-end guard stops repeating: $out"
+  [ -z "$out" ] || fail "Pi stale-beat rearm test printed output: $out"
+  pass "stale heartbeat replacement stops the turn-end guard from repeating"
+}
+
 test_pi_extension_reports_external_healthy_watcher
 test_pi_tool_returns_agent_tool_result
 test_pi_redundant_tool_call_is_owned_noop
@@ -5790,6 +5953,7 @@ test_pi_failed_case_poller_is_reaped_as_a_group
 test_pi_hung_successor_falls_back_to_typed_wake
 test_pi_unretired_successor_falls_back_without_retry
 test_pi_late_unretired_close_resumes_supervision
+test_pi_stale_beat_rearm_stops_turnend_guard_loop
 test_pi_empty_close_retries_instead_of_disappearing
 test_pi_established_empty_close_honors_retry_limit
 test_pi_actionable_close_rechecks_session_lock

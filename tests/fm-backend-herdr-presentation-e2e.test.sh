@@ -304,8 +304,7 @@ EOF
       "$HERDR_LAB_HELPER" teardown "$HERDR_LAB_SESSION" >/dev/null 2>&1 || true
     LAB_READY=0
   fi
-  find "$TMP_ROOT" -type d -exec chmod u+rwx {} + 2>/dev/null || true
-  rm -rf "$TMP_ROOT"
+  { find "$TMP_ROOT" -type d -exec chmod u+rwx {} + 2>/dev/null || true; rm -rf "$TMP_ROOT"; }
 }
 trap cleanup_all EXIT
 
@@ -443,6 +442,17 @@ finish_concurrent_expected_abort() {  # <id> <status> <stdout> <stderr>
   fi
 }
 
+register_secondmate() {  # <id> <home>
+  # A --secondmate spawn refuses unless the launching home's own registry binds
+  # the id to that home, exactly as bin/fm-home-seed.sh writes it before a real
+  # launch. The home is recorded physically resolved because fm-spawn compares
+  # it against the resolved path.
+  local id=$1 home=$2
+  mkdir -p "$HOME_DIR/data"
+  printf -- '- %s - projection fixture (home: %s; scope: projection fixture; projects: ; added 2026-08-05)\n' \
+    "$id" "$(cd "$home" && pwd -P)" >> "$HOME_DIR/data/secondmates.md"
+}
+
 finish_concurrent_recovery() {  # <id> <home> <status> <stdout> <stderr>
   local id=$1 home=$2 status=$3 out=$4 err=$5
   [ "$status" -ne 0 ] || return 0
@@ -454,6 +464,7 @@ finish_concurrent_recovery() {  # <id> <home> <status> <stdout> <stderr>
 
 spawn_secondmate_task() {
   local id=$1 home=$2
+  register_secondmate "$id" "$home"
   FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE="$ROOT" \
     "$ROOT/bin/fm-spawn.sh" "$id" "$home" "sh -c 'while :; do sleep 60; done'" --secondmate --backend herdr
 }

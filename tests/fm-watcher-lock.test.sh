@@ -454,6 +454,45 @@ test_lock_recovers_dead_nested_steal_chain() {
   pass "dead nested steal chain from an interrupted reclaim is recovered"
 }
 
+test_lock_recovers_dangling_nested_steal_chain() {
+  local dir state lockdir plain rc marker
+  dir=$(make_case lock-dangling-nested-steal-chain)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$(dead_pid)" > "$lockdir/pid"
+  ln -s "$state/nonexistent1" "$lockdir.steal"
+  ln -s "$state/nonexistent2" "$lockdir.steal.steal"
+  ln -s "$state/nonexistent3" "$lockdir.steal.steal.steal"
+
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 8
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" || rc=$?
+  [ "$rc" -eq 0 ] || fail "dangling nested steal chain kept the lock unrecoverable (rc=$rc)"
+  for marker in "$lockdir.steal" "$lockdir.steal.steal"; do
+    [ ! -e "$marker" ] && [ ! -L "$marker" ] || fail "dangling steal marker remained: $marker"
+  done
+
+  plain="$state/.plain.lock"
+  touch "$plain"
+  touch -t 200001010000 "$plain"
+  ln -s "$state/nonexistent_plain" "$plain.steal"
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 9
+    fm_lock_release "$2"
+  ' _ "$LIB" "$plain" || rc=$?
+  [ "$rc" -eq 0 ] || fail "stale plain file with dangling steal link could not be acquired (rc=$rc)"
+  [ ! -e "$plain.steal" ] && [ ! -L "$plain.steal" ] \
+    || fail "plain file steal marker remained: $plain.steal"
+
+  pass "dangling nested steal chain and dead links are recovered"
+}
+
 test_lock_reclaims_self_held_steal_mutex() {
   # A TERM that lands while this process holds the steal mutex runs the EXIT
   # path, which re-acquires the same dead-owner lock. The abandoned steal hold
@@ -849,6 +888,117 @@ test_lock_paused_mid_acquire_claim_fails_during_steal() {
   pid=${out#*pid=}; pid=${pid%% *}
   [ -n "$pid" ] || fail "stealer claim did not record a pid: $out"
   pass "paused mid-acquire claimant backs off to active stealer"
+}
+
+test_lock_stale_plain_file_is_reclaimed() {
+  local dir state lockdir rc newpid
+  dir=$(make_case lock-plain-reclaim)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  : > "$lockdir"
+  touch -t 200001010000 "$lockdir"
+  rc=0
+  newpid=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    if fm_lock_try_acquire "$2"; then cat "$2/pid"; else exit 7; fi
+  ' _ "$LIB" "$lockdir") || rc=$?
+  [ "$rc" -eq 0 ] || fail "acquirer spun on a stale plain-file lock path (rc=$rc)"
+  [ -L "$lockdir" ] || fail "reclaimed lock path is not a symlink lock"
+  [ -n "$newpid" ] || fail "reclaimed lock has no pid recorded"
+  pass "stale plain-file lock path is reclaimed and acquired"
+}
+
+test_lock_fresh_plain_file_is_respected() {
+  local dir state lockdir out
+  dir=$(make_case lock-plain-fresh)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  : > "$lockdir"
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    if fm_lock_try_acquire "$2"; then rc=0; else rc=1; fi
+    printf "rc=%s held=%s\n" "$rc" "${FM_LOCK_HELD_PID:-}"
+  ' _ "$LIB" "$lockdir")
+  case "$out" in
+    *"rc=1"*) ;;
+    *) fail "fresh plain-file lock path was stolen mid-acquire: $out" ;;
+  esac
+  [ -f "$lockdir" ] || fail "fresh plain-file lock path disappeared"
+  [ ! -L "$lockdir" ] || fail "fresh plain-file lock path was replaced by a symlink"
+  pass "fresh plain-file lock path is respected during its grace"
+}
+
+test_lock_symlink_lock_is_never_reclaimed_as_plain_file() {
+  local dir state lockdir holder_file holder out owner_before owner_after lockpid holderpid i
+  dir=$(make_case lock-symlink-noop)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  holder_file="$dir/holder"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 7
+    printf "%s\n" "${BASHPID:-$$}" > "$3"
+    sleep 3
+  ' _ "$LIB" "$lockdir" "$holder_file" &
+  holder=$!
+  i=0
+  while [ "$i" -lt 50 ] && [ ! -s "$holder_file" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -s "$holder_file" ] || fail "symlink lock holder did not start"
+  owner_before=$(readlink "$lockdir" 2>/dev/null || true)
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    if fm_lock_try_acquire "$2"; then rc=0; else rc=1; fi
+    printf "rc=%s held=%s\n" "$rc" "${FM_LOCK_HELD_PID:-}"
+  ' _ "$LIB" "$lockdir")
+  wait "$holder" || fail "symlink lock holder failed"
+  holderpid=$(cat "$holder_file")
+  case "$out" in
+    *"rc=1"*) ;;
+    *) fail "live symlink lock was acquired instead of refused: $out" ;;
+  esac
+  case "$out" in
+    *"held=$holderpid"*) ;;
+    *) fail "live symlink holder pid not reported via FM_LOCK_HELD_PID: $out" ;;
+  esac
+  owner_after=$(readlink "$lockdir" 2>/dev/null || true)
+  [ "$owner_after" = "$owner_before" ] || fail "live symlink lock was replaced (was '$owner_before', now '$owner_after')"
+  lockpid=$(cat "$lockdir/pid" 2>/dev/null || true)
+  [ "$lockpid" = "$(cat "$holder_file")" ] || fail "live symlink holder's lock pid was clobbered (got '$lockpid')"
+  pass "live symlink lock is never deleted by the plain-file reclaim"
+}
+
+test_lock_stale_plain_file_single_winner_under_concurrency() {
+  local dir state lockdir marker i pids pid wins
+  dir=$(make_case lock-plain-concurrency)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  marker="$dir/wins"
+  : > "$lockdir"
+  touch -t 200001010000 "$lockdir"
+  : > "$marker"
+  pids=
+  i=1
+  while [ "$i" -le 40 ]; do
+    FM_STATE_OVERRIDE="$state" bash -c '
+      . "$1"
+      if fm_lock_try_acquire "$2"; then
+        printf "%s\n" "${BASHPID:-$$}" >> "$3"
+        sleep 1
+      fi
+    ' _ "$LIB" "$lockdir" "$marker" &
+    pids="$pids $!"
+    i=$((i + 1))
+  done
+  for pid in $pids; do
+    wait "$pid" 2>/dev/null || true
+  done
+  wins=$(awk 'NF { c++ } END { print c + 0 }' "$marker")
+  [ "$wins" -eq 1 ] || fail "expected exactly one plain-file reclaimer, got $wins"
+  [ -L "$lockdir" ] || fail "reclaimed lock path is not a symlink lock after the race"
+  pass "concurrent stale plain-file reclaim yields exactly one winner"
 }
 
 test_watch_restart_rejects_reused_pid() {
@@ -1331,6 +1481,57 @@ test_arm_waits_for_peer_beacon_after_child_stands_down() {
   pass "arm attaches to a peer watcher after child stands down and surfaces a missing successor"
 }
 
+# Portable mtime in epoch seconds (never the `stat -f || stat -c` fallback).
+sweep_file_mtime() {
+  if [ "$(uname)" = Darwin ]; then stat -f %m "$1" 2>/dev/null; else stat -c %Y "$1" 2>/dev/null; fi
+}
+
+test_check_sweep_keeps_the_beacon_advancing() {
+  local dir state fakebin out pid i id beat now max_age=0 age
+  dir=$(make_case sweep-beacon)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  # Four registered checks of 3s each: a 12s sweep that, before the beacon was
+  # touched per check, left the beacon untouched for the whole sweep and so aged
+  # it past the stale grace in a home with dozens of checks (robots-0clru).
+  for id in a b c d; do
+    cat > "$state/$id.check.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 3
+SH
+    chmod 0700 "$state/$id.check.sh"
+    FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-check-register.sh" "$id" >/dev/null \
+      || fail "could not register slow check $id"
+  done
+  beat="$state/.last-watcher-beat"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=30 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 FM_SECONDMATE_LIVENESS_SECS=99999999 \
+    "$WATCH" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "$beat" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$beat" ] || { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; fail "watcher never wrote its beacon: $(cat "$out")"; }
+  # Sample through the sweep (about 12s): the beacon must never go stale for
+  # more than one check plus rounding, while the sweep is still running.
+  i=0
+  while [ "$i" -lt 100 ]; do
+    now=$(date +%s)
+    age=$(( now - $(sweep_file_mtime "$beat") ))
+    [ "$age" -le "$max_age" ] || max_age=$age
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$max_age" -le 5 ] || fail "beacon aged ${max_age}s during a sweep of 3s checks (only one check's span is allowed)"
+  [ ! -s "$out" ] || ! grep -q 'FAILED' "$out" || fail "watcher reported a failure during the sweep: $(cat "$out")"
+  pass "a check sweep touches the beacon before every check, so a long sweep never ages it"
+}
+
 test_arm_fails_loud_when_no_fresh_watcher_confirmable() {
   local dir state fakebin armout live armpid status
   dir=$(make_case arm-failed-stale)
@@ -1671,6 +1872,7 @@ test_lock_steals_dead_pid_lock
 test_lock_stale_steal_single_winner_under_concurrency
 test_lock_reclaims_dead_steal_owner_without_nested_markers
 test_lock_recovers_dead_nested_steal_chain
+test_lock_recovers_dangling_nested_steal_chain
 test_lock_steal_reap_cannot_remove_successor
 test_lock_reclaims_self_held_steal_mutex
 test_lock_resumes_own_interrupted_steal_reap
@@ -1681,6 +1883,10 @@ test_lock_respects_live_holder_matching_its_start_time
 test_lock_empty_pid_uses_minimum_grace
 test_lock_late_claim_loses_after_recreate
 test_lock_paused_mid_acquire_claim_fails_during_steal
+test_lock_stale_plain_file_is_reclaimed
+test_lock_fresh_plain_file_is_respected
+test_lock_symlink_lock_is_never_reclaimed_as_plain_file
+test_lock_stale_plain_file_single_winner_under_concurrency
 test_watch_restart_rejects_reused_pid
 test_watch_restart_attaches_to_healthy_peer
 test_watcher_self_evicts_on_lock_takeover
@@ -1693,6 +1899,7 @@ test_arm_term_during_steal_waits_for_watcher_cleanup_trap
 test_arm_term_bounds_wait_for_stalled_startup
 test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
+test_check_sweep_keeps_the_beacon_advancing
 test_arm_fails_loud_when_no_fresh_watcher_confirmable
 test_cycle_exit_ledger_links_successor_and_stays_bounded
 test_stopped_watcher_is_live_but_stale_then_exit_is_classified

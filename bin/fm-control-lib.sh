@@ -508,15 +508,16 @@ fm_control_harness_wiring_paths() {  # <harness> <worktree> <state-dir> <id> [ki
   local harness=${1-} wt=${2-} state=${3-} id=${4-} kind=${5-}
   [ -n "$wt" ] && [ -n "$state" ] && [ -n "$id" ] || return 1
   case "$harness" in
-    # A secondmate's .claude/settings.local.json belongs to the captain.
-    # Retire only the firstmate-owned settings file the launch passes to
-    # --settings and the Stop pointer that carries the same busy generation.
-    # A crewmate's hook file is the worktree settings.local.json.
+    # Both kinds reach the busy hooks through the firstmate-owned settings file
+    # the launch passes to --settings, never the worktree's settings.local.json
+    # (a secondmate's belongs to the captain; a project may track its own).
+    # A secondmate also carries the Stop pointer for its busy generation.
     claude)
+      printf '%s\n' "$state/$id.claude-settings.json"
       if [ "$kind" = secondmate ]; then
-        printf '%s\n' "$state/$id.claude-settings.json"
         printf '%s\n' "$wt/.fm-busy-stop"
       else
+        # Retire the legacy worktree hook file an older spawn wrote.
         printf '%s\n' "$wt/.claude/settings.local.json"
       fi
       ;;
@@ -622,4 +623,74 @@ fm_control_harness_turnend_auth_path() {  # <harness> <token>
     kimi) printf '%s\n' "$HOME/.kimi-code/fm-turn-end.d/$token" ;;
     *) return 0 ;;
   esac
+}
+
+# fm_control_composer_structurally_empty: the ONE owner of structural safe-empty
+# recovery paths for backends that can PROVE their input state is empty when
+# the visual composer state is unknown or pending-unproven. Returns 0 if proven
+# empty, 1 otherwise (including any read failure or unknown integration).
+#
+# Herdr 0.9.5 publishes no interactive/prompt readiness field anywhere: `agent
+# get` carries agent_status but no interactive_ready, `agent explain` reports
+# only state/rule/fallback_reason, and the per-agent manifest has no readiness
+# key (robots-cqxt6). The proof is therefore built from what it does publish:
+# `agent get` reports agent_status == "idle", AND an `agent read` of the visible
+# pane shows the integration's EMPTY prompt block as the pane's composer.
+#
+# OpenCode's empty prompt block is a run of left-bar rows (`┃`) ending in the
+# mode/model footer row (`┃  Build · <model> ...`) directly above the `╹▀▀▀`
+# bottom border: every left-bar row above the footer, back to the first row
+# that is not a left-bar row, carries nothing after the bar (bar rows may also hold the right-aligned
+# sidebar cwd text, set off by a wide gap). A row with text
+# after the bar (typed input or ghost placeholder) is NOT empty, and no footer
+# or border row means the shape is unproven.
+fm_control_composer_structurally_empty() {  # <backend> <target>
+  local backend=$1 target=$2
+  # The caller reads the visual composer state inside a subshell, so the
+  # backend is not loaded in this shell yet; a failed load is "not proven".
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    herdr)
+      fm_backend_herdr_parse_target "$target" || return 1
+      local out agent status screen
+      out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" agent get "$FM_BACKEND_HERDR_PANE" 2>/dev/null) || return 1
+      status=$(printf '%s' "$out" | jq -r '.result.agent.agent_status // empty' 2>/dev/null) || return 1
+      [ "$status" = idle ] || return 1
+      agent=$(printf '%s' "$out" | jq -r '.result.agent.agent // empty' 2>/dev/null) || return 1
+      screen=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" agent read "$FM_BACKEND_HERDR_PANE" --source visible 2>/dev/null) || return 1
+      case "$agent" in
+        opencode) fm_control_opencode_prompt_block_empty "$screen" ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# fm_control_opencode_prompt_block_empty: 0 only when the last left-bar block
+# of a plain-text OpenCode screen is an empty prompt block (see above).
+fm_control_opencode_prompt_block_empty() {  # <screen-text>
+  printf '%s\n' "$1" | awk '
+    # A bar row is empty when nothing follows the bar, or when only a wide gap
+    # separates it from the right-aligned sidebar cwd text; typed input starts
+    # directly after the bar, never twelve columns away.
+    function blank_bar(l) { return l ~ /^[[:space:]]*┃[[:space:]]*$/ || l ~ /^[[:space:]]*┃[[:space:]]{12,}[^[:space:]]/ }
+    function bar(l) { return l ~ /^[[:space:]]*┃/ }
+    { line[NR] = $0 }
+    END {
+      n = NR
+      while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--
+      # Drop the status row beneath the border (cwd, hints), then find the border.
+      b = 0
+      for (i = n; i >= 1 && i >= n - 3; i--) if (line[i] ~ /^[[:space:]]*╹▀/) { b = i; break }
+      if (!b) exit 1
+      f = b - 1
+      if (f < 2 || !bar(line[f]) || line[f] !~ /^[[:space:]]*┃[[:space:]]+(Build|Plan)[[:space:]]+·[[:space:]]+/) exit 1
+      rows = 0
+      for (i = f - 1; i >= 1 && bar(line[i]); i--) {
+        if (!blank_bar(line[i])) exit 1
+        rows++
+      }
+      exit (rows > 0 ? 0 : 1)
+    }'
 }

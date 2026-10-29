@@ -78,6 +78,22 @@ OBSERVE_ONLY_TOOLS='taskoutput taskstop taskget tasklist cronlist bashoutput kil
 # widen by accident.
 PLAN_ONLY_TOOLS='taskcreate taskupdate'
 
+# Exact lowercase tool names that match the 'cron'/'schedul' stems but create or
+# remove a DURABLE, PERSISTENT, INSPECTABLE schedule rather than the ephemeral,
+# session-bound, fleet-invisible work the delegation guard targets. A cron
+# ROUTINE outlives the session, is not started or owned by this session's own
+# process, and is inspectable at any time through CronList (already exempt in
+# OBSERVE_ONLY_TOOLS), so the guard's stated hazard - work that "dies with this
+# session" and leaves no durable record anyone can see - simply does not fit it;
+# the /schedule skill also depends on CronCreate. This is the create/delete
+# counterpart to that observe-only CronList exemption. It is DELIBERATELY
+# NARROWER than the 'cron schedul' stems: only these two exact names are
+# released, so an unknown future cron- or schedule-noun tool (ScheduleCreate,
+# CronSchedule, a background scheduler, etc.) is still caught by the stem match
+# below and denied. Exact-name, never substring, so it cannot widen by accident,
+# and tests/fm-subagent-pretool-check.test.sh locks it at exactly these two.
+SCHEDULE_MGMT_TOOLS='croncreate crondelete'
+
 TOOL=""
 TOOL_SET=0
 CLAUDE_MODE=0
@@ -138,6 +154,14 @@ if [ "$TOOL_SET" -eq 0 ]; then
   [ -n "$PAYLOAD" ] || exit 0
   command -v jq >/dev/null 2>&1 || exit 0
   TOOL=$(printf '%s' "$PAYLOAD" | jq -r '(.tool_name // .toolName // empty)' 2>/dev/null) || exit 0
+  # A Monitor that only tails a Parlay channel delegates nothing: it is the
+  # documented self-enrollment (parlay listen --help), so it is not a fleet bypass.
+  if [ "$(printf '%s' "$TOOL" | tr '[:upper:]' '[:lower:]')" = "monitor" ]; then
+    MON_CMD=$(printf '%s' "$PAYLOAD" | jq -r '(.tool_input.command // empty)' 2>/dev/null) || MON_CMD=""
+    case "$MON_CMD" in
+      "parlay listen"*|"parlay monitor"*) exit 0 ;;
+    esac
+  fi
 fi
 
 [ -n "$TOOL" ] || exit 0
@@ -152,7 +176,7 @@ case "$TOOL" in
   mcp__*) exit 0 ;;
 esac
 
-for allowed in $OBSERVE_ONLY_TOOLS $PLAN_ONLY_TOOLS; do
+for allowed in $OBSERVE_ONLY_TOOLS $PLAN_ONLY_TOOLS $SCHEDULE_MGMT_TOOLS; do
   [ "$NORMALIZED" != "$allowed" ] || exit 0
 done
 

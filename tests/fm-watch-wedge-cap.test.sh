@@ -415,6 +415,9 @@ test_wedge_cap_window_marker_silences_hash_churning_busy_pane() {
   pane_hash=$(hash_text "churning wedged pane initial content")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
+  # Busy past the completed-turn bound (set per round below): a busy pane inside
+  # that bound is live and resets instead of escalating, so the cap's hung busy
+  # pane is the one over it.
   export FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
 
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
@@ -437,6 +440,7 @@ test_wedge_cap_window_marker_silences_hash_churning_busy_pane() {
       FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
       FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
       FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_WEDGE_MAX_ESCALATIONS=$max \
+      FM_BUSY_TURN_MAX_SECS=1 \
       "$WATCH" > "$out" &
     pid=$!
     if ! wait_for_exit "$pid" 100; then
@@ -1928,3 +1932,94 @@ test_wedge_cap_reports_gone_endpoint_on_terminal_override_route() {
 }
 
 test_wedge_cap_reports_gone_endpoint_on_terminal_override_route
+
+# wedge_alarm_case <name> <status-line>: fixture for the stale wedge alarm cases.
+# One ship window whose pane has sat on the identical frame (recorded as stably
+# stale at that hash); <status-line> is its last status, already seen, or empty
+# for none. Sets $dir, $state, $out, $key, $window for the caller.
+wedge_alarm_case() {
+  local name=$1 status_line=$2 capture_file pane_hash
+  dir=$(make_case "wedge-cap-$name"); state="$dir/state"; capture_file="$dir/pane.txt"
+  out="$dir/watch.out"
+  window="test:fm-wedge-cap-$name"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'idle frame content' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/wedge-cap-$name.meta"
+  if [ -n "$status_line" ]; then
+    printf '%s\n' "$status_line" > "$state/wedge-cap-$name.status"
+    mark_status_seen "$state" "$state/wedge-cap-$name.status"
+  fi
+  pane_hash=$(hash_text "idle frame content")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+}
+
+test_wedge_alarm_quiet_for_finished_worker_whose_run_step_failed() {
+  local dir state out key window round
+  wedge_alarm_case finished-run-step 'done [at=1]: PR green, awaiting the captain merge'
+  prime_and_ack "$dir" 0 || fail "prime-and-ack failed"
+  # The overriding evidence was real when the idle timer armed; the run has
+  # since failed, so the crew state no longer proves it is working.
+  export FM_FAKE_CREW_STATE='state: failed · source: run-step · run failed'
+  round=1
+  while [ "$round" -le 3 ]; do
+    poll_capped_wedge_round "$dir" 0 "" absorb \
+      || fail "round $round escalated a finished worker as a wedge: $(cat "$out")"
+    grep -F "possible wedge" "$out" >/dev/null \
+      && fail "round $round re-fired a wedge for a finished worker: $(cat "$out")"
+    [ ! -e "$state/.stale-since-$key" ] \
+      || fail "round $round left the wedge timer armed after its evidence was gone"
+    round=$((round + 1))
+  done
+  unset FM_FAKE_CREW_STATE
+  pass "a finished worker whose stale run-step failed is not wedge-escalated"
+}
+
+test_wedge_alarm_resets_for_busy_pane() {
+  local dir state out key window round
+  wedge_alarm_case busy-pane ''
+  prime_and_ack "$dir" 0 || fail "prime-and-ack failed"
+  # With no suppressor standing, the next poll is this pane's first sight, which
+  # is where the busy reading is taken and recorded.
+  export FM_FAKE_CREW_STATE='state: working · source: pane · busy'
+  rm -f "$state/.stale-$key"
+  poll_capped_wedge_round "$dir" 0 "" absorb \
+    || fail "the first sight of a busy pane escalated it: $(cat "$out")"
+  [ -e "$state/.pane-busy-wedge-cap-busy-pane" ] \
+    || fail "the first sight did not record the busy reading"
+  export FM_FAKE_CREW_STATE='state: working · source: pane · busy'
+  round=1
+  while [ "$round" -le 3 ]; do
+    # A count the pane earned before the live reading came back.
+    printf '2\n' > "$state/.wedge-escalations-$key"
+    poll_capped_wedge_round "$dir" 0 "" absorb \
+      || fail "round $round escalated a busy pane as a wedge: $(cat "$out")"
+    grep -F "possible wedge" "$out" >/dev/null \
+      && fail "round $round wedge-escalated a busy pane: $(cat "$out")"
+    [ ! -e "$state/.wedge-escalations-$key" ] \
+      || fail "round $round left the escalation count standing for a busy pane"
+    round=$((round + 1))
+  done
+  unset FM_FAKE_CREW_STATE
+  pass "a busy pane resets the wedge timer and escalation count instead of escalating"
+}
+
+test_wedge_alarm_still_escalates_genuinely_wedged_worker() {
+  local dir state out key window
+  wedge_alarm_case genuinely-wedged ''
+  prime_and_ack "$dir" 0 || fail "prime-and-ack failed"
+  # A run-step claiming work behind a frozen pane is the wedge the timer
+  # exists for: no busy-pane reading, so the unchanged ladder escalates.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  poll_capped_wedge_round "$dir" 0 "" exit \
+    || fail "a genuinely wedged worker was never escalated: $(cat "$out")"
+  grep -F "possible wedge, escalation" "$out" >/dev/null \
+    || fail "the genuinely wedged worker did not raise a wedge wake: $(cat "$out")"
+  unset FM_FAKE_CREW_STATE
+  pass "a genuinely wedged worker still escalates"
+}
+
+test_wedge_alarm_quiet_for_finished_worker_whose_run_step_failed
+test_wedge_alarm_resets_for_busy_pane
+test_wedge_alarm_still_escalates_genuinely_wedged_worker

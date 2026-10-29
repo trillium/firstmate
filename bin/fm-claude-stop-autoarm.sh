@@ -88,7 +88,11 @@
 #     watcher still has a fresh beacon.
 #   - Failure handling: a typed failure is rechecked against the same live,
 #     fresh watcher predicate and retried a bounded number of times in this
-#     hook. Only an exhausted failure with no verified watcher emits one
+#     hook. After the last attempt a live identity-matched holder whose beacon
+#     merely lags is given FM_CLAUDE_AUTOARM_SETTLE seconds (default 35, just
+#     over one check's FM_CHECK_TIMEOUT) to beat again before it is judged, so
+#     a watcher inside one bounded step is never reported as a broken
+#     mechanism; a dead, foreign, absent, or still-frozen holder fails as before. Only an exhausted failure with no verified watcher emits one
 #     last-resort notice per failure episode; later consecutive failures still
 #     exit 2 to guarantee the next Stop-owned retry without repeating notice,
 #     until the synchronous guard has consumed its attended fail-open.
@@ -145,6 +149,13 @@ AUTOARM_ATTEMPTS=${FM_CLAUDE_AUTOARM_ATTEMPTS:-2}
 case "$AUTOARM_ATTEMPTS" in
   1|2|3) : ;;
   *) AUTOARM_ATTEMPTS=2 ;;
+esac
+
+# Seconds a live, identity-matched holder whose beacon merely lags is given to
+# beat again before the failure notice (see settle_lagging_watcher below).
+AUTOARM_SETTLE=${FM_CLAUDE_AUTOARM_SETTLE:-35}
+case "$AUTOARM_SETTLE" in
+  ''|*[!0-9]*) AUTOARM_SETTLE=35 ;;
 esac
 
 # shellcheck source=bin/fm-primary-scope-lib.sh
@@ -394,6 +405,27 @@ start_handling_successor() {  # <closed-arm-pid>
   return 1
 }
 
+# settle_lagging_watcher: succeed when the home's lock names a live,
+# identity-matched watcher that beats again within AUTOARM_SETTLE seconds. A
+# watcher inside one bounded step (a check is capped at FM_CHECK_TIMEOUT) can
+# show a stale beacon at the instant an attempt closes, and judging it there
+# reported a healthy watcher as a broken mechanism. A dead holder, a foreign
+# or recycled pid, no holder, and a holder whose beacon stays frozen all fail
+# immediately or at the deadline, so the genuine failure notice is unchanged.
+settle_lagging_watcher() {
+  local pid deadline
+  [ "$AUTOARM_SETTLE" -gt 0 ] || return 1
+  pid=$(cat "$STATE/.watch.lock/pid" 2>/dev/null || true)
+  fm_pid_alive "$pid" || return 1
+  fm_watcher_lock_matches_pid "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$pid" "$FM_HOME" || return 1
+  deadline=$((SECONDS + AUTOARM_SETTLE))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    fm_watcher_healthy "$STATE" "$SCRIPT_DIR/fm-watch.sh" "$GRACE" "$FM_HOME" && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
 OUT=
 ACTIONABLE=0
 HEALTHY=0
@@ -467,7 +499,13 @@ while [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ]; do
     HEALTHY=1
     break
   fi
-  [ "$attempt" -lt "$AUTOARM_ATTEMPTS" ] || break
+  if [ "$attempt" -ge "$AUTOARM_ATTEMPTS" ]; then
+    # Last attempt: a lagging-but-live watcher still counts as healthy.
+    if [ "$HOST_MODE" -eq 0 ] && settle_lagging_watcher; then
+      HEALTHY=1
+    fi
+    break
+  fi
   [ -z "$OUT" ] || rm -f "$OUT" 2>/dev/null || true
   OUT=
 done

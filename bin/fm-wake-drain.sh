@@ -5,7 +5,8 @@
 # informational status lines, latest captain-facing statuses not covered by a
 # newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
 # a supervision-host home the supervision session's new and unprocessed
-# outcomes (BRANCH OUTCOMES), then assert liveness.
+# outcomes (BRANCH OUTCOMES), then on a heartbeat wake the NOT DONE list from
+# bin/fm-stalled-work.sh (its header owns the contract), then assert liveness.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
@@ -33,6 +34,9 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/fm-supervision-engine-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# Labels surfaced stale wakes at acknowledgement (docs/laya-stale-wake-triage.md).
+# shellcheck source=bin/fm-wake-decision-lib.sh
+. "$SCRIPT_DIR/fm-wake-decision-lib.sh"
 
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
@@ -43,6 +47,7 @@ RECOVERY_MARKER_TOKEN=
 RECOVERY_ACK_REQUIRED=false
 RECOVERY_ACK_MOVED=false
 ACK_THROUGH=
+ACK_LABEL_ROWS=
 ACK_GENERATION=
 ACK_REMOVED=0
 PRESENTED_MAX=0
@@ -809,11 +814,36 @@ print_status_presentation() {  # [<deduped-raw-rows>]
   return "$rc"
 }
 
+# NOT DONE: captain-authorized work that is blocked, never started, or stalled.
+# Printed on a heartbeat wake only, so a long-quiet fleet re-surfaces it every
+# heartbeat without adding bytes to every signal wake. Silent when nothing is
+# waiting; the sweep is read-only and a failure here never fails the drain.
+print_not_done_section() {
+  local out
+  [ "$ACTOR" != branch ] || return 0
+  printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$3 == "heartbeat" { found = 1 } END { exit !found }' || return 0
+  [ -x "$SCRIPT_DIR/fm-stalled-work.sh" ] || return 0
+  out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" fm_run_timed 60 "$SCRIPT_DIR/fm-stalled-work.sh" --quiet --plain 2>/dev/null) || return 0
+  [ -n "$out" ] || return 0
+  printf 'NOT DONE (captain-authorized work waiting; tell the captain, repeat until each item moves or is dropped):\n%s\n' "$out"
+}
+
+# Names the lock holder's command and running time so a wedged holder is visible.
+describe_lock_holder() {
+  local pid=$1 cmd age
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  cmd=$(ps -o command= -p "$pid" 2>/dev/null | head -n 1 | cut -c1-200) || cmd=
+  age=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ') || age=
+  [ -n "$cmd" ] || return 0
+  printf ' (command: %s; running %s)' "$cmd" "${age:-unknown}"
+}
+
 # shellcheck disable=SC2317,SC2329 # Invoked by trap handlers below.
 cleanup() {
   local status=$?
   [ -z "$DRAIN_TMP" ] || rm -f -- "$DRAIN_TMP" 2>/dev/null || true
   [ -z "$DRAIN_VIEW_TMP" ] || rm -f -- "$DRAIN_VIEW_TMP" 2>/dev/null || true
+  [ -z "$ACK_LABEL_ROWS" ] || rm -f -- "$ACK_LABEL_ROWS" 2>/dev/null || true
   if [ "$DRAIN_LOCK_HELD" = true ]; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   fi
@@ -831,8 +861,8 @@ elif fm_lock_acquire_wait_bounded "$FM_WAKE_QUEUE_LOCK" "$PRESENTATION_LOCK_TIME
 else
   lock_rc=$?
   if [ "$lock_rc" -eq 124 ]; then
-    printf 'WAKE DRAIN SKIPPED: queue lock remains held by live pid %s after %ss; retry on the next drain.\n' \
-      "${FM_LOCK_HELD_PID:-unknown}" "$PRESENTATION_LOCK_TIMEOUT"
+    printf 'WAKE DRAIN SKIPPED: queue lock remains held by live pid %s%s after %ss; retry on the next drain.\n' \
+      "${FM_LOCK_HELD_PID:-unknown}" "$(describe_lock_holder "${FM_LOCK_HELD_PID:-}")" "$PRESENTATION_LOCK_TIMEOUT"
     exit 0
   fi
   printf 'wake drain: queue lock could not be acquired safely\n' >&2
@@ -946,16 +976,26 @@ if [ -n "$ACK_THROUGH" ]; then
     exit 1
   fi
   DRAIN_TMP=
+  # Snapshot this actor's owned rows before they are consumed: the decision
+  # log labels exactly the surfaced stale wakes this acknowledgement retired.
+  ACK_LABEL_ROWS=$(mktemp "$STATE/.wake-rows.label.XXXXXX") || ACK_LABEL_ROWS=
   if [ -n "$HANDOFF_ACK" ] && [ "$(cat "$STATE/.supervision-handoff-pending" 2>/dev/null)" = "$HANDOFF_ACK" ]; then
     rm -f "$STATE/.supervision-handoff-pending" || exit 1
   fi
   if [ "$ACTOR" = branch ]; then
+    [ -z "$ACK_LABEL_ROWS" ] || cat "$ELIGIBLE_ROWS_FILE" > "$ACK_LABEL_ROWS" 2>/dev/null || true
     consume_actor_rows_locked "$ELIGIBLE_ROWS_FILE" "$ACK_THROUGH" || exit 1
   else
+    [ -z "$ACK_LABEL_ROWS" ] || cat "$MAIN_ROWS_FILE" > "$ACK_LABEL_ROWS" 2>/dev/null || true
     consume_actor_rows_locked "$MAIN_ROWS_FILE" "$ACK_THROUGH" || exit 1
   fi
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   DRAIN_LOCK_HELD=false
+  if [ -n "$ACK_LABEL_ROWS" ]; then
+    fm_wake_decision_label_through "$STATE" "$ACK_THROUGH" "$ACK_LABEL_ROWS" || true
+    rm -f "$ACK_LABEL_ROWS"
+    ACK_LABEL_ROWS=
+  fi
   if [ "$ACK_REMOVED" -eq 0 ] && [ "$PRESENTED_MAX" -gt "$ACK_THROUGH" ]; then
     # Nothing at or below the cutoff was this actor's to consume, while a
     # presented row above it is still waiting: the caller acknowledged an
@@ -1084,6 +1124,7 @@ printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --a
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
 (print_status_presentation "$RAW_ROWS") || true
+print_not_done_section
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
 assert_watcher_liveness
 exit "$BRANCH_OUTCOMES_RC"

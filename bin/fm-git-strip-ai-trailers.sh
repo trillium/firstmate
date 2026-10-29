@@ -186,7 +186,14 @@ write_executable() {
 # point here, so the wrapper cannot recurse into itself. An empty
 # core.hooksPath makes that lookup fail, but plain git reads it as "no hooks",
 # so the wrapper runs none; any other failure reruns the lookup to show git's
-# error and refuses.
+# error and refuses. Every wrapper also carries a re-entrancy sentinel
+# first: when FM_GIT_HOOK_ACTIVE is already set the hook exits zero at once,
+# else it sets and exports it. Path comparisons miss mixed fresh/stale
+# cycles - installed copies outlive the task that wrote them, beads preserves
+# pane hooks by copy (new inode), and a section injected above the chain
+# still runs - so the sentinel, which depends on no path being what is
+# expected, is what stops a hook that re-enters itself through bd -> git from
+# recursing.
 runtime_chain_body() {
   local ours=$1
   cat <<EOF
@@ -252,6 +259,25 @@ FM_GIT_CLIENT_HOOKS='applypatch-msg pre-applypatch post-applypatch pre-commit
 pre-merge-commit prepare-commit-msg post-commit pre-rebase post-checkout
 post-merge pre-push post-rewrite pre-auto-gc sendemail-validate'
 
+# First lines of every generated wrapper, before the strip and before the
+# chain lookup. A hook that re-enters itself through bd -> git, or through any
+# chain of preserved hook copies, must not recurse: the first entry exports the
+# marker, and every entry below it on the same stack exits at once. This check
+# is first so a section injected above the chain (the beads integration block)
+# cannot run twice on one stack either. A re-entrant commit-msg exits before
+# the strip; the outer message was already stripped on the first entry, and a
+# nested commit inside a hook is the integrator's business, not a typed message.
+sentinel_body() {
+  cat <<'SENTINEL_EOF'
+# Re-entrancy sentinel: exit at once when a hook is already running above us
+# on this stack. Installed copies outlive their task, so no path check here.
+if [ -n "${FM_GIT_HOOK_ACTIVE:-}" ]; then
+  exit 0
+fi
+export FM_GIT_HOOK_ACTIVE=1
+SENTINEL_EOF
+}
+
 write_env_file() {
   local hooks_dir=$1 out=$2 count=${GIT_CONFIG_COUNT:-0} tmp
   [ -n "$hooks_dir" ] && [ -n "$out" ] || usage
@@ -307,6 +333,7 @@ install_hooks() {
   write_executable "$hooks_dir/commit-msg" <<EOF
 #!/usr/bin/env bash
 set -u
+$(sentinel_body)
 $strip_line
 $(runtime_chain_body "$hooks_dir")
 EOF
@@ -337,6 +364,7 @@ EOF
     write_executable "$hooks_dir/$name" <<EOF
 #!/usr/bin/env bash
 set -u
+$(sentinel_body)
 $(runtime_chain_body "$hooks_dir")
 EOF
   done

@@ -427,7 +427,7 @@ A live foreign holder therefore cannot strand a TERM'd watcher in this marker-lo
 
 ### Pi and OpenCode watch extension
 
-`tests/fm-pi-watch-extension.test.sh` checks Pi's first-cycle-or-explicit-repair tool metadata and ownership-based redundant-call no-ops.
+`tests/fm-pi-watch-extension.test.sh` checks Pi's first-cycle-or-explicit-repair tool metadata, ownership-based redundant-call no-ops, and the stale-heartbeat replacement that stops the turn-end guard from repeating.
 It then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, and:
 
 - Blocks prompt delivery to prove the successor launches first.

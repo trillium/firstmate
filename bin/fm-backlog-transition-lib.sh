@@ -68,6 +68,9 @@ FM_BACKLOG_ROW_ERROR=
 # the row is not held.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
 FM_BACKLOG_ROW_HOLD_KIND=
+# Set by fm_backlog_row_probe on a found row: the recorded repo, empty when none.
+# shellcheck disable=SC2034 # Output global, read by the sourcing caller.
+FM_BACKLOG_ROW_REPO=
 # Set by fm_backlog_close_marker_replay: closed | closed_incomplete | retained |
 # retained_incomplete | answered | stale | noop.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
@@ -424,7 +427,7 @@ fm_backlog_row_list() {  # <resolved-data-dir> [flag...]
 }
 
 fm_backlog_row_probe() {  # <data-dir> <id>
-  local data authorized_data=$1 id=$2 out state held blocked hold_kind command_status source_status
+  local data authorized_data=$1 id=$2 out state held blocked hold_kind repo command_status source_status
   if ! data=$(fm_backlog_data_absolute "$1"); then
     FM_BACKLOG_ROW_RESULT=error
     FM_BACKLOG_ROW_STATE=
@@ -434,6 +437,7 @@ fm_backlog_row_probe() {  # <data-dir> <id>
   FM_BACKLOG_ROW_RESULT=error
   FM_BACKLOG_ROW_STATE=
   FM_BACKLOG_ROW_HOLD_KIND=
+  FM_BACKLOG_ROW_REPO=
   FM_BACKLOG_ROW_ERROR=
   fm_backlog_source_present "$data" "$authorized_data"
   source_status=$?
@@ -472,6 +476,13 @@ fm_backlog_row_probe() {  # <data-dir> <id>
   case "$hold_kind" in
     ''|'"-"'|-) FM_BACKLOG_ROW_HOLD_KIND= ;;
     *) FM_BACKLOG_ROW_HOLD_KIND=$hold_kind ;;
+  esac
+  repo=$(printf '%s\n' "$out" | sed -n 's/^  repo: *//p' | head -1)
+  repo=${repo#\"}
+  repo=${repo%\"}
+  case "$repo" in
+    -) FM_BACKLOG_ROW_REPO= ;;
+    *) FM_BACKLOG_ROW_REPO=$repo ;;
   esac
   return 0
 }
@@ -807,8 +818,19 @@ fm_backlog_row_dispatchable() {
   esac
 }
 
+# A relaunch replaces the agent of a task that is already In flight, so it is
+# not a new dispatch: a firstmate-placed hold (for example a PR waiting on the
+# captain) must not strand the task without an agent. Only a dependency-blocked
+# In-flight row stays refused.
+fm_backlog_row_relaunchable() {
+  case "$1" in
+    in_flight\ no\ no|in_flight\ yes\ no) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 fm_backlog_dispatch_transition() {
-  local meta=$1 data=$2 id=$3 state=$4 row row_status
+  local meta=$1 data=$2 id=$3 state=$4 relaunch=${5:-0} row row_status
   fm_backlog_record_present "$meta" "task record" "$state" || return 1
   fm_backlog_row_probe "$data" "$id"
   row_status=$?
@@ -821,12 +843,13 @@ fm_backlog_dispatch_transition() {
     return "$row_status"
   fi
   row=$FM_BACKLOG_ROW_STATE
-  if ! fm_backlog_row_dispatchable "$row"; then
+  if ! fm_backlog_row_dispatchable "$row" &&
+    { [ "$relaunch" != 1 ] || ! fm_backlog_row_relaunchable "$row"; }; then
     FM_BACKLOG_TRANSITION_ERROR="backlog item $id is not dispatchable in state $row"
     return 1
   fi
   case "$row" in
-    in_flight\ no\ no) return 0 ;;
+    in_flight\ no\ no|in_flight\ yes\ no) return 0 ;;
     queued\ no\ no) fm_backlog_start "$data" "$id" ;;
   esac
 }

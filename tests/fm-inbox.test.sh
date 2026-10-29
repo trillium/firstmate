@@ -544,3 +544,25 @@ run_inbox "$home" drain --ack "$did" >/dev/null || fail "drain --ack failed"
 assert_absent "$home/state/inbox/$did.note" "acked note leaves pending"
 assert_present "$home/state/inbox/handled/$did.note" "acked note is in handled"
 pass "drain --ack still moves the note to handled"
+
+# --- a long UTF-8 body files quickly; whitespace-only is still refused ------
+# The emptiness check must not strip the whole body: on bash 3.2 in a UTF-8
+# locale that substitution is quadratic and a ~20 KB note took over a minute.
+
+home=$(make_home longbody)
+long_body=$(python3 -c 'print(("café note line with text. " * 2000)[:50000])')
+start=$SECONDS
+LC_ALL=en_US.UTF-8 FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+  FM_CONFIG_OVERRIDE="$home/config" /bin/bash "$INBOX_BIN" note "$long_body" >/dev/null \
+  || fail "a 50 KB UTF-8 note should be queued"
+elapsed=$((SECONDS - start))
+[ "$elapsed" -le 10 ] || fail "50 KB note took ${elapsed}s, expected well under 10s"
+assert_equals "1" "$(count_notes "$home")" "the long note is queued"
+set +e
+ws_out=$(LC_ALL=en_US.UTF-8 FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+  FM_CONFIG_OVERRIDE="$home/config" /bin/bash "$INBOX_BIN" note $' \t\n ' 2>&1)
+ws_code=$?
+set -e
+expect_code 1 "$ws_code" "a whitespace-only note is refused"
+assert_contains "$ws_out" "empty note" "the whitespace-only refusal keeps its message"
+pass "a long UTF-8 note files quickly and whitespace-only is refused"
