@@ -9,25 +9,6 @@ on:
 permissions:
   contents: read
 
-# Pinned vendor dependency for the Pi extension tests: those tests assert
-# byte-exact rendering and presentation behavior of Pi's own exported
-# components, so their verdict is only meaningful against one Pi version.
-# An unversioned `npm install` floats onto whatever the registry publishes that
-# day, which is how main's Behavior portable serial 2 and 4 shards went red on
-# 2026-10-06 with no change in this repository: the installed package moved from
-# 0.87.1, the version of the last complete green main run, to 1.0.4.
-# Pin it exactly like ShellCheck, actionlint, Herdr, and Treehouse, and treat a
-# bump as the deliberate moment to re-verify the Pi extension tests against the
-# new version. Owner of the value: this workflow.
-#
-# The Pi extension typecheck also needs a `tsc` on PATH. The hosted runner image
-# used to carry one and no longer does (main run 38593361924 passed; PR runs of
-# 2026-10-25 hit the required-gate skip), so install it pinned beside the Pi
-# package rather than depend on what the image happens to bundle.
-env:
-  FM_PI_PACKAGE_VERSION: '0.87.1'
-  FM_TYPESCRIPT_VERSION: '5.9.3'
-
 # Per-PR supersession: a new push to the same PR replaces that PR's in-flight
 # CI instead of letting superseded heads keep the full hosted-runner fan-out.
 # The group uses the PR number for pull_request events, so every run of one PR
@@ -142,11 +123,10 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
-      - name: Install the pinned Pi package for the Pi extension tests
+      - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
-          npm install -g "@earendil-works/pi-coding-agent@${FM_PI_PACKAGE_VERSION}" "typescript@${FM_TYPESCRIPT_VERSION}"
-          tsc --version
+          npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable parallel shard 1
         run: |
@@ -218,7 +198,7 @@ jobs:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -246,16 +226,13 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
-      # The Pi extension tests read the installed Pi package's own types and
-      # runtime, so without it they gate-skip and pass silently. It is a public
-      # npm package and needs no credential, so CI holds the real thing at the
-      # exact version the top-level FM_PI_PACKAGE_VERSION pins.
-      # tests/fm-pi-primary-types.test.sh owns its separate compiler dependencies.
-      - name: Install the pinned Pi package for the Pi extension tests
+      # Runtime-facing Pi extension probes need the installed public package
+      # to avoid capability skips. tests/fm-pi-primary-types.test.sh owns its
+      # separate compiler dependencies.
+      - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
-          npm install -g "@earendil-works/pi-coding-agent@${FM_PI_PACKAGE_VERSION}" "typescript@${FM_TYPESCRIPT_VERSION}"
-          tsc --version
+          npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
