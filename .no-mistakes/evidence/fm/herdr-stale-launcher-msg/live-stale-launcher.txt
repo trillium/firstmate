@@ -1,0 +1,8 @@
+== HERDR_PANE_ID=w9:p9 (no panes exist in lab)
+error: herdr launcher pane 'w9:p9' is stale - it could not be read in session 'fm-lab-stale-27526-21170' and no longer exists; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace
+rc=1
+== HERDR_PANE_ID=w1:p1 (no panes exist in lab)
+error: herdr launcher pane 'w1:p1' is stale - it could not be read in session 'fm-lab-stale-27526-21170' and no longer exists; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace
+rc=1
+== workspaces after:
+{"id":"cli:workspace:list","result":{"type":"workspace_list","workspaces":[]}}

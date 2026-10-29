@@ -1,0 +1,9 @@
+== control: live pane w1:p1
+rc=0
+{"id":"cli:workspace:close","result":{"type":"ok"}}
+== after closing w1 (lab-b remains), stale env w1:p1
+{"error":{"code":"pane_not_found","message":"pane w1:p1 not found"},"id":"cli:pane:get"}
+error: herdr launcher pane 'w1:p1' is stale - it could not be read in session 'fm-lab-stale-27526-21170' and no longer exists; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace
+rc=1
+== workspaces:
+{"workspace_id":"w2","label":"lab-b"}
