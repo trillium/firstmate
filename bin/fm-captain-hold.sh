@@ -50,9 +50,7 @@
 # hold preserves the existing timestamp, while re-holding released work starts
 # a new lifecycle. A task already closed is refused rather than reopened.
 # `--origin` also records the origin on a `Captain hold origin:` body line, which
-# `complete` and `verify` name. An active hold keeps the origin it was first held
-# for: a later `hold --origin` for a different origin leaves that line intact
-# and says so on stderr. The reason may hold parentheses and line breaks:
+# `complete` and `verify` check. The reason may hold parentheses and line breaks:
 # tasks-axi refuses them, so `hold` escapes them where it writes the reason and
 # readers decode them (bin/fm-hold-reason-lib.sh owns the encoding).
 # `--until` records the captain's own deferral date through `tasks-axi hold
@@ -141,9 +139,8 @@
 # has no unresolved captain call, and is refused while the origin still has an
 # open keyed status decision. With a non-empty inventory, every listed task is
 # verified durable (captain-held, or carrying a recorded resolution),
-# is never the origin itself, and is accepted whichever origin `hold --origin`
-# recorded for it: a call already held anywhere is never re-registered, so a
-# hold for another origin, or with none recorded, is accepted on durability
+# is never the origin itself, and, when `hold --origin` recorded one, was held
+# for this origin; a hold with no recorded origin is accepted on durability
 # alone and named in the output,
 # the inventory is unioned idempotently into the metadata, and every still-open
 # keyed status decision is transferred to its durable owner with a
@@ -234,9 +231,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
-# shellcheck source=bin/fm-backend.sh
-# shellcheck disable=SC1091
-. "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-wake-lib.sh"
@@ -872,7 +866,7 @@ write_hold_origin() {  # <task-id> <shown-body> <origin-or-empty>
 
 refuse_self_inventory() {
   local origin=$1 entry=$2 meta="$STATE/$1.meta"
-  if list_has_key "$(fm_meta_get_exact "$meta" decision_keys 2>/dev/null || true)" "$entry"; then
+  if list_has_key "$(meta_value "$meta" decision_keys)" "$entry"; then
     fail "origin $origin cannot be its own captain-call inventory entry; historical decision_keys in $meta still contains $entry; hold a separate captain task with --origin $origin, replace only $entry in the final decision_keys= line with that task id while preserving all other entries, then re-run complete $origin <task-id>"
   fi
   fail "origin $origin cannot be its own captain-call inventory entry; hold a separate captain task for the call and list that task"
@@ -1044,12 +1038,8 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   if [ -n "$stored" ]; then
     if [ -n "$origin" ] && [ "$origin" != "$BINDING_ANY" ]; then
       stored_id=$(task_identity "$stored") || exit $?
-      # A call already held anywhere is never re-registered as a second row,
-      # so a hold recorded for another origin is accepted and named instead.
       if [ "$stored_id" != "$origin_id" ]; then
-        origin_state=other:$stored
-        printf '%s %s %s\n' "$id" "$how" "$origin_state"
-        return 0
+        fail "captain-held task $id was held for origin $stored, not $origin; hold a task for $origin or list the right one"
       fi
     fi
     origin_state=recorded
@@ -1059,7 +1049,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
 
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
-  local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' previous_id hold_status=0
+  local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' hold_status=0
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1111,7 +1101,7 @@ command_hold() {
     [ -n "$title" ] || fail "--title is required to create task $id"
     validate_one_line title "$title"
     if [ -z "$repo" ] && [ -n "$origin" ] && [ -f "$STATE/$origin.meta" ]; then
-      repo=$(fm_meta_get_exact "$STATE/$origin.meta" project 2>/dev/null || true)
+      repo=$(meta_value "$STATE/$origin.meta" project)
       repo=${repo%/}
       repo=${repo##*/}
     fi
@@ -1140,17 +1130,7 @@ command_hold() {
   if [ -n "$origin" ]; then
     origin=$(task_identity "$origin") || exit $?
     previous_origin=$(body_hold_origin "$(show_field_value "$show" body)")
-    previous_id=$previous_origin
-    [ -z "$previous_origin" ] || previous_id=$(task_identity "$previous_origin" 2>/dev/null) || previous_id=$previous_origin
-    if [ "$preserve_hold_set" = 1 ] && [ -n "$previous_origin" ] && [ "$previous_id" != "$origin" ]; then
-      # An active hold keeps the origin it was first held for; rewriting it
-      # would detach the call from the inventory that already lists it.
-      printf 'fm-captain-hold: %s is already held for origin %s; keeping it instead of recording %s\n' \
-        "$id" "$previous_origin" "$origin" >&2
-      origin=''
-    else
-      write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
-    fi
+    write_hold_origin "$id" "$(show_field "$show" body)" "$origin" || exit $?
   fi
   if [ -n "$until" ]; then
     tasks_axi hold "$id" --reason "$stored_reason" --kind captain --until "$until" >/dev/null \
@@ -1898,7 +1878,7 @@ reconcile_note() {
 
 command_complete() {
   local origin=${1:-} meta previous='' supplied='' keys='' entry key status_file open has_meta=0 transfer_rc transfers=() resolved
-  local resolved_how attested_by_prefix='' origin_state unrecorded_origin='' other_origin=''
+  local resolved_how attested_by_prefix='' origin_state unrecorded_origin=''
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   validate_slug origin-id "$origin"
   shift
@@ -1923,7 +1903,7 @@ command_complete() {
     done
   fi
   if [ "$has_meta" = 1 ]; then
-    previous=$(fm_meta_get_exact "$meta" decision_keys 2>/dev/null || true)
+    previous=$(meta_value "$meta" decision_keys)
   fi
   keys=$(sorted_key_union "$previous" "$supplied")
   if [ -n "$keys" ]; then
@@ -1937,9 +1917,6 @@ command_complete() {
       if [ "$origin_state" = unrecorded ]; then
         unrecorded_origin="${unrecorded_origin}${unrecorded_origin:+ }$resolved"
       fi
-      case "$origin_state" in
-        other:*) other_origin="${other_origin}${other_origin:+ }$resolved=${origin_state#other:}" ;;
-      esac
       if [ "$resolved_how" = migrated-prefix ]; then
         attested_by_prefix="${attested_by_prefix}${attested_by_prefix:+ }$entry=$resolved"
       fi
@@ -1955,9 +1932,8 @@ EOF
   fi
 
   if [ "$has_meta" = 1 ]; then
-    if [ "$(fm_meta_get_exact "$meta" decisions_reviewed 2>/dev/null || true)" != 1 ] || [ "$previous" != "$keys" ]; then
-      fm_meta_set "$meta" decisions_reviewed 1 || fail "could not record the decision inventory in $meta"
-      fm_meta_set "$meta" decision_keys "$keys" || fail "could not record the decision inventory in $meta"
+    if [ "$(meta_value "$meta" decisions_reviewed)" != 1 ] || [ "$previous" != "$keys" ]; then
+      printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$meta"
     fi
     fm_lock_release "$CAPTAIN_META_LOCK"
     CAPTAIN_META_LOCK_HELD=0
@@ -1982,9 +1958,8 @@ EOF
       fi
     fi
   fi
-  printf 'complete: %s captain-call inventory reviewed%s%s%s%s\n' "$origin" "${keys:+ ($keys)}" \
+  printf 'complete: %s captain-call inventory reviewed%s%s%s\n' "$origin" "${keys:+ ($keys)}" \
     "${attested_by_prefix:+ [attested through the configured prefix: $attested_by_prefix]}" \
-    "${other_origin:+ [held for another origin: $other_origin]}" \
     "${unrecorded_origin:+ [no recorded origin on: $unrecorded_origin; not checked against $origin]}"
 }
 
@@ -1995,9 +1970,9 @@ command_verify() {
   meta="$STATE/$origin.meta"
   [ -f "$meta" ] || fail "origin metadata is absent: $meta"
   require_tasks_axi
-  reviewed=$(fm_meta_get_exact "$meta" decisions_reviewed 2>/dev/null || true)
+  reviewed=$(meta_value "$meta" decisions_reviewed)
   [ "$reviewed" = 1 ] || fail "origin $origin has no completed captain-call inventory"
-  keys=$(fm_meta_get_exact "$meta" decision_keys 2>/dev/null || true)
+  keys=$(meta_value "$meta" decision_keys)
   if [ -n "$keys" ]; then
     while IFS= read -r entry; do
       [ -n "$entry" ] || continue

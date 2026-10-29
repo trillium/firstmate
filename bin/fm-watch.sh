@@ -29,10 +29,7 @@
 #                          external-wait pause or verified captain-held transfer is
 #                          absorbed instead with its own long re-surface cadence,
 #                          never as a wedge, and that recheck reason names which
-#                          human the wait is on. A REPEAT sighting of a terminal
-#                          status already presented whole and unchanged since is
-#                          absorbed on the same cadence (terminal_repeat_stale_bound);
-#                          its first sight always alarms. Only when neither absorb class
+#                          human the wait is on. Only when neither absorb class
 #                          applies does the log's latest recognized status event decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
 #                          both surfaced at once. A provably-working stale past the
@@ -67,12 +64,7 @@
 #                          arms it, a validation gate of its own awaiting a
 #                          supervisor decision nobody has answered yet - is
 #                          deferred to that same long recheck cadence instead
-#                          (wedge_wait_evidence); once the count has reached
-#                          FM_WEDGE_DEMAND_INSPECT_COUNT, a pane parked at a
-#                          human-owed gate with any open needs-decision takes
-#                          that deferral in every home, so the ladder stops at
-#                          its own top rung instead of climbing for as long as
-#                          the human takes to answer; and a pane whose own task
+#                          (wedge_wait_evidence), and a pane whose own task
 #                          worktree was written during the quiet window is
 #                          deferred rather than escalated (wedge_defer_writing),
 #                          because files appearing there are liveness the pane and
@@ -150,16 +142,7 @@
 #                          source owned closes that episode); the queued
 #                          payload names what to check. These three kinds are
 #                          joined with `;` when more than one surfaces in a cycle
-#   check: captain inbox note pending: <keys>
-#                          an unacknowledged note saved by bin/fm-inbox.sh has
-#                          its `inbox:<id>` row queued and has not been surfaced
-#                          yet; reported once per queued row, never again while
-#                          that row stays queued, and never once the note is
-#                          acknowledged. Joined with `;` after any process-event
-#                          kinds above when more than one surfaces in a cycle
-#   check: idle simulator: <details>  an iOS simulator booted past config/sim-idle-hours,
-#                          unused or kept with the reason (bin/fm-sim-idle.sh)
-#   check: rejected untrusted state checks: <paths>
+#   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
 #   check: rejected unauthenticated PR poll retirement receipts: <paths>
 #                          invalid pending retirements were preserved without
@@ -239,9 +222,6 @@ WATCH_HOME_EXISTED=0
 # runtime needlessly spends per-root CI lint memory while adding no uncovered file.
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
-# Log-only record of every stale verdict (docs/laya-stale-wake-triage.md).
-# shellcheck source=bin/fm-wake-decision-lib.sh
-. "$SCRIPT_DIR/fm-wake-decision-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
@@ -323,11 +303,10 @@ fi
 # turn-ended signature, annotation staleness checks, and guarded bookkeeping writes.
 
 POLL=${FM_POLL:-15}                   # seconds between cycles
-# The liveness beacon is touched at the top of each cycle and, on a cycle long
-# enough to need it, again inside its per-window and per-check loops and before
-# the terminal wait below (event_wait_or_sleep) - see watcher_beat - so a
-# healthy cycle's beacon can legitimately age up to POLL seconds between
-# touches. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
+# The liveness beacon is touched once per cycle, immediately before the
+# terminal wait below (event_wait_or_sleep) as well as at the top of the next
+# one, so a healthy cycle's beacon can legitimately age up to POLL seconds
+# between touches. fm_poll_derived_grace (bin/fm-wake-lib.sh, already sourced
 # transitively above) is the single owner of the max(300, poll+60)
 # derivation - see docs/turnend-guard.md "Guard grace and the poll cadence".
 # This recomputes the library default above now that the real configured
@@ -480,13 +459,7 @@ captain_held_silenced() {  # <status-line>
 }
 
 hash_pane() {
-  if command -v md5sum >/dev/null 2>&1; then
-    md5sum | cut -d' ' -f1
-  elif [ -x /sbin/md5 ]; then
-    /sbin/md5 -q
-  elif command -v md5 >/dev/null 2>&1; then
-    md5 | cut -d' ' -f1
-  fi
+  if command -v md5 >/dev/null 2>&1; then md5 -q; else md5sum | cut -d' ' -f1; fi
 }
 
 # window_is_busy: 0 when the semantic busy-state contract (bin/fm-busy-lib.sh)
@@ -1637,32 +1610,9 @@ wait_record() {  # <kind> <subject> <whom> <action> <age-record>
 # so it is taken only behind a first fold read that finds some open
 # `needs-decision` at all, and only in the at-threshold branch - at most once per
 # window per STALE_ESCALATE_SECS, never on an ordinary poll.
-# The third record is the ESCALATION BOUND itself, and it needs no flag. The
-# demand-deep-inspection marker at FM_WEDGE_DEMAND_INSPECT_COUNT is the ladder's
-# own top rung: the wake payload has already forced the closer look it exists to
-# force, and the supervision turn that handled it found a lane parked at a
-# human-owed gate with its decision still open. Climbing past that rung reports
-# nothing new - the same parked gate, the same open decision - at the cost of one
-# handling turn per STALE_ESCALATE_SECS for as long as the human takes to
-# answer, which in an unarmed home was observed as seven and more escalations of
-# one lane (robots-xjhb5). So once <escalations-so-far> has reached the bound,
-# a lane whose current state is a human-owed gate and whose fold holds ANY open
-# `needs-decision` is deferred to the long recheck cadence instead. The key
-# convention is deliberately not required here: below the bound the ladder has
-# already run its full course, and the open decision only has to show that a
-# human was told something and has not answered. Everything below the bound is
-# untouched, so escalations 1 through FM_WEDGE_DEMAND_INSPECT_COUNT, their
-# reasons and the demand-deep-inspection wording fire exactly as before, and an
-# unarmed home still spends no fold or current-state read below the bound. A
-# crewmate-owed gate, an empty fold, and a lane with no wait at all keep the
-# unchanged schedule past the bound too: the counter is left where it is, so the
-# recheck absorbs each later threshold until the decision closes, after which the
-# empty fold hands the lane back to the ladder within one STALE_ESCALATE_SECS.
 WEDGE_BACKLOG_HOLD_KIND='captain hold'
-# The wedge-timer label of a busy pane past BUSY_TURN_MAX_SECS (busy_turn_bound_check).
-WEDGE_BUSY_BOUND_LABEL='busy (no completed turn)'
-wedge_wait_evidence() {  # <task> [<escalations-so-far>] -> one wait_record on stdout
-  local task=$1 count=${2:-0} last until statusf run verb armed='' capped=''
+wedge_wait_evidence() {  # <task> -> one wait_record on stdout
+  local task=$1 last until statusf run verb
   [ -n "$task" ] || return 1
   statusf="$STATE/$task.status"
   last=$(status_declared_wait_line "$statusf")
@@ -1692,23 +1642,12 @@ wedge_wait_evidence() {  # <task> [<escalations-so-far>] -> one wait_record on s
     fi
     return 0
   fi
-  [ -e "$CONFIG/wedge-defer-parked-gate" ] && armed=1
-  case "$count" in
-    ''|*[!0-9]*) ;;
-    *) [ "$count" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ] && capped=1 ;;
-  esac
-  [ -n "$armed" ] || [ -n "$capped" ] || return 1
-  status_has_open_needs_decision "$statusf" || return 1
-  run=$(crew_gate_awaits_human_decision "$task") || return 1
-  if [ -n "$armed" ] && status_has_open_needs_decision "$statusf" "$run"; then
+  [ -e "$CONFIG/wedge-defer-parked-gate" ] || return 1
+  if status_has_open_needs_decision "$statusf" \
+    && run=$(crew_gate_awaits_human_decision "$task") \
+    && status_has_open_needs_decision "$statusf" "$run"; then
     wait_record 'verified wait at a parked gate' "awaiting firstmate's ask-user decision" \
       supervisor "decide the gate's ask-user finding and relay the decision to the crewmate" ''
-    return 0
-  fi
-  if [ -n "$capped" ]; then
-    wait_record 'parked gate at the escalation bound' \
-      "already wedge-escalated $count times, awaiting a human decision on its open ask-user finding" \
-      supervisor 'answer or escalate the open decision and relay it to the crewmate' ''
     return 0
   fi
   return 1
@@ -1852,31 +1791,6 @@ wedge_defer_validating() {  # <window> <since-file> <triage-label> <idle-age> <t
   resurface_absorbed "$win" "$STATE/.validating-resurfaced-$key" "$vage" \
     "stale: $win (idle ${age}s, no-mistakes run $run validating ($step) for ${vage}s, rechecked on a long cadence not a wedge; confirm the run is still progressing)"
   triage_log "absorbed $label (no-mistakes run $run validating ($step), idle ${age}s): $win"
-}
-
-# Reset ONE wedge escalation for a pane whose crew-state positively reads a busy
-# pane (the .pane-busy-<task> marker crew_absorb_class leaves from its own
-# read and the first-sight route stamps with the frame, so this spends no read): the agent is mid-turn, so the quiet screen is
-# liveness rather than a wedge candidate and the escalation count it earned means
-# nothing once the live reading is back. Unlike the deferrals above this ends the whole
-# episode (timer and count), so a pane that stops being busy and goes quiet again
-# climbs the ladder from 1. A busy pane past BUSY_TURN_MAX_SECS with no completed
-# turn is deliberately NOT covered: that bound exists because a hung foreground
-# call can hide behind a busy reading, so it keeps the unchanged ladder, as does
-# every pane whose crew-state is anything but a busy pane (a run-step included).
-# Returns 0 when it has handled the window, 1 to escalate on the unchanged path.
-wedge_defer_live_busy() {  # <window> <since-file> <triage-label> <idle-age> <task> <hash>
-  local win=$1 since_file=$2 label=$3 age=$4 task=$5 hash=$6 key
-  [ "$label" != "$WEDGE_BUSY_BOUND_LABEL" ] || return 1
-  [ -n "$task" ] || return 1
-  busy_turn_over_age "$task" && return 1
-  [ -n "$hash" ] && [ "$(cat "$STATE/.pane-busy-$task" 2>/dev/null || true)" = "$hash" ] || return 1
-  key=$(window_key "$win")
-  wedge_episode_end "$key"
-  clear_write_tracking "$key"
-  date +%s > "$since_file"
-  triage_log "absorbed $label (busy pane, idle ${age}s), timer and escalation count reset: $win"
-  return 0
 }
 
 # The question the wedge timer never asked before it alarmed: is there still an
@@ -2043,26 +1957,6 @@ wedge_defer_guard() {  # <window> <since-file> <triage-label> <idle-age> <guard-
   return 0
 }
 
-# 0 when the idle timer a terminal-status override armed has reached the wedge
-# threshold, the last status is a settled one (done, or a declared pause), and the
-# crew is no longer provably working. Only those two verbs: a blocked or failed
-# line with nothing running is a stuck crew, and keeps its timer. The crew-state
-# read is the costly one, so it is taken only once per STALE_ESCALATE_SECS (the
-# age of the timer), never on an ordinary poll; a missing or unreadable timer is
-# not evidence.
-terminal_override_evidence_gone() {  # <since-file> <task>
-  local since_file=$1 task=$2 since age last verb
-  [ -e "$since_file" ] || return 1
-  since=$(cat "$since_file" 2>/dev/null || true)
-  case "$since" in ''|*[!0-9]*) return 1 ;; esac
-  fm_epoch_seconds_to age
-  [ $(( age - since )) -ge "$STALE_ESCALATE_SECS" ] || return 1
-  last=$(last_status_line "$STATE/$task.status")
-  status_line_verb "$last" verb
-  case "$verb" in done|paused) ;; *) return 1 ;; esac
-  ! crew_is_provably_working "$task"
-}
-
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
@@ -2076,11 +1970,10 @@ terminal_override_evidence_gone() {  # <since-file> <task>
 # one each per window per STALE_ESCALATE_SECS, never on an ordinary poll,
 # because the escalation that follows clears the timer they share. The
 # crew-state read
-# wedge_wait_evidence may take under config/wedge-defer-parked-gate, or once the
-# escalation count it is handed has reached FM_WEDGE_DEMAND_INSPECT_COUNT, keeps
-# that same bound however long the wait lasts, because the deferral it feeds
-# restarts the idle timer like every other deferral below; an unconfigured home
-# below that bound never reaches that read at all. On the UNCAPPED path the wait consult runs first,
+# wedge_wait_evidence may take under config/wedge-defer-parked-gate keeps that
+# same bound however long the wait lasts, because the deferral it feeds restarts
+# the idle timer like every other deferral below; an unconfigured home never
+# reaches that read at all. On the UNCAPPED path the wait consult runs first,
 # because a pane that can account for its own quiet has nothing to prove through
 # its worktree, and the dead-record probe runs last of the three, so the two
 # cheaper deferrals keep the panes they already own on their existing bounded
@@ -2201,8 +2094,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
             || { fm_epoch_seconds_to _wrb_now; printf '%s\n' "$_wrb_now" > "$since_file"; }
           return 0
         fi
-        n=$(cat "$escalation_file" 2>/dev/null || echo 0)
-        if evidence=$(wedge_wait_evidence "$task" "$n") &&
+        if evidence=$(wedge_wait_evidence "$task") &&
            wedge_defer_wait "$win" "$since_file" "$label" "$age" "$evidence"; then
           return 0
         fi
@@ -2214,9 +2106,6 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           return 0
         fi
         if wedge_defer_validating "$win" "$since_file" "$label" "$age" "$task"; then
-          return 0
-        fi
-        if wedge_defer_live_busy "$win" "$since_file" "$label" "$age" "$task" "$hash"; then
           return 0
         fi
         if wedge_defer_t3code_running "$win" "$since_file" "$label" "$age"; then
@@ -2511,7 +2400,7 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
     handle_paused_stale "$win" "$task" "$h"
     return 0
   fi
-  wedge_timer_check "$win" "$since_file" "$WEDGE_BUSY_BOUND_LABEL" "$escalation_file" "$task" "$h" "$dialog"
+  wedge_timer_check "$win" "$since_file" "busy (no completed turn)" "$escalation_file" "$task" "$h" "$dialog"
   return 1
 }
 
@@ -2813,54 +2702,6 @@ captain_call_stale_bound() {  # <window-key> <task>
   stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
 }
 
-# Bound a due terminal stale alarm whose captain-relevant status was ALREADY
-# presented to firstmate and has not changed since: a repeat sighting of a
-# surfaced, unchanged done/decision/blocker says nothing the first alarm did
-# not. The proof is the heartbeat-surfaced marker covering the whole status
-# log: the signal path, the stale path and the heartbeat each commit it only
-# after presenting that log, and any later append moves the log's end past it.
-# The declaration carries the status-log signature, so one appended line - a
-# new decision, a resolution, a fresh failure - starts its own window and
-# alarms on first sight exactly as before. Only the repeat is bounded, to the
-# same PAUSE_RESURFACE_SECS cadence as a declared wait, after which the stale
-# alarms once more. An unsurfaced status (no marker, a marker short of the
-# log's end, or a marker from an earlier incarnation of the log) is never
-# absorbed here, so the declaration the first alarm records only ever bounds a
-# sighting that follows a completed presentation. Sets STALE_WAIT_DECLARATION
-# exactly as captain_call_stale_bound does; returns 0 to absorb this sighting,
-# 1 to alarm.
-terminal_repeat_stale_bound() {  # <window-key> <task>
-  local key=$1 task=$2 statusf size offset
-  STALE_WAIT_DECLARATION=
-  [ -n "$task" ] || return 1
-  statusf="$STATE/$task.status"
-  size=$(_fm_status_file_size "$statusf" 2>/dev/null) || return 1
-  size=${size//[[:space:]]/}
-  case "$size" in ''|*[!0-9]*|0) return 1 ;; esac
-  STALE_WAIT_DECLARATION="terminal-surfaced:$(fm_wake_signal_sig "$statusf" || true)"
-  offset=$(hb_surfaced_offset "$task")
-  [ "$offset" = "$size" ] || return 1
-  stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION"
-}
-
-# Record a stale verdict in the decision log (bin/fm-wake-decision-lib.sh owns
-# the row). <hold> is open|none|unread as the deciding branch learned it, and
-# <seq> is the queued row of a surfaced wake. Never changes the verdict.
-stale_decision_log() {  # <window> <task> <verdict> <rule> <hold> [<seq>]
-  local win=$1 task=$2 key esc tage
-  key=$(window_key "$win")
-  esc=$(cat "$STATE/.wedge-escalations-$key" 2>/dev/null || true)
-  tage=''
-  [ ! -e "$STATE/.paused-resurfaced-$key" ] || tage=$(age_of "$STATE/.paused-resurfaced-$key")
-  fm_wake_decision_log_stale "$STATE" "$win" "$task" "$3" "$4" "${6-}" "$5" "${busy_now:-1}" "$esc" "$tage"
-}
-
-# The sequence of the newest queued stale row for <window>, for the decision
-# log's label join; 0 when none is queued.
-stale_queued_seq() {  # <window>
-  awk -F'\t' -v win="$1" '$3 == "stale" && $4 == win { s = $2 } END { print s + 0 }' "$FM_WAKE_QUEUE" 2>/dev/null || printf '0'
-}
-
 # Surface a stale pane no classifier could resolve, so firstmate inspects it: it
 # may have finished through an interactive menu that wrote no status, be waiting on
 # a decision, or be wedged. pause_state_class deliberately answers `none` for a
@@ -2881,7 +2722,7 @@ stale_queued_seq() {  # <window>
 # above): the status line the worker declared, and the backlog hold firstmate
 # recorded once the captain took the work in hand.
 surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
-  local win=$1 h=$2 dialog=${3-} key task last declared=1 bounded=1 throttled=1 until now reason='' rule=nonterminal-surface hold=unread
+  local win=$1 h=$2 dialog=${3-} key task last declared=1 bounded=1 throttled=1 until now reason=''
   key=$(window_key "$win")
   task=$(window_to_task "$win" "$STATE")
   last=$(status_declared_wait_line "$STATE/$task.status")
@@ -2889,7 +2730,6 @@ surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
   if status_is_paused "$last"; then
     declared=0
     bounded=0
-    rule=nonterminal-declared-wait
     STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
     if until=$(status_paused_until "$last"); then
       now=$(date +%s)
@@ -2905,7 +2745,6 @@ surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
   elif status_is_captain_held "$last"; then
     declared=0
     bounded=0
-    rule=nonterminal-captain-held
     STALE_WAIT_DECLARATION=$(stale_wait_declaration "$task")
     if captain_held_silenced "$last"; then
       throttled=0
@@ -2915,18 +2754,11 @@ surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
   elif captain_call_stale_bound "$key" "$task"; then
     bounded=0
     throttled=0
-    rule=nonterminal-captain-call-bound
-    hold=open
   elif [ -z "$STALE_WAIT_DECLARATION" ] && unknown_alive_stale_bound "$win" "$task"; then
     bounded=0
     throttled=0
-    rule=nonterminal-unknown-alive-bound
   elif [ -n "$STALE_WAIT_DECLARATION" ]; then
     bounded=0
-    rule=nonterminal-captain-call-first
-    hold=open
-  else
-    hold=none
   fi
   if [ "$throttled" -ne 0 ]; then
     reason=$(stale_reason_naming_dialog "stale: $win" "$dialog")
@@ -2954,10 +2786,8 @@ surface_nonterminal_stale() {  # <window> <hash> [dialog-name]
   fi
   if [ "$throttled" -eq 0 ]; then
     triage_log "absorbed non-terminal stale (declared wait or open captain call already re-surfaced this window): $win"
-    stale_decision_log "$win" "$task" absorb "$rule" "$hold"
     return 0
   fi
-  stale_decision_log "$win" "$task" surface "$rule" "$hold" "$(stale_queued_seq "$win")"
   wake "$reason"
 }
 
@@ -3053,8 +2883,7 @@ scan_signals() {
   return 0
 }
 
-# Deliver a durably queued process-event result, or an unacknowledged captain
-# inbox note, to firstmate. Publication is
+# Deliver a durably queued process-event result to firstmate. Publication is
 # owned by bin/fm-procevent.sh - by the runner at capture time and by reconcile's
 # re-announcement - so this decides only whether a queued check record has been
 # surfaced yet, then reports it through the same actionable exit every other wake
@@ -3065,20 +2894,7 @@ scan_signals() {
 # and re-announcement, drain-time deduplication, and the handled acknowledgement
 # keep their existing owners untouched.
 procevent_surfaced_marker() {  # <queue-key>
-  local prefix=procevent
-  case "$1" in inbox:*) prefix=inbox ;; esac
-  printf '%s/.seen-%s-%s' "$STATE" "$prefix" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
-}
-
-# An ordinary captain inbox note (bin/fm-inbox.sh) is surfaced by the same
-# once-per-queued-record discipline, but only while the note itself is still
-# unacknowledged: the pending file under $STATE/inbox exists and the key names
-# a plain note id. A row whose note is already in handled/, or whose key names
-# no pending note, is left to the drain and the recovery path untouched.
-inbox_note_pending() {  # <queue-key>
-  local id=${1#inbox:}
-  case "$id" in ''|*[!A-Za-z0-9._-]*|*..*) return 1 ;; esac
-  [ -f "$STATE/inbox/$id.note" ] && [ ! -L "$STATE/inbox/$id.note" ]
+  printf '%s/.seen-procevent-%s' "$STATE" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')"
 }
 
 procevent_surface_after_output() {
@@ -3098,16 +2914,12 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes=""
+  local key reason captured="" stranded="" unstarted=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
   while IFS= read -r key; do
-    case "$key" in
-      procevent:*) ;;
-      inbox:*) inbox_note_pending "$key" || continue ;;
-      *) continue ;;
-    esac
+    case "$key" in procevent:*) ;; *) continue ;; esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
     PROCEVENT_SURFACED="$PROCEVENT_SURFACED $key"
     # A stranded source or one whose launch never proved itself is the opposite
@@ -3117,7 +2929,6 @@ procevent_surface_queued() {
     case "$key" in
       procevent:*:stranded:*) stranded="$stranded $key" ;;
       procevent:*:launch-failed:*) unstarted="$unstarted $key" ;;
-      inbox:*) notes="$notes $key" ;;
       *) captured="$captured $key" ;;
     esac
   done < <(fm_wake_queued_keys_locked check)
@@ -3127,10 +2938,6 @@ procevent_surface_queued() {
   fi
   reason="check:"
   [ -z "$captured" ] || reason="$reason process-event result captured:$captured"
-  if [ -n "$notes" ]; then
-    [ "$reason" = "check:" ] || reason="$reason;"
-    reason="$reason captain inbox note pending:$notes"
-  fi
   if [ -n "$stranded" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason process-event source stranded:$stranded"
@@ -3387,18 +3194,6 @@ EOF
 # surfaced when it wakes firstmate, this normally finds nothing and the heartbeat
 # is absorbed; it surfaces only an event the per-wake path absorbed by mistake -
 # the fail-safe backstop.
-# heartbeat_reap_finds_actionable: 0 iff bin/fm-reap.sh's dry run names at
-# least one record or staleness row with a pending action. Read-only: the
-# reaper acts only under the heartbeat handler's `scan --act`. A reaper that
-# cannot run (missing, refused, or over its budget) finds nothing, so the
-# heartbeat is absorbed exactly as before rather than fired on an error.
-heartbeat_reap_finds_actionable() {
-  local reap=${FM_WATCH_REAP_BIN:-$SCRIPT_DIR/fm-reap.sh}
-  [ -x "$reap" ] || return 1
-  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$reap" scan --actionable 2>/dev/null \
-    | grep -q .
-}
-
 heartbeat_scan_finds_actionable() {
   local f task record rest endpoint ident rc found=1 sig marker exclude
   # Same self-home exclusion as scan_signals: a remote mate's parent channel
@@ -3822,24 +3617,6 @@ resurface_after_downtime() {
   wake "check: rearm-resurface"
 }
 
-# watcher_beat: touch the liveness beacon, which the cycle top always does.
-# watcher_beat_due re-touches it from inside the per-window and per-check loops
-# and before the terminal wait once WATCHER_BEAT_INTERVAL seconds have passed,
-# because one cycle over a large fleet can legitimately outlast the guard grace;
-# a single step that genuinely hangs still lets the beacon age. The interval
-# keeps a quick cycle's only touch at its top, which cycle-boundary observers
-# rely on, and costs no fork when not due ($SECONDS is a shell builtin).
-WATCHER_BEAT_INTERVAL=${FM_WATCHER_BEAT_INTERVAL:-30}
-case "$WATCHER_BEAT_INTERVAL" in ''|*[!0-9]*) WATCHER_BEAT_INTERVAL=30 ;; esac
-WATCHER_LAST_BEAT=$SECONDS
-watcher_beat() {
-  touch "$STATE/.last-watcher-beat"
-  WATCHER_LAST_BEAT=$SECONDS
-}
-watcher_beat_due() {
-  [ $((SECONDS - WATCHER_LAST_BEAT)) -lt "$WATCHER_BEAT_INTERVAL" ] || watcher_beat
-}
-
 while :; do
   # Home-gone exit: a deleted home, state directory, or code root means this
   # watcher's world is gone (a torn-down temporary home or a discarded
@@ -3876,11 +3653,7 @@ while :; do
 
   # Liveness beacon for fm-guard.sh: a fresh mtime here means a watcher is
   # alive. Supervision scripts warn when this goes stale with tasks in flight.
-  watcher_beat
-
-  # Snapshot the window->meta index once per cycle (bin/fm-backend.sh) so the
-  # many per-window lookups below stop rescanning every meta file each time.
-  fm_backend_meta_index_build "$STATE"
+  touch "$STATE/.last-watcher-beat"
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
@@ -3982,13 +3755,6 @@ while :; do
     contribution_check_output=
     for c in "$STATE"/*.check.sh; do
       [ -e "$c" ] || continue
-      # Each check is bounded by CHECK_TIMEOUT but the sweep is not: a home with
-      # dozens of registered checks spends minutes here, far past the stale
-      # grace, and the top-of-cycle beacon touch cannot run until it ends. The
-      # beacon therefore advances before every check, so a sweep never ages it
-      # by more than one check's bound and a healthy watcher is never mistaken
-      # for a frozen one (robots-0clru).
-      watcher_beat
       is_pr_poll=0
       if [ "$(basename "$c")" = x-watch.check.sh ]; then
         if fmx_poll_shim_valid "$c" "$FM_HOME" "$FM_ROOT" \
@@ -4011,13 +3777,7 @@ while :; do
           path=$FM_PR_POLL_SNAPSHOT_PATH
           number=$FM_PR_POLL_SNAPSHOT_NUMBER
           PR_POLL_CONTROL_LOCK="$STATE/.control-$id.lock"
-          # Bounded: a control script holding this lock must cost one skipped
-          # poll, which the next sweep retries, never a beacon that stops.
-          if ! fm_lock_acquire_wait_max "$PR_POLL_CONTROL_LOCK" "$CHECK_TIMEOUT"; then
-            PR_POLL_CONTROL_LOCK=
-            triage_log "control lock for $id stayed busy; skipping its PR poll until the next sweep"
-            continue
-          fi
+          fm_lock_acquire_wait "$PR_POLL_CONTROL_LOCK" || exit 1
           if ! fm_pr_poll_snapshot_matches "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
             pr_poll_control_release || exit 1
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
@@ -4106,22 +3866,9 @@ EOF
       fi
       pr_poll_control_release || exit 1
     done
-    # A simulator booted past its threshold, unused or kept with the reason
-    # (bin/fm-sim-idle.sh; silent unless one is found). Enqueue first, then ack,
-    # so a failed enqueue is reported again.
-    sim_idle_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
-      "$SCRIPT_DIR/fm-sim-idle.sh" scan 2>/dev/null) || sim_idle_out=
-    if [ -n "$sim_idle_out" ]; then
-      reason="check: idle simulator: $(printf '%s' "$sim_idle_out" | paste -sd';' - | sed 's/;/; /g')"
-      fm_wake_append check sim-idle "$reason" || exit 1
-      FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_CONFIG_OVERRIDE="$CONFIG" \
-        "$SCRIPT_DIR/fm-sim-idle.sh" ack >/dev/null 2>&1 || true
-      touch "$STATE/.last-check"
-      wake "$reason"
-    fi
     if [ -n "$rejected_checks" ]; then
-      reason="check: rejected untrusted state checks:$rejected_checks"
-      fm_wake_append check untrusted-state-checks "$reason" || exit 1
+      reason="check: rejected unauthenticated state checks:$rejected_checks"
+      fm_wake_append check unauthenticated-state-checks "$reason" || exit 1
       touch "$STATE/.last-check"
       wake "$reason"
     fi
@@ -4262,7 +4009,6 @@ EOF
   # remembers the hash already classified, or the declaration a busy pane's
   # crossed turn bound already handed to the away-mode daemon).
   while IFS= read -r w; do
-    watcher_beat_due
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
     # Steering-inbox loss detection runs before the secondmate stale
@@ -4290,19 +4036,6 @@ EOF
     dialog=$(fm_composer_blocking_dialog "$tail40") || dialog=
     [ -n "$dialog" ] || clear_dialog_suffix "$task"
     h=$(printf '%s' "$tail40" | hash_pane)
-    # Org-disabled early detection, ahead of ordinary busy/stale classification:
-    # a pane showing Claude Code's org-subscription-disabled error is wedged
-    # before its first turn and can never self-recover, so waiting out staleness
-    # escalation only burns the captain's time. Append a blocked line to the
-    # task's status file; the status scan above wakes firstmate on it, so it can
-    # relaunch on an account that still has access. Keyed on the pane hash so a
-    # pane that keeps rendering the same error is reported once, not every cycle.
-    if [ -n "$task" ] && fm_busy_org_disabled "$tail40" \
-      && [ "$(cat "$STATE/.org-disabled-surfaced-$key" 2>/dev/null || true)" != "$h" ]; then
-      printf 'blocked [at=%s] [key=org-disabled]: worker launched on an account whose organization has disabled Claude Code access; relaunch it on an account that still has access\n' \
-        "$(date +%s)" >> "$STATE/$task.status" 2>/dev/null || true
-      printf '%s' "$h" > "$STATE/.org-disabled-surfaced-$key"
-    fi
     hf="$STATE/.hash-$key"
     cf="$STATE/.count-$key"
     sf="$STATE/.stale-$key"
@@ -4364,7 +4097,6 @@ EOF
               date +%s > "$ssf"
               clear_write_tracking "$key"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
-              stale_decision_log "$w" "$task" absorb provably-working unread
             elif captain_call_stale_bound "$key" "$task"; then
               # The line is captain-relevant and stays so, but the backlog says
               # the captain already holds this work: further NEW pane hashes with
@@ -4378,21 +4110,7 @@ EOF
               wedge_episode_end "$key" 0 1
               clear_write_tracking "$key"
               triage_log "absorbed stale (open captain call already surfaced for this status): $w"
-              stale_decision_log "$w" "$task" absorb captain-call-bound open
-            elif [ -z "$STALE_WAIT_DECLARATION" ] && terminal_repeat_stale_bound "$key" "$task"; then
-              # No captain call bounds this line, but it was already presented
-              # whole and is unchanged: a repeat sighting of the same surfaced
-              # done/decision/blocker is absorbed for one re-surface window
-              # (Phase 0 of docs/laya-stale-wake-triage.md). The first sight of
-              # any status-log state still alarms below, and the alarm branch
-              # records this declaration so only its repeats are bounded.
-              printf '%s' "$h" > "$sf"
-              rm -f "$ssf"
-              clear_write_tracking "$key"
-              triage_log "absorbed stale (repeat of an already-surfaced unchanged terminal status): $w"
-              stale_decision_log "$w" "$task" absorb terminal-repeat none
             else
-              if [ -n "$CAPTAIN_CALL_IDENTITY" ]; then stale_hold=open; else stale_hold=none; fi
               stale_reason=$(stale_reason_naming_dialog "stale: $w" "$dialog")
               fm_wake_append stale "$w" "$stale_reason" || exit 1
               stale_wait_record "$key"
@@ -4406,20 +4124,9 @@ EOF
                 0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
                 *) stale_end=''; stale_ident='' ;;
               esac
-              stale_decision_log "$w" "$task" surface terminal-surface "$stale_hold" "$(stale_queued_seq "$w")"
               mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
               wake "$stale_reason"
             fi
-          elif terminal_override_evidence_gone "$ssf" "$task"; then
-            # The timer was armed while the crew was provably working, and that
-            # evidence is gone: the run ended or the pane went idle, so the
-            # terminal status the log already surfaced is the whole story and
-            # nothing here is a wedge. Without this the timer outlives its
-            # evidence and escalates a finished crew every threshold.
-            rm -f "$ssf"
-            wedge_episode_end "$key"
-            clear_write_tracking "$key"
-            triage_log "absorbed stale (overridden terminal status no longer provably working, wedge timer retired): $w"
           elif [ -e "$ssf" ] \
             || { [ "$FM_WEDGE_MAX_ESCALATIONS" -gt 0 ] && [ -e "$STATE/.wedge-permanent-$key" ]; }; then
             # This exact hash was already overridden as provably-working - keep
@@ -4467,8 +4174,6 @@ EOF
                 # clear_pause_tracking, so this route is not a keep-count site.
                 wedge_episode_end "$key"
                 date +%s > "$ssf"
-                # A busy-pane reading belongs to the frame it was taken on.
-                [ ! -e "$STATE/.pane-busy-$task" ] || printf '%s' "$h" > "$STATE/.pane-busy-$task"
                 triage_log "absorbed non-terminal stale (provably working): $w"
                 ;;
               paused)
@@ -4576,14 +4281,6 @@ EOF
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced || true
       wake "heartbeat"
-    elif heartbeat_reap_finds_actionable; then
-      # A finished or dead record the reaper can clear (bin/fm-reap.sh's dry run
-      # names a pending action): the heartbeat handler runs `scan --act`, so the
-      # record stops jamming the spawn cap instead of waiting for a captain event.
-      fm_wake_append heartbeat heartbeat heartbeat || exit 1
-      touch "$STATE/.last-heartbeat"
-      mark_all_captain_relevant_surfaced || true
-      wake "heartbeat"
     else
       if ! mark_all_captain_relevant_surfaced; then
         fm_wake_append heartbeat heartbeat heartbeat || exit 1
@@ -4598,6 +4295,5 @@ EOF
 
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr, rex),
   # else the blind poll sleep. See event_wait_or_sleep.
-  watcher_beat_due
   event_wait_or_sleep
 done

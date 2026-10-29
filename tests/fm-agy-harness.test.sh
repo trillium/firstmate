@@ -190,19 +190,16 @@ test_agy_busy_signatures_are_harness_scoped() {
   pass "fm-composer-lib: agy delivery signatures never cross harnesses"
 }
 
-test_agy_classify_reads_idle_row_and_unknown_without_either_marker() {
-  local statedir busy idle unknown
+test_agy_classify_reports_unknown_when_the_marker_scrolls_out() {
+  local statedir busy idle
   statedir="$TMP_ROOT/classify"; mkdir -p "$statedir"
   busy=$(fm_busy_classify tmux fake:win agy agy-case-1 "$statedir" 'turn running
 esc to cancel                                                           Gemini 3.8 Flash · low')
   [ "$busy" = "busy agy-regex" ] || fail "a busy tail must classify busy agy-regex, got '$busy'"
   idle=$(fm_busy_classify tmux fake:win agy agy-case-2 "$statedir" 'reply landed
 ? for shortcuts                                                         Gemini 3.8 Flash · low')
-  [ "$idle" = "idle agy-regex" ] || fail "the idle status row must classify idle agy-regex, got '$idle'"
-  unknown=$(fm_busy_classify tmux fake:win agy agy-case-3 "$statedir" 'long output scrolled
-past the status row')
-  [ "$unknown" = "unknown agy-regex" ] || fail "no marker at all must classify unknown, got '$unknown'"
-  pass "fm-busy-lib: agy classifies busy, idle on the idle row, unknown without either"
+  [ "$idle" = "unknown agy-regex" ] || fail "a scrolled-out marker must classify unknown, got '$idle'"
+  pass "fm-busy-lib: agy classifies busy on its marker and unknown without it"
 }
 
 test_agy_tmux_names_the_native_binary_an_agent() {
@@ -642,7 +639,7 @@ test_agy_launch_carries_the_brief_with_model_effort_and_autonomy() {
   assert_contains "$launch" "$FAKEBIN_DIR/agy" "agy launch did not pin the resolved absolute binary"
   assert_contains "$launch" "--prompt-interactive" "agy launch did not carry the brief via --prompt-interactive"
   assert_contains "$launch" "--model 'gemini-3.8-flash-low'" "agy launch did not carry the requested model"
-  assert_not_contains "$launch" "--effort" "agy launch passed --effort alongside an id that pins its own effort"
+  assert_contains "$launch" "--effort 'low'" "agy launch did not carry the requested effort"
   assert_contains "$launch" "--dangerously-skip-permissions" "agy launch omitted unattended autonomy"
   assert_contains "$launch" "env -u CLAUDECODE" "agy launch did not clear the inherited launcher marker"
   assert_not_contains "$launch" "__AGYBIN__" "agy launch left its binary placeholder unsubstituted"
@@ -653,22 +650,6 @@ test_agy_launch_carries_the_brief_with_model_effort_and_autonomy() {
   assert_grep 'model=gemini-3.8-flash-low' "$meta" "agy meta did not record its model"
   assert_grep 'effort=low' "$meta" "agy meta did not record its effort"
   pass "fm-spawn: agy launch carries brief, model, effort, and autonomy with cleared markers"
-}
-
-test_agy_effort_suffixed_model_omits_conflicting_effort() {
-  local id rec out rc launch
-  id="agy-pinned-z4-$$"
-  rec=$(make_agy_spawn_case pinned "$id")
-  read_agy_spawn_record "$rec"
-  out=$(run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
-    --model gemini-3.8-flash-high --effort medium 2>&1)
-  rc=$?
-  expect_code 0 "$rc" "agy spawn with an effort-pinned model should succeed"
-  launch=$(cat "$CASE_DIR/launch.log")
-  assert_contains "$launch" "--model 'gemini-3.8-flash-high'" "agy launch lost the requested model"
-  assert_not_contains "$launch" "--effort" "agy launch passed --effort that agy rejects as conflicting with the model id"
-  assert_contains "$out" "pins its own effort" "agy spawn did not say it omitted the differing effort"
-  pass "fm-spawn: agy omits --effort for an effort-suffixed model id and says so"
 }
 
 test_agy_effort_xhigh_is_recorded_but_omitted() {
@@ -923,7 +904,7 @@ test_agy_claims_no_inherited_launcher_marker
 test_agy_control_mechanics_are_the_verified_ones
 test_agy_busy_tail_needs_the_pinned_status_row
 test_agy_busy_signatures_are_harness_scoped
-test_agy_classify_reads_idle_row_and_unknown_without_either_marker
+test_agy_classify_reports_unknown_when_the_marker_scrolls_out
 test_agy_tmux_names_the_native_binary_an_agent
 test_herdr_done_with_live_registry_stays_live
 test_herdr_registered_status_over_a_shell_only_pane_is_stale_not_live
@@ -931,7 +912,6 @@ test_herdr_shell_first_with_live_registry_stays_live
 test_herdr_lone_unregistered_pane_is_agent_free
 test_herdr_malformed_and_failed_reads_stay_unknown
 test_agy_launch_carries_the_brief_with_model_effort_and_autonomy
-test_agy_effort_suffixed_model_omits_conflicting_effort
 test_agy_effort_xhigh_is_recorded_but_omitted
 test_agy_unlisted_model_refuses_before_pane_creation
 test_agy_unreachable_listing_launches_unvalidated

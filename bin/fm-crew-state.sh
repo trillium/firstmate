@@ -241,11 +241,7 @@ REMOTE_HOST=$(meta_value remote_host)
 # A torn-down (or never-created) worktree has no current state to read. A
 # remote secondmate's recorded worktree is a path on ITS host, so the local
 # probe proves nothing for it - the remote arm below reads the true source.
-CLOUD_RUN=
-if [ "$(meta_value backend)" = cloud ]; then
-  CLOUD_RUN=$(meta_value cloud_run)
-fi
-if [ -z "$CLOUD_RUN" ] && [ -z "$REMOTE_HOST" ] && { [ -z "$WT" ] || [ ! -d "$WT" ]; }; then
+if [ -z "$REMOTE_HOST" ] && { [ -z "$WT" ] || [ ! -d "$WT" ]; }; then
   emit unknown none "worktree gone (torn down?)"
 fi
 
@@ -284,17 +280,6 @@ map_log_state() {  # <line>
 
 LOG_LINE=$(status_current_line "$LOG" "$KIND")
 LOG_VERB=$(status_line_verb "$LOG_LINE")
-
-# --- cloud run: no pane or worktree, the run record and the status log are the source ---
-if [ -n "$CLOUD_RUN" ]; then
-  CLOUD_DETAIL="cloud run $CLOUD_RUN, session $(meta_value cloud_url)"
-  [ -z "$(meta_value pr)" ] || CLOUD_DETAIL="$CLOUD_DETAIL${SEP}PR $(meta_value pr)"
-  if [ -n "$LOG_VERB" ] && [ "$LOG_VERB" != working ]; then
-    CLOUD_STATE=$(map_log_state "$LOG_LINE")
-    [ "$CLOUD_STATE" = unknown ] || emit "$CLOUD_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}$CLOUD_DETAIL"
-  fi
-  emit working cloud-run "$CLOUD_DETAIL"
-fi
 
 # --- remote secondmate: the true source is the remote endpoint ---------------
 # A remote mate's recorded worktree and backend target live on its own host, so
