@@ -2145,6 +2145,7 @@ EOF
 window=firstmate:fm-$child
 worktree=$childwt
 project=$childproj
+branch=duplicate-child
 harness=echo
 kind=ship
 mode=no-mistakes

@@ -26,6 +26,7 @@ make_ownership_fakebin() {
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
+window_file="$(dirname "$0")/.spawn-window"
 case "$*" in
   *"#{pane_current_path}"*)
     printf '%s\n' "${FM_FAKE_PANE_PATH:?FM_FAKE_PANE_PATH unset}"

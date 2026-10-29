@@ -2135,7 +2135,7 @@ spawn_refuse_if_away_spend_cap() {
   case "$cap" in
   '' | *[!0-9]* | 0) return 0 ;;
   esac
-  live=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-contract.sh" live-workers 2>/dev/null || true)
+  live=$(FM_AFK_CONTRACT_CREW_STATE="$SCRIPT_DIR/fm-crew-state.sh" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-afk-contract.sh" live-workers --working 2>/dev/null || true)
   case "$live" in
   '' | *[!0-9]*)
     echo "error: spawn refused - the away-posture record caps concurrent workers at $cap and this home's live ordinary task count could not be read; task $ID stays queued (spend cap: bin/fm-afk-contract.sh)" >&2
@@ -7417,7 +7417,10 @@ if [ "$BACKEND" = t3code ]; then
   # (spawn_t3code_env_install). TRACEPARENT is delivered only once its meta
   # record exists, the same delivered-implies-recorded invariant the pane path
   # keeps by unsetting it when the record fails.
-  T3CODE_ENV=("GOTMPDIR=$TASK_TMP/gotmp" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true "GIT_AUTHOR_EMAIL=$CREW_GIT_EMAIL" "GIT_COMMITTER_EMAIL=$CREW_GIT_EMAIL" COMPACT_ADVISER_DISABLE=1 "FM_TASK_INBOX=$STATE_REAL/$ID.inbox")
+  T3CODE_ENV=("GOTMPDIR=$TASK_TMP/gotmp" GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true COMPACT_ADVISER_DISABLE=1 "FM_TASK_INBOX=$STATE_REAL/$ID.inbox")
+  if [ "$KIND" != secondmate ]; then
+    T3CODE_ENV+=("GIT_AUTHOR_EMAIL=$CREW_GIT_EMAIL" "GIT_COMMITTER_EMAIL=$CREW_GIT_EMAIL")
+  fi
   if [ "$GIT_HOOKS_INSTALLED" = 1 ]; then
     T3CODE_ENV+=(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "GIT_CONFIG_VALUE_0=$GIT_HOOKS_DIR")
   fi

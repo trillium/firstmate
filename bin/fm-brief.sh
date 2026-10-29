@@ -706,6 +706,19 @@ IFS= read -r -d '' SHARED_NO_CD_RULE <<'EOF' || true
 EOF
 SHARED_NO_CD_RULE=${SHARED_NO_CD_RULE%$'\n'}
 
+# One shared string keeps the ship and scout notable-item bead rule identical.
+# The federated bead stores are the durable record the in-flight view reads,
+# so notable sub-items born inside the work get beads too - filed at creation,
+# closed with a receipt on landing. The secondmate charter deliberately omits
+# this rule: a secondmate routes durable knowledge through its own backlog.
+IFS= read -r -d '' NOTABLE_BEADS_RULE <<'EOF2' || true
+# Notable-item beads
+Every notable item this task produces is a bead in the federated store: file it at creation time in the appropriate store (`task`, `review`, `robots`, `projects`, `workflows`), and close it with a receipt when it lands.
+One line files it: `bin/fm-note.sh <store> "<title>"`.
+What the in-flight view (`bin/fm-inflight.sh`) cannot source from a bead does not exist to the captain - chat memory is not a record.
+EOF2
+NOTABLE_BEADS_RULE=${NOTABLE_BEADS_RULE%$'\n'}
+
 if [ -n "$BASE_BRANCH" ]; then
   SETUP_BASE="You are in a disposable git worktree of $REPO, at a detached HEAD on a clean copy of its base branch.
 Base branch: $BASE_BRANCH"

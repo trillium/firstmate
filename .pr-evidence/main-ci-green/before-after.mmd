@@ -1,0 +1,12 @@
+flowchart LR
+  subgraph Before
+    A[main merges drop code from bin/] --> B[12 test files fail]
+    A --> C[shellcheck SC2100 and SC2034]
+    A --> D[.pr-evidence .md trips doc-audience check]
+  end
+  subgraph After
+    E[dropped code restored, stale fixtures fixed] --> F[all test files pass]
+    E --> G[lint clean]
+    E --> H[.pr-evidence files renamed to .mmd]
+  end
+  Before --> After

@@ -102,7 +102,7 @@
 #   fm-afk-contract.sh field <name> [--path <record>]
 #   fm-afk-contract.sh words [--path <record>]
 #   fm-afk-contract.sh validate [--path <record>]  exit 0 when the record is readable and complete
-#   fm-afk-contract.sh live-workers
+#   fm-afk-contract.sh live-workers [--working]
 #     Print the ordinary worker count this home holds right now (SPEND CAP
 #     below). Reads no record, so it answers before an entry as well as during
 #     one.
@@ -696,8 +696,11 @@ fm_afk_contract_main() {
       path=$(fm_afk_contract_select_path "$@") || { fm_afk_contract_usage >&2; return 2; }
       fm_afk_contract_validate "$path" ;;
     live-workers)
-      [ "$#" -eq 0 ] || { fm_afk_contract_usage >&2; return 2; }
-      fm_afk_contract_live_ordinary_workers ;;
+      case "$#:${1:-}" in
+      0:) fm_afk_contract_live_ordinary_workers ;;
+      1:--working) fm_afk_contract_live_ordinary_workers "$FM_AFK_CONTRACT_STATE" working-only ;;
+      *) fm_afk_contract_usage >&2; return 2 ;;
+      esac ;;
     clauses|flags|refused|grants)
       fm_afk_contract_log "'$cmd' was retired with the clause and merge-grant apparatus: the record is the captain's words (read them with 'words' or 'readback')"
       return 2 ;;
