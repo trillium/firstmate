@@ -1218,41 +1218,6 @@ test_grok_idle_footer_does_not_confirm_cancellation() {
   pass "fm-control interrupt: grok's idle footer does not confirm cancellation"
 }
 
-test_structural_composer_check_loads_its_own_backend() {
-  local out
-  # A fresh shell mirrors the real caller: the visual composer read runs in a
-  # subshell, so the herdr adapter is never loaded into the shell that then
-  # asks the structural question.
-  out=$(bash -c '
-    . "$1/bin/fm-backend.sh"; . "$1/bin/fm-control-lib.sh"
-    fm_control_composer_structurally_empty herdr bogus-target >/dev/null 2>&1
-    type -t fm_backend_herdr_parse_target' _ "$ROOT" 2>&1)
-  [ "$out" = "function" ] \
-    || fail "the structural composer check must source the backend it calls, got: $out"
-  # With the adapter's CLI stubbed after that load (the herdr 0.9.5 shape: no
-  # readiness field, just agent_status plus the pane text), an idle OpenCode
-  # whose prompt block is empty is proven empty without a live herdr, and one
-  # whose prompt row holds text is not.
-  # shellcheck disable=SC2016 # the probe body expands in the child shell
-  local probe='
-    . "$1/bin/fm-backend.sh"; . "$1/bin/fm-control-lib.sh"
-    fm_backend_source herdr || exit 3
-    fm_backend_herdr_parse_target() { FM_BACKEND_HERDR_SESSION=s; FM_BACKEND_HERDR_PANE=p; }
-    fm_backend_herdr_cli() {
-      case "$3" in
-        get) printf "%s" "{\"result\":{\"agent\":{\"agent\":\"opencode\",\"agent_status\":\"idle\"}}}" ;;
-        read) printf "\n  ┃\n  ┃  %s\n  ┃  Build · Model · high\n  ╹▀▀▀\n   /work/tree  ctrl+p commands\n" "$TYPED" ;;
-      esac
-    }
-    fm_backend_source() { return 0; }
-    fm_control_composer_structurally_empty herdr default:s:p'
-  TYPED='' bash -c "$probe" _ "$ROOT" \
-    || fail "an idle herdr OpenCode with an empty prompt block must be proven structurally empty"
-  TYPED='half-typed draft' bash -c "$probe" _ "$ROOT" \
-    && fail "an idle herdr OpenCode whose prompt row holds text must not be proven empty"
-  pass "fm-control: the structural composer-empty check loads the herdr backend itself"
-}
-
 # --- 6. marker non-regression -----------------------------------------------
 
 test_secondmate_control_command_carries_no_marker() {
@@ -1336,55 +1301,6 @@ EOF
   pass "fm-control-lib: only a runtime's own recorded session has a relaunch resume form"
 }
 
-test_exit_records_generation_scoped_stop_marker_only_on_verified_exit() {
-  local dir out rc
-  dir=$(new_case exit-marker)
-  add_task "$dir" t1 claude
-  printf 'spawn_gen=gen-42\n' >> "$dir/home/state/t1.meta"
-  cp "$dir/home/state/t1.meta" "$dir/meta.before"
-
-  # Refused exit (stubborn agent that stays alive) must NOT record control-exit.
-  alive_as "$dir" claude
-  cat > "$dir/fake/stubborn-tmux" <<'SH'
-#!/usr/bin/env bash
-case "${1:-}" in
-  display-message)
-    case "$*" in
-      *pane_tty*) printf '\n'; exit 0 ;;
-      *pane_current_command*) printf 'claude\n'; exit 0 ;;
-      *pane_current_path*) cat "$FM_FAKE_DIR/cwd"; printf '\n'; exit 0 ;;
-    esac ;;
-  list-windows) printf 'fm-t1\n'; exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$dir/fake/stubborn-tmux"
-  mkdir -p "$dir/stubborn-bin"
-  ln -sf "$dir/fake/stubborn-tmux" "$dir/stubborn-bin/tmux"
-  out=$(env PATH="$dir/stubborn-bin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
-    FM_CONTROL_POLL=0.01 FM_CONTROL_SETTLE_WAIT=0.02 FM_CONTROL_EXIT_WAIT=0.03 \
-    "$CONTROL" t1 exit 2>&1); rc=$?
-  expect_code 1 "$rc" "unconfirmed exit must fail closed"
-  assert_absent "$dir/home/state/t1.control-exit" "failed exit must not write control-exit"
-
-  # Verified live stop records v1 marker with current spawn_gen and leaves .meta untouched.
-  out=$(run_control "$dir" t1 exit); rc=$?
-  expect_code 0 "$rc" "verified exit should succeed"$'\n'"$out"
-  assert_present "$dir/home/state/t1.control-exit" "verified exit must write control-exit"
-  cmp -s "$dir/meta.before" "$dir/home/state/t1.meta" || fail "exit must leave state/<id>.meta byte-identical"
-  grep -Fqx 'v1' "$dir/home/state/t1.control-exit" || fail "control-exit header"
-  grep -Fqx 'task=t1' "$dir/home/state/t1.control-exit" || fail "control-exit task"
-  grep -Fqx 'spawn_gen=gen-42' "$dir/home/state/t1.control-exit" || fail "control-exit spawn_gen"
-  grep -Fqx 'result=stopped' "$dir/home/state/t1.control-exit" || fail "control-exit stopped result"
-  grep -Eq '^at=[0-9][0-9]*$' "$dir/home/state/t1.control-exit" || fail "control-exit epoch"
-
-  # Idempotent already-stopped exit refreshes result=already-stopped.
-  out=$(run_control "$dir" t1 exit); rc=$?
-  expect_code 0 "$rc" "already-stopped exit should succeed"$'\n'"$out"
-  grep -Fqx 'result=already-stopped' "$dir/home/state/t1.control-exit" || fail "control-exit already-stopped result"
-  pass "fm-control exit: records generation-scoped control-exit only after a verified exit"
-}
-
 test_exit_types_each_harness_verified_command
 test_opencode_exit_matches_recorded_major
 test_opencode2_exit_retries_ctrl_c_once
@@ -1433,5 +1349,3 @@ test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
 test_fm_send_still_marks_the_same_secondmate_task
-test_exit_records_generation_scoped_stop_marker_only_on_verified_exit
-test_structural_composer_check_loads_its_own_backend

@@ -15,10 +15,9 @@
 #   fm-remote-secondmate-control.sh retire <id> [--force]
 #
 # Remote placement ends here, but the second-mate agent always runs on the
-# Herdr backend in the configured remote-secondmate session
-# (FM_REMOTE_HERDR_SESSION, default `default`), so launch refuses any other
-# selection rather than reading this home's config/backend. The session
-# default keeps remote mates visible from the captain's own Herdr client.
+# Herdr backend in the dedicated fm-remote session, so launch refuses any other
+# selection rather than reading this home's config/backend. The interactive
+# default session remains for the user's work.
 # fm-spawn/fm-send/fm-teardown keep owning the local endpoint mechanics.
 # The home's own workers keep their ordinary backend selection.
 # bin/fm-remote-doctor.sh owns that host's readiness for Herdr.
@@ -37,7 +36,7 @@
 # agent's endpoint record; the home's own
 # state/*.meta remains reserved for workers the secondmate supervises.
 # Retirement closes only this secondmate's panes or workspace and never
-# stops the remote-secondmate session or removes a sibling secondmate's workspace or panes.
+# stops fm-remote or removes a sibling secondmate's workspace or panes.
 #
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
 # control plane here, because from this host the mate is a plain local
@@ -57,48 +56,26 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-# Same deployment choice bin/fm-remote-doctor.sh owns: FM_REMOTE_HERDR_SESSION
-# points the remote-secondmate session elsewhere without editing code, and
-# defaults to `default`.
-REMOTE_HERDR_SESSION=${FM_REMOTE_HERDR_SESSION:-default}
-
-# TARGET_HOME/CONTROL_STATE/CONTROL_DATA are resolved lazily by require_home,
-# only for a command that actually operates on the home. Resolving them here at
-# top level (the historical `TARGET_HOME=${FM_HOME:?...}`) aborted every
-# invocation without FM_HOME - including --help and an unknown command, which
-# never touch the home - so help was unreachable. See require_home below.
-
-# shellcheck source=bin/fm-home-lib.sh
-. "$SCRIPT_DIR/fm-home-lib.sh"
+TARGET_HOME=${FM_HOME:?FM_HOME is required}
+CONTROL_STATE="$TARGET_HOME/state/parent-route"
+CONTROL_DATA="$TARGET_HOME/data/.parent-route"
+REMOTE_HERDR_SESSION=fm-remote
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 validate_id() { case "$1" in ''|*[!A-Za-z0-9._-]*) die "invalid secondmate id: $1" ;; esac; }
 
-# Resolve the target secondmate home for a command that needs it. FM_HOME, when
-# set, is the remote secondmate home fm-on selected; unset resolves to the
-# conventional default and errors with a clear diagnostic only when that default
-# does not exist (bin/fm-home-lib.sh). Called after help/usage dispatch, so
-# --help and an unknown command never require FM_HOME.
-require_home() {
-  TARGET_HOME=$(fm_resolve_home) || exit 1
-  CONTROL_STATE="$TARGET_HOME/state/parent-route"
-  CONTROL_DATA="$TARGET_HOME/data/.parent-route"
-}
-
 # Sourcing fm-wake-lib.sh through the libraries below creates "$FM_HOME/state",
 # so recognize an already-retired home before loading them rather than
 # fabricating an unseeded home that every later retirement then refuses.
 # The accepted arguments match the retire dispatcher's.
-if [ "${1:-}" = retire ]; then
-  require_home
-  if [ ! -e "$TARGET_HOME" ] && [ ! -L "$TARGET_HOME" ]; then
-    case "$#:${3:-}" in
-      2:|3:|3:--force) validate_id "$2"; printf 'already-retired: %s\n' "$2"; exit 0 ;;
-      *) usage ;;
-    esac
-  fi
+if [ "${1:-}" = retire ] && [ ! -e "$TARGET_HOME" ] && [ ! -L "$TARGET_HOME" ]; then
+  case "$#:${3:-}" in
+    2:|3:|3:--force) validate_id "$2"; printf 'already-retired: %s\n' "$2"; exit 0 ;;
+    *) usage ;;
+  esac
 fi
+
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-ff-lib.sh
@@ -284,7 +261,7 @@ cmd_relaunch() {
   [ "$effort" != - ] || effort=default
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
   # The same launch-boundary facts cmd_launch establishes: the endpoint lives in
-  # the configured remote-secondmate session, and the parent already owns both convergence
+  # the dedicated fm-remote session, and the parent already owns both convergence
   # legs, so the host-local spawn must not re-sync or re-inherit against this
   # host's own Firstmate copy.
   HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
@@ -462,14 +439,6 @@ cmd_retire() {
       "$SCRIPT_DIR/fm-teardown.sh" "$id"
   fi
 }
-
-# Dispatch home resolution: help and an unknown command never touch the home, so
-# they run without FM_HOME; every real command resolves TARGET_HOME first.
-case "${1:-}" in
-  ''|-h|--help|help) usage ;;
-  launch|relaunch|state|route|send|key|capture|observe|sync|update|retire) require_home ;;
-  *) die "unknown command: ${1:-}" ;;
-esac
 
 case "${1:-}" in
   launch) shift; [ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage; cmd_launch "$@" ;;

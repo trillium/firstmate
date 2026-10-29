@@ -623,14 +623,6 @@ A prior label heuristic could adopt a captain-owned workspace named `firstmate` 
 The current structural gate removes label inference from cleanup authority.
 `tests/fm-backend-herdr-prune-safety-e2e.test.sh` reproduces the collision in an isolated named session and proves the adopted pane remains untouched.
 
-## Session-lock badge
-
-Two primary firstmate panes share the same agent colour, so `bin/fm-lock.sh` also reports its outcome on the pane through `bin/fm-lock-badge.sh`.
-A held lock sets the sidebar token `lock_held` and the display-agent label `firstmate (lock)`, and clears `lock_ro`.
-A refused lock sets `lock_ro` and `firstmate (read-only)`, and clears `lock_held`.
-The colour is not set by Firstmate: herdr colours each `$hs_<token>` in the captain's `[ui.sidebar.agents.rows_by_agent]` row config, so give the two tokens different `fg` values, for example `{ token = "$hs_lock_held", fg = "#98BB6C", bold = true }` and `{ token = "$hs_lock_ro", fg = "#E46876", bold = true }`.
-The badge is display-only: outside herdr it does nothing, and a herdr error never changes lock behavior.
-
 ## Endpoint metadata
 
 ```text
