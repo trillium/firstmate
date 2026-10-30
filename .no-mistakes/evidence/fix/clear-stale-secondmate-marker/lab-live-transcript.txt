@@ -1,0 +1,109 @@
+=== lab: firstmate change c259f95d, treehouse 3.1.2 ===
+
+=== Scenario A: a retirement whose lease return fails keeps the home's identity ===
+$ ls -a <alpha home> | grep fm-secondmate
+.fm-secondmate-home
+.fm-secondmate-parent
+$ LAB_FAIL_RETURN=1 bin/fm-teardown.sh alpha --force
+treehouse: return refused (lab-injected failure)
+error: treehouse return failed for secondmate home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/1/fmroot; lease may still be held
+teardown exit status: 1
+$ ls -a <alpha home> | grep fm-secondmate
+.fm-secondmate-home
+.fm-secondmate-parent
+  PASS: teardown reported the failed return
+  PASS: the preserved home kept .fm-secondmate-home with its id
+  PASS: the preserved home kept .fm-secondmate-parent
+  PASS: no identity stash was left behind
+  PASS: the lease is still held by alpha
+
+=== Scenario B: retiring a home (killed mid-return, then retried) frees a slot a task can lease with no marker ===
+$ primary-home guards fire in <alpha home>?  YES
+$ (teardown is inside treehouse return) ls -a <alpha home> | grep fm-secondmate
+(identity files staged aside)
+$ ls -a <slot parent> | grep identity-restore
+.fm-identity-restore.fmroot.1447251460
+(teardown killed)
+  PASS: the identity files were staged aside while the return was in flight
+$ bin/fm-teardown.sh alpha --force   # the retry, with the real treehouse
+teardown: restored the interrupted retirement's home-identity files for secondmate home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/1/fmroot
+🌳 Worktree returned to pool.
+teardown alpha complete (window labtm:fm-alpha, worktree /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/1/fmroot)
+teardown exit status: 0
+  PASS: the retry completed
+  PASS: the retired home left no .fm-secondmate-* file in its slot
+  PASS: no identity stash was left behind
+$ treehouse status
+base  main  (repository default)
+$ treehouse get --lease   # the next task takes the pool slot
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/1/fmroot
+  PASS: the task got the retired home's own slot
+$ ls -a <leased slot> | grep fm-secondmate
+(none)
+$ primary-home guards fire in the leased slot?  no
+  PASS: no primary-home guard would fire in the task's slot
+
+=== Scenario C: a spawn into a slot of a still-registered secondmate is refused ===
+$ cat data/secondmates.md
+- beta - Lab secondmate beta (home: /private/var/folders/d9/2d5w27z577
+$ treehouse return <beta home>   # lease released out of band; the registry still names beta
+🌳 Worktree returned to pool.
+$ ls -a <beta home> | grep fm-secondmate
+.fm-secondmate-home
+.fm-secondmate-parent
+$ bin/fm-spawn.sh labtask <project> --mode no-mistakes --yolo off --backend tmux
+error: treehouse get handed back 
+'/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/1/fmroot', which is the home of 
+secondmate 'beta', still registered in /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/home/data/secondmates.md; 
+refusing to launch a task into a live secondmate home. Retire secondmate 'beta' first. Inspect target firstmate:fm-labtask
+spawn exit status: 1
+  PASS: the spawn was refused
+  PASS: the refusal names the live secondmate home
+  PASS: the refused spawn left beta's identity files in place
+  PASS: no task record was written
+
+=== Scenario D: a pre-fix leaked slot (marker + binding to this home, id retired) is cleared by spawn, even with FM_HOME reached through a symlink ===
+🌳 Worktree returned to pool.
+$ cat <slot>/.fm-secondmate-parent
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/home
+$ FM_HOME=<symlink to home> bin/fm-spawn.sh labtask2 <project> --mode no-mistakes --yolo off --backend tmux
+notice: cleared a stale secondmate-home marker ('gamma') retired from this home, left in leased worktree 
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/2/fmroot
+spawned labtask2 harness=sleep kind=ship mode=no-mistakes yolo=off window=firstmate:fm-labtask2 
+worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/2/fmroot
+spawn exit status: 0
+task worktree: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/2/fmroot
+  PASS: spawn reported clearing the stale marker
+  PASS: the task worktree carries no identity files
+  PASS: no primary-home guard would fire in the task worktree
+
+=== Scenario E: a slot whose binding names a different parent home is refused with that home named ===
+🌳 Worktree returned to pool.
+$ cat <slot>/.fm-secondmate-parent
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/otherhome
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━�
+�━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━�
+�━━━━━━━━━━━━━━━━━━━━━━━━━
+error: treehouse get handed back 
+'/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/pool/.treehouse/fmroot-129f37/3/fmroot', which carries the 
+identity of secondmate 'delta' bound to parent home '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/otherhome', 
+not this home '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/home'; refusing to launch a task into it. Retire 
+or clean that secondmate from '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.0pmnW0/run/otherhome'. Inspect target 
+firstmate:fm-labtask3
+spawn exit status: 1
+  PASS: the spawn was refused
+  PASS: the refusal names the other parent home
+  PASS: the slot kept its identity files
+  PASS: no task record was written
+
+LIVE RESULT: 5/5 scenarios passed
