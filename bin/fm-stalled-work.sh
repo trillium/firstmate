@@ -31,9 +31,9 @@
 #     (concurrent, bounded at 8 seconds); a local home's own
 #     state/home-summary.json is read directly. Only when the live read fails
 #     does the newest matching copy in the parent-side cache
-#     state/secondmate-summary-cache answer. A remote home republishes its
-#     summary only at session start, spawn, and teardown, so a summary can lag
-#     work the home has since closed: whatever its source, a summary over a day
+#     state/secondmate-summary-cache answer. A summary lags work the home has
+#     closed since it last published (bin/fm-home-summary-refresh.sh owns when
+#     that happens), so whatever its source, a summary over a day
 #     old (or with no generated_epoch) is listed in the unavailable list with
 #     its age instead of judged. Summaries carry no per-item event age, so only
 #     queued and blocked rows are judged there. A row with no recorded date
