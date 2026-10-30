@@ -1,0 +1,42 @@
+=== live-simple2-z6 :: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/agents/rec-agent --flag
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-simple2-z6/launch-brief.md records no ship branch; defaulting to legacy branch fm/live-simple2-z6
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-simple2-z6/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned live-simple2-z6 harness=rec-agent kind=ship mode=no-mistakes yolo=off window=primary:fm-live-simple2-z6 worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/pool/.treehouse/demo-223520/2/demo
+exit=0
+=== live-compound-z2 :: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/agents/rec-agent --flag; /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/agents/cleanup
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: raw launch command is compound (it contains an unquoted ;, |, &, && or newline), so the launch brief was not appended; put __BRIEF__ where the agent takes its prompt, for example: my-agent --flag "$(__OPINPUT__ encode launch-brief < __BRIEF__)"; cleanup
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-compound-z2/launch-brief.md records no ship branch; defaulting to legacy branch fm/live-compound-z2
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-compound-z2/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned live-compound-z2 harness=rec-agent kind=ship mode=no-mistakes yolo=off window=primary:fm-live-compound-z2 worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/pool/.treehouse/demo-223520/3/demo
+exit=0
+=== live-quoted-z3 :: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/agents/rec-agent -c 'notify=[a; b | c]' 2>&1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-quoted-z3/launch-brief.md records no ship branch; defaulting to legacy branch fm/live-quoted-z3
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-quoted-z3/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned live-quoted-z3 harness=rec-agent kind=ship mode=no-mistakes yolo=off window=primary:fm-live-quoted-z3 worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/pool/.treehouse/demo-223520/4/demo
+exit=0
+=== live-claude-z4 :: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/agents/claude --model x
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-claude-z4/launch-brief.md records no ship branch; defaulting to legacy branch fm/live-claude-z4
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-claude-z4/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned live-claude-z4 harness=claude kind=ship mode=no-mistakes yolo=off window=primary:fm-live-claude-z4 worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/pool/.treehouse/demo-223520/5/demo
+exit=0
+=== live-placeholder-z5 :: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/agents/rec-agent --flag "\$(__OPINPUT__ encode launch-brief < __BRIEF__)"; /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/agents/cleanup
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-placeholder-z5/launch-brief.md records no ship branch; defaulting to legacy branch fm/live-placeholder-z5
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-placeholder-z5/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned live-placeholder-z5 harness=rec-agent kind=ship mode=no-mistakes yolo=off window=primary:fm-live-placeholder-z5 worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/pool/.treehouse/demo-223520/6/demo
+exit=0

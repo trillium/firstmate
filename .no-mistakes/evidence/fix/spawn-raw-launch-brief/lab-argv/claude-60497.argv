@@ -1,0 +1,4 @@
+argc=3
+argv[1]=--model
+argv[2]=x
+argv[3]=: Firstmate operational input waiting: read '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/state/operational-inbox/1793341478-12170164f657d636.msg' and handle its contents as Firstmate operational input.

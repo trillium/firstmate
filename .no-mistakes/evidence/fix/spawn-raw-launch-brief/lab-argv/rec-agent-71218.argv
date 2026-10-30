@@ -1,0 +1,3 @@
+argc=2
+argv[1]=--flag
+argv[2]=$('/Users/mini0/.no-mistakes/worktrees/cb10e94bf57f/01M65N98RCEEWG1E4NNDFDY6D1/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.5WWvfl/data/live-placeholder-z5/launch-brief.md')

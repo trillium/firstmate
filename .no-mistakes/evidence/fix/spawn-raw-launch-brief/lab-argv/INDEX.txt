@@ -1,0 +1,7 @@
+Map of recorded argv files (fake agent records its real argv when fm-spawn's launch runs in the lab tmux worker pane):
+rec-agent-32784.argv  live-simple2-z6     raw 'rec-agent --flag'                         -> argv[2] = U+2063 typed launch-brief envelope
+rec-agent-42898.argv  live-compound-z2    raw 'rec-agent --flag; cleanup'                -> only --flag; warning on stderr; cleanup-60597 argc=0
+rec-agent-49540.argv  live-quoted-z3      raw "rec-agent -c 'notify=[a; b | c]' 2>&1"    -> quoted arg intact + appended brief, no warning
+claude-60497.argv     live-claude-z4      raw 'claude --model x'                         -> argv[3] = ASCII doorbell; record = claude-doorbell-record.msg
+rec-agent-71218.argv  live-placeholder-z5 (driver quoting slip: literal \$( ) - superseded by z7
+rec-agent-34248.argv  live-placeholder2-z7 raw 'rec-agent --flag "$(__OPINPUT__ encode launch-brief < __BRIEF__)"; cleanup' -> brief at placeholder, cleanup-45529 argc=0, no warning
