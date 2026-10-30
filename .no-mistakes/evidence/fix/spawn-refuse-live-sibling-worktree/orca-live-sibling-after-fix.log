@@ -1,0 +1,14 @@
+ok - real tmux preserves absent/C locale values and reported raw bytes, rejects missing/phantom names and excludes the automatic SSH agent
+# all fm-spawn-orca-worktree tests passed
+fm-spawn exit=1
+fm-spawn output:
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-orca-worktree.UHLIsP/live-sibling/home/data/orca-sibling-a3/launch-brief.md records no ship branch; defaulting to legacy branch fm/orca-sibling-a3
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-orca-worktree.UHLIsP/live-sibling/home/data/orca-sibling-a3/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: orca worktree create yielded task other-task (recorded in state/other-task.meta) (resolved '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-orca-worktree.UHLIsP/live-sibling/sibling-wt'); refusing to launch into a worktree held by a live sibling task; it belongs to that task, so do not return or remove it
+fakebin
+home
+orca-worktrees
+project
+sibling-wt
+ok - an Orca spawn refused for a live sibling's worktree leaves that worktree and terminal in place
+exit=0
