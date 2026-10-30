@@ -1,0 +1,3 @@
+pi session owns the lock itself (ancestor holds it), supervision off: ['guard_rc=2'] foreign-diagnostic=False block-banner=True
+no session lock at all, supervision off: ['guard_rc=2'] foreign-diagnostic=False block-banner=True
+lock names a dead pid, supervision off: ['guard_rc=2'] foreign-diagnostic=False block-banner=True

@@ -1,0 +1,8 @@
+commit-under-test=fm-head.uFAx foreign owner pid=91598 lock=91598
+pi rc=0
+user messages (1): ['Reply with exactly the word OK and nothing else. Do not run any tools.']
+assistant messages (1): ['']
+turn-end-guard repair follow-ups injected: 0
+lock after pi still held by foreign owner: True
+watcher armed by pi session (state/.watch.lock exists): False
+pi stderr tail: ''

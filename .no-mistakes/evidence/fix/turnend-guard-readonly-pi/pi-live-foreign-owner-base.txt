@@ -1,0 +1,8 @@
+commit-under-test=fm-base.gidR foreign owner pid=97416 lock=97416
+pi rc=0
+user messages (2): ['Reply with exactly the word OK and nothing else. Do not run any tools.', '\u2063FIRSTMATE_OP: v1 turn-end-guard: TURN WOULD END BLIND - supervision is off. The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery ins']
+assistant messages (2): ['', '']
+turn-end-guard repair follow-ups injected: 1
+lock after pi still held by foreign owner: True
+watcher armed by pi session (state/.watch.lock exists): False
+pi stderr tail: ''
