@@ -1,0 +1,63 @@
+=== S1: two concurrent runs, --stop lists both, --stop <id> kills only one
+registry mode: drwx------ mini0
+$ fm-test-run.sh --stop   (TZ=Pacific/Kiritimati)
+fm-test-run-1793345591228-26055 pid=26055
+fm-test-run-1793345591228-26057 pid=26057
+$ fm-test-run.sh --stop fm-test-run-1793345591228-26055
+fm-test-run: stopped fm-test-run-1793345591228-26055
+exit=0
+run A exit=143
+ok - sleeping
+FM_TEST_ABORTED signal=15 run=fm-test-run-1793345591228-26055
+run A fixture child: gone; pid record present: no
+run B fixture child: alive; run B aborted?: 0
+$ fm-test-run.sh --stop
+fm-test-run-1793345591228-26057 pid=26057
+fm-test-run: stopped fm-test-run-1793345591228-26057
+run B exit=143
+
+=== S2: decoy whose command line contains fm-test-run is never signalled
+decoy cmd: bash tests/fm-test-run.test.sh
+$ fm-test-run.sh --stop fake-decoy
+fm-test-run: no live run fake-decoy
+exit=1
+decoy: alive; planted record kept: no
+
+=== S3: live runner pid with wrong start time (pid reuse) is never signalled
+$ fm-test-run.sh --stop fake-reuse   (record has real runner pid 28518, stale start)
+fm-test-run: no live run fake-reuse
+exit=1
+runner C: alive
+
+=== S5: TERM sent straight to the runner aborts a hung script promptly
+runner C exit=143 after 0s; output tail: FM_TEST_ABORTED signal=15 run=fm-test-run-1793345593634-28518
+C fixture child: gone
+
+=== S4: a pre-created non-private registry is refused
+registry mode: drwxr-xr-x
+$ fm-test-run.sh tests/fm-sleep-fixture.test.sh
+fm-test-run: refusing run registry /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-stop-live.ZVIxYI/fm-test-run-pids-501: it must be a real directory owned by you with mode 700
+exit=2  fixture ran: no
+$ fm-test-run.sh --stop
+fm-test-run: refusing run registry /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-stop-live.ZVIxYI/fm-test-run-pids-501: it must be a real directory owned by you with mode 700
+exit=1
+registry is symlink -> elsewhere (mode 700)
+$ fm-test-run.sh --stop
+fm-test-run: refusing run registry /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-stop-live.ZVIxYI/fm-test-run-pids-501: it must be a real directory owned by you with mode 700
+exit=1
+$ fm-test-run.sh tests/fm-sleep-fixture.test.sh
+fm-test-run: refusing run registry /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-stop-live.ZVIxYI/fm-test-run-pids-501: it must be a real directory owned by you with mode 700
+exit=2
+
+=== S6: native Windows Bash (stubbed uname -> MINGW64_NT): no registration, --stop refuses
+$ fm-test-run.sh tests/fm-quick.test.sh
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=225
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=30 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-quick.test.sh duration_ms=30
+exit=0  registry created: no
+$ fm-test-run.sh --stop
+fm-test-run: --stop is unsupported on native Windows Bash: process identity cannot be read
+exit=1
+$ fm-test-run.sh --stop=some-id
+fm-test-run: --stop is unsupported on native Windows Bash: process identity cannot be read
+exit=1

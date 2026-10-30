@@ -1,0 +1,4 @@
+ok - --stop kills one run, emits FM_TEST_ABORTED with exit 143, spares siblings
+ok - --stop refuses a run registry that is not private to the caller
+ok - native Windows Bash runs without a registry and --stop refuses
+ok - a TERM sent to the runner aborts a hung script promptly with exit 143
