@@ -523,6 +523,29 @@ fm_backlog_mutate() {  # <data-dir> <verb> <id> [flag...]
   return "$command_status"
 }
 
+# Republish this home's published summary (state/home-summary.json) after a
+# backlog state change that neither spawn nor teardown made: an item closed,
+# held, or released by bin/fm-tasks-axi.sh or bin/fm-captain-hold.sh. A parent
+# reads that ledger to see this home's backlog, so it would otherwise stay stale
+# until the next session start, spawn, teardown, or watcher refresh. The
+# publisher is bin/fm-home-summary-refresh.sh, run in its direct mode so a
+# failure is visible here; this helper turns that failure into a warning and
+# always returns 0, because the backlog change it follows has already landed and
+# a side-band publication must never undo or fail it. A home with no state
+# directory (a retired home) is left alone rather than recreated.
+fm_backlog_summary_republish() {  # <home> <state-dir> <data-dir>
+  local lib_dir refresh_rc=0
+  [ -d "$2" ] || return 0
+  lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return 0
+  env FM_HOME="$1" FM_STATE_OVERRIDE="$2" FM_DATA_OVERRIDE="$3" \
+    "$lib_dir/fm-home-summary-refresh.sh" >/dev/null || refresh_rc=$?
+  if [ "$refresh_rc" -ne 0 ]; then
+    printf 'warning: the backlog change landed but this home'"'"'s published summary could not be refreshed (exit %s)\n' \
+      "$refresh_rc" >&2
+  fi
+  return 0
+}
+
 fm_backlog_start() {  # <data-dir> <id>
   fm_backlog_mutate "$1" start "$2"
 }
