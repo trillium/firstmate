@@ -1,0 +1,4 @@
+=== pre-fix base teardown (b83dc59e) ===
+TEARDOWN under test: /Users/mini0/.no-mistakes/worktrees/1467055f0b60/01M65TGVKNGS32R9645E1PZF5J/bin/.fm-teardown-base.sh
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+not ok - nm-mirror-only: teardown should refuse mirror-only work: expected exit 1, got 0

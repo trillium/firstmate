@@ -1,0 +1,15 @@
+=== sabotage: refusal then destroys meta ===
+TEARDOWN under test: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-sabotage.oOCALL/teardown-meta.sh
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+not ok - nm-mirror-only: refusal erased the durable task record
+exit=0
+=== sabotage: refusal then destroys wt ===
+TEARDOWN under test: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-sabotage.oOCALL/teardown-wt.sh
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+not ok - nm-mirror-only: refusal removed the isolated copy
+exit=0
+=== sabotage: refusal then destroys branch ===
+TEARDOWN under test: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-sabotage.oOCALL/teardown-branch.sh
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+not ok - nm-mirror-only: refusal moved the task branch off the unlanded commit
+exit=0
