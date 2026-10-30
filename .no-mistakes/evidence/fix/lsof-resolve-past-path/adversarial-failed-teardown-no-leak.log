@@ -1,0 +1,11 @@
+== before fix (prior test at c5bec00c) ==
+test exit=1 after 1s
+not ok - lsof-off-path-reap: teardown should succeed: expected exit 0, got 7
+LEAKED after test exit:
+  PID  PPID COMMAND
+67266     1 sleep 300
+(killed leaked pids)
+== target 876332ab (fixed test) ==
+test exit=1 after 1s
+not ok - lsof-off-path-reap: teardown should succeed: expected exit 0, got 7
+no leaked 'sleep 300' process after failed teardown

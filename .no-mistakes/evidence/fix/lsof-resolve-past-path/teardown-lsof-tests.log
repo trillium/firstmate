@@ -1,0 +1,6 @@
+lsof not on PATH
+ok - teardown leaves opencode's busy plugin in the returned pool worktree as on main
+ok - a leaked descendant process rooted under the task's worktree is reaped by teardown, not left surviving
+ok - missing lsof falls back to reaping the tmux pane process group
+ok - an lsof installed off PATH (macOS /usr/sbin) still drives the leaked-process reap
+ok - an erroring lsof scan refuses teardown and preserves the task

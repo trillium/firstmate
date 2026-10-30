@@ -1,0 +1,9 @@
+PATH without /usr/sbin and /sbin; command -v lsof: <none>
+== target 876332ab ==
+ok - fm-teardown.sh backend=t3code secondmate: interrupts and archives, then ends the home's lingering provider process before the home is removed; an unprovable scan keeps the home
+exit=
+== base 05196e30 test file (command -v lsof skip check) ==
+note: test_secondmate_teardown_archives_thread_before_home_removal_without_project_delete skipped: lsof is required to prove a process left the home
+exit=
+normal PATH; command -v lsof: /usr/sbin/lsof
+ok - fm-teardown.sh backend=t3code secondmate: interrupts and archives, then ends the home's lingering provider process before the home is removed; an unprovable scan keeps the home
