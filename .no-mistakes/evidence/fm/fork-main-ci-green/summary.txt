@@ -1,0 +1,20 @@
+Targeted run of the 16 test files changed by fm/fork-main-ci-green (nice -n 10, parallel)
+fm-afk-contract rc=0 42s
+fm-backend-t3code rc=0 441s
+fm-backlog-atomicity rc=0 525s
+fm-branch-supervision rc=0 102s
+fm-busy-adapter-wiring rc=0 216s
+fm-control-relaunch rc=0 546s
+fm-project-capacity rc=0 185s
+fm-secondmate-safety rc=0 231s
+fm-spawn-compact-adviser-disable rc=0 92s
+fm-spawn-dispatch-profile rc=0 840s
+fm-spawn-noreply-identity rc=0 15s
+fm-spawn-orca-worktree rc=1 193s
+fm-spawn-project-match rc=0 45s
+fm-spawn-worktree-ownership rc=0 33s
+fm-supervision-host-hook rc=0 406s
+fm-teardown rc=0 658s
+
+fm-spawn-orca-worktree after the test-seam fix (solo): 26 ok, 0 not ok, rc=0
+Mutation (TERM trap removed from bin/fm-spawn.sh): not ok - publish/TERM: interrupted spawn left credentials in /tmp/fm-orca-env-interrupt-publish-TERM+3959e243dd734b4379d

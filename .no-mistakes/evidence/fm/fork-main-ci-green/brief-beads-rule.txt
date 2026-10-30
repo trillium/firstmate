@@ -1,0 +1,18 @@
+=== fm-brief.sh ship1 demo --mode local-only
+scaffolded: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.wk3YDY/data/ship1/brief.md (ship, mode=local-only; replace {TASK} and {FIRSTMATE_SPEC})
+brief: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.wk3YDY/data/ship1/brief.md
+85:# Notable-item beads
+86-Every notable item this task produces is a bead in the federated store: file it at creation time in the appropriate store (`task`, `review`, `robots`, `projects`, `workflows`), and close it with a receipt when it lands.
+87-One line files it: `bin/fm-note.sh <store> "<title>"`.
+88-What the in-flight view (`bin/fm-inflight.sh`) cannot source from a bead does not exist to the captain - chat memory is not a record.
+=== fm-brief.sh scout1 demo --scout
+scaffolded: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.wk3YDY/data/scout1/brief.md (scout; replace {TASK} and {FIRSTMATE_SPEC})
+brief: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.wk3YDY/data/scout1/brief.md
+76:# Notable-item beads
+77-Every notable item this task produces is a bead in the federated store: file it at creation time in the appropriate store (`task`, `review`, `robots`, `projects`, `workflows`), and close it with a receipt when it lands.
+78-One line files it: `bin/fm-note.sh <store> "<title>"`.
+79-What the in-flight view (`bin/fm-inflight.sh`) cannot source from a bead does not exist to the captain - chat memory is not a record.
+=== fm-brief.sh sm1 --secondmate --no-projects
+scaffolded: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.wk3YDY/data/sm1/brief.md (secondmate charter; replace {TASK})
+brief: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.wk3YDY/data/sm1/brief.md
+(no Notable-item beads section)

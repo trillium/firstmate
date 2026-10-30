@@ -1,0 +1,16 @@
+fm-spawn-noreply-identity rc=0 15s
+fm-spawn-worktree-ownership rc=0 33s
+fm-afk-contract rc=0 42s
+fm-spawn-project-match rc=0 45s
+fm-spawn-compact-adviser-disable rc=0 92s
+fm-branch-supervision rc=0 102s
+fm-project-capacity rc=0 185s
+fm-spawn-orca-worktree rc=1 193s
+fm-busy-adapter-wiring rc=0 216s
+fm-secondmate-safety rc=0 231s
+fm-supervision-host-hook rc=0 406s
+fm-backend-t3code rc=0 441s
+fm-backlog-atomicity rc=0 525s
+fm-control-relaunch rc=0 546s
+fm-teardown rc=0 658s
+fm-spawn-dispatch-profile rc=0 840s

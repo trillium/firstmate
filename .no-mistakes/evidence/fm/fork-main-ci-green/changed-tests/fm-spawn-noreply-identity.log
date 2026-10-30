@@ -1,0 +1,2 @@
+ok - spawn exports the noreply identity to the worker and writes no git config
+# all fm-spawn-noreply-identity tests passed

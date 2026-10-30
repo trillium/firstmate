@@ -1,0 +1,22 @@
+ok - real tmux preserves absent/C locale values and reported raw bytes, rejects missing/phantom names and excludes the automatic SSH agent
+ok - Orca refuses source=absent before allocating resources
+ok - Orca source/allowlist=enabled preserves controlled values, clears ambient credentials and keeps values off terminal input
+ok - Orca source/allowlist=empty preserves controlled values, clears ambient credentials and keeps values off terminal input
+ok - Orca refuses source=unavailable before allocating resources
+ok - Orca refuses source=malformed before allocating resources
+ok - Orca refuses source=nonregular before allocating resources
+ok - Orca refuses source=missing before allocating resources
+ok - Orca removes the credential launch file when the launch cannot be delivered
+ok - Orca warns when allowlisted names would resolve from the Orca terminal, and stays quiet for an empty allowlist
+ok - an Orca spawn waits for a slow pane to consume its launch file before a later failure
+ok - an Orca spawn reclaims a launch file its pane never ran and fails visibly
+ok - an Orca spawn interrupted by TERM during the consume step reclaims its launch file and refuses the worker
+ok - an Orca spawn interrupted by HUP during the consume step reclaims its launch file and refuses the worker
+ok - an Orca spawn interrupted by INT during the consume step reclaims its launch file and refuses the worker
+ok - an Orca spawn interrupted by TERM during the enter step reclaims its launch file and refuses the worker
+ok - an Orca spawn interrupted by HUP during the enter step reclaims its launch file and refuses the worker
+ok - an Orca spawn interrupted by INT during the enter step reclaims its launch file and refuses the worker
+not ok - TERM: the spawn was not paused after publishing its launch file: warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-orca-worktree.iGYVYk/orca-env-interrupt-publish-TERM/home/data/orca-env-interrupt-publish-TERM/launch-brief.md records no ship branch; defaulting to legacy branch fm/orca-env-interrupt-publish-TERM
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-orca-worktree.iGYVYk/orca-env-interrupt-publish-TERM/home/data/orca-env-interrupt-publish-TERM/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode direct-PR - confirm its definition of done matches
+notice: orca-env-interrupt-publish-TERM ships mode=direct-PR while the standing posture for project is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: Orca terminal term-1 did not run the launch command or could not remove the launch file; refused the worker launch; inspect window term-1

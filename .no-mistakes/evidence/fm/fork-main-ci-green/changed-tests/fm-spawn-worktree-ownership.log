@@ -1,0 +1,15 @@
+warning: re-init: ignored --initial-branch=main
+On branch main
+nothing to commit, working tree clean
+fatal: destination path '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-worktree-ownership.YItjaY/sibling-task/project.origin.git' already exists and is not an empty directory.
+error: remote origin already exists.
+ok - a pane stably sitting in a live sibling task's worktree is refused
+warning: re-init: ignored --initial-branch=main
+On branch main
+nothing to commit, working tree clean
+fatal: destination path '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-worktree-ownership.YItjaY/stale-record/project.origin.git' already exists and is not an empty directory.
+error: remote origin already exists.
+ok - a stale sibling task record does not veto a fresh allocation
+ok - a fresh, unowned worktree is accepted
+ok - the task's own recorded worktree is accepted
+# all fm-spawn-worktree-ownership tests passed

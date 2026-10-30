@@ -1,0 +1,6 @@
+--- fm-crew-state.sh w1:
+state: unknown · source: none · worktree gone (torn down?)
+--- live-workers (this branch):
+0
+--- live-workers (base c12c1026):
+1

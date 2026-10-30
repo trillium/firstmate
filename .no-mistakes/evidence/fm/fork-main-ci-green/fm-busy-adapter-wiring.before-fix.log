@@ -1,0 +1,3 @@
+not ok - claude secondmate spawn failed: error: secondmate registry is unavailable or unsafe: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-busy-adapter-wiring.l8MsyO/sm-claude/primary/data/secondmates.md
+error: refusing to write state/sm-claude.meta into /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-busy-adapter-wiring.l8MsyO/sm-claude/primary, which does not register secondmate sm-claude
+exit=1

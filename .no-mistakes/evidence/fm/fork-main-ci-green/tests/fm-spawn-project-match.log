@@ -1,0 +1,6 @@
+ok - a project matching the item's recorded repo spawns
+ok - a project disagreeing with the recorded repo is refused naming both
+ok - an item with no recorded repo needs --repo-unrecorded-ok
+ok - --repo-unrecorded-ok does not waive a recorded repo mismatch
+# all fm-spawn-project-match tests passed
+rc=0 secs=45

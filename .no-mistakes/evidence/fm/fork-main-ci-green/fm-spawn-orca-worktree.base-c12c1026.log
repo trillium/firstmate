@@ -1,0 +1,4 @@
+ok - real tmux preserves absent/C locale values and reported raw bytes, rejects missing/phantom names and excludes the automatic SSH agent
+ok - Orca refuses source=absent before allocating resources
+not ok - failed deletion must preserve the interactive /bin/zsh pane: expected exit 0, got 2
+exit=1

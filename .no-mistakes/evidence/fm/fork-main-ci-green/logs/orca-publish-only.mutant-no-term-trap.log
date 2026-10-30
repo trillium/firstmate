@@ -1,0 +1,2 @@
+ok - real tmux preserves absent/C locale values and reported raw bytes, rejects missing/phantom names and excludes the automatic SSH agent
+not ok - publish/TERM: interrupted spawn left credentials in /tmp/fm-orca-env-interrupt-publish-TERM+3959e243dd734b4379d63abd70d26e8c2f1cf9d1b60a3dc16f856cb76a3e41f2/launch.s1793397157.9439.15510.sh
