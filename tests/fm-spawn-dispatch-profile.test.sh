@@ -502,17 +502,20 @@ test_active_dispatch_profile_allows_positional_harness() {
 # scoped HTTPS credential helper. Execute the real emitted launch and ask Git,
 # rather than inspecting command text, to catch that credential widening. Every
 # pane shell runs with its startup files pointed at the case directory, so a
-# developer's rc file cannot prompt, exec a multiplexer or export GIT_CONFIG_*.
+# developer's rc file cannot prompt, exec a multiplexer or export GIT_CONFIG_*. It
+# also runs outside any repository, so the enclosing checkout's local config
+# cannot add credential helpers to the probe.
 isolated_pane_env() {  # <assignment-or-command...>
-  env HOME="$CASE_DIR" ZDOTDIR="$CASE_DIR" XDG_CONFIG_HOME="$CASE_DIR" ENV= BASH_ENV= "$@"
+  cd "$CASE_DIR" && env HOME="$CASE_DIR" ZDOTDIR="$CASE_DIR" XDG_CONFIG_HOME="$CASE_DIR" ENV= BASH_ENV= "$@"
 }
 
 test_launch_preserves_inherited_git_config() {
   local rec id=git-config-append out status launch result pane_shell count launch_file expected prefix
   rec=$(make_spawn_case "$id" codex "$id")
   read_case_record "$rec"
+  # GIT_CONFIG_NOSYSTEM keeps a host system helper (e.g. Xcode git osxkeychain) out of the probe.
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness 'echo WORKER-RAN >&2; git config --get-all credential.helper; git config --get core.hooksPath')
+    "$id" "$PROJ_DIR" --harness 'echo WORKER-RAN >&2; GIT_CONFIG_NOSYSTEM=1 git config --get-all credential.helper; git config --get core.hooksPath')
   status=$?
   expect_code 0 "$status" "Git configuration probe should spawn: $out"
   launch=$(cat "$LAUNCH_LOG")
