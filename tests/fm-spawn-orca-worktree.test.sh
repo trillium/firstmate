@@ -75,6 +75,18 @@ case "$1 $2" in
     exit 0
     ;;
   "terminal send")
+    # FM_TEST_ORCA_HOLD_PUBLISHED holds the spawn after it published its launch
+    # file but before any launch text reaches the terminal, then delivers nothing.
+    if [ "${FM_TEST_ORCA_HOLD_PUBLISHED:-0}" = 1 ]; then
+      case "$*" in
+        */launch.*)
+          printf '%s\n' "$*" | grep -o "/[^' ]*/launch\.[^' ]*\.sh" | head -1 > "$DIR/published"
+          i=0
+          while [ ! -e "$DIR/release" ] && [ "$i" -lt 100 ]; do /bin/sleep 0.1; i=$((i + 1)); done
+          exit 0
+          ;;
+      esac
+    fi
     if [ -n "${FM_TEST_ORCA_LOG:-}" ]; then
       prev=
       for a in "$@"; do
@@ -657,8 +669,9 @@ EOF
 }
 
 # The spawn owns the credential-bearing file from the moment it publishes it, so
-# an interrupt before the launch command is sent must still remove it. A fake
-# sleep holds the spawn in the pause right after publishing.
+# an interrupt before the launch command is sent must still remove it. The spawn's
+# own pauses use /bin/sleep (no PATH shim reaches them), so the fake Orca send
+# holds the spawn after publishing, before any launch text is delivered.
 test_orca_interrupted_spawn_before_send_removes_launch_file() {
   local sig id case_dir home fb pid status staged i want
   for sig in TERM HUP INT; do
@@ -681,20 +694,8 @@ Confirm the staged credential file is removed.
 EOF
     fb=$(make_orca_fakebin "$case_dir")
     printf '#!/bin/sh\necho "GH_TOKEN=synthetic-interrupt-token"\n' > "$fb/tmux"
-    cat > "$fb/sleep" <<SH
-#!/bin/sh
-if [ "\$1" = 0.3 ] && [ ! -e '$case_dir/published' ]; then
-  for f in /tmp/fm-$id+*/launch.*.sh; do
-    [ -f "\$f" ] || continue
-    printf '%s\n' "\$f" > '$case_dir/published'
-    i=0
-    while [ ! -e '$case_dir/release' ] && [ "\$i" -lt 100 ]; do /bin/sleep 0.1; i=\$((i + 1)); done
-  done
-fi
-exec /bin/sleep "\$@"
-SH
-    chmod +x "$fb/tmux" "$fb/sleep"
-    FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$case_dir/user-home" \
+    chmod +x "$fb/tmux"
+    FM_TEST_ORCA_HOLD_PUBLISHED=1 FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$case_dir/user-home" \
       FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
       FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
       FM_SPAWN_NO_GUARD=1 FM_TEST_ORCA_DIR="$case_dir" \
