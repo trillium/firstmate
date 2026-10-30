@@ -1,0 +1,12 @@
+--- [target 895abcbc] S6 merged-pr-contains-patch (unpushed-to-forge commit sits on no-mistakes mirror) -> exit 0
+remote-tracking refs: no-mistakes/fm/task-x1 origin origin/fm/task-x1 origin/main origin/pr-head 
+task meta present: no
+
+--- [target 895abcbc] S6 merged-pr-different-content (unpushed-to-forge commit sits on no-mistakes mirror) -> exit 1
+remote-tracking refs: no-mistakes/fm/task-x1 origin origin/fm/task-x1 origin/main origin/pr-head 
+  | REFUSED: worktree /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-mirror-pr.aWkmWo/merged-pr-different-content/wt has work not on any remote and not landed.
+  | unpushed commits:
+  | 874da9c add feature
+  | Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+task meta present: yes
+

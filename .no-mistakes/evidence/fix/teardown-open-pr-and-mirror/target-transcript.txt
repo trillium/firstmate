@@ -1,0 +1,33 @@
+--- [target 895abcbc] S1 work only on no-mistakes mirror, no --force -> exit 1
+remote-tracking refs: no-mistakes/fm/task-x1 origin origin/main 
+stderr (first lines):
+  | REFUSED: worktree /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-mirror-drive.lWgQ4u/mirror-only/wt has work not on any remote and not landed.
+  | unpushed commits:
+  | 69ec0ea mirror-only work
+  | Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+worktree present: yes; task meta present: yes
+
+--- [target 895abcbc] S2 same work also pushed to origin (forge) -> exit 0
+remote-tracking refs: no-mistakes/fm/task-x1 origin origin/fm/task-x1 origin/main 
+stderr (first lines):
+worktree present: yes; task meta present: no
+
+--- [target 895abcbc] S3 work only on mirror, --force -> exit 0
+remote-tracking refs: no-mistakes/fm/task-x1 origin origin/main 
+stderr (first lines):
+worktree present: yes; task meta present: no
+
+--- [target 895abcbc] S4 work on mirror and a fork remote -> exit 0
+remote-tracking refs: fork/fm/task-x1 no-mistakes/fm/task-x1 origin origin/main 
+stderr (first lines):
+worktree present: yes; task meta present: no
+
+--- [target 895abcbc] S5 origin has first commit, extra local commit unpushed -> exit 1
+remote-tracking refs: no-mistakes/fm/task-x1 origin origin/fm/task-x1 origin/main 
+stderr (first lines):
+  | REFUSED: worktree /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-mirror-drive.lWgQ4u/mirror-extra-local/wt has work not on any remote and not landed.
+  | unpushed commits:
+  | fbe6e4a local after mirror push
+  | Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+worktree present: yes; task meta present: yes
+
