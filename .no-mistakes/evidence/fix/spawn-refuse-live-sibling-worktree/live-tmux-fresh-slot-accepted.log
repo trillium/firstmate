@@ -1,0 +1,12 @@
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/data/new-task-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/new-task-a1
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/data/new-task-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned new-task-a1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-new-task-a1 worktree=/Users/mini0/.treehouse/proj-e9142a/1/proj
+EXIT=0

@@ -1,0 +1,32 @@
+== spawn transcript ==
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/data/new-task-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/new-task-a1
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/data/new-task-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: treehouse get yielded task sib-task (recorded in state/sib-task.meta) (resolved '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/sib-wt'); refusing to launch into a worktree held by a live sibling task. Inspect target firstmate:fm-new-task-a1
+EXIT=1
+
+== lab tmux windows after refusal ==
+ctl cmd=bash cwd=/Users/mini0/.no-mistakes/worktrees/0bf32a15afdb/01M65E95KCXFA28D7HM013TEQ6
+fm-sib-task cmd=claude cwd=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/sib-wt
+fm-new-task-a1 cmd=bash cwd=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/sib-wt
+
+== sibling worktree still registered ==
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/proj    711a7fb [main]
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/sib-wt  711a7fb [sib]
+.
+..
+.git
+
+== sibling pane (live claude) ==
+────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+ /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/sib-wt
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+ Claude Code'll be able to read, edit, and execute files here.
+ Security guide
+ ❯ No, exit
+   Yes, I trust this folder
+ Enter to confirm · Esc to cancel

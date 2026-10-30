@@ -1,0 +1,2 @@
+ok - real tmux preserves absent/C locale values and reported raw bytes, rejects missing/phantom names and excludes the automatic SSH agent
+not ok - the refusal removed the live sibling's Orca worktree

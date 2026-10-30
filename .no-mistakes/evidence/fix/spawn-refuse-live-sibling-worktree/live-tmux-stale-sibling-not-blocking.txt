@@ -1,0 +1,20 @@
+== sibling record present but its window is gone ==
+window=firstmate:fm-sib-task
+worktree=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.gxg6nN/sib-wt
+backend=tmux
+kind=ship
+harness=claude
+mode=no-mistakes
+yolo=off
+
+== spawn transcript ==
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/data/new-task-a1/launch-brief.md records no ship branch; defaulting to legacy branch fm/new-task-a1
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/data/new-task-a1/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned new-task-a1 harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-new-task-a1 worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/sib-wt
+EXIT=0
+
+== lab tmux windows ==
+ctl cmd=bash cwd=/Users/mini0/.no-mistakes/worktrees/0bf32a15afdb/01M65E95KCXFA28D7HM013TEQ6
+fm-new-task-a1 cmd=claude cwd=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.gxg6nN/sib-wt
