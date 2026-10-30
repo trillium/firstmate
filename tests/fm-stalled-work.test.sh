@@ -187,9 +187,121 @@ test_delivery_surfaces() {
   pass 'bearings projects not_done rows'
 }
 
+# --- remote secondmate homes -------------------------------------------------
+
+# remote_fixture <home> <id> <remote-home>: registers a remote secondmate and
+# returns a fake ssh that serves <remote-home>/state/home-summary.json.
+remote_fixture() {
+  local home=$1 id=$2 rhome=$3
+  mkdir -p "$rhome/state"
+  printf -- '- %s - remote fixture (host: host-%s; root: /remote/root; home: %s; scope: fixture; projects: sample; added 2026-09-01)\n' \
+    "$id" "$id" "$rhome" >> "$home/data/secondmates.md"
+  cat > "$home/fakebin/fake-ssh" <<'SH'
+#!/usr/bin/env bash
+set -u
+while [ "$#" -gt 0 ]; do
+  case "$1" in -o) shift 2 ;; --) shift; break ;; *) exit 90 ;; esac
+done
+shift 2
+remote_home=$(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$3")
+[ -f "$remote_home/state/home-summary.json" ] || exit 1
+cat "$remote_home/state/home-summary.json"
+SH
+  chmod +x "$home/fakebin/fake-ssh"
+}
+
+# write_summary <file> <remote-home> <generated-epoch> <queued-json>
+write_summary() {
+  jq -n --arg home "$2" --argjson epoch "$3" --argjson queued "$4" '{
+    schema:"fm-secondmate-home-summary.v1", hold_classifier_schema:"fm-captain-hold-buckets.v1",
+    generated:"2027-01-01T00:00:00Z", generated_epoch:$epoch, home:$home,
+    valid:true, reason:null, invalidity:{kind:null,ids:[]}, state:"no_active_work",
+    active_children:[], decisions_open:[], holds:[], queued:$queued, landed:[], endpoints:[],
+    counts:{active_children:0,decisions_open:0,holds:0,queued:($queued|length),landed:0,endpoints:0}, omitted:[]
+  }' > "$1"
+}
+
+remote_sweep() { # <home> args...
+  local home=$1
+  shift
+  FM_SSH_BIN="$home/fakebin/fake-ssh" sweep "$home" "$@"
+}
+
+QUEUED_OLD='{"id":"old-q","title":"Old queued","blocked_reason":null,"hold_kind":null,"hold_until":null,"unresolved_blocker_ids":[],"kind":"ship","repo":"sample","since":"2027-01-01"}'
+QUEUED_UNDATED='{"id":"undated-q","title":"Undated queued","blocked_reason":null,"hold_kind":null,"hold_until":null,"unresolved_blocker_ids":[],"kind":"ship","repo":"sample","since":null}'
+
+test_remote_done_item_not_reported() {
+  local home rhome out
+  home=$(new_home remote-done)
+  rhome="$home/remote-home"
+  remote_fixture "$home" rm1 "$rhome"
+  mkdir -p "$home/state/secondmate-summary-cache"
+  chmod 700 "$home/state/secondmate-summary-cache"
+  # The parent's cached copy still lists the item; the remote has since closed it.
+  write_summary "$home/state/secondmate-summary-cache/aaa.json" "$rhome" $((NOW - 3600)) "[$QUEUED_OLD]"
+  write_summary "$rhome/state/home-summary.json" "$rhome" "$NOW" '[]'
+  out=$(remote_sweep "$home" --json) || fail 'sweep failed with a remote home'
+  printf '%s' "$out" | jq -e '[.not_done[].id] | index("old-q") == null' >/dev/null \
+    || fail "an item the remote home already closed was reported from the stale cache: $out"
+  pass 'a remote item closed since the cached summary is not reported'
+}
+
+test_remote_stale_cache_not_judged() {
+  local home rhome out
+  home=$(new_home remote-stale)
+  rhome="$home/remote-home"
+  remote_fixture "$home" rm2 "$rhome"
+  mkdir -p "$home/state/secondmate-summary-cache"
+  chmod 700 "$home/state/secondmate-summary-cache"
+  write_summary "$home/state/secondmate-summary-cache/aaa.json" "$rhome" $((NOW - 13 * 86400)) "[$QUEUED_OLD]"
+  rm -f "$rhome/state/home-summary.json"   # unreachable now: only the old cached copy remains
+  out=$(remote_sweep "$home" --json) || fail 'sweep failed with an unreachable remote home'
+  printf '%s' "$out" | jq -e '[.not_done[].id] | index("old-q") == null' >/dev/null \
+    || fail "work was reported as unstarted from a cached summary 13 days old: $out"
+  printf '%s' "$out" | jq -e '[.unavailable[] | select(.source == "secondmate rm2")] | length == 1' >/dev/null \
+    || fail "the stale cached summary was not disclosed as unchecked: $out"
+  pass 'a day-stale cached summary is disclosed instead of reported as unstarted'
+}
+
+test_remote_newest_cache_wins() {
+  local home rhome out
+  home=$(new_home remote-newest)
+  rhome="$home/remote-home"
+  remote_fixture "$home" rm3 "$rhome"
+  mkdir -p "$home/state/secondmate-summary-cache"
+  chmod 700 "$home/state/secondmate-summary-cache"
+  # Two cached copies for one home (for example after a host rename); the older sorts first.
+  write_summary "$home/state/secondmate-summary-cache/aaa.json" "$rhome" $((NOW - 7200)) "[$QUEUED_OLD]"
+  write_summary "$home/state/secondmate-summary-cache/bbb.json" "$rhome" $((NOW - 600)) '[]'
+  rm -f "$rhome/state/home-summary.json"
+  out=$(remote_sweep "$home" --json) || fail 'sweep failed with two cached copies'
+  printf '%s' "$out" | jq -e '[.not_done[].id] | index("old-q") == null' >/dev/null \
+    || fail "an older cached copy outranked the newer one: $out"
+  pass 'the newest cached summary for a home is the one judged'
+}
+
+test_remote_missing_date_is_unknown() {
+  local home rhome out plain
+  home=$(new_home remote-undated)
+  rhome="$home/remote-home"
+  remote_fixture "$home" rm4 "$rhome"
+  write_summary "$rhome/state/home-summary.json" "$rhome" "$NOW" "[$QUEUED_UNDATED]"
+  out=$(remote_sweep "$home" --json) || fail 'sweep failed on an undated remote row'
+  printf '%s' "$out" | jq -e '[.not_done[] | select(.id == "undated-q" and .since == "unknown")] | length == 1' >/dev/null \
+    || fail "an undated row did not render its age as unknown: $out"
+  plain=$(remote_sweep "$home" --plain) || fail 'plain sweep failed'
+  case "$plain" in *[0-9][0-9][0-9][0-9]d*) fail "an epoch-based age leaked into the plain list: $plain" ;; esac
+  case "$plain" in *'undated-q on rm4) - unstarted unknown'*) ;; *) fail "plain list did not show an unknown age: $plain" ;; esac
+  pass 'a row with no recorded date renders its age as unknown'
+}
+
 test_classes
 test_plain_and_quiet
 test_quota_resume
 test_notify
 test_store_absent
 test_delivery_surfaces
+test_remote_done_item_not_reported
+test_remote_stale_cache_not_judged
+test_remote_newest_cache_wins
+test_remote_missing_date_is_unknown

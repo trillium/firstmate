@@ -8,7 +8,8 @@
 # record a note on a bead. This is the read-only sweep behind the NOT DONE
 # delivery surfaces (bin/fm-session-start.sh, bin/fm-wake-drain.sh on a
 # heartbeat wake, and the not_done[] list in bin/fm-bearings-snapshot.sh).
-# It never writes to any bead store, never spawns, never contacts a remote.
+# It never writes to any bead store or the summary cache and never spawns; its
+# only remote contact is the read of a remote home's published summary.
 #
 # Classes (one row per item, oldest first):
 #   blocked    a blocked bead in the task store, a backlog row with a recorded
@@ -25,12 +26,19 @@
 #   - The main backlog, through bin/fm-fleet-snapshot.sh --contribution-input.
 #   - state/<id>.status for last-event age (the latest [at=<epoch>] tag, else
 #     the file's modification time, else the backlog row's filed date).
-#   - Every registered secondmate home through its published home summary: the
-#     home's own state/home-summary.json when the home is local, else the
-#     parent-side cache in state/secondmate-summary-cache, matched on the
-#     summary's home path. No ssh and no second remote reader. Summaries carry
-#     no per-item event age, so only queued and blocked rows are judged there;
-#     a stale summary is disclosed in the unavailable list.
+#   - Every registered secondmate home through its published home summary: a
+#     remote home's state/home-summary.json is read live through fm-on.sh
+#     (concurrent, bounded by FM_STALLED_REMOTE_TIMEOUT, default 8 seconds), so
+#     work the remote has since closed is not reported; a local home's own
+#     state/home-summary.json is read directly. Only when the live read fails
+#     does the newest matching copy in the parent-side cache
+#     state/secondmate-summary-cache answer, and a cached copy over a day old
+#     is listed in the unavailable list instead of judged. Summaries carry no
+#     per-item event age, so only queued and blocked rows are judged there; a
+#     stale summary is disclosed in the unavailable list. A row with no
+#     recorded date shows its age as "unknown". FM_STALLED_REMOTE_FETCH=0 skips
+#     the live read for a caller that has just refreshed the cache itself
+#     (bin/fm-bearings-snapshot.sh, after its fleet snapshot).
 #   - `task list --status blocked --json` when the task CLI is on PATH. A
 #     failure or an absent CLI is reported under unavailable, never as
 #     "nothing blocked". A bead that a backlog item names is annotated with
@@ -153,29 +161,68 @@ else
 fi
 
 # --- registered secondmate homes (published summaries only) -----------------
+# A remote home's summary is read live first (the same fm-on.sh read the fleet
+# snapshot uses, concurrent and bounded), so a queued row the remote has since
+# closed cannot survive in the output. Only when that read fails does the
+# parent-side cache answer, and then the newest cached copy for the home wins.
+# A cached copy older than a day is disclosed instead of judged: it can no
+# longer say what is unstarted now.
 SMS='[]'
 REG="$DATA/secondmates.md"
 CACHE="$STATE/secondmate-summary-cache"
+REMOTE_TIMEOUT=${FM_STALLED_REMOTE_TIMEOUT:-8}
+case "$REMOTE_TIMEOUT" in '' | *[!0-9]* | 0) REMOTE_TIMEOUT=8 ;; esac
+SUMMARY_MAX_BYTES=${FM_SNAPSHOT_SECONDMATE_MAX_BYTES:-262144}
+# shellcheck disable=SC2016  # a jq filter fragment; $h is a jq variable
+SUMMARY_OK='.schema == "fm-secondmate-home-summary.v1" and .home == $h and (.queued | type == "array")'
+FETCH_DIR=''
 if [ -f "$REG" ]; then
+  FETCH_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fm-stalled-fetch.XXXXXX" 2>/dev/null) || FETCH_DIR=''
+  trap '[ -z "$FETCH_DIR" ] || rm -rf "$FETCH_DIR"' EXIT
+  if [ -n "$FETCH_DIR" ] && [ "${FM_STALLED_REMOTE_FETCH:-1}" != 0 ]; then
+    while IFS= read -r line; do
+      case "$line" in '- '*) ;; *) continue ;; esac
+      secondmate_registry_parse_line "$line" || continue
+      [ "$SECONDMATE_REGISTRY_REMOTE" = 1 ] || continue
+      case "$SECONDMATE_REGISTRY_ID" in *[!A-Za-z0-9._-]*) continue ;; esac
+      (
+        FM_HOME="$FM_HOME" fm_run_timed "$REMOTE_TIMEOUT" "$SCRIPT_DIR/fm-on.sh" "$SECONDMATE_REGISTRY_ID" \
+          fm-remote-file.sh get state/home-summary.json "$SUMMARY_MAX_BYTES" 2>/dev/null \
+          | LC_ALL=C head -c "$((SUMMARY_MAX_BYTES + 1))" > "$FETCH_DIR/$SECONDMATE_REGISTRY_ID.json"
+      ) &
+    done < "$REG"
+    wait
+  fi
   while IFS= read -r line; do
     case "$line" in '- '*) ;; *) continue ;; esac
     secondmate_registry_parse_line "$line" || continue
-    sid=$SECONDMATE_REGISTRY_ID shome=$SECONDMATE_REGISTRY_HOME summary=''
-    if [ "$SECONDMATE_REGISTRY_REMOTE" != 1 ] && [ -f "$shome/state/home-summary.json" ]; then
+    sid=$SECONDMATE_REGISTRY_ID shome=$SECONDMATE_REGISTRY_HOME summary='' cached=0
+    if [ "$SECONDMATE_REGISTRY_REMOTE" = 1 ]; then
+      if [ -n "$FETCH_DIR" ] && [ -s "$FETCH_DIR/$sid.json" ] \
+        && [ "$(LC_ALL=C wc -c < "$FETCH_DIR/$sid.json" | tr -d ' ')" -le "$SUMMARY_MAX_BYTES" ]; then
+        summary=$(jq -c -s --arg h "$shome" '.[0] | select(('"$SUMMARY_OK"'))' "$FETCH_DIR/$sid.json" 2>/dev/null | head -n 1)
+      fi
+    elif [ -f "$shome/state/home-summary.json" ]; then
       summary=$(cat "$shome/state/home-summary.json" 2>/dev/null)
     fi
     if [ -z "$summary" ] && [ -d "$CACHE" ]; then
-      summary=$(cat "$CACHE"/*.json 2>/dev/null | jq -c --arg h "$shome" \
-        'select(.schema == "fm-secondmate-home-summary.v1" and .home == $h)' 2>/dev/null | head -n 1)
+      summary=$(cat "$CACHE"/*.json 2>/dev/null | jq -c -s --arg h "$shome" \
+        '[.[] | select(('"$SUMMARY_OK"'))] | sort_by(.generated_epoch // 0) | last // empty' 2>/dev/null | head -n 1)
+      [ -z "$summary" ] || cached=1
     fi
     if [ -z "$summary" ] || ! printf '%s' "$summary" | jq -e '.queued | type == "array"' >/dev/null 2>&1; then
       unavailable "secondmate $sid" 'no published home summary, so its queued work was not checked'
       continue
     fi
+    gen=$(printf '%s' "$summary" | jq -r '.generated_epoch // 0')
+    case "$gen" in '' | *[!0-9]*) gen=0 ;; esac
+    if [ "$cached" = 1 ] && { [ "$gen" -le 0 ] || [ $((NOW - gen)) -gt 86400 ]; }; then
+      unavailable "secondmate $sid" 'it was unreachable and its cached home summary is over a day old, so its queued work was not checked'
+      continue
+    fi
     SMS=$(printf '%s' "$SMS" | jq -c --arg id "$sid" --argjson s "$summary" '
       . + [{id:$id, generated_epoch:($s.generated_epoch // 0), queued:$s.queued, holds:($s.holds // [])}]')
-    gen=$(printf '%s' "$summary" | jq -r '.generated_epoch // 0')
-    if [ "$gen" -gt 0 ] 2>/dev/null && [ $((NOW - gen)) -gt 86400 ]; then
+    if [ "$gen" -gt 0 ] && [ $((NOW - gen)) -gt 86400 ]; then
       unavailable "secondmate $sid" "its home summary is $(((NOW - gen) / 86400)) day(s) old, so newer work may be missing"
     fi
   done < "$REG"
@@ -187,7 +234,9 @@ MODEL=$(jq -n -c \
   --argjson blocked_min "$BLOCKED_MIN" \
   --argjson backlog "$BACKLOG" --argjson statuses "$STATUSES" --argjson beads "$BEADS" \
   --argjson sms "$SMS" --argjson unavail "$UNAVAIL" '
-  def epoch_of($d): (($d // "1970-01-01") | tostring | sub("\\.[0-9]+";"") | if test("T") then . else . + "T00:00:00Z" end | fromdateiso8601);
+  def epoch_of($d):
+    if $d == null or ($d | tostring) == "" then null
+    else try (($d | tostring) | sub("\\.[0-9]+";"") | if test("T") then . else . + "T00:00:00Z" end | fromdateiso8601) catch null end;
   def human($s): if $s < 3600 then "\(($s / 60) | floor)m" elif $s < 172800 then "\(($s / 3600) | floor)h" else "\(($s / 86400) | floor)d" end;
   def scrub: ((. // "") | tostring) | gsub("(?<p>^|[ (])(~?/[A-Za-z0-9._~-]+){2,}"; "\(.p)<path>") | gsub("\\s+"; " ") | sub("^ +";"");
   def clip($n): if length > $n then .[0:($n - 3)] + "..." else . end;
@@ -201,8 +250,8 @@ MODEL=$(jq -n -c \
     else $default end;
   def row($home; $id; $title; $state; $at; $why; $needs; $src; $extra):
     {home:$home, id:$id, title:($title | scrub | clip(80)), state:$state,
-     since:human($now - $at), why:($why | scrub | clip(140)), needs:$needs,
-     age_seconds:($now - $at), source:$src, quota:(($why | quota_hit) or ($needs | startswith("resumes: when a configured")))} + $extra;
+     since:(if $at == null then "unknown" else human($now - $at) end), why:($why | scrub | clip(140)), needs:$needs,
+     age_seconds:(if $at == null then -1 else $now - $at end), source:$src, quota:(($why | quota_hit) or ($needs | startswith("resumes: when a configured")))} + $extra;
   def gated($r):
     ($r.hold_kind == "captain") or (($r.kind // "") | IN("captain", "decision", "secondmate"))
     or ((($r.unresolved_blocker_ids // []) | length) > 0)
@@ -213,7 +262,7 @@ MODEL=$(jq -n -c \
     elif $r.blocked_reason != null then
       row($home; $r.id; $r.title; "blocked"; epoch_of($r.since); $r.blocked_reason;
           needs_for($r.blocked_reason; "firstmate: clear the blocker or ask the captain to drop it"); "backlog"; {backlog_state:"queued", repo:($r.repo // null)})
-    elif ($now - epoch_of($r.since)) > $grace then
+    elif (epoch_of($r.since) | . == null or ($now - .) > $grace) then
       row($home; $r.id; $r.title; "unstarted"; epoch_of($r.since);
           "queued with no dependency or date gate and never dispatched"; "firstmate: dispatch it, or ask the captain whether to drop it"; "backlog"; {backlog_state:"queued", repo:($r.repo // null)})
     else empty end;
@@ -226,7 +275,7 @@ MODEL=$(jq -n -c \
           else row("main"; $r.id; $r.title; "blocked"; $s.at; $s.text;
                    needs_for($s.text; "firstmate: clear the blocker named in why"); "status"; {backlog_state:"in_flight", repo:($r.repo // null)}) end
         else ((if $s != null then $s.at else epoch_of($r.since) end)) as $at
-          | if ($now - $at) > $stall then
+          | if $at == null or ($now - $at) > $stall then
               row("main"; $r.id; $r.title; "stalled"; $at;
                   (if $s != null then "no status event since the last report" else "in flight with no status event on record" end);
                   "firstmate: check the worker and relaunch or close it"; "status"; {backlog_state:"in_flight", repo:($r.repo // null)})
