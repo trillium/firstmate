@@ -1,0 +1,5 @@
+rc=0
+error: herdr launcher pane 'w9:p9' could not be read in session 'fm-lab-stale3-81182-14219'; refusing to place a worker without its exact parent workspace
+rc=1
+error: herdr launcher pane '1-1' is stale - in session 'fm-lab-stale3-81182-14219' that pane no longer exists or names no tab or workspace; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace
+rc=1
