@@ -228,16 +228,6 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 mkdir -p "$STATE"
-# Hold this state directory open for the main loop's teardown check: a
-# directory recreated at the same path is then a different directory, and the
-# held descriptor keeps its inode from being reused. It is opened before the
-# lock claim so a teardown during startup is not mistaken for the directory
-# this watcher claimed in. A host that cannot open a directory keeps reading a
-# lock with no holder as a teardown.
-WATCH_STATE_HELD=0
-if { exec 6<"$STATE"; } 2>/dev/null; then
-  WATCH_STATE_HELD=1
-fi
 # A home that never existed (a state-only test fixture) is not a home that
 # disappeared, so the per-poll home-gone exit below applies only when it did.
 WATCH_HOME_EXISTED=0
@@ -3859,11 +3849,8 @@ while :; do
   # into nothing, or into a live home from a checkout that no longer exists.
   # A detached helper this watcher started (home-summary refresh, reconcile)
   # can recreate a deleted state directory before the next poll, so a lock
-  # with no holder at all is read as the same teardown when the state directory
-  # is no longer the one this watcher holds open. A lock with no holder in the
-  # same directory was released by a successor - one still relinking the lock
-  # it reclaimed from this watcher, or one that already delivered its wake and
-  # exited before this poll - so it is the self-eviction below.
+  # with no holder at all is read as the same teardown: only a fresh watcher
+  # ever recreates the lock, and that case is the self-eviction below.
   # Scoped to this process alone: no other watcher is signalled.
   if [ "$WATCH_HOME_EXISTED" -eq 1 ] && [ ! -d "$FM_HOME" ]; then
     echo "watcher: exiting - home no longer exists: $FM_HOME" >&2
@@ -3871,8 +3858,7 @@ while :; do
   elif [ ! -d "$STATE" ]; then
     echo "watcher: exiting - state directory no longer exists: $STATE" >&2
     exit 1
-  elif [ ! -e "$WATCH_LOCK/pid" ] \
-    && { [ "$WATCH_STATE_HELD" -ne 1 ] || [ ! /dev/fd/6 -ef "$STATE" ]; }; then
+  elif [ ! -e "$WATCH_LOCK/pid" ]; then
     echo "watcher: exiting - state directory was torn down (singleton lock removed): $STATE" >&2
     exit 1
   elif [ ! -d "$SCRIPT_DIR" ]; then
@@ -4587,7 +4573,7 @@ EOF
   # Heartbeat: the watcher runs a cheap fleet-scan at a regular cadence no matter
   # what. Time-based via .last-heartbeat mtime; interval doubles per consecutive
   # no-change heartbeat (idle fleet) up to HEARTBEAT_MAX, and resets on any
-  # surfaced non-heartbeat wake or actionable heartbeat backstop.
+  # surfaced non-heartbeat wake.
   streak=$(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0)
   [ "$streak" -gt 12 ] && streak=12
   hb=$(( HEARTBEAT * (1 << streak) ))
@@ -4610,7 +4596,7 @@ EOF
       fm_wake_append heartbeat heartbeat heartbeat || exit 1
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced || true
-      wake "heartbeat" actionable
+      wake "heartbeat"
     elif heartbeat_reap_finds_actionable; then
       # A finished or dead record the reaper can clear (bin/fm-reap.sh's dry run
       # names a pending action): the heartbeat handler runs `scan --act`, so the
@@ -4618,7 +4604,7 @@ EOF
       fm_wake_append heartbeat heartbeat heartbeat || exit 1
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced || true
-      wake "heartbeat" actionable
+      wake "heartbeat"
     else
       if ! mark_all_captain_relevant_surfaced; then
         fm_wake_append heartbeat heartbeat heartbeat || exit 1
