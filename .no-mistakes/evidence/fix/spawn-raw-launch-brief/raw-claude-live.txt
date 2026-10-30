@@ -1,0 +1,36 @@
+### fm-spawn output (raw launch: claude --model haiku --setting-sources project,local)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+spawned rawlab-claude harness=claude kind=ship mode=local-only yolo=on window=primary:fm-rawlab-claude worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/treehouse/.treehouse/notes-24f9ca/3/notes
+spawn-exit=0
+
+### staged launch line (tail)
+/git-config.s1793346890.37388.14639.sh' || return 1 2>/dev/null || exit 1; env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI claude --model haiku --setting-sources project,local ': Firstmate operational input waiting: read '\''/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/state/operational-inbox/1793346891-6ffed36530960c8f.msg'\'' and handle its contents as Firstmate operational input.'
+
+
+### published record (first 400 bytes, cat -v; M-bM-^AM-# = U+2063)
+M-bM-^AM-#FIRSTMATE_OP: v1 launch-brief: # Current worker role contract
+You are a crewmate: an autonomous worker agent managed by firstmate.
+This section establishes your current identity before every project or task instruction below and supersedes any conflicting role identity in those instructions.
+Do the assigned work yourself and report only to firstmate; do not adopt a firstmate or secondmate super
+
+### real Claude Code worker pane
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Haiku 4.5 · Claude API
+ ▝▝   ▝▝   /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/treehouse/.treehouse/notes-24f9ca/3/notes
+❯ : Firstmate operational input waiting: read '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/state/operational-inbox/1793346891-6ffed36530960c8f.msg' and handle its contents
+  as Firstmate operational input.
+  Read 1 file (ctrl+o to expand)
+⏺ I'll handle this Firstmate operational input. Let me first verify isolation, then execute the task.
+⏺ Bash(pwd -P && git rev-parse --show-toplevel)
+  ⎿  Waiting…
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+   pwd -P && git rev-parse --show-toplevel
+   Run shell command
+ This command requires approval
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: pwd -P
+   3. No
+ Esc to cancel · Tab to amend

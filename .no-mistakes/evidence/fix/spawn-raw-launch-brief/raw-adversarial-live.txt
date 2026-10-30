@@ -1,0 +1,18 @@
+### wrap
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: raw launch command is not a plain single command for a known harness (it is compound, substituted, wrapped, or starts with an unknown program), so the launch brief was not appended; put __BRIEF__ where the agent takes its prompt, for example: my-agent --flag "$(__OPINPUT__ encode launch-brief < __BRIEF__)"
+spawned rawlab-wrap harness=env kind=ship mode=local-only yolo=on window=primary:fm-rawlab-wrap worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/treehouse/.treehouse/notes-24f9ca/4/notes
+spawn-exit=0
+staged tail: || return 1 2>/dev/null || exit 1; env -u CLAUDECODE claude --version
+2.1.285 (Claude Code)
+mini0@mini0:/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/treehouse/.treehouse/notes-24f9ca/4/notes/ >
+### subst
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+warning: raw launch command is not a plain single command for a known harness (it is compound, substituted, wrapped, or starts with an unknown program), so the launch brief was not appended; put __BRIEF__ where the agent takes its prompt, for example: my-agent --flag "$(__OPINPUT__ encode launch-brief < __BRIEF__)"
+spawned rawlab-subst harness=claude kind=ship mode=local-only yolo=on window=primary:fm-rawlab-subst worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/treehouse/.treehouse/notes-24f9ca/5/notes
+spawn-exit=0
+staged tail: KED_AS -u GEMINI_CLI claude --model $(echo haiku | tr -d x) --version
+2.1.285 (Claude Code)
+mini0@mini0:/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/treehouse/.treehouse/notes-24f9ca/5/notes/ >

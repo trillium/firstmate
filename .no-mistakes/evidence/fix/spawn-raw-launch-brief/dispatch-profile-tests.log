@@ -37,10 +37,9 @@ ok - active crew-dispatch profile allows an explicit resolved harness
 ok - active crew-dispatch profile allows the legacy positional harness form
 ok - active crew-dispatch profile allows the raw launch-command escape hatch
 ok - a raw rovo launch is not given the positional launch-brief argument
-ok - a raw launch whose command only starts with rovo still gets the launch brief
+ok - a plain single raw launch of a known harness gets the launch brief appended
 ok - a raw claude launch gets the record-backed launch-brief doorbell
-ok - a compound raw launch without __BRIEF__ launches unchanged with a warning
-ok - a quoted operator or redirection in a raw launch still gets the brief appended
+ok - a raw launch that is not a plain single known-harness command launches unchanged with a warning
 ok - a compound raw launch places the brief where it names __BRIEF__, with nothing appended
 ok - a chained raw launch commits through the AI-trailer strip in every step
 ok - claude receives --model and --effort profile flags
@@ -93,7 +92,7 @@ ok - exclusions stay in the home that configured them and skip secondmate agents
 ok - batch dispatch forwards shared --harness, --model, and --effort to every pair
 ok - claude forwards firstmate's CLAUDE_CONFIG_DIR so the crewmate uses the same credential store
 ok - the primary-owned Lavish server address reaches every worker launch
-cat: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-dispatch-profile.sl2n5k/profile-lavish-ambient/pane.log: No such file or directory
+cat: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-spawn-dispatch-profile.AwoRAR/profile-lavish-ambient/pane.log: No such file or directory
 ok - absent Lavish configuration preserves the destination environment
 ok - claude omits the config-dir prefix when firstmate runs with the single-store default
 ok - absent config/claude-permission-mode defaults to --dangerously-skip-permissions

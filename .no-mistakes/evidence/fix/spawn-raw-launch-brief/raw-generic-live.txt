@@ -1,0 +1,33 @@
+### Scenario A: raw 'custom-agent --flag; cleanup'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp
+warning: raw launch command is not a plain single command for a known harness (it is compound, substituted, wrapped, or starts with an unknown program), so the launch brief was not appended; put __BRIEF__ where the agent takes its prompt, for example: my-agent --flag "$(__OPINPUT__ encode launch-brief < __BRIEF__)"
+spawned rawlab-cmpd harness=custom-agent kind=ship mode=local-only yolo=on window=primary:fm-rawlab-cmpd worktree=/Users/mini0/.treehouse/notes-24f9ca/1/notes
+spawn-exit=0
+staged tail: || exit 1; custom-agent --flag; cleanup
+custom-agent argv:
+argc=1
+argv[1]=--flag
+cleanup argv:
+cleanup argc=0
+
+### Scenario B: raw 'custom-agent --flag;'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp
+warning: raw launch command is not a plain single command for a known harness (it is compound, substituted, wrapped, or starts with an unknown program), so the launch brief was not appended; put __BRIEF__ where the agent takes its prompt, for example: my-agent --flag "$(__OPINPUT__ encode launch-brief < __BRIEF__)"
+spawned rawlab-trail harness=custom-agent kind=ship mode=local-only yolo=on window=primary:fm-rawlab-trail worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/treehouse/.treehouse/notes-24f9ca/1/notes
+spawn-exit=0
+staged tail: ev/null || exit 1; custom-agent --flag;
+
+### Scenario C: __BRIEF__ placement in compound command
+custom-agent --flag "$(__OPINPUT__ encode launch-brief < __BRIEF__)"; cleanup
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+spawned rawlab-place harness=custom-agent kind=ship mode=local-only yolo=on window=primary:fm-rawlab-place worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/treehouse/.treehouse/notes-24f9ca/2/notes
+spawn-exit=0
+staged tail: ent --flag "$('/Users/mini0/.no-mistakes/worktrees/cb10e94bf57f/01M65TR9BJBJP5K211NC45WDXY/bin/fm-operational-input.sh' encode launch-brief < '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.SaiMBp/data/rawlab-place/launch-brief.md')"; cleanup
+custom-agent argv (first 500 bytes, cat -v):
+argc=2
+argv[1]=--flag
+argv[2]=M-bM-^AM-#FIRSTMATE_OP: v1 launch-brief: # Current worker role contract
+You are a crewmate: an autonomous worker agent managed by firstmate.
+This section establishes your current identity before every project or task instruction below and supersedes any conflicting role identity in those instructions.
+Do the assigned work yourself and report only to firstmate; do not adopt a firstmate or secondmate supervisor identity, delegate the task, run fleet supervision, or address t
