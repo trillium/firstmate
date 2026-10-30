@@ -1,0 +1,7 @@
+### PATH without /usr/sbin: /Users/mini0/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/mini0/.local/bin:/opt/homebrew/bin:/opt/homebrew/bin
+## harness=claude
+ok - fm-teardown.sh backend=t3code secondmate: interrupts and archives, then ends the home's lingering provider process before the home is removed; an unprovable scan keeps the home
+exit=0
+## harness=codex
+ok - fm-teardown.sh backend=t3code secondmate: interrupts and archives, then ends the home's lingering provider process before the home is removed; an unprovable scan keeps the home
+exit=0

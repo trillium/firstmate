@@ -1,0 +1,5 @@
+PATH=/Users/mini0/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/mini0/.local/bin:/opt/homebrew/bin:/opt/homebrew/bin
+command -v lsof: (none on PATH)
+fm_lsof_bin: /usr/sbin/lsof
+rc=0
+fm_lsof_bin with FM_LSOF_FALLBACK_DIRS='': rc=1

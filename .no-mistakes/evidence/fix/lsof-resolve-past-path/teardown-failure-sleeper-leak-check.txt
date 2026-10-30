@@ -1,0 +1,9 @@
+### Current test (fix applied), teardown forced to fail:
+not ok - lsof-off-path-reap: teardown should succeed: expected exit 0, got 3
+test-exit=1
+surviving sleepers rooted in the test sandbox: 0
+
+### Same test with the kill/wait-on-failure block removed (pre-review-fix shape):
+not ok - lsof-off-path-reap: teardown should succeed: expected exit 0, got 3
+test-exit=1
+surviving sleepers rooted in the test sandbox: 1
