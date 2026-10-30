@@ -28,16 +28,17 @@
 #     the file's modification time, else the backlog row's filed date).
 #   - Every registered secondmate home through its published home summary: a
 #     remote home's state/home-summary.json is read live through fm-on.sh
-#     (concurrent, bounded by FM_STALLED_REMOTE_TIMEOUT, default 8 seconds), so
-#     work the remote has since closed is not reported; a local home's own
+#     (concurrent, bounded at 8 seconds); a local home's own
 #     state/home-summary.json is read directly. Only when the live read fails
 #     does the newest matching copy in the parent-side cache
-#     state/secondmate-summary-cache answer, and a cached copy over a day old
-#     is listed in the unavailable list instead of judged. Summaries carry no
-#     per-item event age, so only queued and blocked rows are judged there; a
-#     stale summary is disclosed in the unavailable list. A row with no
-#     recorded date shows its age as "unknown". FM_STALLED_REMOTE_FETCH=0 skips
-#     the live read for a caller that has just refreshed the cache itself
+#     state/secondmate-summary-cache answer. A remote home republishes its
+#     summary only at session start, spawn, and teardown, so a summary can lag
+#     work the home has since closed: whatever its source, a summary over a day
+#     old (or with no generated_epoch) is listed in the unavailable list with
+#     its age instead of judged. Summaries carry no per-item event age, so only
+#     queued and blocked rows are judged there. A row with no recorded date
+#     shows its age as "unknown". FM_STALLED_REMOTE_FETCH=0 skips the live read
+#     for a caller that has just refreshed the cache itself
 #     (bin/fm-bearings-snapshot.sh, after its fleet snapshot).
 #   - `task list --status blocked --json` when the task CLI is on PATH. A
 #     failure or an absent CLI is reported under unavailable, never as
@@ -162,16 +163,13 @@ fi
 
 # --- registered secondmate homes (published summaries only) -----------------
 # A remote home's summary is read live first (the same fm-on.sh read the fleet
-# snapshot uses, concurrent and bounded), so a queued row the remote has since
-# closed cannot survive in the output. Only when that read fails does the
+# snapshot uses, concurrent and bounded). Only when that read fails does the
 # parent-side cache answer, and then the newest cached copy for the home wins.
-# A cached copy older than a day is disclosed instead of judged: it can no
-# longer say what is unstarted now.
+# Any summary older than a day is disclosed instead of judged: it can no longer
+# say what is unstarted now.
 SMS='[]'
 REG="$DATA/secondmates.md"
 CACHE="$STATE/secondmate-summary-cache"
-REMOTE_TIMEOUT=${FM_STALLED_REMOTE_TIMEOUT:-8}
-case "$REMOTE_TIMEOUT" in '' | *[!0-9]* | 0) REMOTE_TIMEOUT=8 ;; esac
 SUMMARY_MAX_BYTES=${FM_SNAPSHOT_SECONDMATE_MAX_BYTES:-262144}
 # shellcheck disable=SC2016  # a jq filter fragment; $h is a jq variable
 SUMMARY_OK='.schema == "fm-secondmate-home-summary.v1" and .home == $h and (.queued | type == "array")'
@@ -186,7 +184,7 @@ if [ -f "$REG" ]; then
       [ "$SECONDMATE_REGISTRY_REMOTE" = 1 ] || continue
       case "$SECONDMATE_REGISTRY_ID" in *[!A-Za-z0-9._-]*) continue ;; esac
       (
-        FM_HOME="$FM_HOME" fm_run_timed "$REMOTE_TIMEOUT" "$SCRIPT_DIR/fm-on.sh" "$SECONDMATE_REGISTRY_ID" \
+        FM_HOME="$FM_HOME" fm_run_timed 8 "$SCRIPT_DIR/fm-on.sh" "$SECONDMATE_REGISTRY_ID" \
           fm-remote-file.sh get state/home-summary.json "$SUMMARY_MAX_BYTES" 2>/dev/null \
           | LC_ALL=C head -c "$((SUMMARY_MAX_BYTES + 1))" > "$FETCH_DIR/$SECONDMATE_REGISTRY_ID.json"
       ) &
@@ -196,7 +194,7 @@ if [ -f "$REG" ]; then
   while IFS= read -r line; do
     case "$line" in '- '*) ;; *) continue ;; esac
     secondmate_registry_parse_line "$line" || continue
-    sid=$SECONDMATE_REGISTRY_ID shome=$SECONDMATE_REGISTRY_HOME summary='' cached=0
+    sid=$SECONDMATE_REGISTRY_ID shome=$SECONDMATE_REGISTRY_HOME summary=''
     if [ "$SECONDMATE_REGISTRY_REMOTE" = 1 ]; then
       if [ -n "$FETCH_DIR" ] && [ -s "$FETCH_DIR/$sid.json" ] \
         && [ "$(LC_ALL=C wc -c < "$FETCH_DIR/$sid.json" | tr -d ' ')" -le "$SUMMARY_MAX_BYTES" ]; then
@@ -208,7 +206,6 @@ if [ -f "$REG" ]; then
     if [ -z "$summary" ] && [ -d "$CACHE" ]; then
       summary=$(cat "$CACHE"/*.json 2>/dev/null | jq -c -s --arg h "$shome" \
         '[.[] | select(('"$SUMMARY_OK"'))] | sort_by(.generated_epoch // 0) | last // empty' 2>/dev/null | head -n 1)
-      [ -z "$summary" ] || cached=1
     fi
     if [ -z "$summary" ] || ! printf '%s' "$summary" | jq -e '.queued | type == "array"' >/dev/null 2>&1; then
       unavailable "secondmate $sid" 'no published home summary, so its queued work was not checked'
@@ -216,15 +213,16 @@ if [ -f "$REG" ]; then
     fi
     gen=$(printf '%s' "$summary" | jq -r '.generated_epoch // 0')
     case "$gen" in '' | *[!0-9]*) gen=0 ;; esac
-    if [ "$cached" = 1 ] && { [ "$gen" -le 0 ] || [ $((NOW - gen)) -gt 86400 ]; }; then
-      unavailable "secondmate $sid" 'it was unreachable and its cached home summary is over a day old, so its queued work was not checked'
+    if [ "$gen" -le 0 ]; then
+      unavailable "secondmate $sid" 'its home summary has no generation time, so its queued work was not checked'
+      continue
+    fi
+    if [ $((NOW - gen)) -gt 86400 ]; then
+      unavailable "secondmate $sid" "its home summary is $(((NOW - gen) / 86400)) day(s) old, so its queued work was not checked"
       continue
     fi
     SMS=$(printf '%s' "$SMS" | jq -c --arg id "$sid" --argjson s "$summary" '
       . + [{id:$id, generated_epoch:($s.generated_epoch // 0), queued:$s.queued, holds:($s.holds // [])}]')
-    if [ "$gen" -gt 0 ] && [ $((NOW - gen)) -gt 86400 ]; then
-      unavailable "secondmate $sid" "its home summary is $(((NOW - gen) / 86400)) day(s) old, so newer work may be missing"
-    fi
   done < "$REG"
 fi
 

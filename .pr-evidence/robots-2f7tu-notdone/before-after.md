@@ -9,7 +9,9 @@ flowchart LR
   end
   subgraph After
     L[live read of the remote summary] --> N2[NOT DONE: only what the remote still has queued, undated shows unknown]
-    L -. read fails .-> C2[newest cached copy, disclosed and not judged if over a day old]
+    L -. read fails .-> C2[newest cached copy]
+    L --> S[any summary over a day old: disclosed with its age, not judged]
+    C2 --> S
   end
 ```
 

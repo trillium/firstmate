@@ -263,6 +263,21 @@ test_remote_stale_cache_not_judged() {
   pass 'a day-stale cached summary is disclosed instead of reported as unstarted'
 }
 
+test_remote_stale_live_summary_not_judged() {
+  local home rhome out
+  home=$(new_home remote-stale-live)
+  rhome="$home/remote-home"
+  remote_fixture "$home" rm5 "$rhome"
+  # Reachable, but its published summary was last republished 13 days ago.
+  write_summary "$rhome/state/home-summary.json" "$rhome" $((NOW - 13 * 86400)) "[$QUEUED_OLD]"
+  out=$(remote_sweep "$home" --json) || fail 'sweep failed with a stale live summary'
+  printf '%s' "$out" | jq -e '[.not_done[].id] | index("old-q") == null' >/dev/null \
+    || fail "work was reported as unstarted from a live summary 13 days old: $out"
+  printf '%s' "$out" | jq -e '[.unavailable[] | select(.source == "secondmate rm5" and (.reason | test("13 day")))] | length == 1' >/dev/null \
+    || fail "the stale live summary was not disclosed with its age: $out"
+  pass 'a day-stale live summary is disclosed with its age instead of reported as unstarted'
+}
+
 test_remote_newest_cache_wins() {
   local home rhome out
   home=$(new_home remote-newest)
@@ -303,5 +318,6 @@ test_store_absent
 test_delivery_surfaces
 test_remote_done_item_not_reported
 test_remote_stale_cache_not_judged
+test_remote_stale_live_summary_not_judged
 test_remote_newest_cache_wins
 test_remote_missing_date_is_unknown
