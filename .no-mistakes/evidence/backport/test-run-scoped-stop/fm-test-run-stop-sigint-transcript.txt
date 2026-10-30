@@ -1,0 +1,11 @@
+=== S4: Ctrl-C (SIGINT to the run's process group, as a terminal does)
+$ kill -INT -- -65319   # process group of run C
+C runner exit status: 130 (after 0s)
+ok - sleeping
+FM_TEST_ABORTED signal=2 run=fm-test-run-1793339280945-65319
+C fixture gone
+fm-test-run-1793339280956-65321.pid
+sibling run S unaffected
+fm-test-run-1793339280956-65321 pid=65321
+fm-test-run: stopped fm-test-run-1793339280956-65321
+S exit 143

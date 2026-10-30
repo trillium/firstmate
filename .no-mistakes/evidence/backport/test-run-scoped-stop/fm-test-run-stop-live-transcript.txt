@@ -1,0 +1,85 @@
+=== S0: --stop with no registry
+$ bin/fm-test-run.sh --stop
+fm-test-run: no live runs
+[exit=0]
+$ bin/fm-test-run.sh --stop nosuch
+fm-test-run: no live run nosuch
+[exit=1]
+=== S1: two sibling runs (A with TZ=UTC), list from another TZ
+runner pids: A=7863 B=7864 C=7865
+drwx------ 5 mini0 staff 160 Oct 29 22:45 /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-stop-live.96TzR2/fm-test-run-pids-501
+record contents:
+fm-test-run-1793339142332-7863.pid: 7863 Fri Oct 30 05:45:42 2026
+fm-test-run-1793339142332-7864.pid: 7864 Fri Oct 30 05:45:42 2026
+fm-test-run-1793339142332-7865.pid: 7865 Fri Oct 30 05:45:42 2026
+$ TZ=Pacific/Kiritimati LC_ALL=de_DE.UTF-8 bin/fm-test-run.sh --stop
+fm-test-run-1793339142332-7863 pid=7863
+fm-test-run-1793339142332-7864 pid=7864
+fm-test-run-1793339142332-7865 pid=7865
+=== S2: --stop A (from different TZ) kills only A
+$ env TZ=Pacific/Kiritimati bin/fm-test-run.sh --stop fm-test-run-1793339142332-7863
+fm-test-run: stopped fm-test-run-1793339142332-7863
+[exit=0]
+A runner exit status: 143
+A output tail:
+ok - sleeping
+Terminated: 15             bash "$script" 2>&1 | tee "$out"
+FM_TEST_ABORTED signal=15 run=fm-test-run-1793339142332-7863
+A fixture sleep script gone
+A record removed
+B runner alive
+B fixture alive
+0
+$ bin/fm-test-run.sh --stop
+fm-test-run-1793339142332-7864 pid=7864
+fm-test-run-1793339142332-7865 pid=7865
+[exit=0]
+=== S3: --stop=<id> form, unknown id
+$ bin/fm-test-run.sh --stop=fm-test-run-1793339142332-7864
+fm-test-run: stopped fm-test-run-1793339142332-7864
+[exit=0]
+B runner exit status: 143
+FM_TEST_ABORTED signal=15 run=fm-test-run-1793339142332-7864
+$ bin/fm-test-run.sh --stop fm-test-run-1793339142332-7863
+fm-test-run: no live run fm-test-run-1793339142332-7863
+[exit=1]
+=== S4: Ctrl-C (SIGINT) to runner C -> exit 130
+C runner exit status: 1
+FM_TEST_SLOWEST rank=1 script=tests/fm-sleep-fixture.test.sh duration_ms=120246
+=== S5: stale/forged records: dead pid, reused pid (unrelated live process), wrong start time
+fm-test-run-1793339263176-58743.pid
+fm-test-run-reused.pid
+$ bin/fm-test-run.sh --stop fm-test-run-unrelated
+fm-test-run: no live run fm-test-run-unrelated
+[exit=1]
+$ bin/fm-test-run.sh --stop fm-test-run-reused
+fm-test-run: no live run fm-test-run-reused
+[exit=1]
+unrelated sleep 58733 survived
+runner D survived forged-start-time record
+$ bin/fm-test-run.sh --stop
+fm-test-run-1793339263176-58743 pid=58743
+[exit=0]
+registry after pruning:
+fm-test-run-1793339263176-58743.pid
+D exit 143
+=== S6: non-private registry refused (mode 755, symlink, and a run refuses to start)
+$ bin/fm-test-run.sh --stop
+fm-test-run: refusing run registry /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-stop-live.96TzR2/fm-test-run-pids-501: it must be a real directory owned by you with mode 700
+[exit=1]
+$ bin/fm-test-run.sh tests/fm-sleep-fixture.test.sh
+fm-test-run: refusing run registry /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-stop-live.96TzR2/fm-test-run-pids-501: it must be a real directory owned by you with mode 700
+[exit=2]
+$ bin/fm-test-run.sh --stop
+fm-test-run: refusing run registry /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-stop-live.96TzR2/fm-test-run-pids-501: it must be a real directory owned by you with mode 700
+[exit=1]
+=== S7: normal passing run still exits 0 and cleans its record
+$ bin/fm-test-run.sh tests/fm-quick-fixture.test.sh
+FM_TEST_BEGIN 2026-10-30T05:47:45Z tests/fm-quick-fixture.test.sh family=unclassified expected_gate_skip=none
+ok - quick
+FM_TEST_END 2026-10-30T05:47:45Z tests/fm-quick-fixture.test.sh exit=0 duration_ms=73 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=306
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=73 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-quick-fixture.test.sh duration_ms=73
+[exit=0]
+(registry entries above; empty = cleaned)
