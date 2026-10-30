@@ -1,0 +1,52 @@
+fm-spawn.sh under test: /Users/mini0/.no-mistakes/worktrees/7276c5eda0d5/01M65K6NK7RFJ7QEZ61BFYWPWM/bin/fm-spawn.sh (after-fix)
+TMUX=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/parent/tmux/tmux-501/fm-lab,88692,0
+
+===== S1 seed secondmate sm1 from parent lab home (real fm-home-seed.sh) =====
+$ /Users/mini0/.no-mistakes/worktrees/7276c5eda0d5/01M65K6NK7RFJ7QEZ61BFYWPWM/bin/fm-home-seed.sh sm1 /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/sm1 --no-projects
+scaffolded: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/parent/data/sm1/brief.md (secondmate charter)
+home=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/sm1
+[exit 0]
+-- parent registry:
+- sm1 - lab domain charter for meta-placement test (home: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/sm1; scope: lab scope; projects: ; added 2026-10-29)
+
+===== S2 adversarial: stale FM_HOME (other lab home, NO registry) spawns sm1 =====
+$ /Users/mini0/.no-mistakes/worktrees/7276c5eda0d5/01M65K6NK7RFJ7QEZ61BFYWPWM/bin/fm-spawn.sh sm1 /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/sm1 --harness sleep 3600 --backend tmux --secondmate
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+[exit 3]
+-- /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/other/state/*.meta:
+(none)
+primary:bash
+
+===== S3 adversarial: other home registers a DIFFERENT id only =====
+$ /Users/mini0/.no-mistakes/worktrees/7276c5eda0d5/01M65K6NK7RFJ7QEZ61BFYWPWM/bin/fm-spawn.sh sm1 /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/sm1 --harness sleep 3600 --backend tmux --secondmate
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+[exit 3]
+-- /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/other/state/*.meta:
+(none)
+
+===== S4 adversarial: stale FM_HOME + parent-route DATA override but unrelated STATE =====
+$ /Users/mini0/.no-mistakes/worktrees/7276c5eda0d5/01M65K6NK7RFJ7QEZ61BFYWPWM/bin/fm-spawn.sh sm1 /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/sm1 --harness sleep 3600 --backend tmux --secondmate
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+[exit 3]
+-- /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/other/state/*.meta:
+(none)
+
+===== S5 happy path: registering parent home spawns sm1 =====
+$ /Users/mini0/.no-mistakes/worktrees/7276c5eda0d5/01M65K6NK7RFJ7QEZ61BFYWPWM/bin/fm-spawn.sh sm1 /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/sm1 --harness sleep 3600 --backend tmux --secondmate
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+[exit 3]
+-- /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/parent/state/*.meta:
+(none)
+-- /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/other/state/*.meta:
+(none)
+primary:bash
+
+===== S6 delegated parent-route launch shape (as fm-remote-secondmate-control.sh launch, tmux backend) =====
+$ /Users/mini0/.no-mistakes/worktrees/7276c5eda0d5/01M65K6NK7RFJ7QEZ61BFYWPWM/bin/fm-spawn.sh sm1 /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/sm1 --harness sleep 3600 --backend tmux --secondmate
+error: no-mistakes gate agent must not drive the fleet (NO_MISTAKES_GATE set)
+[exit 3]
+-- /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/sm1/state/parent-route:
+-- /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.amugFk/other/state/*.meta:
+(none)
+primary:bash
+DRIVE-DONE

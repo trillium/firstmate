@@ -1,0 +1,20 @@
+fm-spawn.sh under test: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/base/bin/fm-spawn.sh (baseline)
+TMUX=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/parent/tmux/tmux-501/fm-lab,88692,0
+
+===== S1 seed secondmate sm1 from parent lab home (real fm-home-seed.sh) =====
+-- parent registry:
+- sm1 - lab domain charter for meta-placement test (home: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/sm1; scope: lab scope; projects: ; added 2026-10-29)
+
+===== S2 adversarial: stale FM_HOME (other lab home, NO registry) spawns sm1 =====
+$ /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/base/bin/fm-spawn.sh sm1 /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/sm1 --harness sleep 3600 --backend tmux --secondmate
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/other
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+warning: secondmate sm1 sync skipped before launch: primary default-branch commit cannot be resolved
+spawned sm1 harness=sleep kind=secondmate mode=secondmate yolo=off window=primary:fm-sm1 worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/sm1
+[exit 0]
+-- /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/other/state/*.meta:
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.amugFk/other/state/sm1.meta
+primary:bash
+primary:fm-sm1
+DRIVE-DONE
