@@ -1,0 +1,87 @@
++(eval):4> cd /tmp/fm-live.2e8N
++(eval):4> git init -q repo
++(eval):4> git -C repo -c 'user.name=t' -c 'user.email=t@e' commit -q --allow-empty -m init
++(eval):5> git init -q --bare mirror.git
++(eval):5> git -C repo remote add mirror file:///tmp/fm-live.2e8N/mirror.git
++(eval):6> /Users/mini0/.no-mistakes/worktrees/1467055f0b60/01M65STZ8R1WHJX5Y5D5WCZAZE/bin/fm-git-push-guard.sh write guard repo fm/t1 fm/
++(eval):7> /Users/mini0/.no-mistakes/worktrees/1467055f0b60/01M65STZ8R1WHJX5Y5D5WCZAZE/bin/fm-git-strip-ai-trailers.sh install --push-guard /tmp/fm-live.2e8N/guard /tmp/fm-live.2e8N/hooks /tmp/fm-live.2e8N/repo
++(eval):8> mkdir repo/.beads-hooks
++(eval):8> cp hooks/pre-push repo/.beads-hooks/pre-push
++(eval):8> chmod 700 repo/.beads-hooks/pre-push
++(eval):9> git -C repo config core.hooksPath /tmp/fm-live.2e8N/repo/.beads-hooks
++(eval):10> . /Users/mini0/.no-mistakes/worktrees/1467055f0b60/01M65STZ8R1WHJX5Y5D5WCZAZE/bin/fm-timeout-lib.sh
++/Users/mini0/.no-mistakes/worktrees/1467055f0b60/01M65STZ8R1WHJX5Y5D5WCZAZE/bin/fm-timeout-lib.sh:79> set -u
++(eval):10> fm_timeout_mechanism
++fm_timeout_mechanism:1> local timeout_path
++fm_timeout_mechanism:2> [ '' '=' bash ']'
++fm_timeout_mechanism:4> timeout_path=+fm_timeout_mechanism:4> fm_external_timeout_path
++fm_external_timeout_path:1> local name timeout_path
++fm_external_timeout_path:2> name=timeout
++fm_external_timeout_path:3> timeout_path=+fm_external_timeout_path:3> timeout_path='' 
++fm_external_timeout_path:3> true
++fm_external_timeout_path:4> [ -n '' ']'
++fm_external_timeout_path:2> name=gtimeout
++fm_external_timeout_path:3> timeout_path=+fm_external_timeout_path:3> timeout_path='' 
++fm_external_timeout_path:3> true
++fm_external_timeout_path:4> [ -n '' ']'
++fm_external_timeout_path:9> return 1
++fm_timeout_mechanism:4> timeout_path='' 
++fm_timeout_mechanism:6> command -v perl
++fm_timeout_mechanism:7> printf 'perl\n'
+perl
++(eval):11> fm_run_timed 30 git -C repo push mirror HEAD:refs/heads/fm/t1
++fm_run_timed:1> local seconds=30 timeout_path
++fm_run_timed:2> shift
++fm_run_timed:3> fm_timeout_mechanism
++fm_timeout_mechanism:1> local timeout_path
++fm_timeout_mechanism:2> [ '' '=' bash ']'
++fm_timeout_mechanism:4> timeout_path=+fm_timeout_mechanism:4> fm_external_timeout_path
++fm_external_timeout_path:1> local name timeout_path
++fm_external_timeout_path:2> name=timeout
++fm_external_timeout_path:3> timeout_path=+fm_external_timeout_path:3> timeout_path='' 
++fm_external_timeout_path:3> true
++fm_external_timeout_path:4> [ -n '' ']'
++fm_external_timeout_path:2> name=gtimeout
++fm_external_timeout_path:3> timeout_path=+fm_external_timeout_path:3> timeout_path='' 
++fm_external_timeout_path:3> true
++fm_external_timeout_path:4> [ -n '' ']'
++fm_external_timeout_path:9> return 1
++fm_timeout_mechanism:4> timeout_path='' 
++fm_timeout_mechanism:6> command -v perl
++fm_timeout_mechanism:7> printf 'perl\n'
++fm_run_timed:3> case perl (timeout | gtimeout)
++fm_run_timed:3> case perl (perl)
++fm_run_timed:9> perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' 30 git -C repo push mirror HEAD:refs/heads/fm/t1
+fm-git-push-guard: refused: refs/heads/fm/t1 is your task branch, which is never pushed to any remote on this project
+error: failed to push some refs to 'file:///tmp/fm-live.2e8N/mirror.git'
++(eval):11> echo 'rc=1'
+rc=1
++(eval):12> git -C mirror.git branch
++(eval):13> fm_run_timed 30 git -C repo push mirror HEAD:refs/heads/main
++fm_run_timed:1> local seconds=30 timeout_path
++fm_run_timed:2> shift
++fm_run_timed:3> fm_timeout_mechanism
++fm_timeout_mechanism:1> local timeout_path
++fm_timeout_mechanism:2> [ '' '=' bash ']'
++fm_timeout_mechanism:4> timeout_path=+fm_timeout_mechanism:4> fm_external_timeout_path
++fm_external_timeout_path:1> local name timeout_path
++fm_external_timeout_path:2> name=timeout
++fm_external_timeout_path:3> timeout_path=+fm_external_timeout_path:3> timeout_path='' 
++fm_external_timeout_path:3> true
++fm_external_timeout_path:4> [ -n '' ']'
++fm_external_timeout_path:2> name=gtimeout
++fm_external_timeout_path:3> timeout_path=+fm_external_timeout_path:3> timeout_path='' 
++fm_external_timeout_path:3> true
++fm_external_timeout_path:4> [ -n '' ']'
++fm_external_timeout_path:9> return 1
++fm_timeout_mechanism:4> timeout_path='' 
++fm_timeout_mechanism:6> command -v perl
++fm_timeout_mechanism:7> printf 'perl\n'
++fm_run_timed:3> case perl (timeout | gtimeout)
++fm_run_timed:3> case perl (perl)
++fm_run_timed:9> perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' 30 git -C repo push mirror HEAD:refs/heads/main
+To file:///tmp/fm-live.2e8N/mirror.git
+ * [new branch]      HEAD -> main
++(eval):13> echo 'rc=0'
+rc=0
++(eval):14> set +x
