@@ -69,7 +69,7 @@
 # ordering. An exact retry also completes unfinished ordering normalization and
 # is idempotent only when its requested close mode
 # matches the newest record; a changed decision or a mode mismatch is rejected.
-# A hold or answer also republishes state/home-summary.json
+# A hold, answer, or reconcile close also republishes state/home-summary.json
 # (bin/fm-home-summary-refresh.sh) so a parent sees the new state.
 # A re-held task may record a new answer on top. On a task already closed outside this script,
 # `answer` records the missing resolution block (the old `repair` path) only
@@ -265,6 +265,7 @@ CAPTAIN_META_LOCK=
 CAPTAIN_META_LOCK_HELD=0
 CAPTAIN_CONTROL_LOCK=
 CAPTAIN_CONTROL_LOCK_HELD=0
+CAPTAIN_SUMMARY_REPUBLISH=0
 captain_hold_cleanup() {
   if [ "$CAPTAIN_META_LOCK_HELD" = 1 ]; then
     fm_lock_release "$CAPTAIN_META_LOCK" || true
@@ -273,6 +274,10 @@ captain_hold_cleanup() {
   if [ "$CAPTAIN_CONTROL_LOCK_HELD" = 1 ]; then
     fm_lock_release "$CAPTAIN_CONTROL_LOCK" || true
     CAPTAIN_CONTROL_LOCK_HELD=0
+  fi
+  if [ "$CAPTAIN_SUMMARY_REPUBLISH" = 1 ]; then
+    CAPTAIN_SUMMARY_REPUBLISH=0
+    fm_backlog_summary_republish "$FM_HOME" "$STATE" "$DATA"
   fi
 }
 trap captain_hold_cleanup EXIT
@@ -2212,20 +2217,18 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
   exit 2
 }
 
-# `hold` and `answer` (which closes or releases the call) change what this
-# home's published summary shows, so republish it once either returns, whatever
-# its status: a non-zero return can still follow a landed change. The helper
+# `hold`, `answer` (which closes or releases the call), and `reconcile close`
+# change what this home's published summary shows, so the EXIT trap republishes
+# it on every exit path: a failure can still follow a landed change. The helper
 # only warns, so it never changes the command's own status.
-run_and_republish_summary() {  # <command> [args...]
-  local rc=0
-  "$@" || rc=$?
-  fm_backlog_summary_republish "$FM_HOME" "$STATE" "$DATA"
-  return "$rc"
-}
+case "${1:-}" in
+  hold|answer) CAPTAIN_SUMMARY_REPUBLISH=1 ;;
+  reconcile) [ "${2:-}" != close ] || CAPTAIN_SUMMARY_REPUBLISH=1 ;;
+esac
 
 case "${1:-}" in
-  hold) shift; run_and_republish_summary command_hold "$@" ;;
-  answer) shift; run_and_republish_summary command_answer "$@" ;;
+  hold) shift; command_hold "$@" ;;
+  answer) shift; command_answer "$@" ;;
   answers) shift; command_answers "$@" ;;
   reconcile-requests) shift; command_reconcile_requests "$@" ;;
   bind) shift; command_bind "$@" ;;

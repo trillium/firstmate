@@ -1176,6 +1176,32 @@ if tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null; then
   ledger_jq '[.decisions_open[].id] | index("sc-call") == null' \
     || fail "an answered captain call stayed in the published ledger"
   pass "captain hold and answer republish the home summary"
+
+  # A reconcile close republishes even when it fails after the call closed:
+  # a read-only request directory makes retirement fail past the close.
+  run_backlog_cmd fm-captain-hold.sh hold sc-moot --title "Fixture moot call" \
+    --reason "needs the captain" --repo firstmate >/dev/null \
+    || fail "could not open the fixture moot call"
+  run_backlog_cmd fm-captain-hold.sh bind sc-board >/dev/null \
+    || fail "could not bind the fixture board"
+  printf 'sc-moot\n' | run_backlog_cmd fm-captain-hold.sh reconcile-requests \
+    --source-id sc-board --source "fixture board" >/dev/null \
+    || fail "could not request the fixture reconciliation"
+  ledger_jq '[.decisions_open[].id] | index("sc-moot") != null' \
+    || fail "the fixture moot call was not open in the published ledger"
+  printf 'already landed\n' > "$TMP_ROOT/captain-evidence.txt"
+  chmod 555 "$STATE_CHANGE_HOME/state/reconcile-requests"
+  if run_backlog_cmd fm-captain-hold.sh reconcile close sc-moot \
+    --evidence-file "$TMP_ROOT/captain-evidence.txt" >/dev/null 2>&1; then
+    chmod 755 "$STATE_CHANGE_HOME/state/reconcile-requests"
+    fail "the forced post-close retirement failure reported success"
+  fi
+  chmod 755 "$STATE_CHANGE_HOME/state/reconcile-requests"
+  run_backlog_cmd fm-tasks-axi.sh show sc-moot | grep -F 'state: done' >/dev/null \
+    || fail "the fixture moot call did not close before the forced failure"
+  ledger_jq '[.decisions_open[].id] | index("sc-moot") == null' \
+    || fail "a reconcile close that failed after closing left the call open in the published ledger"
+  pass "captain reconcile close republishes the home summary on a post-close failure"
 else
   echo "skip: tasks-axi lacks the captain-hold contract, captain-hold republish case not run"
 fi
