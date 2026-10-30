@@ -74,7 +74,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 # shellcheck source=bin/fm-remote-herdr-owner-lib.sh
 . "$SCRIPT_DIR/fm-remote-herdr-owner-lib.sh"
 REQUIRED_TOOLS=(git jq herdr tasks-axi treehouse)
-HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi)
+HARNESS_TOOLS=(claude codex opencode pi pi-signed grok kimi omp)
 OPTIONAL_TOOLS=(tmux no-mistakes gh)
 # The remote-secondmate Herdr session is a deployment choice, not a constant:
 # FM_REMOTE_HERDR_SESSION points it elsewhere without editing code, and it
