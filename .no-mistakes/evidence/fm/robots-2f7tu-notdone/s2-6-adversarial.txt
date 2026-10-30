@@ -1,0 +1,36 @@
+# Scenario 2: remote unreachable (unresolvable ssh host), only a 13-day-old cached summary
+## BEFORE (base)
+Not done: Sidecar heartbeat persist (sidecar-heartbeat-persist-q1 on mini1-ops) - unstarted 20756d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Undated queued item (undated-still-open on mini1-ops) - unstarted 20756d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Pre-push git env leak (fm-hooks-prepush-git-env-leak on mini1-ops) - unstarted 13d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not checked: secondmate mini1-ops - its home summary is 13 day(s) old, so newer work may be missing
+## AFTER
+{"not_done":[],"unavailable":[{"source":"secondmate mini1-ops","reason":"its home summary is 13 day(s) old, so its queued work was not checked"}]}
+--plain:
+Not checked: secondmate mini1-ops - its home summary is 13 day(s) old, so its queued work was not checked
+
+# Scenario 3: remote reachable but its live published summary is 13 days old
+(live summary still lists the old queue; a fresh cached copy says nothing queued - live read must win, then be disclosed as stale)
+{"not_done":[],"unavailable":[{"source":"secondmate mini1-ops","reason":"its home summary is 13 day(s) old, so its queued work was not checked"}]}
+--plain:
+Not checked: secondmate mini1-ops - its home summary is 13 day(s) old, so its queued work was not checked
+
+# Scenario 4: remote unreachable, cached summary 1h old -> cache answers
+{"not_done":[{"home":"mini1-ops","id":"fm-hooks-prepush-git-env-leak","state":"unstarted","since":"13d"},{"home":"mini1-ops","id":"sidecar-heartbeat-persist-q1","state":"unstarted","since":"unknown"},{"home":"mini1-ops","id":"undated-still-open","state":"unstarted","since":"unknown"}],"unavailable":[]}
+--plain:
+Not done: Pre-push git env leak (fm-hooks-prepush-git-env-leak on mini1-ops) - unstarted 13d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Sidecar heartbeat persist (sidecar-heartbeat-persist-q1 on mini1-ops) - unstarted unknown: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Undated queued item (undated-still-open on mini1-ops) - unstarted unknown: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+
+# Scenario 5: FM_STALLED_REMOTE_FETCH=0 with a reachable remote -> no live read, cache answers
+Not done: Pre-push git env leak (fm-hooks-prepush-git-env-leak on mini1-ops) - unstarted 13d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Sidecar heartbeat persist (sidecar-heartbeat-persist-q1 on mini1-ops) - unstarted unknown: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Undated queued item (undated-still-open on mini1-ops) - unstarted unknown: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+ssh calls with FETCH=0: 0
+ssh calls with default fetch: 1
+
+# Scenario 6: remote transport hangs (ssh shim sleeps 60s) -> bounded at ~8s, falls back to cache
+Not done: Pre-push git env leak (fm-hooks-prepush-git-env-leak on mini1-ops) - unstarted 13d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Sidecar heartbeat persist (sidecar-heartbeat-persist-q1 on mini1-ops) - unstarted unknown: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Undated queued item (undated-still-open on mini1-ops) - unstarted unknown: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+elapsed=9s

@@ -1,0 +1,31 @@
+# Scenario 7: real bin/fm-session-start.sh in the lab primary (remote secondmate mini1-ops reachable over ssh localhost; parent cache still lists the two closed items)
+
+================================================================================
+SESSION START - /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.T4EOWo/primary
+================================================================================
+
+LOCK
+--------------------------------------------------------------------------------
+lock acquired: harness pid 50966
+
+HOME ROLE
+--------------------------------------------------------------------------------
+fm-role: user (default)
+
+BOOTSTRAP
+--------------------------------------------------------------------------------
+(silent - all good)
+
+WAKE QUEUE
+--------------------------------------------------------------------------------
+(no queued wakes)
+
+NOT DONE (captain-authorized work waiting)
+--------------------------------------------------------------------------------
+Not done: Undated queued item (undated-still-open on mini1-ops) - unstarted unknown: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+================================================================================
+SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude
+================================================================================
+Current state:
+- Lock: held by this session; this session owns normal supervision unless away mode says otherwise.
+- Away/quiet mode: inactive.

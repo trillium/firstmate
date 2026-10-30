@@ -1,0 +1,15 @@
+# Scenario 1: remote secondmate closed items since the parent cached its summary
+# lab primary=$LAB/primary; remote home=$LAB/remote read over real `ssh localhost` via bin/fm-on.sh
+
+## BEFORE (base c12c1026) fm-stalled-work.sh --plain
+Not done: Sidecar heartbeat persist (sidecar-heartbeat-persist-q1 on mini1-ops) - unstarted 20756d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Undated queued item (undated-still-open on mini1-ops) - unstarted 20756d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+Not done: Pre-push git env leak (fm-hooks-prepush-git-env-leak on mini1-ops) - unstarted 13d: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+exit=0
+
+## AFTER (d0143ba0) fm-stalled-work.sh --plain
+Not done: Undated queued item (undated-still-open on mini1-ops) - unstarted unknown: queued with no dependency or date gate and never dispatched - firstmate: dispatch it, or ask the captain whether to drop it
+exit=0
+
+## AFTER --json
+{"not_done":[{"home":"mini1-ops","id":"undated-still-open","state":"unstarted","since":"unknown","age_seconds":-1}],"unavailable":[]}
