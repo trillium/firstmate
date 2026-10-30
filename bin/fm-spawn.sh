@@ -720,6 +720,9 @@
 #   Local spawns never pass it and resolve their own carrier exactly as before.
 set -eu
 
+# Template replacements must stay literal on Bash 5.2+ and stock macOS Bash.
+shopt -u patsub_replacement 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
