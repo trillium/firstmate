@@ -1,0 +1,26 @@
+# Live Herdr lab transcript (herdr 0.9.3, session fm-lab-stale-11314, target 88f8b0e2)
+$ herdr pane list
+{"pane_id":"w1:p1","tab_id":"w1:t1","workspace_id":"w1"}
+
+## S1 live launcher pane w1:p1 -> resolves
+rc=0 resolved_pane=w1:p1 tab=w1:t1 ws=w1
+
+## S2 stale id herdr answers with a different pane
+$ herdr pane get 1-1
+{"pane_id":"w1:p1","tab_id":"w1:t1","workspace_id":"w1"}
+error: herdr launcher pane '1-1' is stale - in session 'fm-lab-stale-11314' that pane no longer exists or names no tab or workspace; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace
+rc=1 resolved_pane=<none> tab=<none> ws=<none>
+(herdr pane get 1-2 rc=1)
+error: herdr launcher pane '1-2' could not be read in session 'fm-lab-stale-11314'; refusing to place a worker without its exact parent workspace
+rc=1 resolved_pane=<none> tab=<none> ws=<none>
+
+## S3 destroyed pane id (tab w1:t2 closed earlier, workspace w2 closed) -> pane_not_found
+$ herdr pane get w1:p2
+{"error":{"code":"pane_not_found","message":"pane w1:p2 not found"},"id":"cli:pane:get"}
+error: herdr launcher pane 'w1:p2' could not be read in session 'fm-lab-stale-11314'; refusing to place a worker without its exact parent workspace
+rc=1 resolved_pane=<none> tab=<none> ws=<none>
+error: herdr launcher pane 'w2:p1' could not be read in session 'fm-lab-stale-11314'; refusing to place a worker without its exact parent workspace
+rc=1 resolved_pane=<none> tab=<none> ws=<none>
+
+## workspace list after refusals (no worker workspace minted)
+{"workspace_id":"w1","label":"stalelab"}
