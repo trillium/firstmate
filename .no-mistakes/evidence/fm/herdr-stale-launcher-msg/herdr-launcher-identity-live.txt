@@ -1,0 +1,16 @@
+# Live Herdr herdr 0.9.3 lab session: fm-lab-stalepane-25532-26660  (commit 7ac23559)
+# Function: fm_backend_herdr_launcher_identity from bin/backends/herdr.sh, run with the lab's injected HERDR_* identity
+
+## HERDR_PANE_ID=w1:p1  -- live pane (control)
+[exit=0]
+
+## HERDR_PANE_ID=w1:p2  -- destroyed pane (tab w1:t2 closed; pane get -> pane_not_found rc=1)
+error: herdr launcher pane 'w1:p2' could not be read in session 'fm-lab-stalepane-25532-26660'; refusing to place a worker without its exact parent workspace
+[exit=1]
+
+## HERDR_PANE_ID=1-1  -- legacy id form, Herdr resolves it to w1:p1
+error: herdr launcher pane '1-1' is stale - in session 'fm-lab-stalepane-25532-26660' that pane no longer exists or names no tab or workspace; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace
+[exit=1]
+
+## workspaces after refusals (expect only w1)
+["w1"]
