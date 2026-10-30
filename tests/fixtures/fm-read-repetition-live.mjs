@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -46,7 +46,10 @@ export default function(pi) {
 `);
 
 const receipt = join(lab, "receipt.json");
-const child = spawn(pi, ["--mode", "rpc", "--approve", "--offline", "--no-mcp", "--no-context-files", "--no-skills",
+// Pi releases before MCP support have no --no-mcp flag and nothing to disable.
+const piHelp = spawnSync(pi, ["--help"], { encoding: "utf8" });
+const noMcp = `${piHelp.stdout}${piHelp.stderr}`.includes("--no-mcp") ? ["--no-mcp"] : [];
+const child = spawn(pi, ["--mode", "rpc", "--approve", "--offline", ...noMcp, "--no-context-files", "--no-skills",
   "--no-prompt-templates", "--no-extensions", "-e", join(repo, "probe.ts"), "-e", join(repo, ".pi/extensions/fm-primary-read-repetition.ts"),
   "--model", "read-guard-probe/scripted", "--thinking", "off"], {
   cwd: repo, detached: true, stdio: ["pipe", "pipe", "pipe"],

@@ -1682,6 +1682,9 @@ spawn_t3_secondmate() {
   local id=$1 home=$2 harness=$3 model=$4
   mkdir -p "$CASE_DIR/home/state" "$CASE_DIR/home/data"
   touch "$CASE_DIR/home/state/.last-watcher-beat"
+  # A secondmate spawn refuses unless the spawning home's registry binds the id.
+  grep -qF -- "- $id - " "$CASE_DIR/home/data/secondmates.md" 2>/dev/null \
+    || fm_register_secondmate "$CASE_DIR/home/data/secondmates.md" "$id" "$home"
   HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$CASE_DIR/home" FM_STATE_OVERRIDE="$CASE_DIR/home/state" FM_DATA_OVERRIDE="$CASE_DIR/home/data" \
     FM_CONFIG_OVERRIDE="$CONFIG" FM_PROJECTS_OVERRIDE="$CASE_DIR/home/projects" FM_SPAWN_NO_GUARD=1 \
@@ -1753,11 +1756,11 @@ test_spawn_secondmate_runs_thread_in_home_with_env() {
   settings="$home/.claude/settings.local.json"
   assert_present "$settings" "a claude secondmate home gets .claude/settings.local.json"
   [ "$(t3_json_field "$settings" 'd.hooks')" = undefined ] || fail "a secondmate home carries no busy hooks"
-  [ "$(t3_json_field "$settings" 'd.env.FM_T3CODE_ENV_KEYS.split(",").length')" = 17 ] || fail "the env block should carry GOTMPDIR plus the secondmate environment, got $(t3_json_field "$settings" 'Object.keys(d.env)')"
+  [ "$(t3_json_field "$settings" 'd.env.FM_T3CODE_ENV_KEYS.split(",").length')" = 21 ] || fail "the env block should carry GOTMPDIR plus the secondmate environment, got $(t3_json_field "$settings" 'Object.keys(d.env)')"
   [ "$(t3_json_field "$settings" 'd.env.CAPTAIN_VAR')" = keep ] || fail "the home's own env entries must survive the T3 environment install"
   [ "$(t3_json_field "$settings" 'd.permissions.allow[0]')" = 'Bash(ls:*)' ] || fail "the home's own settings must survive the T3 environment install"
   [ "$(t3_json_field "$settings" 'd.env.LAVISH_AXI_HOST')" = undefined ] || fail "a key an earlier spawn wrote and this one does not must not linger"
-  [ "$(t3_json_field "$settings" 'Object.keys(d.env).length')" = 19 ] || fail "the env block should hold the home's entry, the 17 Firstmate keys, and their list, got $(t3_json_field "$settings" 'Object.keys(d.env)')"
+  [ "$(t3_json_field "$settings" 'Object.keys(d.env).length')" = 23 ] || fail "the env block should hold the home's entry, the 21 Firstmate keys, and their list, got $(t3_json_field "$settings" 'Object.keys(d.env)')"
   [ "$(t3_json_field "$settings" 'd.env.GOTMPDIR')" = "/tmp/fm-$id/gotmp" ] || fail "settings env must carry GOTMPDIR"
   read_settings() { t3_json_field "$settings" "d.env[\"$1\"]"; }
   assert_t3_secondmate_env read_settings "claude secondmate settings env" "$home" "$thread" autoarm "$id"

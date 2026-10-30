@@ -1341,6 +1341,9 @@ make_crew_state_stub_root() {
   for f in "$ROOT/bin"/*; do
     [ "${f##*/}" = fm-crew-state.sh ] || ln -s "$f" "$root/bin/${f##*/}"
   done
+  # The contract script finds its sibling fm-crew-state.sh by its own path, so
+  # wrappers that exec it must go through this link to see the stub.
+  ln -s "$ROOT/bin/fm-afk-contract.sh" "$root/bin/fm-afk-contract-real.sh"
   cat > "$root/bin/fm-crew-state.sh" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
@@ -1600,16 +1603,17 @@ test_quiet_record_never_caps_a_present_captains_spawn() {
   local home root out
   home="$TMP_ROOT/quiet-spend-home"
   root="$TMP_ROOT/quiet-spend-root"
-  mkdir -p "$home/state" "$root/bin"
+  mkdir -p "$home/state" "$root"
   git init -q -b main "$root"
   git -C "$root" commit -q --allow-empty -m init
+  make_crew_state_stub_root "$root"
   FM_AFK_MODE=quiet FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 1 >/dev/null || fail "quiet entry failed"
-  fm_write_meta "$home/state/task-a.meta" "window=fm-task-a" "kind=ship"
-  fm_write_meta "$home/state/task-b.meta" "window=fm-task-b" "kind=ship"
-  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
+  fm_write_meta "$home/state/task-a-working.meta" "window=fm-task-a" "kind=ship"
+  fm_write_meta "$home/state/task-b-working.meta" "window=fm-task-b" "kind=ship"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$root/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   assert_not_contains "$out" "caps concurrent workers" "a quiet record capped a present captain's spawn"
   FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 1 >/dev/null 2>&1 || fail "away entry over quiet failed"
-  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$root/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   assert_contains "$out" "caps concurrent workers at 1 and 2 ordinary task(s) are live" "the away record's cap no longer binds"
   pass "a quiet-mode record never caps a present captain's spawn, while the away record's cap still binds"
 }
@@ -1626,7 +1630,7 @@ test_away_spend_cap_is_rechecked_under_the_task_set_lock() {
   cat > "$root/bin/fm-afk-contract.sh" <<WRAPPER
 #!/usr/bin/env bash
 set -eu
-REAL="$ROOT/bin/fm-afk-contract.sh"
+REAL="$root/bin/fm-afk-contract-real.sh"
 COUNT="$home/contract-field-count"
 if [ "\${1:-}" = field ]; then
   n=0
