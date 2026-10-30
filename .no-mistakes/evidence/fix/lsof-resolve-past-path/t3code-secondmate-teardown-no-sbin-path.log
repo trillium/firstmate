@@ -1,0 +1,3 @@
+### t3code secondmate teardown, PATH without sbin (lsof only at /usr/sbin/lsof)
+ok - fm-teardown.sh backend=t3code secondmate: interrupts and archives, then ends the home's lingering provider process before the home is removed; an unprovable scan keeps the home
+exit=0

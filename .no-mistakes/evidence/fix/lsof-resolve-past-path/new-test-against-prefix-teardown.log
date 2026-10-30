@@ -1,0 +1,4 @@
+### new test against BASE (pre-fix) bin/fm-teardown.sh, PATH without sbin
+not ok - lsof-off-path-reap: leaked worktree process survived teardown
+exit=1
+sleep-300 before=0 after=0

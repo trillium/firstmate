@@ -1,0 +1,4 @@
+### new test with run_teardown forced to fail (rc=3); disowned sleeper must not outlive the test
+not ok - lsof-off-path-reap: teardown should succeed: expected exit 0, got 3
+exit=1
+surviving 'sleep 300' processes: 0
