@@ -1428,6 +1428,48 @@ test_spawn_claude_refuses_worktree_symlink() {
   pass "Claude channel refuses a symlink in the leased worktree without following it"
 }
 
+test_spawn_claude_refuses_worktree_settings_symlink_or_tracked() {
+  local mode proj wt data state id out rc fb target
+  for mode in symlink tracked; do
+    id=$(t3_uid t3claudeset)
+    t3_task_id "$id"
+    t3_case "spawn-claude-settings-$mode"
+    proj="$CASE_DIR/spawn-project"; wt="$CASE_DIR/spawn-wt"; data="$CASE_DIR/data"; state="$CASE_DIR/state"
+    fm_git_worktree "$proj" "$wt" "fm/$id"
+    if [ "$mode" = tracked ]; then
+      mkdir -p "$proj/.claude"
+      printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$proj/.claude/settings.local.json"
+      git -C "$proj" add .claude/settings.local.json
+      git -C "$proj" -c user.name=t -c user.email=t@example.invalid commit -qm "track local settings"
+    else
+      target="$CASE_DIR/outside-settings.json"
+      printf '{"env":{"OUTSIDE":"1"}}\n' > "$target"
+      mkdir -p "$wt/.claude"
+      ln -s "$target" "$wt/.claude/settings.local.json"
+      printf '.claude/settings.local.json\n' >> "$(git -C "$wt" rev-parse --git-path info/exclude)"
+    fi
+    mkdir -p "$data/$id" "$state" "$CASE_DIR/home/state"
+    write_spawn_brief "$data" "$id"
+    touch "$state/.last-watcher-beat"
+    FM_T3_PROJ="$proj" t3_world_set 'w.projects[0].workspaceRoot = process.env.FM_T3_PROJ'
+    fb=$(make_treehouse_fakebin "$CASE_DIR")
+    out=$( HOME="$SPAWN_HOME" CLAUDE_CONFIG_DIR='' PATH="$fb:$PATH" FM_T3_TREEHOUSE_LOG="$LOG" FM_T3_TREEHOUSE_WT="$wt" \
+      FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$CASE_DIR/home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$CONFIG" \
+      FM_PROJECTS_OVERRIDE="$CASE_DIR/unused-projects" FM_SPAWN_NO_GUARD=1 \
+      "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --scout --model claude-sonnet-5 --backend t3code 2>&1 ); rc=$?
+    expect_code 1 "$rc" "a $mode worktree .claude/settings.local.json must refuse the spawn"$'\n'"$out"
+    assert_contains "$out" "tracked or a symlink" "the refusal must name the settings file"
+    if [ "$mode" = tracked ]; then
+      git -C "$wt" ls-files --error-unmatch -- .claude/settings.local.json >/dev/null 2>&1 || fail "the leased slot must track the settings file"
+      [ -z "$(git -C "$wt" status --porcelain -- .claude/settings.local.json)" ] || fail "the tracked settings file must stay clean"
+    else
+      [ "$(cat "$target")" = '{"env":{"OUTSIDE":"1"}}' ] || fail "the symlink's target must be left untouched, got '$(cat "$target")'"
+      [ -L "$wt/.claude/settings.local.json" ] || fail "the symlink must remain after the refused spawn"
+    fi
+  done
+  pass "fm-spawn.sh --backend t3code claude: a tracked or symlinked worktree .claude/settings.local.json is refused, never written"
+}
+
 test_untracked_codex_config_is_preserved() {
   local proj out rc
   t3_case untracked-codex
@@ -2780,6 +2822,7 @@ test_tracked_codex_overlay_recovery
 test_spawn_codex_refuses_tracked_codex_config
 test_spawn_claude_refuses_tracked_claude_local_md
 test_spawn_claude_refuses_worktree_symlink
+test_spawn_claude_refuses_worktree_settings_symlink_or_tracked
 test_untracked_codex_config_is_preserved
 test_codex_cleanup_without_journal_needs_no_python
 test_codex_worker_ignores_untracked_config_in_main_checkout
