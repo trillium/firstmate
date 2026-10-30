@@ -1,0 +1,44 @@
+=== D: launcher-shaped call (FM_HOME=code root, state=sub/state/parent-route, data=sub/data/.parent-route)
+spawned domain harness=claude kind=secondmate mode=secondmate yolo=off window=primary:fm-domain worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.UFpR0R/sub-home
+exit=0
+--- D meta at sub-home/state/parent-route/domain.meta:
+window=primary:fm-domain
+endpoint_task_id=domain
+worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.UFpR0R/sub-home
+project=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.UFpR0R/sub-home
+harness=claude
+approval_mode=bypass
+kind=secondmate
+mode=secondmate
+yolo=off
+tasktmp=/tmp/fm-domain
+model=default
+effort=default
+--- windows:
+zsh
+fm-domain
+=== D': same call but FM_STATE_OVERRIDE unset (stale code-root FM_HOME, Greptile P1 shape)
+error: secondmate registry is unavailable or unsafe: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route/secondmates.md
+error: refusing to write domain.meta into /Users/mini0/.no-mistakes/worktrees/7276c5eda0d5/01M65YNGB296N0NZBH2T0FA3SH/state: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route/secondmates.md does not register secondmate domain
+exit=1
+worktree state/domain.meta: absent
+=== E: registered home spawns (positive control)
+spawned domain harness=claude kind=secondmate mode=secondmate yolo=off window=primary:fm-domain worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.UFpR0R/sub-home
+exit=0
+--- E meta at stale-home/state/domain.meta:
+window=primary:fm-domain
+endpoint_task_id=domain
+worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.UFpR0R/sub-home
+project=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.UFpR0R/sub-home
+harness=claude
+approval_mode=bypass
+kind=secondmate
+mode=secondmate
+yolo=off
+tasktmp=/tmp/fm-domain
+model=default
+effort=default
+--- windows:
+zsh
+fm-domain
+DRIVE-DONE

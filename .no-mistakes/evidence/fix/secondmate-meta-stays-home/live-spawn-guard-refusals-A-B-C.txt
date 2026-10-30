@@ -1,0 +1,51 @@
+=== A: stale FM_HOME + FM_DATA_OVERRIDE=parent-route, FM_STATE_OVERRIDE unset (Greptile P1)
++ FM_HOME=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home FM_DATA_OVERRIDE=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route
+error: secondmate registry is unavailable or unsafe: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route/secondmates.md
+error: refusing to write domain.meta into /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home/state: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route/secondmates.md does not register secondmate domain
+exit=1
+stale meta: absent
+elsewhere meta: absent
+parent-route meta: absent
+=== B: parent-route data + unrelated FM_STATE_OVERRIDE
++ FM_HOME=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home FM_DATA_OVERRIDE=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route FM_STATE_OVERRIDE=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/elsewhere/state
+error: secondmate registry is unavailable or unsafe: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route/secondmates.md
+error: refusing to write domain.meta into /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/elsewhere/state: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route/secondmates.md does not register secondmate domain
+exit=1
+stale meta: absent
+elsewhere meta: absent
+parent-route meta: absent
+=== C: parent-route state + unrelated data dir (mismatch the other way)
++ FM_HOME=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home FM_DATA_OVERRIDE=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home/data FM_STATE_OVERRIDE=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/state/parent-route
+error: secondmate registry is unavailable or unsafe: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home/data/secondmates.md
+error: refusing to write domain.meta into /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/state/parent-route: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home/data/secondmates.md does not register secondmate domain
+exit=1
+stale meta: absent
+elsewhere meta: absent
+parent-route meta: absent
+=== D: launcher-shaped route: data=.parent-route AND state=state/parent-route
++ FM_HOME=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home FM_DATA_OVERRIDE=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/data/.parent-route FM_STATE_OVERRIDE=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/state/parent-route
+error: secondmate home cannot be the active firstmate home: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home
+exit=1
+stale meta: absent
+elsewhere meta: absent
+parent-route meta: absent
+--- D meta:
+cat: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/sub-home/state/parent-route/domain.meta: No such file or directory
+--- tmux windows after D:
+zsh
+=== E: positive control: FM_HOME registry binds domain to this home (stock dirs)
++ FM_HOME=/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home
+warning: secondmate domain sync skipped before launch: primary default-branch commit cannot be resolved
+fatal: not a git repository (or any of the parent directories): .git
+error: not a git worktree: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.UFpR0R/sub-home
+error: could not install the AI-trailer strip hooks for domain
+exit=1
+stale meta: absent
+elsewhere meta: absent
+parent-route meta: absent
+--- tmux windows after E:
+zsh
+fm-domain
+--- E meta:
+cat: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.UFpR0R/stale-home/state/domain.meta: No such file or directory
+DRIVE-DONE
