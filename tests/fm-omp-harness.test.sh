@@ -302,6 +302,7 @@ make_omp_secondmate_world() {  # <name> -> echoes <world>; seeded home at <world
   printf 'charter\n' > "$home/data/charter.md"
   printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$home/.gitignore"
   git -C "$home" init -q -b main
+  fm_register_secondmate "$world/home/data/secondmates.md" sm "$home"
   fakebin=$(make_spawn_fakebin "$world/fake" claude)
   make_fake_omp "$fakebin"
   : > "$world/launch.log"
