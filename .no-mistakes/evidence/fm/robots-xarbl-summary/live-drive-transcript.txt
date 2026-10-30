@@ -1,0 +1,63 @@
+===== TARGET (6d3d2e1c) =====
+$ fm-home-summary-refresh.sh  (baseline publish)
+## ledger after: baseline
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":null}],"landed":[],"decisions_open":[]}
+$ fm-tasks-axi.sh hold lv-hold --reason 'waiting on vendor'
+exit=0
+## ledger after: hold
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":"waiting on vendor"}],"landed":[],"decisions_open":[]}
+$ fm-tasks-axi.sh unhold lv-hold
+exit=0
+## ledger after: unhold
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":null}],"landed":[],"decisions_open":[]}
+$ fm-tasks-axi.sh done lv-close
+exit=0
+## ledger after: done
+{"generated_at":null,"queued":[{"id":"lv-hold","hold_reason":null}],"landed":["lv-close"],"decisions_open":[]}
+$ fm-captain-hold.sh hold lv-call ...
+exit=0
+## ledger after: captain-hold
+{"generated_at":null,"queued":[{"id":"lv-hold","hold_reason":null},{"id":"lv-call","hold_reason":"needs the captain"}],"landed":["lv-close"],"decisions_open":["lv-call"]}
+$ fm-captain-hold.sh answer lv-call --decision-file ans.txt
+exit=0
+## ledger after: captain-answer
+{"generated_at":null,"queued":[{"id":"lv-hold","hold_reason":null}],"landed":["lv-close"],"decisions_open":[]}
+$ fm-tasks-axi.sh list ; fm-captain-hold.sh list (read-only, ledger removed first)
+ledger not republished (expected)
+$ chmod 555 state; fm-tasks-axi.sh hold lv-hold --reason 'republish fails'
+Terminated: 15             sleep 0.1
+fm-home-summary-refresh: refresh exceeded its 60-second deadline
+warning: the backlog change landed but this home's published summary could not be refreshed (exit 124)
+exit=0
+  state: queued
+  hold_reason: republish fails
+===== BASE (c12c1026, before the change) =====
+$ fm-home-summary-refresh.sh  (baseline publish)
+## ledger after: baseline
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":null}],"landed":[],"decisions_open":[]}
+$ fm-tasks-axi.sh hold lv-hold --reason 'waiting on vendor'
+exit=0
+## ledger after: hold
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":null}],"landed":[],"decisions_open":[]}
+$ fm-tasks-axi.sh unhold lv-hold
+exit=0
+## ledger after: unhold
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":null}],"landed":[],"decisions_open":[]}
+$ fm-tasks-axi.sh done lv-close
+exit=0
+## ledger after: done
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":null}],"landed":[],"decisions_open":[]}
+$ fm-captain-hold.sh hold lv-call ...
+exit=0
+## ledger after: captain-hold
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":null}],"landed":[],"decisions_open":[]}
+$ fm-captain-hold.sh answer lv-call --decision-file ans.txt
+exit=0
+## ledger after: captain-answer
+{"generated_at":null,"queued":[{"id":"lv-close","hold_reason":null},{"id":"lv-hold","hold_reason":null}],"landed":[],"decisions_open":[]}
+$ fm-tasks-axi.sh list ; fm-captain-hold.sh list (read-only, ledger removed first)
+ledger not republished (expected)
+$ chmod 555 state; fm-tasks-axi.sh hold lv-hold --reason 'republish fails'
+exit=0
+  state: queued
+  hold_reason: republish fails
