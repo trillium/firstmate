@@ -1,0 +1,10 @@
+ok - malformed presentation locks report acquire failure instead of contention
+lock before: -rw-r--r-- 1 mini0 staff 0 Jan  1  2020 /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-wake-tests.MfmD1A/malformed-presentation-lock-aged/state/.status-presentation-lock
+drain rc=0
+--- stderr:
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 23248.1793350935.CW81qd
+wake drain: status presentation lock could not be acquired safely
+--- signal row retained:
+1793350935	1	signal	task.status	signal: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-wake-tests.MfmD1A/ma
+lock after: -rw-r--r-- 1 mini0 staff 0 Jan  1  2020 /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-wake-tests.MfmD1A/malformed-presentation-lock-aged/state/.status-presentation-lock
+RESULT: aged regular-file lock was NOT reclaimed
