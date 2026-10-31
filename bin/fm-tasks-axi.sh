@@ -52,6 +52,10 @@
 #     this command exists to prevent. Lifecycle transitions refuse the same file.
 # Otherwise the exit status is tasks-axi's own, unless decoding a read fails;
 # in that case the decoder's nonzero status is returned.
+#
+# A successful `done`, `hold`, or `unhold` also republishes this home's
+# state/home-summary.json (bin/fm-home-summary-refresh.sh) so a parent reading
+# the ledger sees the new backlog state; a failed republish only warns.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -149,6 +153,17 @@ case "${1:-}" in
     set -o pipefail
     tasks-axi ${ARGS[@]+"${ARGS[@]}"} | fm_hold_reason_decode_stream
     exit $?
+    ;;
+esac
+# A close, hold, or release changes what this home's published summary shows,
+# so republish it once the change landed (the library helper owns the contract:
+# a failed republish warns and never changes this command's exit status).
+case "${1:-}" in
+  done|hold|unhold)
+    tasks_axi_rc=0
+    tasks-axi ${ARGS[@]+"${ARGS[@]}"} || tasks_axi_rc=$?
+    [ "$tasks_axi_rc" -ne 0 ] || fm_backlog_summary_republish "$FM_HOME" "${FM_STATE_OVERRIDE:-$FM_HOME/state}" "$DATA"
+    exit "$tasks_axi_rc"
     ;;
 esac
 exec tasks-axi ${ARGS[@]+"${ARGS[@]}"}

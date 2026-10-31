@@ -24,7 +24,9 @@
 # fallback, and the command exits zero. Session start, watcher, spawn, and
 # teardown use that mode so this side-band publication can never change their
 # result. Without it, failures are printed and returned to the direct caller
-# for tests and diagnostics.
+# for tests and diagnostics, and to fm_backlog_summary_republish in
+# bin/fm-backlog-transition-lib.sh, which turns them into a warning after a
+# backlog close, hold, or release.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -35,6 +35,7 @@ cleanup() {
     [ -n "$pid" ] || continue
     kill -KILL "$pid" >/dev/null 2>&1 || true
   done
+  chmod 755 "$TMP_ROOT/state-change-home/state" 2>/dev/null || true
   fm_test_cleanup
 }
 trap cleanup EXIT
@@ -1083,3 +1084,124 @@ case "$report_out" in
     ;;
 esac
 pass "repeated publication failure is reported at session start until it clears"
+
+# --- backlog state changes republish the summary -------------------------------
+# A close, hold, or release through the backlog commands must leave the
+# published ledger showing the new state with no session start, spawn, teardown,
+# or watcher refresh in between. A failed republish warns and never fails the
+# backlog change that already landed.
+if ! command -v tasks-axi >/dev/null 2>&1; then
+  echo "skip: tasks-axi not found, backlog-change republish cases not run"
+  exit 0
+fi
+
+STATE_CHANGE_HOME="$TMP_ROOT/state-change-home"
+mkdir -p "$STATE_CHANGE_HOME/state" "$STATE_CHANGE_HOME/data" "$STATE_CHANGE_HOME/config" \
+  "$STATE_CHANGE_HOME/projects"
+STATE_CHANGE_HOME=$(cd "$STATE_CHANGE_HOME" && pwd -P)
+cat > "$STATE_CHANGE_HOME/data/backlog.md" <<'BACKLOG'
+## In flight
+
+## Queued
+- [ ] sc-close - Item to close (repo: firstmate) (kind: ship)
+- [ ] sc-hold - Item to hold and release (repo: firstmate) (kind: ship)
+
+## Done
+BACKLOG
+STATE_CHANGE_LEDGER="$STATE_CHANGE_HOME/state/home-summary.json"
+
+run_backlog_cmd() {  # <script> [args...]
+  local script=$1
+  shift
+  env -u TASKS_AXI_FILE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE \
+    PATH="$FAKEBIN:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$STATE_CHANGE_HOME" \
+    "$ROOT/bin/$script" "$@"
+}
+
+ledger_jq() {  # <jq filter>: succeeds when the published ledger satisfies it
+  jq -e "$1" "$STATE_CHANGE_LEDGER" >/dev/null 2>&1
+}
+
+run_backlog_cmd fm-home-summary-refresh.sh || fail "could not publish the baseline ledger"
+ledger_jq '[.queued[].id] == ["sc-close","sc-hold"] and .landed == []' \
+  || fail "baseline ledger did not show both queued items"
+
+run_backlog_cmd fm-tasks-axi.sh hold sc-hold --reason "waiting on the fixture" >/dev/null \
+  || fail "could not hold the fixture item"
+ledger_jq '.queued[] | select(.id == "sc-hold") | .hold_reason == "waiting on the fixture"' \
+  || fail "a hold did not reach the published ledger"
+pass "holding a backlog item republishes the home summary"
+
+run_backlog_cmd fm-tasks-axi.sh unhold sc-hold >/dev/null \
+  || fail "could not release the fixture item"
+ledger_jq '.queued[] | select(.id == "sc-hold") | .hold_reason == null' \
+  || fail "a release did not reach the published ledger"
+pass "releasing a backlog item republishes the home summary"
+
+run_backlog_cmd fm-tasks-axi.sh "done" sc-close >/dev/null \
+  || fail "could not close the fixture item"
+ledger_jq '[.queued[].id] == ["sc-hold"] and ([.landed[].id] == ["sc-close"])' \
+  || fail "a close did not reach the published ledger"
+pass "closing a backlog item republishes the home summary"
+
+# A non-state-changing verb must not pay for a republish.
+rm -f "$STATE_CHANGE_LEDGER"
+run_backlog_cmd fm-tasks-axi.sh list >/dev/null || fail "could not list the fixture backlog"
+[ ! -e "$STATE_CHANGE_LEDGER" ] || fail "a read-only backlog command republished the summary"
+pass "read-only backlog commands do not republish the home summary"
+
+# A republish failure is a warning. A read-only state directory leaves the
+# publisher unable to stage its document after the backlog change has landed.
+chmod 555 "$STATE_CHANGE_HOME/state"
+run_backlog_cmd fm-tasks-axi.sh hold sc-hold --reason "republish will fail" \
+  >/dev/null 2> "$TMP_ROOT/republish-failure.err" \
+  || fail "a failed republish failed the backlog change"
+grep -F "published summary could not be refreshed" "$TMP_ROOT/republish-failure.err" >/dev/null \
+  || fail "a failed republish did not warn: $(cat "$TMP_ROOT/republish-failure.err")"
+run_backlog_cmd fm-tasks-axi.sh show sc-hold | grep -F 'republish will fail' >/dev/null \
+  || fail "the backlog change was lost when the republish failed"
+chmod 755 "$STATE_CHANGE_HOME/state"
+pass "a failed republish warns and keeps the backlog change"
+
+# Captain holds have their own mutator; its hold and answer paths republish too.
+if tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null; then
+  run_backlog_cmd fm-captain-hold.sh hold sc-call --title "Fixture captain call" \
+    --reason "needs the captain" --repo firstmate >/dev/null \
+    || fail "could not open the fixture captain call"
+  ledger_jq '[.decisions_open[].id] | index("sc-call") != null' \
+    || fail "a captain hold did not reach the published ledger"
+  printf 'go ahead\n' > "$TMP_ROOT/captain-answer.txt"
+  run_backlog_cmd fm-captain-hold.sh answer sc-call --decision-file "$TMP_ROOT/captain-answer.txt" >/dev/null \
+    || fail "could not answer the fixture captain call"
+  ledger_jq '[.decisions_open[].id] | index("sc-call") == null' \
+    || fail "an answered captain call stayed in the published ledger"
+  pass "captain hold and answer republish the home summary"
+
+  # A reconcile close republishes even when it fails after the call closed:
+  # a read-only request directory makes retirement fail past the close.
+  run_backlog_cmd fm-captain-hold.sh hold sc-moot --title "Fixture moot call" \
+    --reason "needs the captain" --repo firstmate >/dev/null \
+    || fail "could not open the fixture moot call"
+  run_backlog_cmd fm-captain-hold.sh bind sc-board >/dev/null \
+    || fail "could not bind the fixture board"
+  printf 'sc-moot\n' | run_backlog_cmd fm-captain-hold.sh reconcile-requests \
+    --source-id sc-board --source "fixture board" >/dev/null \
+    || fail "could not request the fixture reconciliation"
+  ledger_jq '[.decisions_open[].id] | index("sc-moot") != null' \
+    || fail "the fixture moot call was not open in the published ledger"
+  printf 'already landed\n' > "$TMP_ROOT/captain-evidence.txt"
+  chmod 555 "$STATE_CHANGE_HOME/state/reconcile-requests"
+  if run_backlog_cmd fm-captain-hold.sh reconcile close sc-moot \
+    --evidence-file "$TMP_ROOT/captain-evidence.txt" >/dev/null 2>&1; then
+    chmod 755 "$STATE_CHANGE_HOME/state/reconcile-requests"
+    fail "the forced post-close retirement failure reported success"
+  fi
+  chmod 755 "$STATE_CHANGE_HOME/state/reconcile-requests"
+  run_backlog_cmd fm-tasks-axi.sh show sc-moot | grep -F 'state: done' >/dev/null \
+    || fail "the fixture moot call did not close before the forced failure"
+  ledger_jq '[.decisions_open[].id] | index("sc-moot") == null' \
+    || fail "a reconcile close that failed after closing left the call open in the published ledger"
+  pass "captain reconcile close republishes the home summary on a post-close failure"
+else
+  echo "skip: tasks-axi lacks the captain-hold contract, captain-hold republish case not run"
+fi
