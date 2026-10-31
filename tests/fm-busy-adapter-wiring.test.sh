@@ -595,6 +595,8 @@ spawn_secondmate_harness() { # <case-dir> <id> <harness> [extra fake tools...]
   fakebin=$(make_spawn_fakebin "$case_dir/fake" "$harness" "$@")
   fm_test_spawn_home "$primary" "$harness"
   seed_secondmate_home "$sm" "$id" "${SECONDMATE_HOME_GUARD:-}"
+  # A --secondmate spawn refuses unless the launching home's registry binds the id.
+  fm_register_secondmate "$primary/data/secondmates.md" "$id" "$sm"
   if [ -n "${SECONDMATE_LOCAL_SETTINGS:-}" ]; then
     mkdir -p "$sm/.claude"
     cp "$SECONDMATE_LOCAL_SETTINGS" "$sm/.claude/settings.local.json"

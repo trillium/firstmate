@@ -992,6 +992,7 @@ SH
       printf 'worktree=%s\nproject=%s\nhome=%s\n' "$dir/wt" "$dir/wt" "$dir/wt"
       printf 'harness=%s\nkind=secondmate\nmode=secondmate\nyolo=off\nmodel=default\neffort=default\n' "$harness"
     } > "$dir/home/state/$id.meta"
+    fm_register_secondmate "$dir/home/data/secondmates.md" "$id" "$dir/wt"
     : > "$dir/primary/.credentials.json"
     : > "$dir/mate/.credentials.json"
     : > "$dir/new-mate/.credentials.json"
@@ -1217,6 +1218,7 @@ test_secondmate_relaunch_with_a_legacy_pin_file_uses_the_first_line() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'sml2\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sml2 "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
     echo "window=fmses:fm-sml2"
@@ -1255,6 +1257,7 @@ test_secondmate_claude_relaunch_keeps_local_settings() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-local-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin" "$dir/smhome/.claude"
   printf 'sml\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" sml "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   prior='{"permissions":{"allow":["Bash(echo hi)"]}}'
   printf '%s\n' "$prior" > "$dir/smhome/.claude/settings.local.json"
@@ -1301,6 +1304,7 @@ test_secondmate_relaunch_lands_on_the_per_mate_pin() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'smp1\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" smp1 "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
     echo "window=fmses:fm-smp1"
@@ -1341,6 +1345,7 @@ test_secondmate_relaunch_uses_the_default_for_an_unpinned_mate() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'smp2\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" smp2 "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
     echo "window=fmses:fm-smp2"
@@ -1382,6 +1387,7 @@ test_secondmate_relaunch_refuses_an_unreadable_configured_pin_before_stop() {
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
   printf 'smp3\n' > "$dir/smhome/.fm-secondmate-home"
+  fm_register_secondmate "$home/data/secondmates.md" smp3 "$dir/smhome"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
   {
     echo "window=fmses:fm-smp3"

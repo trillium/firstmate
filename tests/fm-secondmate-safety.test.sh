@@ -2149,6 +2149,7 @@ harness=echo
 kind=ship
 mode=no-mistakes
 yolo=off
+branch=duplicate-child
 EOF
   done
   fakebin=$(make_fake_tmux "$TMP_ROOT/force-duplicate-slot-fake")

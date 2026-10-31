@@ -36,13 +36,31 @@ case "$*" in
     exit 0
     ;;
 esac
+window_file="$(dirname "$0")/.spawn-window"
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows)
-    [ -n "${FM_FAKE_LIVE_WINDOW:-}" ] && printf '%s\n' "$FM_FAKE_LIVE_WINDOW"
+  new-window)
+    name=
+    previous=
+    for arg in "$@"; do
+      [ "$previous" = -n ] && name=$arg
+      previous=$arg
+    done
+    printf '%s\n' "$name" > "$window_file"
+    printf '%s\n' "@spawnwid"
     exit 0
     ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  list-windows)
+    case "$*" in
+      *'#{window_id}'*) printf '%s\n' '@spawnwid' ;;
+      *)
+        [ -n "${FM_FAKE_LIVE_WINDOW:-}" ] && printf '%s\n' "$FM_FAKE_LIVE_WINDOW"
+        [ ! -s "$window_file" ] || cat "$window_file"
+        ;;
+    esac
+    exit 0
+    ;;
+  has-session|new-session|kill-window) exit 0 ;;
   send-keys) exit 0 ;;
 esac
 exit 0
