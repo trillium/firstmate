@@ -9,7 +9,6 @@ set -u
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
-SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-project-match)
 
 # make_match_case <name> <id> [repo] builds a home with a real backlog carrying

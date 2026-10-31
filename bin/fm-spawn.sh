@@ -1562,6 +1562,7 @@ T3CODE_ABORT_CLEANUP=0
 T3CODE_LEASED=0
 T3CODE_HOME_ENV=0
 T3CODE_CLAUDE_CHANNEL_WRITTEN=0
+T3CODE_CLAUDE_SETTINGS_WRITTEN=0
 T3CODE_CREATE_UNCERTAIN=0
 T3CODE_LAUNCH_UNCONFIRMED=0
 T3CODE_PROJECT_ID=
@@ -1766,12 +1767,12 @@ spawn_abort_cleanup() {
   fi
   if [ "$T3CODE_LEASED" = 1 ] && [ -n "${WT:-}" ]; then
     T3CODE_LEASED=0
-    rm -f "$WT/.claude/settings.local.json" 2>/dev/null || true
+    [ "$T3CODE_CLAUDE_SETTINGS_WRITTEN" != 1 ] || rm -f "$WT/.claude/settings.local.json" 2>/dev/null || true
     # Only a CLAUDE.local.md this spawn wrote: the channel install refuses one
     # already in the slot, and that one stays as found.
     [ "$T3CODE_CLAUDE_CHANNEL_WRITTEN" != 1 ] || rm -f "$WT/CLAUDE.local.md" 2>/dev/null || true
     if ! "$SCRIPT_DIR/fm-t3code-codex-env.sh" cleanup "$WT" \
-      || [ -e "$WT/.claude/settings.local.json" ] \
+      || { [ "$T3CODE_CLAUDE_SETTINGS_WRITTEN" = 1 ] && [ -e "$WT/.claude/settings.local.json" ]; } \
       || { [ "$T3CODE_CLAUDE_CHANNEL_WRITTEN" = 1 ] && [ -e "$WT/CLAUDE.local.md" ]; }; then
       echo "warning: could not remove the T3 environment files this spawn wrote into $WT for $ID, so it stays leased; remove them, then run 'treehouse return --force $WT' from $PROJ_ABS" >&2
     else
@@ -2120,9 +2121,10 @@ spawn_refuse_if_away_spend_cap() {
 # Spend cap (bin/fm-afk-contract.sh's spend_max_concurrent_workers): while an
 # away record exists (never a quiet-mode one, whose captain is present and
 # spends as attended: bin/fm-afk-contract.sh mode), a fresh ordinary spawn
-# refuses for BOTH actors once this home already holds that many ordinary task
-# records, counted by that script's own `live-workers`, which is also the count
-# its entry records as the cap. A relaunch replaces a worker that already
+# refuses for BOTH actors once this home already holds that many ordinary workers
+# that are genuinely working, counted by that script's own `live-workers`
+# (finished, paused, and endpoint-gone records are not counted), which is also
+# the count its entry records as the cap. A relaunch replaces a worker that already
 # counts, and a secondmate is a persistent home rather than spend, so both are
 # exempt. Checked before any endpoint, worktree, or record
 # exists, so a refusal costs nothing to unwind; rechecked after the task-set
@@ -3848,11 +3850,24 @@ if [ "$KIND" = secondmate ]; then
     exit 1
   }
   PROJ_ABS=$(validate_firstmate_home_for_spawn "$ID" "$FIRSTMATE_HOME")
-  if [ -e "$DATA/secondmates.md" ] || [ -L "$DATA/secondmates.md" ]; then
-    if ! secondmate_registry_validate_bindings "$DATA/secondmates.md" resolve_path "$ID" "$FIRSTMATE_HOME"; then
-      echo "error: $SECONDMATE_REGISTRY_ERROR" >&2
-      exit 1
-    fi
+  # This home's own registry must bind $ID to $FIRSTMATE_HOME before the spawn may
+  # publish state/<id>.meta here. An absent registry is a refusal, not a skip: a
+  # home that never registered $ID would otherwise host the meta of a secondmate
+  # another home supervises. The one exception is the private parent-route
+  # directory of the home being launched (bin/fm-remote-secondmate-control.sh),
+  # recognized structurally: $DATA is that home's .parent-route child and its
+  # identity marker names $ID.
+  sm_data_abs=$(resolve_path "$DATA")
+  sm_parent_route=$(resolve_path "$PROJ_ABS/data/.parent-route")
+  sm_home_marker=
+  [ ! -f "$PROJ_ABS/.fm-secondmate-home" ] || sm_home_marker=$(cat "$PROJ_ABS/.fm-secondmate-home")
+  if [ "$sm_data_abs" = "$sm_parent_route" ] && [ "$sm_home_marker" = "$ID" ]; then
+    : # delegated remote launch into this secondmate's own parent-route directory
+  elif ! secondmate_registry_validate_bindings "$DATA/secondmates.md" resolve_path "$ID" "$FIRSTMATE_HOME"; then
+    echo "error: $SECONDMATE_REGISTRY_ERROR" >&2
+    echo "error: refusing to write state/$ID.meta into $FM_HOME, which does not register secondmate $ID" >&2
+    exit 1
+  else
     SECONDMATE_PROJECTS=$SECONDMATE_REGISTRY_MATCH_PROJECTS
   fi
   WT="$PROJ_ABS"
@@ -4234,6 +4249,50 @@ real_path_or_raw() { # <path>
 # that every downstream operation (send/capture/kill) already treats as opaque
 # per-backend routing (fm_backend_resolve_selector).
 
+# Reject or clear a secondmate-home identity marker left behind in a leased task
+# worktree. Pool slots are reused: bin/fm-home-seed.sh seeds a secondmate home
+# into the same kind of slot a crewmate task later leases, and a `treehouse
+# return` restores tracked content without removing gitignored files, so a slot
+# that once held a secondmate home comes back still carrying its
+# .fm-secondmate-home marker. bin/fm-primary-scope-lib.sh force-includes any
+# marked root as a primary home, so that leftover marker makes every
+# primary-only guard - the subagent pre-tool check, the turn-end guard, the
+# session-start nudge, and the Claude Stop auto-arm - fire inside an ordinary
+# task worktree.
+#
+# Decide by identity, never by shape. A genuine secondmate home is a linked
+# worktree too (docs/turnend-guard.md), so "linked worktree" cannot distinguish
+# a stale marker from a live home. An id this home still registers, or the
+# durable .fm-secondmate-parent binding a seed writes beside the marker, names a
+# home that is still provisioned: that is the pool handing out a LIVE
+# secondmate's home, which is a refusal rather than something to clean up.
+# Anything else is a leftover from a retired or never-provisioned home, and
+# removing it restores the slot to a plain task worktree.
+spawn_clear_stale_secondmate_marker() {  # <worktree> <source> <inspect-target>
+  local wt=$1 source=$2 inspect_target=$3 marker parent id
+  # A secondmate spawn launches INTO a home whose marker is the point, so this
+  # hygiene is for task worktrees only.
+  [ "$KIND" != secondmate ] || return 0
+  marker="$wt/$SUB_HOME_MARKER"
+  parent="$wt/.fm-secondmate-parent"
+  [ -e "$marker" ] || [ -L "$marker" ] || return 0
+  id=
+  if [ -f "$marker" ] && [ ! -L "$marker" ]; then
+    IFS= read -r id < "$marker" 2>/dev/null || id=
+    id=${id//[[:space:]]/}
+  fi
+  if { [ -n "$id" ] && secondmate_registry_field "$DATA/secondmates.md" "$id" home >/dev/null 2>&1; } ||
+     [ -e "$parent" ] || [ -L "$parent" ]; then
+    echo "error: $source handed back '$wt', which is still the provisioned home of secondmate '${id:-unreadable}'; refusing to launch a task into a live secondmate home. Free that pool slot or retire the secondmate first. Inspect target $inspect_target" >&2
+    exit 1
+  fi
+  rm -f -- "$marker" || {
+    echo "error: could not clear the stale secondmate-home marker at '$marker'; refusing to launch because every primary-home guard would misfire in this task worktree. Inspect target $inspect_target" >&2
+    exit 1
+  }
+  echo "notice: cleared a stale secondmate-home marker ('${id:-unreadable}') left in leased worktree $wt" >&2
+}
+
 # True when <path> is an isolated worktree of the spawning project: a real
 # directory that is its own worktree root, is not the spawning project itself,
 # and does not share the project repository's common git dir. SPAWN_WT_TOP is
@@ -4316,12 +4375,44 @@ spawn_endpoint_hint() {
   fi
 }
 
+# A sibling task of this home that is still alive on a worktree owns it. Only a
+# positively alive endpoint vetoes, so a stale record never blocks a fresh slot.
+# The calling task's own record never counts against it (relaunch adopts it).
+spawn_worktree_sibling_owner() { # <wt-real>
+  local wt=$1 meta base raw owner target backend state
+  [ -d "${STATE:-}" ] || return 1
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    base=$(basename "$meta" .meta)
+    [ "$base" = "${ID:-}" ] && continue
+    while IFS= read -r raw || [ -n "$raw" ]; do
+      owner=$(real_path_or_raw "${raw#*=}")
+      [ "$wt" = "$owner" ] || continue
+      target=$(grep '^window=' "$meta" 2>/dev/null | cut -d= -f2- | head -n 1)
+      [ -n "$target" ] || continue
+      backend=$(grep '^backend=' "$meta" 2>/dev/null | cut -d= -f2- | head -n 1)
+      state=$(fm_backend_agent_alive "${backend:-tmux}" "$target" 2>/dev/null || true)
+      if [ "$state" = alive ]; then
+        printf 'task %s (recorded in state/%s.meta)' "$base" "$base"
+        return 0
+      fi
+    done < <(grep -E '^(worktree|home)=.' "$meta" 2>/dev/null || true)
+  done
+  return 1
+}
+
 validate_spawn_worktree() { # <source> <inspect-target>
-  local source=$1 inspect_target=$2
+  local source=$1 inspect_target=$2 wt_real owner
+  wt_real=$(cd "$WT" 2>/dev/null && pwd -P) || wt_real=
+  if [ -n "$wt_real" ] && owner=$(spawn_worktree_sibling_owner "$wt_real"); then
+    echo "error: $source yielded $owner (resolved '$WT'); refusing to launch into a worktree held by a live sibling task. Inspect target $inspect_target" >&2
+    exit 1
+  fi
   if ! spawn_worktree_isolated "$WT"; then
     echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${SPAWN_WT_TOP:-none}'; spawning project '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
     exit 1
   fi
+  spawn_clear_stale_secondmate_marker "${wt_real:-$WT}" "$source" "$inspect_target"
 }
 
 # A pooled slot whose only deviation is a submodule gitlink is stale, not dirty:
@@ -6182,6 +6273,20 @@ BUSY_GEN=
     fi
     hooks_json="\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_submit\"}]}],${stop_entry}\"StopFailure\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_stopfail\"}]}],\"SessionEnd\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"$j_sessionend\"}]}]}"
     printf '{"feedbackDrafts":"off"%s,%s}\n' "$claude_attribution_json" "$hooks_json" >"$STATE_REAL/$ID.claude-settings.json"
+    # T3 Code launches Claude itself, so there is no --settings flag to carry the
+    # file above; its thread reads the worktree's local settings instead
+    # (docs/t3code-backend.md), and spawn_t3code_env_install merges the env block
+    # into this same file.
+    if [ "$BACKEND" = t3code ] && [ "$KIND" != secondmate ]; then
+      if git -C "$WT" ls-files --error-unmatch -- .claude/settings.local.json >/dev/null 2>&1 || [ -L "$WT/.claude/settings.local.json" ]; then
+        echo "error: $WT/.claude/settings.local.json is tracked or a symlink; refusing to write the T3 busy hooks through it" >&2
+        exit 1
+      fi
+      mkdir -p "$WT/.claude"
+      T3CODE_CLAUDE_SETTINGS_WRITTEN=1
+      printf '{%s}\n' "$hooks_json" >"$WT/.claude/settings.local.json"
+      exclude_path '.claude/settings.local.json'
+    fi
     ;;
   devin)
     if [ "$RAW_LAUNCH" -eq 0 ]; then
