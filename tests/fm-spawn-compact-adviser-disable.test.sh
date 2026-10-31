@@ -212,6 +212,7 @@ test_launch_exports_task_inbox() {
       printf 'charter for %s\n' "$id" > "$sm/data/charter.md"
       printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$sm/.gitignore"
       git -C "$sm" init -q -b main
+      fm_register_secondmate "$HOME_DIR/data/secondmates.md" "$id" "$sm"
       out=$(run_case_spawn "$id" "$sm" --secondmate)
     fi
     status=$?

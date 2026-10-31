@@ -407,6 +407,8 @@ spawn_account_secondmate() {
   printf '# Firstmate\n' > "$sm/AGENTS.md"
   printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
   printf 'charter for %s\n' "$id" > "$sm/data/charter.md"
+  grep -q -- "^- $id - " "$HOME_DIR/data/secondmates.md" 2>/dev/null ||
+    fm_register_secondmate "$HOME_DIR/data/secondmates.md" "$id" "$sm"
   : > "$CASE/launch.log"
   FM_FAKE_LAUNCH_LOG="$CASE/launch.log" \
     fm_test_run_spawn "$HOME_DIR" "$WT" "$FAKEBIN" "$id" "$sm" --secondmate "$@"

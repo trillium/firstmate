@@ -1,0 +1,20 @@
+flowchart LR
+  subgraph before["fork main run 41029346969"]
+    b1["11 jobs red"]
+    b2["13 test files fail"]
+    b3["2 lint jobs fail on 4 findings"]
+    b1 --> b2
+    b1 --> b3
+  end
+  subgraph after["this change"]
+    a1["dropped fork fixes restored"]
+    a2["stale test fixtures updated"]
+    a3["tool-generated hook entries removed"]
+    a4["lint findings fixed"]
+    a5["jobs green so PRs 251 and 252 can merge"]
+    a1 --> a5
+    a2 --> a5
+    a3 --> a5
+    a4 --> a5
+  end
+  before --> after

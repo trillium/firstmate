@@ -1068,8 +1068,10 @@ SH
 }
 
 test_relaunch_accepts_a_held_in_flight_row() {
-  local case_dir id data meta out rc=0
+  local case_dir id item data meta out rc=0
   id=atomic-relaunch-held-in-flight-b16
+  # The sourced library assigns its own id inside the subshell below; keep a copy for the check after it.
+  item=$id
   case_dir=$(make_home relaunch-held-in-flight "$id")
   add_item "$case_dir" "$id"
   start_item "$case_dir" "$id"
@@ -1088,7 +1090,7 @@ test_relaunch_accepts_a_held_in_flight_row() {
     fm_backlog_atomic_transition dispatch "$meta" "$data" "$id" "$(home_of "$case_dir")/state" 1
   ) || rc=$?
   [ "$rc" -eq 0 ] || fail "relaunch of a held In-flight row was refused (exit $rc): $out"
-  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+  [ "$(row_state "$case_dir" "$item")" = in_flight ] \
     || fail "relaunch of a held In-flight row changed the backlog state"
 
   rc=0

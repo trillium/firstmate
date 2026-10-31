@@ -189,7 +189,7 @@ run_spawn() {  # <case-dir> <home> <pane-path> <args...>
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$pane" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
     PATH="$case_dir/fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+    "$SPAWN" "$@" --repo-unrecorded-ok 2>&1
 }
 
 spawn_ship() {  # <case-dir> <id> [pane-path]

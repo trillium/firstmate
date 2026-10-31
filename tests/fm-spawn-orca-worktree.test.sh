@@ -75,6 +75,18 @@ case "$1 $2" in
     exit 0
     ;;
   "terminal send")
+    # FM_TEST_ORCA_HOLD_PUBLISHED holds the spawn after it published its launch
+    # file but before any launch text reaches the terminal, then delivers nothing.
+    if [ "${FM_TEST_ORCA_HOLD_PUBLISHED:-0}" = 1 ]; then
+      case "$*" in
+        */launch.*)
+          printf '%s\n' "$*" | grep -o "/[^' ]*/launch\.[^' ]*\.sh" | head -1 > "$DIR/published"
+          i=0
+          while [ ! -e "$DIR/release" ] && [ "$i" -lt 100 ]; do /bin/sleep 0.1; i=$((i + 1)); done
+          exit 0
+          ;;
+      esac
+    fi
     if [ -n "${FM_TEST_ORCA_LOG:-}" ]; then
       prev=
       for a in "$@"; do
@@ -233,7 +245,7 @@ EOF
 # newlines. Removing the source overlay, ambient clearing, or quoting breaks
 # these executions of the real staged spawn command.
 test_orca_launch_uses_controlled_tmux_environment() {
-  local setting case_dir home id fb out status staged staged_content result expected value pane_shell failbin delivered
+  local setting case_dir home id fb out status staged staged_content result expected value pane_shell failbin delivered pane_flags
   for setting in absent enabled empty unavailable malformed nonregular missing sendfail; do
     id="orca-env-$setting"
     case_dir="$TMP_ROOT/$id"
@@ -332,10 +344,13 @@ EOF
     esac
     for pane_shell in /bin/sh /bin/bash /bin/zsh; do
       [ -x "$pane_shell" ] || continue
+      # zsh -f skips host rc files (e.g. a nix-darwin /etc/zshenv) that reset PATH
+      # and would hide the failing rm stub from the interactive pane.
+      pane_flags=(-i); [ "$pane_shell" != /bin/zsh ] || pane_flags=(-f -i)
       (umask 077; printf '%s\n' "$staged_content" > "$staged")
       # shellcheck disable=SC2016 # The child pane expands the source path and its failure status.
       result=$(env -i HOME="$case_dir/user-home" PATH="$failbin:$PATH" TERM=xterm \
-        "$pane_shell" -i -c '. "$1"; fm_status=$?; [ "$fm_status" -ne 0 ] || exit 2; printf "\nSHELL-STILL-ALIVE\n"' _ "$staged" 2>&1)
+        "$pane_shell" "${pane_flags[@]}" -c '. "$1"; fm_status=$?; [ "$fm_status" -ne 0 ] || exit 2; printf "\nSHELL-STILL-ALIVE\n"' _ "$staged" 2>&1)
       expect_code 0 "$?" "failed deletion must preserve the interactive $pane_shell pane"
       assert_contains "$result" 'cannot remove private launch file' "deletion failure must refuse before worker execution"
       assert_contains "$result" SHELL-STILL-ALIVE "deletion refusal killed the interactive $pane_shell pane"
@@ -343,7 +358,7 @@ EOF
       mv "$staged" "$staged.reclaimed"
       # shellcheck disable=SC2016 # The child pane expands the source path and its failure status.
       result=$(env -i HOME="$case_dir/user-home" PATH="$PATH" TERM=xterm \
-        "$pane_shell" -i -c '. "$1"; fm_status=$?; [ "$fm_status" -ne 0 ] || exit 2; printf "\nSHELL-STILL-ALIVE\n"' _ "$staged.reclaimed" 2>&1)
+        "$pane_shell" "${pane_flags[@]}" -c '. "$1"; fm_status=$?; [ "$fm_status" -ne 0 ] || exit 2; printf "\nSHELL-STILL-ALIVE\n"' _ "$staged.reclaimed" 2>&1)
       expect_code 0 "$?" "a launch file reclaimed before the pane unlinked it must refuse the worker in $pane_shell"
       assert_contains "$result" 'cannot remove private launch file' "a reclaimed launch file must refuse before worker execution"
       assert_contains "$result" SHELL-STILL-ALIVE "a reclaimed launch file killed the interactive $pane_shell pane"
@@ -352,14 +367,14 @@ EOF
       # its unlink fails and when the file was reclaimed before the pane opened it.
       delivered=$(grep "/launch\." "$case_dir/terminal.log" | tail -1)
       result=$(env -i HOME="$case_dir/user-home" PATH="$failbin:$PATH" TERM=xterm \
-        "$pane_shell" -i -c "set -e; $delivered; printf '\nSHELL-STILL-ALIVE\n'" 2>&1)
+        "$pane_shell" "${pane_flags[@]}" -c "set -e; $delivered; printf '\nSHELL-STILL-ALIVE\n'" 2>&1)
       expect_code 0 "$?" "failed deletion must preserve an errexit $pane_shell pane"
       assert_contains "$result" 'cannot remove private launch file' "deletion failure under errexit must refuse before worker execution"
       assert_contains "$result" SHELL-STILL-ALIVE "deletion refusal killed the errexit $pane_shell pane"
       assert_not_contains "$result" 'launch file still contains credentials' "deletion refusal under errexit ran the worker in $pane_shell"
       mv "$staged" "$staged.reclaimed"
       result=$(env -i HOME="$case_dir/user-home" PATH="$PATH" TERM=xterm \
-        "$pane_shell" -i -c "set -e; $delivered; printf '\nSHELL-STILL-ALIVE\n'" 2>&1)
+        "$pane_shell" "${pane_flags[@]}" -c "set -e; $delivered; printf '\nSHELL-STILL-ALIVE\n'" 2>&1)
       expect_code 0 "$?" "a launch file reclaimed before the pane opened it must preserve an errexit $pane_shell pane"
       assert_contains "$result" SHELL-STILL-ALIVE "a launch file reclaimed before sourcing killed the errexit $pane_shell pane"
       mv "$staged.reclaimed" "$staged"
@@ -392,7 +407,7 @@ test_orca_spawn_waits_for_a_slow_pane_before_a_later_failure() {
   printf 'GH_TOKEN\n' > "$home/config/launch-env-allowlist"
   printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$home/data/backlog.md"
   printf 'backend = "markdown"\n\n[markdown]\npath = "data/backlog.md"\n' > "$home/.tasks.toml"
-  "$real_axi" add "$id" "item for $id" --kind ship --file "$home/data/backlog.md" >/dev/null
+  "$real_axi" add "$id" "item for $id" --kind ship --repo project --file "$home/data/backlog.md" >/dev/null
   fm_git_init_commit "$case_dir/project"
   cat > "$home/data/$id/brief.md" <<EOF
 # Task
@@ -654,8 +669,9 @@ EOF
 }
 
 # The spawn owns the credential-bearing file from the moment it publishes it, so
-# an interrupt before the launch command is sent must still remove it. A fake
-# sleep holds the spawn in the pause right after publishing.
+# an interrupt before the launch command is sent must still remove it. The spawn's
+# own pauses use /bin/sleep (no PATH shim reaches them), so the fake Orca send
+# holds the spawn after publishing, before any launch text is delivered.
 test_orca_interrupted_spawn_before_send_removes_launch_file() {
   local sig id case_dir home fb pid status staged i want
   for sig in TERM HUP INT; do
@@ -678,20 +694,8 @@ Confirm the staged credential file is removed.
 EOF
     fb=$(make_orca_fakebin "$case_dir")
     printf '#!/bin/sh\necho "GH_TOKEN=synthetic-interrupt-token"\n' > "$fb/tmux"
-    cat > "$fb/sleep" <<SH
-#!/bin/sh
-if [ "\$1" = 0.3 ] && [ ! -e '$case_dir/published' ]; then
-  for f in /tmp/fm-$id+*/launch.*.sh; do
-    [ -f "\$f" ] || continue
-    printf '%s\n' "\$f" > '$case_dir/published'
-    i=0
-    while [ ! -e '$case_dir/release' ] && [ "\$i" -lt 100 ]; do /bin/sleep 0.1; i=\$((i + 1)); done
-  done
-fi
-exec /bin/sleep "\$@"
-SH
-    chmod +x "$fb/tmux" "$fb/sleep"
-    FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$case_dir/user-home" \
+    chmod +x "$fb/tmux"
+    FM_TEST_ORCA_HOLD_PUBLISHED=1 FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$case_dir/user-home" \
       FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
       FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
       FM_SPAWN_NO_GUARD=1 FM_TEST_ORCA_DIR="$case_dir" \
