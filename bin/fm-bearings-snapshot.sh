@@ -354,7 +354,7 @@ fi
 # --- not-done sweep (read-only; bin/fm-stalled-work.sh owns the contract) ----
 NOT_DONE='[]'
 NOT_DONE_UNREAD=0
-if ND_RAW=$(fm_run_timed 90 "$SCRIPT_DIR/fm-stalled-work.sh" --json 2>/dev/null) \
+if ND_RAW=$(FM_STALLED_REMOTE_FETCH=0 fm_run_timed 90 "$SCRIPT_DIR/fm-stalled-work.sh" --json 2>/dev/null) \
   && printf '%s' "$ND_RAW" | jq -e '.not_done | type == "array"' >/dev/null 2>&1; then
   NOT_DONE=$(printf '%s' "$ND_RAW" | jq -c '.not_done | map({home,id,title,state,since,why,needs})')
   NOT_DONE_UNREAD=$(printf '%s' "$ND_RAW" | jq -r '.unavailable | length')
