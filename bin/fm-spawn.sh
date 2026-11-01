@@ -529,22 +529,31 @@
 #   secondmate first checks config/secondmate-accounts/<id>/<runner>-account
 #   in this launching home, then falls back to its home-wide pin when absent.
 #   Pins are never inherited; remote per-mate overrides refuse locally.
-#   --account <value> (Claude only; same grammar as config/claude-account:
-#   ordinary, an absolute config directory, or token:<absolute path>) replaces
-#   the home-wide and per-secondmate pin for this one launch, with the same
-#   validation, sign-in check, and credential shedding, so the ordinary login
-#   and a setup-token account can run side by side. It is recorded as
-#   account_request= (account= keeps the declared name) and a relaunch reuses
-#   it unless that relaunch passes its own --account.
+#   --account <value> (Claude ships and scouts only; refused on other runners
+#   and on secondmates) chooses the Claude account for this launch. Without
+#   config/claude-accounts it takes the config/claude-account grammar (ordinary,
+#   an absolute config directory, or token:<absolute path>) and replaces the
+#   home-wide pin for this one launch, with the same validation, sign-in check,
+#   and credential shedding, so the ordinary login and a setup-token account
+#   can run side by side; under config/claude-accounts it names one declared
+#   entry directly. It is recorded as account_request= (account= keeps the
+#   declared name) and a relaunch reuses the recorded account unless --account
+#   moves it.
 #   T3 Code refuses a pin because its provider instance owns the account.
 #   bin/fm-worker-account-lib.sh owns parsing, the check, and the shed list.
-# Claude account list (config/claude-accounts, --account <entry>):
-#   Opt-in and Claude-only. When the list is present, a Claude ship or scout
-#   spawn must name one declared entry with --account, chosen at intake, and
-#   that entry is checked, launched, and recorded exactly like a pin; a
-#   relaunch reuses the recorded entry unless --account moves it. Without the
-#   list, --account is the per-launch account above and nothing else changes.
-#   docs/configuration.md
+# Claude account list (config/claude-accounts, config/claude-account-low-threshold):
+#   Opt-in and Claude ships/scouts only. When the list is present and a Claude
+#   ship or scout spawns with no --account, fm_worker_account_choose_claude
+#   selects the healthy declared account with the most usable headroom (skipping
+#   accounts below config/claude-account-low-threshold or
+#   FM_CLAUDE_ACCOUNT_LOW_THRESHOLD, default 20%, keeping unmeasured accounts
+#   eligible with disclosed uncertainty, and falling back to
+#   config/claude-account or the first declared entry with a stderr warning when
+#   every declared account is low), recording account=, account_request=, and
+#   account_reason= in state/<id>.meta. An explicit --account <entry> selects
+#   that declared entry directly, and a relaunch reuses the recorded entry
+#   unless --account moves it. Without the list, --account is the per-launch
+#   account above and nothing else changes. docs/configuration.md
 #   "Several Claude accounts" owns the contract.
 # Per-secondmate omp profile (config/secondmate-accounts/<id>/omp-profile):
 #   Opt-in, and read only for a local secondmate's own omp agent;
@@ -1038,6 +1047,7 @@ HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
 ACCOUNT_ARG=
+ACCOUNT_REASON=
 ACCOUNT_SET=0
 HERMES_PROFILE=
 HERMES_PROFILE_SET=0
@@ -2619,10 +2629,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
   UPSTREAM_CONSENT=$(fm_meta_get "$RELAUNCH_META" upstream_consent)
-  # A per-launch Claude account recorded at spawn keeps governing the task's
-  # relaunches unless this relaunch names its own.
+  # A per-launch or auto-selected Claude account recorded at spawn keeps
+  # governing the task's relaunches unless this relaunch names its own.
   if [ "$ACCOUNT_SET" -eq 0 ]; then
     ACCOUNT_ARG=$(fm_meta_get "$RELAUNCH_META" account_request)
+    ACCOUNT_REASON=$(fm_meta_get "$RELAUNCH_META" account_reason)
   fi
   if [ "$KIND" = ship ]; then
     BRANCH=$(fm_meta_get "$RELAUNCH_META" branch)
@@ -3569,16 +3580,32 @@ WORKER_ACCOUNT_MATE=
 # transfer; an explicit --account on a non-Claude launch still refuses.
 if [ "$RELAUNCH" -eq 1 ] && [ "$ACCOUNT_SET" -eq 0 ] && [ "$HARNESS" != claude ]; then
   ACCOUNT_ARG=
+  ACCOUNT_REASON=
 fi
-# A declared Claude account list (config/claude-accounts) needs the entry this
-# launch spends: --account on a fresh spawn, and on a relaunch that flag or
-# else the account the task already records.
+ACCOUNT_OVERRIDE_SETTING=
 WORKER_ACCOUNT_REQUEST=$ACCOUNT_ARG
 if [ "$RELAUNCH" -eq 1 ]; then
   WORKER_ACCOUNT_REQUEST=$(fm_worker_account_relaunch_request "$HARNESS" "$CONFIG" "$RELAUNCH_PRIOR_HARNESS" \
     "$(fm_meta_get "$RELAUNCH_META" account)" "$ACCOUNT_ARG" "$WORKER_ACCOUNT_MATE") || exit 1
+elif [ "$HARNESS" = claude ] && [ -z "$WORKER_ACCOUNT_MATE" ] && [ -z "$ACCOUNT_ARG" ]; then
+  if [ "$BACKEND" = t3code ]; then
+    t3_claude_accounts=$(fm_worker_account_list claude "$CONFIG") || exit 1
+    if [ -n "$t3_claude_accounts" ]; then
+      echo "error: backend=t3code cannot apply the claude worker account pin because T3's provider instance owns the account; select that instance in config/t3code-instances instead" >&2
+      exit 1
+    fi
+  else
+    AUTO_ACCOUNT=$(fm_worker_account_choose_claude "$CONFIG" "$MODEL") || exit 1
+    if [ -n "$AUTO_ACCOUNT" ]; then
+      ACCOUNT_ARG=${AUTO_ACCOUNT%%$'\t'*}
+      WORKER_ACCOUNT_REQUEST=$ACCOUNT_ARG
+      auto_account_rest=${AUTO_ACCOUNT#*$'\t'}
+      ACCOUNT_OVERRIDE_SETTING=${auto_account_rest%%$'\t'*}
+      ACCOUNT_REASON=${auto_account_rest#*$'\t'}
+    fi
+  fi
 fi
-WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-$HARNESS}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE" "$WORKER_ACCOUNT_REQUEST") || exit 1
+WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-$HARNESS}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE" "$WORKER_ACCOUNT_REQUEST" "$ACCOUNT_OVERRIDE_SETTING") || exit 1
 WORKER_ACCOUNT_DECLARED=${WORKER_ACCOUNT%%$'\t'*}
 WORKER_ACCOUNT_ROOT=${WORKER_ACCOUNT#*$'\t'}
 WORKER_ACCOUNT_PROVIDER=${WORKER_ACCOUNT_ROOT#*$'\t'}
@@ -7558,7 +7585,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness hermes_profile hermes_home kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider account_request omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness hermes_profile hermes_home kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider account_request account_reason omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id hc_session hc_terminal home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -7597,10 +7624,11 @@ preserve_relaunch_meta() {
   # task record stays byte-identical.
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
-  # The per-launch account value (the declared form drops a token file's
-  # directory), so a relaunch re-resolves the same account. Absent when the
-  # home-wide pin or no pin applied.
+  # The per-launch or auto-selected account value (the declared form drops a
+  # token file's directory), so a relaunch re-resolves the same account. Absent
+  # when the home-wide pin or no pin applied.
   [ -z "$WORKER_ACCOUNT" ] || [ -z "$ACCOUNT_ARG" ] || echo "account_request=$ACCOUNT_ARG"
+  [ -z "$WORKER_ACCOUNT" ] || [ -z "${ACCOUNT_REASON:-}" ] || echo "account_reason=$ACCOUNT_REASON"
   # The per-secondmate omp profile pin, only when one applies, so every other
   # task record stays byte-identical.
   [ -z "$OMP_PROFILE_PIN" ] || echo "omp_profile=$OMP_PROFILE_PIN"

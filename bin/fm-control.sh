@@ -1149,6 +1149,7 @@ resolve_relaunch_profile() {
   # declared Claude account list, the replacement stays on the account the task
   # records unless --account explicitly moves it.
   local account_model=$TARGET_MODEL account_mate='' account_request=''
+  local account_cfg="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   [ "$account_model" != default ] || account_model=
   [ "$KIND" != secondmate ] || account_mate=$ID
   if [ "$ACCOUNT_SET" = 1 ]; then
@@ -1156,9 +1157,12 @@ resolve_relaunch_profile() {
   elif [ "$TARGET_HARNESS" = claude ]; then
     account_request=$(fm_meta_get "$META" account_request)
   fi
-  TARGET_ACCOUNT=$(fm_worker_account_relaunch_request "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+  TARGET_ACCOUNT=$(fm_worker_account_relaunch_request "$TARGET_HARNESS" "$account_cfg" \
     "$PRIOR_HARNESS" "$(fm_meta_get "$META" account)" "$account_request" "$account_mate") || return 1
-  fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+  if [ "$TARGET_HARNESS" = claude ] && [ -z "$account_mate" ]; then
+    fm_worker_account_low_threshold "$account_cfg" >/dev/null || return 1
+  fi
+  fm_worker_account_select "$TARGET_HARNESS" "$account_cfg" \
     "$account_model" "$TARGET_HARNESS" "" "$account_mate" "$TARGET_ACCOUNT" >/dev/null || return 1
   fm_omp_profile_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
     "$account_mate" >/dev/null || return 1

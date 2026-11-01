@@ -136,6 +136,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
 | `fm-backlog-transition-lib.sh` | Pair task-record changes with their backlog transitions and replay interrupted closes |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor and quota snapshot schema validation           |
+| `fm-claude-account-quota.sh` | Measure each Claude account declared in `config/claude-accounts` in isolation and emit per-account quota TOON or JSON |
 | `fm-primary-failover.sh` | Watchdog that relaunches the primary on grok, opencode, or pi when Claude's limit is exhausted, handing over the session lock safely, and switches back on reset |
 | `fm-credential-source-lib.sh` | Single owner of the declared credential-source schema and its adapters, read by `fm-dispatch-resolve.sh` and checked by `fm-bootstrap.sh` |
 | `fm-quota-choose.sh`     | Choose the first candidate with known positive quota from an ordered harness:model list |

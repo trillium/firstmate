@@ -820,7 +820,7 @@ tests/fm-check-unregister.test.sh 469
 tests/fm-ci-workflow.test.sh 5833
 tests/fm-classify-corr-token.test.sh 23085
 tests/fm-classify-decision-key.test.sh 4362
-tests/fm-claude-account-quota.test.sh 2492
+tests/fm-claude-account-quota.test.sh 6262
 tests/fm-claude-stop-autoarm-live-e2e.test.sh 73
 tests/fm-claude-stop-autoarm.test.sh 61189
 tests/fm-claude-trust.test.sh 12010
@@ -1731,6 +1731,8 @@ families_for_changed_path() {
       ;;
     bin/fm-claude-account-quota.sh)
       printf '%s\n' "__script__:fm-claude-account-quota.test.sh"
+      printf '%s\n' "__script__:fm-worker-account.test.sh"
+      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       ;;
     bin/fm-dispatch-resolve.sh)
       printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
