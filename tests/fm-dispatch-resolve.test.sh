@@ -1311,4 +1311,163 @@ assert_not_contains "$out" '--account' "a non-claude profile with an account is 
 cp "$BASE_RULES" "$RULES"
 pass "account: a claude profile passes its account to the profile line; bad or non-claude accounts do not"
 
+# --- per-account claude quota (config/claude-accounts) ----------------------------
+CLAUDE_TOKEN_SECRET="sk-ant-oat01-dispatch-never-leak-8821"
+CLAUDE_USER_HOME="$TMP_ROOT/claude-user-home"
+CLAUDE_TOKEN_FILE="$TMP_ROOT/claude-tokens/max100.token"
+mkdir -p "$CLAUDE_USER_HOME/.claude" "$TMP_ROOT/claude-tokens" "$HOME_DIR/state"
+: > "$CLAUDE_USER_HOME/.claude/.credentials.json"
+printf '%s\n' "$CLAUDE_TOKEN_SECRET" > "$CLAUDE_TOKEN_FILE"
+chmod 600 "$CLAUDE_TOKEN_FILE"
+
+cat > "$FAKEBIN/quota-axi" <<SH
+#!/usr/bin/env bash
+set -u
+if [ "\${1:-}" = --provider ] && [ "\${2:-}" = claude ]; then
+  if [ -n "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    [ ! -f '$TMP_ROOT/claude-acct-token.fail' ] || exit 1
+    cat '$TMP_ROOT/claude-acct-token.json'
+    exit 0
+  fi
+  root=\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}
+  [ ! -f "\$root/quota.fail" ] || exit 1
+  cat "\$root/quota.json"
+  exit 0
+fi
+printf '%s\n' "\$*" >> "\${QUOTA_AXI_CALLS:?}"
+[ "\${FAKE_QUOTA_FAIL:-0}" = 1 ] && exit 1
+[ "\${1:-}" = --json ] || exit 2
+cat "\${QUOTA_AXI_FIXTURE:?}"
+SH
+chmod +x "$FAKEBIN/quota-axi"
+
+write_claude_acct_quota() { # <dest> <all_models_pct> <spendPriority> [<runway>] [<fable_pct> <fable_sp>]
+  local dest=$1 pct=$2 sp=$3 runway=${4:-through_reset} fpct=${5:-} fsp=${6:-0.5}
+  jq -n --argjson pct "$pct" --argjson sp "$sp" --arg runway "$runway" --arg fpct "$fpct" --argjson fsp "$fsp" '{
+    schemaVersion: 5,
+    providers: [{
+      provider: "claude",
+      quotaSemantics: {
+        status: "known",
+        effectiveAvailability: ([
+          {scope: "all_models", status: "known", effectivePercentRemaining: $pct,
+           runway: {status: $runway}, selection: {spendPriority: $sp}}
+        ] + (if $fpct == "" then [] else [
+          {scope: "model:fable", status: "known", effectivePercentRemaining: ($fpct | tonumber),
+           runway: {status: "through_reset"}, selection: {spendPriority: $fsp}}
+        ] end))
+      }
+    }]
+  }' > "$dest"
+}
+
+run_claude_accts() {
+  HOME="$CLAUDE_USER_HOME" FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 TYPESAFE_API_KEY=$KEY "$@"
+}
+
+printf 'ordinary\ntoken:%s\n' "$CLAUDE_TOKEN_FILE" > "$HOME_DIR/config/claude-accounts"
+
+# Global snapshot has claude exhausted (0% / exhausted_now) and cursor at spendPriority=0.40,
+# while ordinary is low (10%) and token:max100.token has 75% headroom (spendPriority=0.85).
+jq '
+  .providers |= map(
+    if .provider == "claude" then
+      .quotaSemantics.effectiveAvailability = [
+        {scope: "all_models", status: "known", effectivePercentRemaining: 0,
+         runway: {status: "exhausted_now"}, selection: {spendPriority: -2.0}},
+        {scope: "model:fable", status: "known", effectivePercentRemaining: 0,
+         runway: {status: "exhausted_now"}, selection: {spendPriority: -2.0}}
+      ]
+    elif .provider == "cursor" then
+      .quotaSemantics.effectiveAvailability[0].selection.spendPriority = 0.40
+    else . end
+  )
+' "$QUOTA" > "$TMP_ROOT/quota-ord-exhausted.json"
+
+write_claude_acct_quota "$CLAUDE_USER_HOME/.claude/quota.json" 10 -0.9 projected_exhaustion 5 -1.2
+write_claude_acct_quota "$TMP_ROOT/claude-acct-token.json" 75 0.85 through_reset 65 0.80
+write_response "$RESPONSE" rule_4 0.9
+DLOG_CLAUDE="$HOME_DIR/state/dispatch-claude-accts"
+reset_log
+QUOTA_AXI_FIXTURE="$TMP_ROOT/quota-ord-exhausted.json" FM_DISPATCH_RESOLVE_LOG="$DLOG_CLAUDE" \
+  run_claude_accts run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "per-account claude headroom resolves clear"
+assert_contains "$out" '  status: clear' "claude is not blocked by ordinary alone when setup-token has headroom"
+assert_contains "$out" 'candidate: claude:sonnet  account=token:max100.token  provider=claude  scope=all_models  remaining=75%  spendPriority=0.85  runway=through_reset  -> eligible' "claude candidate reports the healthy second account's quota"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "claude wins over lower-spendPriority cursor and leaves --account unset for fm-spawn auto-choice"
+assert_not_contains "$out$err" "$CLAUDE_TOKEN_SECRET" "setup-token value never reaches stdout or stderr"
+assert_no_grep "$CLAUDE_TOKEN_SECRET" "$(only_record "$DLOG_CLAUDE")" "setup-token value never reaches the dispatch log"
+
+# Rule floor on provider=claude also evaluates across declared accounts.
+write_response "$RESPONSE" rule_1 0.9
+reset_log
+QUOTA_AXI_FIXTURE="$TMP_ROOT/quota-ord-exhausted.json" \
+  run_claude_accts run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "rule floor with healthy second claude account exits 0"
+assert_contains "$out" '  status: clear' "rule_1 claude floor clears via the second account despite ordinary at 5%"
+assert_contains "$out" "  profile: --harness 'claude' --model 'fable' --effort 'xhigh'" "rule_1 resolves to claude fable"
+
+# Both healthy: binds to the higher-headroom account.
+write_claude_acct_quota "$CLAUDE_USER_HOME/.claude/quota.json" 84 0.6 through_reset
+write_claude_acct_quota "$TMP_ROOT/claude-acct-token.json" 50 0.95 through_reset
+write_response "$RESPONSE" rule_4 0.9
+reset_log
+QUOTA_AXI_FIXTURE="$TMP_ROOT/quota-ord-exhausted.json" \
+  run_claude_accts run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "both healthy claude accounts resolve"
+assert_contains "$out" 'candidate: claude:sonnet  account=ordinary  provider=claude  scope=all_models  remaining=84%  spendPriority=0.6  runway=through_reset  -> eligible' "both healthy binds to the higher-headroom account"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "higher-headroom ordinary account still beats cursor"
+
+# Both low (< 20%): claude candidate is ineligible and dispatch routes to healthy cursor.
+write_claude_acct_quota "$CLAUDE_USER_HOME/.claude/quota.json" 12 -0.7 projected_exhaustion
+write_claude_acct_quota "$TMP_ROOT/claude-acct-token.json" 8 -1.1 projected_exhaustion
+reset_log
+QUOTA_AXI_FIXTURE="$TMP_ROOT/quota-ord-exhausted.json" \
+  run_claude_accts run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "both low claude accounts route to cursor"
+assert_contains "$out" '  status: clear' "healthy sibling harness resolves clear when all claude accounts are low"
+assert_contains "$out" '-> not eligible: all declared claude accounts below 20% headroom threshold (ordinary 12%, token:max100.token 8%)' "candidate line names all low claude accounts"
+assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "routes away from low claude accounts to cursor"
+
+# Measurement unavailable on second account while ordinary is low: candidate stays eligible with disclosed uncertainty.
+jq -n '{
+  schemaVersion: 5,
+  providers: [{
+    provider: "claude",
+    state: {status: "rate_limited", error: "Claude quota endpoint rate limited"},
+    quotaSemantics: {status: "unknown", effectiveAvailability: []}
+  }]
+}' > "$TMP_ROOT/claude-acct-token.json"
+reset_log
+QUOTA_AXI_FIXTURE="$TMP_ROOT/quota-ord-exhausted.json" \
+  run_claude_accts run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "unmeasured second account exits 0"
+assert_contains "$out" 'candidate: claude:sonnet  account=token:max100.token  provider=claude  -> eligible, unranked: provider claude unmeasured (unknown): disclosed uncertainty' "unknown quotaSemantics on second account keeps claude eligible with disclosed uncertainty"
+
+: > "$TMP_ROOT/claude-acct-token.fail"
+reset_log
+QUOTA_AXI_FIXTURE="$TMP_ROOT/quota-ord-exhausted.json" \
+  run_claude_accts run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "failed probe on second account exits 0"
+assert_contains "$out" 'candidate: claude:sonnet  account=token:max100.token  provider=claude  -> eligible, unranked: claude account token:max100.token unmeasured (quota-axi could not read this account): disclosed uncertainty' "failed probe on second account keeps claude eligible with disclosed uncertainty"
+rm -f "$TMP_ROOT/claude-acct-token.fail"
+
+# Malformed config/claude-accounts or config/claude-account-low-threshold exits 2 before any network call.
+printf '200\n' > "$HOME_DIR/config/claude-account-low-threshold"
+reset_log
+run_claude_accts run code out err "$BRIEF" --project pager
+expect_code 2 "$code" "malformed low-headroom threshold exits 2"
+assert_contains "$err" 'config/claude-account-low-threshold must hold an integer from 0 through 100' "malformed threshold is reported"
+assert_absent "$LOG/argv" "malformed threshold makes no network call"
+rm -f "$HOME_DIR/config/claude-account-low-threshold"
+
+printf 'relative/account\n' > "$HOME_DIR/config/claude-accounts"
+reset_log
+run_claude_accts run code out err "$BRIEF" --project pager
+expect_code 2 "$code" "malformed config/claude-accounts exits 2"
+assert_contains "$err" 'config/claude-accounts must hold one account per line' "malformed claude-accounts is reported"
+assert_absent "$LOG/argv" "malformed claude-accounts makes no network call"
+rm -f "$HOME_DIR/config/claude-accounts"
+pass "config/claude-accounts: per-account headroom feeds candidate and rule-floor evaluation, skips low accounts, and keeps unmeasured accounts eligible"
+
 printf '# all fm-dispatch-resolve tests passed\n'

@@ -3222,3 +3222,35 @@ test_relaunch_clears_control_exit_marker_only_when_published() {
 }
 
 test_relaunch_clears_control_exit_marker_only_when_published
+
+test_autoswitched_claude_account_persists_across_relaunch() {
+  local dir out rc id=rl-autoswitch
+  dir=$(new_case autoswitch "$id")
+  add_ship_task "$dir" "$id" claude
+  make_claude_auth_stub "$dir"
+  mkdir -p "$dir/home/config" "$dir/work" "$dir/other"
+  : > "$dir/work/.credentials.json"
+  : > "$dir/other/.credentials.json"
+  printf '%s\n%s\n' "$dir/work" "$dir/other" > "$dir/home/config/claude-accounts"
+  {
+    printf 'account=%s\n' "$dir/work"
+    printf 'account_request=%s\n' "$dir/work"
+    printf 'account_reason=auto: %s 80%% usable headroom (%s 40%%; threshold 20%%)\n' "$dir/work" "$dir/other"
+  } >> "$dir/home/state/$id.meta"
+
+  out=$(run_control "$dir" "$id" relaunch --note "keep auto-selected account"); rc=$?
+  expect_code 0 "$rc" "plain relaunch of auto-selected Claude task should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" "$id" account)" = "$dir/work" ] || fail "relaunch should keep the auto-selected account"
+  [ "$(meta_field "$dir" "$id" account_request)" = "$dir/work" ] || fail "relaunch should keep account_request"
+  [ "$(meta_field "$dir" "$id" account_reason)" = "auto: $dir/work 80% usable headroom ($dir/other 40%; threshold 20%)" ] \
+    || fail "relaunch should keep account_reason, got '$(meta_field "$dir" "$id" account_reason)'"
+
+  # Explicit --account on relaunch overrides the auto-selected account and drops the stale auto reason.
+  out=$(run_control "$dir" "$id" relaunch --account "$dir/other" --note "explicit switch"); rc=$?
+  expect_code 0 "$rc" "relaunch with explicit --account should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" "$id" account)" = "$dir/other" ] || fail "explicit --account should select the new account"
+  assert_no_grep "account_reason=" "$dir/home/state/$id.meta" "explicit --account must drop the prior auto reason"
+  pass "fm-control relaunch: preserves an auto-selected Claude account and reason until --account overrides it"
+}
+
+test_autoswitched_claude_account_persists_across_relaunch

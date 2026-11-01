@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Codex approval review](#codex-automatic-approval-review), [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [Codex permission mode](#codex-permission-mode-configcodex-permission-mode), [persistent managed-policy failover](#persistent-managed-policy-failover), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and its [Orca environment source](#orca-environment-source-configlaunch-env-tmux-session) |
+| Worker permissions, accounts, or environment | [Codex approval review](#codex-automatic-approval-review), [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [Codex permission mode](#codex-permission-mode-configcodex-permission-mode), [persistent managed-policy failover](#persistent-managed-policy-failover), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [automatic Claude account switching](#automatic-claude-account-switching-configclaude-accounts), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist), and its [Orca environment source](#orca-environment-source-configlaunch-env-tmux-session) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), [record export](#record-export-configrecord-export-root), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), [warm-cache compaction](#warm-cache-compaction-configwarm-compact), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) and [herdr tab labels](#tab-labels-configtab-labels) |
@@ -1537,9 +1537,8 @@ A raw Claude launch command that sets `CLAUDE_CODE_OAUTH_TOKEN` itself still ref
 The sign-in check reads the file the same way and requires `claude auth status` to report `oauth_token` as the signed-in method, without printing the token.
 A revoked or expired token passes this offline check and fails when the worker first calls the API; replace the file with a new `claude setup-token` result.
 
-Dispatch quota: `quota-axi` reads Claude windows only with `--allow-claude-inference` and files a token-authenticated reading under accountKey `default`, the same row as the home's ambient Claude account.
-Dispatch therefore cannot yet rank the token account as its own lane; see the `quota-array-dispatch` skill for how accountKeys are matched.
-Ranking it separately needs `quota-axi` to emit a distinct accountKey for a token credential and `bin/fm-quota-axi-lib.sh` (`quota_lane`) to select that key from the active pin.
+Dispatch quota: a standalone `quota-axi` call files a setup-token reading under `accountKey` `default`, the same row as the home's ambient Claude account.
+Declare multiple accounts in [`config/claude-accounts`](#automatic-claude-account-switching-configclaude-accounts) so [`bin/fm-claude-account-quota.sh`](../bin/fm-claude-account-quota.sh), `bin/fm-dispatch-resolve.sh`, and `bin/fm-spawn.sh` measure each account in isolation and switch automatically by usable headroom.
 
 ### Per-launch account (`--account`)
 
@@ -1552,6 +1551,41 @@ With no `--account`, the file is the default and an absent file keeps today's un
 The task record keeps `account=` (the declared name, `token:<basename>` for a token) and adds `account_request=` with the value passed, so a relaunch can re-resolve it.
 `bin/fm-control.sh <id> relaunch` reuses a recorded `account_request=` unless it passes its own `--account <value>`; a relaunch onto a non-Claude runner drops it.
 A [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson) may carry an optional `account` (Claude profiles only), which `bin/fm-dispatch-resolve.sh` passes through as `--account` on its `profile:` line.
+
+### Automatic Claude account switching (config/claude-accounts)
+
+A home with two or more Claude subscriptions, such as an ordinary interactive login alongside a [setup-token](#setup-token-pin) account, can declare them in `config/claude-accounts` for automatic per-spawn headroom selection.
+`config/claude-accounts` is local, gitignored, and not inherited into secondmate homes.
+It holds one account per line using the same value grammar as `config/claude-account` (`ordinary`, an absolute Claude config directory, or `token:<absolute path of a setup-token file>`), with no blank lines, duplicate entries, or control characters:
+
+```text
+ordinary
+token:/Users/me/.config/claude-tokens/secondary.token
+```
+
+[`bin/fm-claude-account-quota.sh`](../bin/fm-claude-account-quota.sh) measures every entry in `config/claude-accounts` in isolation (TOON by default, or `--json`, with optional `--model <model>`).
+For `ordinary` and config-directory entries, it unsets ambient Claude credentials and runs `quota-axi --provider claude --json` (adding `--profile-only` when `.credentials.json` is present in that root, or reading that root's Keychain entry otherwise).
+For `token:<file>` entries, it validates the mode-`0600` token file, points `CLAUDE_CONFIG_DIR` at an empty scratch directory so `quota-axi` cannot fall back to `~/.claude` or Keychain, and runs `quota-axi --provider claude --allow-claude-inference --json` through [`bin/fm-claude-token-exec.sh`](../bin/fm-claude-token-exec.sh).
+Because `--allow-claude-inference` spends a minimal probe call, valid setup-token snapshots are cached in mode-`0600` `state/.claude-account-quota-*.json` files for `FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS` (default `300` seconds, `0` to disable) and invalidated immediately when the token file's mtime advances.
+Token contents are never printed, logged, passed on argv, or stored in cache files; any error output is scrubbed before reporting.
+
+When `config/claude-accounts` is present and `bin/fm-spawn.sh` launches a Claude ship or scout with no explicit `--account`:
+
+1. Every entry in `config/claude-accounts` (plus `config/claude-account`, if present) must pass format and file validation before any endpoint or task record is created.
+2. Each declared account's usable headroom is the minimum known `effectivePercentRemaining` across applicable scopes (`all_models`, `all_products`, and any `model:<bare>` or `product:<bare>` matching `--model`).
+3. Accounts with `runway` `exhausted_now`, `<= 0%` remaining, or usable headroom strictly below the low-headroom threshold are skipped as low.
+   The threshold defaults to `20` (20% remaining) and is configurable via `config/claude-account-low-threshold` (a single integer `0` through `100`) or `FM_CLAUDE_ACCOUNT_LOW_THRESHOLD` in the environment.
+4. Among healthy accounts at or above the threshold, Firstmate selects the one with the highest usable headroom (breaking ties by `spendPriority`, then file order).
+5. An account whose quota measurement is unavailable or incomplete remains eligible with disclosed uncertainty rather than being treated as low or blocked: measured healthy accounts rank ahead of it, and unmeasured accounts rank ahead of known-low accounts.
+6. If every declared account is below the low-headroom threshold (or exhausted), Firstmate prints a `warning:` line on stderr naming each low account and keeps today's fallback behavior: it uses `config/claude-account` when present, or the first entry in `config/claude-accounts` when `config/claude-account` is absent.
+
+The spawn records `account=` (the declared name, `token:<basename>` for a token), `account_request=`, and `account_reason=` (the headroom comparison, disclosed uncertainty, or all-low fallback reason) in `state/<id>.meta`.
+Mid-session switching of an already-running worker is out of scope: a plain `bin/fm-control.sh <id> relaunch` reuses the recorded `account_request=` and preserves `account_reason=`, while an explicit `--account` overrides it.
+Local secondmates continue to use their [per-secondmate account pin](#per-secondmate-account-pins) or `config/claude-account`.
+
+When `config/claude-accounts` is present, [`bin/fm-dispatch-resolve.sh`](#typed-dispatch-resolution-env-fm_dispatch_provider-fm_dispatch_model) reads `bin/fm-claude-account-quota.sh --json` alongside the main `quota-axi --json` snapshot.
+`claude` rule floors pass when any declared account clears the floor (and treat unmeasured accounts as unknown rather than below), and `claude` candidate profiles without an explicit `account` field bind to the highest-headroom healthy declared account, stay `eligible, unranked` with disclosed uncertainty when only unmeasured accounts remain above the low threshold, and become `not eligible` only when every declared account is below the low-headroom threshold or exhausted.
+The emitted `profile:` line omits `--account` unless the dispatch profile itself set `account`, so `bin/fm-spawn.sh` performs and records the final selection against the cached per-account snapshot.
 
 ### Failures, reporting, and inheritance
 
@@ -1948,7 +1982,7 @@ After the answer, code applies all remaining checks and ranking:
 
 - The confidence floor and the matched rule's `approval` and `floor`.
 - Each candidate's `provider` and `floor`.
-- Every applicable account-wide and model/product row from one `quota-axi --json` snapshot.
+- Every applicable account-wide and model/product row from one `quota-axi --json` snapshot, plus per-account Claude readings from `bin/fm-claude-account-quota.sh --json` when [`config/claude-accounts`](#automatic-claude-account-switching-configclaude-accounts) is present.
 - The numeric `spendPriority` argmax over candidates, using each candidate's limiting row.
 
 The [shared quota library](../bin/fm-quota-axi-lib.sh) accepts schema 5 and schema 6 and implements the [account-matching contract](../.agents/skills/quota-array-dispatch/SKILL.md#1-eligibility).
@@ -3290,6 +3324,8 @@ FM_DISPATCH_MODEL=      # explicit model for the selected provider; required for
 TYPESAFE_API_KEY=       # typesafe dispatch key, from the environment or .env
 OPENROUTER_API_KEY=     # OpenRouter dispatch key, from the environment or .env
 FM_DISPATCH_RESOLVE_LOG=   # optional directory under $FM_HOME/state or $FM_HOME/data where bin/fm-dispatch-resolve.sh writes one question/answer record per run; read from the environment only, never from .env (docs/configuration.md "Typed dispatch resolution")
+FM_CLAUDE_ACCOUNT_LOW_THRESHOLD=20   # integer 0..100 percentage below which automatic Claude account switching skips a declared account, overriding config/claude-account-low-threshold (docs/configuration.md "Automatic Claude account switching")
+FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=300   # seconds bin/fm-claude-account-quota.sh reuses a cached setup-token inference-probe snapshot under state/ before probing again; 0 disables caching
 FMX_DISCORD_REPLY_MAX_CHARS=1900   # Discord reply per-message split budget; values below 50 clamp to 50, values above 2000 reset to 1900
 FMX_X_THREAD_MAX=25     # maximum messages in one auto-split reply thread
 FMX_FOLLOWUP_MAX_AGE_SECS=604800   # local window for posting Relay completion follow-ups (7 days)
