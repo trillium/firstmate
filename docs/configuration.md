@@ -1541,6 +1541,18 @@ Dispatch quota: `quota-axi` reads Claude windows only with `--allow-claude-infer
 Dispatch therefore cannot yet rank the token account as its own lane; see the `quota-array-dispatch` skill for how accountKeys are matched.
 Ranking it separately needs `quota-axi` to emit a distinct accountKey for a token credential and `bin/fm-quota-axi-lib.sh` (`quota_lane`) to select that key from the active pin.
 
+### Per-launch account (`--account`)
+
+`bin/fm-spawn.sh --account <value>` chooses the Claude account for that one launch, so the ordinary login and a [setup-token](#setup-token-pin) account can run side by side while `config/claude-account` stays the home-wide default.
+The value uses the same grammar as the file: `ordinary`, an absolute Claude config directory, or `token:<absolute path of a setup-token file>`.
+It replaces the home-wide and per-secondmate pin for that launch only, and gets the same validation, `claude auth status` sign-in check, and credential shedding; a bad value or a signed-out account refuses before any endpoint or record exists.
+With no `--account`, the file is the default and an absent file keeps today's unpinned behavior.
+`--account` applies to Claude launches only (ships, scouts, local secondmates, raw Claude commands) and refuses for any other runner or a remote secondmate.
+
+The task record keeps `account=` (the declared name, `token:<basename>` for a token) and adds `account_request=` with the value passed, so a relaunch can re-resolve it.
+`bin/fm-control.sh <id> relaunch` reuses a recorded `account_request=` unless it passes its own `--account <value>`; a relaunch onto a non-Claude runner drops it.
+A [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson) may carry an optional `account` (Claude profiles only), which `bin/fm-dispatch-resolve.sh` passes through as `--account` on its `profile:` line.
+
 ### Failures, reporting, and inheritance
 
 A malformed file, a root that is not a readable directory, or a signed-out account refuses the launch and names the file to fix; Firstmate never falls back to the ambient account and never changes a global login or copies a credential.
@@ -1764,7 +1776,7 @@ Firstmate cannot see which part of a worker's life uses the resource, so the num
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
 Firstmate chooses the best matching rule with judgment; shell scripts do not match the natural-language rules.
-Firstmate resolves the rule's profile object or array under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
+Firstmate resolves the rule's profile object or array under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only concrete `--harness`, `--model`, `--effort`, and (Claude profiles only) `--account` flags to `fm-spawn.sh`.
 
 **Spawn requirements**
 
@@ -1805,7 +1817,7 @@ This section is the single owner of the canonical schema and its per-field seman
 | Rule `when` and `use` | Required for each rule. |
 | `use` and optional top-level `default` | Accept one profile object or a non-empty array of profile objects; the single-object form remains fully backward-compatible. |
 | Profile `harness` | Required in every profile. |
-| Profile `model` and `effort`; rule `why` | Optional. |
+| Profile `model`, `effort`, and `account`; rule `why` | Optional. A Claude profile's `account` takes the [per-launch account](#per-launch-account---account) grammar. |
 
 **Fields applied only by typed resolution**
 

@@ -7,6 +7,12 @@
 # docs/configuration.md "Worker account pin" owns the operator-facing contract.
 # Sourced by bin/fm-spawn.sh, bin/fm-control.sh, and bin/fm-claude-token-exec.sh.
 #
+# A single Claude launch can override the home-wide default with a per-launch
+# account (bin/fm-spawn.sh --account, bin/fm-control.sh relaunch --account, or
+# a dispatch profile's account): the same value grammar as config/claude-account,
+# the same validation, sign-in check, and credential shedding, so the ordinary
+# login and a setup-token account can be used side by side.
+#
 # Pinnable runners, each a credential store inside a root its vendor lets a
 # process select:
 #   claude          CLAUDE_CONFIG_DIR     config/claude-account
@@ -200,7 +206,7 @@ fm_worker_account_config() {
 # not pinnable or the home has no pin. On refusal prints one error naming the
 # file and returns 1.
 fm_worker_account_resolve() {
-  local harness=$1 config=$2 setting=$3 file cfg token rc declared root fallback
+  local harness=$1 config=$2 setting=$3 file cfg token rc
   file=$(fm_worker_account_file "$harness") || return 0
   cfg="$config/$file"
   token=$(fm_worker_account_read "$harness" "$cfg")
@@ -222,7 +228,26 @@ fm_worker_account_resolve() {
     return 1
     ;;
   esac
-  declared=${token%%$'\t'*}
+  fm_worker_account_resolve_declared "$harness" "${token%%$'\t'*}" "$setting" "$cfg" "${token#*$'\t'}"
+}
+
+# fm_worker_account_value_valid <value>
+# Returns 0 when <value> is a well-formed Claude account value: `ordinary`, an
+# absolute path, or `token:` plus an absolute path, with no control bytes. This
+# is the same grammar fm_worker_account_read enforces for config/claude-account.
+fm_worker_account_value_valid() {
+  perl -e '
+    my ($v) = @ARGV;
+    exit(($v =~ /\A(?:ordinary|(?:token:)?\/[^\x00-\x1f\x7f]*)\z/) ? 0 : 1);
+  ' -- "$1"
+}
+
+# fm_worker_account_resolve_declared <harness> <declared> <setting> <where> <providers>
+# The shared back half of a pin: turns one already-parsed declared value into
+# "declared<TAB>root<TAB>providers", validating the token file or root. <where>
+# only names the source in a refusal (the pin file, or the per-launch flag).
+fm_worker_account_resolve_declared() {
+  local harness=$1 declared=$2 setting=$3 cfg=$4 providers=${5:-} root fallback
   root=$declared
   case "$declared" in
   token:*)
@@ -248,7 +273,7 @@ fm_worker_account_resolve() {
     echo "error: $setting must name a readable, searchable existing directory (ordinary means $fallback): $cfg -> $root" >&2
     return 1
   fi
-  printf '%s\t%s\t%s\n' "$declared" "$root" "${token#*$'\t'}"
+  printf '%s\t%s\t%s\n' "$declared" "$root" "$providers"
 }
 
 # fm_worker_account_pi_provider <model>
@@ -330,25 +355,43 @@ fm_worker_account_check() {
   return 0
 }
 
-# fm_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>] [<secondmate-id>]
+# fm_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>] [<secondmate-id>] [<claude-account-override>]
 # The whole launch-time decision. Prints nothing for an unpinned runner, so
 # the caller keeps today's launch unchanged. For a pinned one prints
 # "declared<TAB>root<TAB>provider", where provider is the Pi launch model's
-# own (empty for Claude), after the model guard and the sign-in check pass. On
+# own (empty for Claude), after the model guard and the sign-in check pass. A
+# non-empty <claude-account-override> (the per-launch --account value, same
+# grammar as config/claude-account) replaces the file for this launch and is
+# refused for any runner but Claude. On
 # refusal prints one error and returns 1. bin/fm-spawn.sh runs it before any
 # endpoint exists, and bin/fm-control.sh before a relaunch stops the live
 # agent.
 fm_worker_account_select() {
-  local harness=$1 config=$2 model=$3 executable=$4 raw=${5:-} mate=${6:-}
+  local harness=$1 config=$2 model=$3 executable=$4 raw=${5:-} mate=${6:-} override=${7:-}
   local selection declared root providers word provider='' selected_config setting
-  selected_config=$(fm_worker_account_config "$harness" "$config" "$mate") || return 1
-  setting="config/$(fm_worker_account_file "$harness")"
-  [ "$selected_config" = "$config" ] || setting="$selected_config/$(fm_worker_account_file "$harness")"
-  selection=$(fm_worker_account_resolve "$harness" "$selected_config" "$setting") || return 1
-  if [ -z "$selection" ]; then
-    [ "$selected_config" = "$config" ] && return 0
-    echo "error: secondmate account pin disappeared during selection: $setting" >&2
-    return 1
+  if [ -n "$override" ]; then
+    # A per-launch account replaces the home-wide and per-secondmate pin for
+    # this one launch; everything after the selection is shared.
+    if [ "$harness" != claude ]; then
+      echo "error: --account selects a Claude account, but this launch runs $harness; remove --account, or launch with --harness claude" >&2
+      return 1
+    fi
+    fm_worker_account_value_valid "$override" || {
+      echo "error: --account must be 'ordinary', one absolute path, or token:<absolute path of a setup-token file> with no control characters: $override" >&2
+      return 1
+    }
+    setting="--account"
+    selection=$(fm_worker_account_resolve_declared "$harness" "$override" "$setting" "$override" "") || return 1
+  else
+    selected_config=$(fm_worker_account_config "$harness" "$config" "$mate") || return 1
+    setting="config/$(fm_worker_account_file "$harness")"
+    [ "$selected_config" = "$config" ] || setting="$selected_config/$(fm_worker_account_file "$harness")"
+    selection=$(fm_worker_account_resolve "$harness" "$selected_config" "$setting") || return 1
+    if [ -z "$selection" ]; then
+      [ "$selected_config" = "$config" ] && return 0
+      echo "error: secondmate account pin disappeared during selection: $setting" >&2
+      return 1
+    fi
   fi
   declared=${selection%%$'\t'*}
   root=${selection#*$'\t'}

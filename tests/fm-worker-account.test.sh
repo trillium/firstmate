@@ -668,8 +668,108 @@ test_relaunch_check_and_exec_helper() {
   pass "the relaunch check and the exec helper handle a token pin without exposing the token"
 }
 
+test_per_launch_account_ordinary_overrides_a_token_pin() {
+  local out rc id=acct-ovr-ordinary
+  new_case ovr-ordinary claude
+  make_token_file "$CASE/tokens/max100.token"
+  printf 'token:%s\n' "$CASE/tokens/max100.token" > "$HOME_DIR/config/claude-account"
+  signed_in_claude_root "$HOME_DIR/user-home/.claude"
+  : > "$CASE/claude-checks"
+  out=$(spawn_ship "$id" --account ordinary); rc=$?
+  expect_code 0 "$rc" "an ordinary override over a token pin should succeed: $out"
+  assert_contains "$out" "account=ordinary" "the spawn should report the overriding ordinary account"
+  assert_not_contains "$out" "token:" "the home token pin must not be reported for the overridden launch"
+  assert_grep "account=ordinary" "$HOME_DIR/state/$id.meta" "the record should carry the ordinary account"
+  assert_grep "account_request=ordinary" "$HOME_DIR/state/$id.meta" "the record should carry the per-launch value"
+  assert_absent "$CASE/claude-token-checks" "the ordinary override must not run the token sign-in check"
+  assert_not_contains "$(cat "$CASE/launch.log")" "fm-claude-token-exec.sh" "the ordinary launch must not use the token helper"
+  run_pane
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=unset" "$CASE/claude-worker" "an ordinary launch must shed an ambient token"
+  assert_grep "CLAUDE_CONFIG_DIR=unset" "$CASE/claude-worker" "an ordinary launch must drop an ambient config root"
+  # Without the flag the home-wide token pin is still the default.
+  out=$(spawn_ship acct-ovr-default); rc=$?
+  expect_code 0 "$rc" "the home-wide pin should still be the default: $out"
+  assert_contains "$out" "account=token:max100.token" "no --account keeps the home-wide token pin"
+  assert_no_grep "account_request" "$HOME_DIR/state/acct-ovr-default.meta" "a home-pin launch records no per-launch value"
+  pass "a per-launch ordinary account overrides a token pin and leaves the file as the default"
+}
+
+test_per_launch_account_token_overrides_an_ordinary_pin() {
+  local out rc id=acct-ovr-token
+  new_case ovr-token claude
+  make_token_file "$CASE/tokens/max100.token"
+  printf 'ordinary\n' > "$HOME_DIR/config/claude-account"
+  signed_in_claude_root "$HOME_DIR/user-home/.claude"
+  out=$(spawn_ship "$id" --account "token:$CASE/tokens/max100.token"); rc=$?
+  expect_code 0 "$rc" "a token override over an ordinary pin should succeed: $out"
+  assert_contains "$out" "account=token:max100.token" "the spawn should report the token account by basename"
+  assert_grep "account_request=token:$CASE/tokens/max100.token" "$HOME_DIR/state/$id.meta" "the record should carry the per-launch value"
+  assert_no_token_anywhere "$id" "$out"
+  assert_contains "$(cat "$CASE/launch.log")" "fm-claude-token-exec.sh" "the launch should use the token helper"
+  run_pane
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=$TOKEN_SENTINEL" "$CASE/claude-worker" "the worker should receive the token"
+  assert_grep "ANTHROPIC_API_KEY=unset" "$CASE/claude-worker" "an ambient API key must not outrank the token"
+  pass "a per-launch token account overrides an ordinary pin"
+}
+
+test_per_launch_account_works_with_no_home_pin_and_refuses_bad_values() {
+  local out rc id=acct-ovr-nopin
+  new_case ovr-nopin claude
+  make_token_file "$CASE/tokens/max100.token"
+  out=$(spawn_ship "$id" --account "token:$CASE/tokens/max100.token"); rc=$?
+  expect_code 0 "$rc" "--account with no home pin should select that account: $out"
+  assert_contains "$out" "account=token:max100.token" "the spawn should report the chosen account"
+  out=$(spawn_ship acct-ovr-rel --account relative/path); rc=$?
+  expect_code 1 "$rc" "a relative --account must refuse"
+  assert_refused_before_launch acct-ovr-rel "$out" "--account must be 'ordinary'"
+  chmod 644 "$CASE/tokens/max100.token"
+  out=$(spawn_ship acct-ovr-loose --account "token:$CASE/tokens/max100.token"); rc=$?
+  expect_code 1 "$rc" "a loose token file must refuse under --account"
+  assert_refused_before_launch acct-ovr-loose "$out" "--account pins Claude workers to a setup token"
+  assert_not_contains "$out" "$TOKEN_SENTINEL" "a refusal must never print the token"
+  rm -f "$HOME_DIR/user-home/.claude/.credentials.json" "$CASE/ambient-claude/.credentials.json"
+  out=$(spawn_ship acct-ovr-out --account ordinary); rc=$?
+  expect_code 1 "$rc" "a signed-out ordinary account must refuse under --account"
+  assert_refused_before_launch acct-ovr-out "$out" "--account pins Claude workers to the ordinary account, which is not signed in"
+  pass "--account works without a home pin and refuses malformed, loose, and signed-out values before launch"
+}
+
+test_per_launch_account_refuses_non_claude_runners() {
+  local out rc id=acct-ovr-pi
+  new_case ovr-pi pi
+  out=$(spawn_ship "$id" --harness pi --account ordinary); rc=$?
+  expect_code 1 "$rc" "--account on a Pi launch must refuse"
+  assert_refused_before_launch "$id" "$out" "--account selects a Claude account"
+  pass "--account refuses a non-Claude runner"
+}
+
+test_relaunch_reuses_the_recorded_per_launch_account() {
+  local out rc
+  new_case ovr-relaunch claude
+  make_token_file "$CASE/tokens/h.token"
+  printf 'token:%s\n' "$CASE/tokens/h.token" > "$HOME_DIR/config/claude-account"
+  signed_in_claude_root "$HOME_DIR/user-home/.claude"
+  # fm-control computes the pre-stop check from the recorded request; this is
+  # the same select call it makes, fed the value fm-spawn recorded.
+  out=$( (
+    # shellcheck source=bin/fm-worker-account-lib.sh
+    . "$REPO_ROOT/bin/fm-worker-account-lib.sh"
+    export HOME="$HOME_DIR/user-home"
+    PATH="$FAKEBIN:$PATH" fm_worker_account_select claude "$HOME_DIR/config" "" claude "" "" ordinary
+  ) 2>&1); rc=$?
+  expect_code 0 "$rc" "the relaunch check with a recorded ordinary request should pass: $out"
+  assert_contains "$out" "ordinary" "the recorded request should win over the home token pin"
+  assert_not_contains "$out" "token:" "the home token pin must not apply to the recorded request"
+  pass "the relaunch check honors a recorded per-launch account over the home pin"
+}
+
 test_secondmate_account_override
 test_secondmate_account_refusals
+test_per_launch_account_ordinary_overrides_a_token_pin
+test_per_launch_account_token_overrides_an_ordinary_pin
+test_per_launch_account_works_with_no_home_pin_and_refuses_bad_values
+test_per_launch_account_refuses_non_claude_runners
+test_relaunch_reuses_the_recorded_per_launch_account
 test_remote_secondmate_account_override_refuses_locally
 test_absent_pin_keeps_the_launch_unchanged
 test_claude_pin_selects_the_root_and_sheds_ambient_credentials
