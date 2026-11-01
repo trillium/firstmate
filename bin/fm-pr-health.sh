@@ -373,6 +373,49 @@ read_notifications() { # deadline
     || NOTIFY_OK=1
 }
 
+# Owned PRs with new GitHub notification activity -> $TMP/events. Sets
+# NOTIFY_OK=1 only when the feed proved it holds every new event (a 304, or a
+# 200 that is short of a full page or reaches back past the saved cursor), so
+# the caller may skip the fallback full sweep. GitHub ignores since= on a
+# conditional request, so a changed feed answers with its newest page and the
+# cursor is applied here.
+FALLBACK_SECONDS=900 # ponytail: fixed fallback sweep; make it a config value if a home needs a faster unattended sweep
+read_notifications() { # deadline
+  local lm since status next_lm next_since
+  local args=(api -i)
+  NOTIFY_OK=0
+  : > "$TMP/events"
+  lm=$(jq -r '.notifications.last_modified // ""' "$TMP/health.json")
+  since=$(jq -r '.notifications.since // ""' "$TMP/health.json")
+  [ -z "$lm" ] || args+=(-H "If-Modified-Since: $lm")
+  args+=("notifications?all=true&per_page=50${since:+&since=$since}")
+  # gh exits non-zero on 304, so the status line, not the exit code, decides.
+  gh_read "$1" "${args[@]}" 2>/dev/null | tr -d '\r' > "$TMP/notify.txt" || true
+  status=$(sed -n '1s/^HTTP\/[0-9.]* \([0-9][0-9]*\).*/\1/p' "$TMP/notify.txt")
+  case "$status" in
+    304) NOTIFY_OK=1; return 0 ;;
+    200) ;;
+    4*) jq 'del(.notifications)' "$TMP/health.json" > "$TMP/next.json" && mv "$TMP/next.json" "$TMP/health.json"; return 0 ;;
+    *) return 0 ;;
+  esac
+  next_lm=$(sed -n '1,/^$/s/^[Ll]ast-[Mm]odified: //p' "$TMP/notify.txt")
+  sed '1,/^$/d' "$TMP/notify.txt" > "$TMP/notify.json"
+  jq -e 'type == "array"' "$TMP/notify.json" >/dev/null 2>&1 || return 0
+  next_since=$(jq -r --arg since "$since" '[.[].updated_at | strings] + [$since] | max' "$TMP/notify.json")
+  jq -r --arg since "$since" '.[] | select(.subject.type == "PullRequest" and (.updated_at // "") >= $since)
+    | .subject.url // "" | capture("^https://api[.]github[.]com/repos/(?<path>[^/]+/[^/]+)/pulls/(?<n>[1-9][0-9]*)$")
+    | "https://github.com/\(.path)/pull/\(.n)"' "$TMP/notify.json" | sort -u > "$TMP/events"
+  jq --arg lm "$next_lm" --arg since "$next_since" '.notifications = ((.notifications // {}) + {last_modified:$lm,since:$since})' \
+    "$TMP/health.json" > "$TMP/next.json" && mv "$TMP/next.json" "$TMP/health.json"
+  # The first read, and a full page whose oldest entry is still newer than the
+  # cursor, leave NOTIFY_OK=0, so this pass reads every owned PR: events on
+  # unread pages are older than that read, and the cursor still advances, so a
+  # busy feed cannot pin the monitor to full sweeps.
+  [ -z "$lm" ] || jq -e --arg since "$since" \
+    'length >= 50 and ([.[].updated_at | strings] | min // "") >= $since' "$TMP/notify.json" >/dev/null \
+    || NOTIFY_OK=1
+}
+
 poll() {
   local deadline timeout url step pid index=0 read_dir now full
   local pids=()
