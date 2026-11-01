@@ -1292,4 +1292,23 @@ assert_absent "$HOME_DIR/state/never-created-hooks" "an absent fm-hooks queue is
 assert_equals '1' "$(record_count "$DLOG_NOHOOKS")" "the record is still written without fm-hooks"
 pass "one fm-hooks pointer line names the record without widening result capture"
 
+# --- per-profile account ----------------------------------------------------------
+reset_log
+write_response "$RESPONSE" rule_4 0.9
+jq '.rules[3].use = [{"harness":"claude","model":"sonnet","account":"token:/keys/second"}]' "$BASE_RULES" > "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "a claude profile with an account resolves"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --account 'token:/keys/second'" "the profile line carries the account"
+jq '.rules[3].use = [{"harness":"claude","model":"sonnet","account":"ordinary"}]' "$BASE_RULES" > "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+assert_contains "$out" "--account 'ordinary'" "an ordinary account passes through"
+jq '.rules[3].use = [{"harness":"claude","model":"sonnet","account":"relative/path"}]' "$BASE_RULES" > "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+assert_not_contains "$out" '--account' "a malformed account is never passed through"
+jq '.rules[3].use = [{"harness":"cursor","model":"cursor-grok-4.6-medium","account":"ordinary"}]' "$BASE_RULES" > "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+assert_not_contains "$out" '--account' "a non-claude profile with an account is not passed through"
+cp "$BASE_RULES" "$RULES"
+pass "account: a claude profile passes its account to the profile line; bad or non-claude accounts do not"
+
 printf '# all fm-dispatch-resolve tests passed\n'

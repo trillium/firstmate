@@ -1200,6 +1200,7 @@ crew_dispatch_validate() {
     def malformed_optional_fields($items):
       ($items | any(has("model") and (((.model | type) != "string") or (.model | length) == 0)))
       or ($items | any(has("effort") and (((.effort | type) != "string") or (.effort | length) == 0)))
+      or ($items | any(has("account") and (((.account | type) != "string") or (.harness != "claude") or (.account | test("^(ordinary|(token:)?/[^[:cntrl:]]*)$") | not))))
       or ($typed and ($items | any(has("provider") and (provider_id(.provider) | not))));
     # A quota floor, on a rule or a profile: bin/fm-dispatch-resolve.sh applies
     # it in code against one quota-axi row, so scope and min_percent must be

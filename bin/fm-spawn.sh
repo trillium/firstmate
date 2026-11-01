@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--account <value>] [--backend <name>] [--herdr-resume-lock-wait]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--account <value>] [--backend <name>] [--herdr-resume-lock-wait]
+#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--account <value>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
@@ -68,7 +68,7 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--account <value>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
 #   endpoint still exists, instead of creating either from scratch. It is
@@ -491,6 +491,13 @@
 #   secondmate first checks config/secondmate-accounts/<id>/<runner>-account
 #   in this launching home, then falls back to its home-wide pin when absent.
 #   Pins are never inherited; remote per-mate overrides refuse locally.
+#   --account <value> (Claude only; same grammar as config/claude-account:
+#   ordinary, an absolute config directory, or token:<absolute path>) replaces
+#   the home-wide and per-secondmate pin for this one launch, with the same
+#   validation, sign-in check, and credential shedding, so the ordinary login
+#   and a setup-token account can run side by side. It is recorded as
+#   account_request= (account= keeps the declared name) and a relaunch reuses
+#   it unless that relaunch passes its own --account.
 #   T3 Code refuses a pin because its provider instance owns the account.
 #   bin/fm-worker-account-lib.sh owns parsing, the check, and the shed list.
 # Per-secondmate omp profile (config/secondmate-accounts/<id>/omp-profile):
@@ -958,6 +965,8 @@ TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+ACCOUNT_ARG=
+ACCOUNT_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -994,6 +1003,10 @@ for a in "$@"; do
     effort)
       EFFORT=$a
       EFFORT_SET=1
+      ;;
+    account)
+      ACCOUNT_ARG=$a
+      ACCOUNT_SET=1
       ;;
     backend)
       BACKEND_ARG=$a
@@ -1057,6 +1070,11 @@ for a in "$@"; do
     EFFORT=${a#--effort=}
     EFFORT_SET=1
     ;;
+  --account) want_value=account ;;
+  --account=*)
+    ACCOUNT_ARG=${a#--account=}
+    ACCOUNT_SET=1
+    ;;
   --backend) want_value=backend ;;
   --backend=*)
     BACKEND_ARG=${a#--backend=}
@@ -1110,6 +1128,10 @@ done
 }
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || {
   echo "error: --effort requires a non-empty value" >&2
+  exit 1
+}
+[ "$ACCOUNT_SET" -eq 0 ] || [ -n "$ACCOUNT_ARG" ] || {
+  echo "error: --account requires a non-empty value" >&2
   exit 1
 }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || {
@@ -1323,6 +1345,12 @@ spawn_remote_secondmate() {
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
     echo "error: $account_config/$(fm_worker_account_file "$harness") cannot pin remote secondmate $id from this host; configure config/$(fm_worker_account_file "$harness") in its home $home on $host instead" >&2
+    return 1
+  fi
+  if [ "$ACCOUNT_SET" -eq 1 ]; then
+    fm_lock_release "$registry_lock" || true
+    fm_lock_release "$SPAWN_TASK_LOCK" || true
+    echo "error: --account cannot select an account for remote secondmate $id from this host; configure config/$(fm_worker_account_file "$harness") in its home $home on $host instead" >&2
     return 1
   fi
   model=${MODEL:--}
@@ -2021,6 +2049,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
+  [ -z "$ACCOUNT_ARG" ] || shared_args+=(--account "$ACCOUNT_ARG")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -2415,6 +2444,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
   UPSTREAM_CONSENT=$(fm_meta_get "$RELAUNCH_META" upstream_consent)
+  # A per-launch Claude account recorded at spawn keeps governing the task's
+  # relaunches unless this relaunch names its own.
+  if [ "$ACCOUNT_SET" -eq 0 ]; then
+    ACCOUNT_ARG=$(fm_meta_get "$RELAUNCH_META" account_request)
+  fi
   if [ "$KIND" = ship ]; then
     BRANCH=$(fm_meta_get "$RELAUNCH_META" branch)
     [ -n "$BRANCH" ] || BRANCH="fm/$ID"
@@ -3219,7 +3253,12 @@ RAW_COMMAND=
 [ "$RAW_LAUNCH" = 0 ] || RAW_COMMAND=$ARG3
 WORKER_ACCOUNT_MATE=
 [ "$KIND" != secondmate ] || WORKER_ACCOUNT_MATE=$ID
-WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-$HARNESS}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE") || exit 1
+# A per-launch account recorded for a relaunch onto a different runner does not
+# transfer; an explicit --account on a non-Claude launch still refuses.
+if [ "$RELAUNCH" -eq 1 ] && [ "$ACCOUNT_SET" -eq 0 ] && [ "$HARNESS" != claude ]; then
+  ACCOUNT_ARG=
+fi
+WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-$HARNESS}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE" "$ACCOUNT_ARG") || exit 1
 WORKER_ACCOUNT_DECLARED=${WORKER_ACCOUNT%%$'\t'*}
 WORKER_ACCOUNT_ROOT=${WORKER_ACCOUNT#*$'\t'}
 WORKER_ACCOUNT_PROVIDER=${WORKER_ACCOUNT_ROOT#*$'\t'}
@@ -6877,7 +6916,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent forge backup_remote backup_prefix model effort opencode_version account account_provider account_request omp_profile busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id paseo_terminal_id paseo_workspace_id rex_server rex_session_id rex_window_id rex_block_id t3_thread_id t3_project_id tern_session_id tern_tab_id tern_block_id home projects control_relaunch_tx polytoken_session polytoken_port polytoken_credential", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -6916,6 +6955,10 @@ preserve_relaunch_meta() {
   # task record stays byte-identical.
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
+  # The per-launch account value (the declared form drops a token file's
+  # directory), so a relaunch re-resolves the same account. Absent when the
+  # home-wide pin or no pin applied.
+  [ -z "$WORKER_ACCOUNT" ] || [ -z "$ACCOUNT_ARG" ] || echo "account_request=$ACCOUNT_ARG"
   # The per-secondmate omp profile pin, only when one applies, so every other
   # task record stays byte-identical.
   [ -z "$OMP_PROFILE_PIN" ] || echo "omp_profile=$OMP_PROFILE_PIN"

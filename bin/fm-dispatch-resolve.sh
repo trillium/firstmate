@@ -50,7 +50,7 @@
 #     fallback: <runner-up rule taken when the picked rule missed its own floor>
 #     reason: <why the status is not clear>
 #     candidate: <harness>:<model> provider=.. scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | not eligible: <reason>
-#     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
+#     profile: --harness <h> [--model <m>] [--effort <e>] [--account <a>]     (status clear only)
 #   clear     -> pass the profile line to fm-spawn.sh unless you state a reason to override
 #   ambiguous -> confidence below the floor; decide as today from the probabilities
 #   escalate  -> the rule requires captain approval, no candidate is rankable, or a genuine tie
@@ -314,15 +314,18 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
         then (provider_id($f.provider) | not)
         else ($f | has("provider"))
         end);
+  def account_ok($h; $a):
+    $h == "claude" and ($a | type) == "string" and ($a | test("^(ordinary|(token:)?/[^[:cntrl:]]*)$"));
   def profile_bad($p):
     ($p | type) != "object"
     or (($p.harness | type) != "string") or (($p.harness | length) == 0)
     or ($p | has("model") and ((.model | type) != "string" or (.model | length) == 0))
     or ($p | has("effort") and ((.effort | type) != "string" or (.effort | length) == 0))
+    or ($p | has("account") and (account_ok($p.harness; $p.account) | not))
     or ($p | has("provider") and (provider_id(.provider) | not))
     or ($p | has("floor") and floor_bad(.floor; false));
   def duplicate_profiles($items):
-    ($items | map([.harness, (.model // null), (.effort // null)] | @json)) as $keys
+    ($items | map([.harness, (.model // null), (.effort // null), (.account // null)] | @json)) as $keys
     | ($keys | length) != ($keys | unique | length);
   if type != "object" then "top-level value must be an object"
   elif has("rules") and (.rules | type) != "array" then "rules must be an array"
@@ -686,6 +689,7 @@ TEXT=$(jq -r '
       + "  -> " + (if .unranked then "eligible, unranked: \(.reason | flat): disclosed uncertainty" elif .eligible then "eligible" else "not eligible: \(.reason | flat)" end)),
   (if .chosen then "  profile: --harness \(.chosen.profile.harness | shell_arg)"
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
-      + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
+      + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)
+      + (if .chosen.profile.account then " --account \(.chosen.profile.account | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
 printf '%s\n' "$TEXT"
 exit 0
