@@ -828,6 +828,19 @@ print_not_done_section() {
   printf 'NOT DONE (captain-authorized work waiting; tell the captain, repeat until each item moves or is dropped):\n%s\n' "$out"
 }
 
+# SECONDMATE HOLDS: a read-only count-plus-oldest line per second mate home with
+# open captain holds, so holds living in a second mate's own backlog show here.
+# Heartbeat wakes only, silent when none; a failure never fails the drain.
+print_secondmate_holds_section() {
+  local out
+  [ "$ACTOR" != branch ] || return 0
+  printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$3 == "heartbeat" { found = 1 } END { exit !found }' || return 0
+  [ -x "$SCRIPT_DIR/fm-stalled-work.sh" ] || return 0
+  out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" fm_run_timed 60 "$SCRIPT_DIR/fm-stalled-work.sh" --holds --quiet --plain 2>/dev/null) || return 0
+  [ -n "$out" ] || return 0
+  printf 'SECONDMATE HOLDS (open captain holds in second mate homes; read-only, answered in those homes):\n%s\n' "$out"
+}
+
 # Names the lock holder's command and running time so a wedged holder is visible.
 describe_lock_holder() {
   local pid=$1 cmd age
@@ -1125,6 +1138,7 @@ printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --a
 
 (print_status_presentation "$RAW_ROWS") || true
 print_not_done_section
+print_secondmate_holds_section
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
 assert_watcher_liveness
 exit "$BRANCH_OUTCOMES_RC"

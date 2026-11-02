@@ -320,4 +320,59 @@ test_remote_done_item_not_reported
 test_remote_stale_cache_not_judged
 test_remote_stale_live_summary_not_judged
 test_remote_newest_cache_wins
+HOLD_A='{"id":"hold-a","title":"Pick the vendor","blocked_reason":null,"hold_kind":"captain","hold_reason":"captain picks","hold_bucket":"aged","hold_until":null,"unresolved_blocker_ids":[],"kind":"ship","repo":"sample","since":"2026-12-01","hold_age_days":9}'
+HOLD_B='{"id":"hold-b","title":"Approve the design","blocked_reason":null,"hold_kind":"captain","hold_reason":"captain approves","hold_bucket":"live","hold_until":null,"unresolved_blocker_ids":[],"kind":"ship","repo":"sample","since":"2027-01-10","hold_age_days":2}'
+HOLD_C='{"id":"hold-c","title":"Undated call","blocked_reason":null,"hold_kind":"captain","hold_reason":"captain decides","hold_bucket":"live","hold_until":null,"unresolved_blocker_ids":[],"kind":"ship","repo":"sample","since":null,"hold_age_days":null}'
+
+test_secondmate_holds_rollup() {
+  local home rhome out plain
+  home=$(new_home holds)
+  rhome="$home/remote-home"
+  remote_fixture "$home" rmh "$rhome"
+  write_summary "$rhome/state/home-summary.json" "$rhome" "$NOW" "[$HOLD_B,$HOLD_A,$HOLD_C,$QUEUED_OLD]"
+  plain=$(remote_sweep "$home" --holds --plain) || fail '--holds sweep failed'
+  case "$plain" in *'Secondmate holds on rmh: 3 open, oldest hold-a held 9d'*) ;; *) fail "no count-plus-oldest line for the home: $plain" ;; esac
+  [ "$(printf '%s\n' "$plain" | grep -c 'Secondmate holds on')" -eq 1 ] || fail "holds were repeated one by one: $plain"
+  case "$plain" in *hold-b*) fail "a hold other than the oldest was listed: $plain" ;; esac
+  out=$(remote_sweep "$home" --holds --json) || fail '--holds --json failed'
+  printf '%s' "$out" | jq -e '(.secondmate_holds | map(.id)) == ["hold-a","hold-b","hold-c"] and .secondmate_hold_homes[0].count == 3 and .secondmate_hold_homes[0].oldest_age_days == 9' >/dev/null     || fail "holds were not ordered oldest first with undated last: $out"
+  out=$(remote_sweep "$home" --json) || fail 'default sweep failed'
+  printf '%s' "$out" | jq -e '[.not_done[].id] | index("hold-a") == null' >/dev/null     || fail "a captain hold leaked into the not-done list: $out"
+  pass 'secondmate captain holds roll up to one count-plus-oldest line per home'
+}
+
+test_secondmate_holds_quiet_and_bound() {
+  local home rhome out
+  home=$(new_home holds-quiet)
+  rhome="$home/remote-home"
+  remote_fixture "$home" rmq "$rhome"
+  write_summary "$rhome/state/home-summary.json" "$rhome" "$NOW" "[$QUEUED_OLD]"
+  out=$(remote_sweep "$home" --holds --quiet --plain) || fail 'quiet --holds failed'
+  case "$out" in *'Secondmate holds'*) fail "--holds --quiet reported a hold with none open: $out" ;; esac
+  # A summary that carries fewer queued rows than its queued total hides some; say so.
+  jq --argjson q "[$HOLD_A]" '.queued = $q | .counts.queued = 5' "$rhome/state/home-summary.json" > "$rhome/x.json" \
+    && mv "$rhome/x.json" "$rhome/state/home-summary.json"
+  out=$(remote_sweep "$home" --holds --plain) || fail 'bounded --holds failed'
+  case "$out" in *'beyond a home summary bound: 4'*) ;; *) fail "rows hidden by the summary bound were not counted: $out" ;; esac
+  out=$(FM_STALLED_HOLDS_MAX=1 remote_sweep "$home" --holds) || fail 'toon --holds failed'
+  case "$out" in *'secondmate_hold_homes[1]{home,count,oldest_id,oldest_age_days}:'*'omitted_homes: 0'*) ;; *) fail "unexpected toon output: $out" ;; esac
+  pass 'holds are silent when none, and rows hidden by a summary bound are counted'
+}
+
+test_bearings_projects_secondmate_holds() {
+  local home rhome out
+  home=$(new_home bearings-holds)
+  rhome="$home/remote-home"
+  remote_fixture "$home" rmb "$rhome"
+  write_summary "$rhome/state/home-summary.json" "$rhome" "$NOW" "[$HOLD_B,$HOLD_A]"
+  out=$(FM_SSH_BIN="$home/fakebin/fake-ssh" PATH="$home/fakebin:/usr/bin:/bin" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" FM_STALLED_NOW="$NOW" \
+    FM_BEARINGS_NOW=2027-01-15T12:00:00Z "$ROOT/bin/fm-bearings-snapshot.sh" --json) || fail 'bearings failed with a remote home'
+  printf '%s' "$out" | jq -e '.secondmate_holds | length == 1 and .[0].count == 2 and .[0].oldest_id == "hold-a"' >/dev/null || fail "bearings listed holds one by one: $(printf '%s' "$out" | jq -c '.secondmate_holds')"
+  pass 'bearings keeps secondmate holds to one line per home'
+}
+
 test_remote_missing_date_is_unknown
+test_secondmate_holds_rollup
+test_bearings_projects_secondmate_holds
+test_secondmate_holds_quiet_and_bound
