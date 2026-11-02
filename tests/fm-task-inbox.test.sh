@@ -366,7 +366,7 @@ SH
 # rings. Our own exact doorbell is submitted instead; any other pending text
 # still skips untouched; and a lost Enter after typing gets one retry.
 test_ring_submits_its_own_stuck_doorbell() {
-  local dir state rec doorbell log composer drops rc other
+  local dir state rec doorbell log composer drops rc other stacked
   dir="$TMP_ROOT/ring-stuck"
   state="$dir/state"
   mkdir -p "$state"
@@ -393,7 +393,19 @@ test_ring_submits_its_own_stuck_doorbell() {
     || fail "the retry Enter should submit the stuck doorbell once, not retype it:"$'\n'"$(cat "$log")"
   [ ! -s "$composer" ] || fail "a lost Enter left the stuck doorbell unsubmitted"
 
-  for other in 'a half-typed draft' "$doorbell and a draft"; do
+  # Stacked copies: earlier rings whose Enter never landed concatenate their
+  # doorbells with no separator. All-doorbell content is still ours, so it is
+  # submitted once as it stands, never extended with another copy.
+  for stacked in "$doorbell$doorbell" "$doorbell$doorbell$doorbell$doorbell"; do
+    : > "$log"; printf '%s' "$stacked" > "$composer"
+    rc=0; ring || rc=$?
+    [ "$rc" = 0 ] || fail "stacked own doorbells should be submitted, got rc $rc"
+    [ "$(cat "$log")" = "SUBMIT: $stacked" ] \
+      || fail "stacked doorbells should be submitted once without retyping:"$'\n'"$(cat "$log")"
+    [ ! -s "$composer" ] || fail "stacked doorbells were left in the composer"
+  done
+
+  for other in 'a half-typed draft' "$doorbell and a draft" "${doorbell}typed" "${doorbell}${doorbell} draft"; do
     : > "$log"; printf '%s' "$other" > "$composer"
     rc=0; ring || rc=$?
     [ "$rc" = 1 ] || fail "other pending text should skip the ring, got rc $rc for: $other"
@@ -408,6 +420,35 @@ test_ring_submits_its_own_stuck_doorbell() {
     || fail "the retry Enter should submit the doorbell once:"$'\n'"$(cat "$log")"
   [ ! -s "$composer" ] || fail "a lost Enter left the doorbell unsubmitted"
   pass "inbox: the ring submits its own stuck doorbell, skips other pending text, and retries a lost Enter once on both paths"
+}
+
+# Real claude 2.1.316 composer frames captured through herdr: the doorbell sits
+# in the composer wrapped under a two-space indent, and each ring whose Enter
+# never landed stacks another copy with no separator. One or many copies are
+# our own doorbell; anything typed around them is not.
+test_composer_holds_recognises_captured_stacked_doorbells() {
+  local state rec line fx n probe
+  state="$TMP_ROOT/holds-fixture/state"
+  mkdir -p "$state"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" robots-wave1-c "please continue")
+  line=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  fx="$ROOT/tests/fixtures/claude-2.1.316-stacked-doorbells"
+  # shellcheck disable=SC2016 # the probe body expands in the child shell
+  probe='
+    . "$1"; . "${1%/*}/fm-composer-lib.sh"
+    fm_backend_source() { return 0; }
+    fm_backend_capture() { cat "$FIXTURE"; }
+    fm_task_inbox_composer_holds herdr w:p "$2"'
+  for n in one two four; do
+    FIXTURE="$fx/$n.txt" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line" \
+      || fail "the captured $n-doorbell composer should read as our own doorbell"
+  done
+  FIXTURE="$fx/two.txt" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line and more" \
+    && fail "a composer that does not match the expected line must not read as ours"
+  sed 's/handled\/\.$/handled\/. plus a typed draft/' "$fx/two.txt" > "$state/mixed.txt"
+  FIXTURE="$state/mixed.txt" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line" \
+    && fail "doorbells followed by typed text must not read as ours"
+  pass "inbox: captured claude composers holding one or many stacked doorbells read as our own, mixed text does not"
 }
 
 test_idempotent_write_dedups_exact_body() {
@@ -1198,6 +1239,7 @@ test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_submits_its_own_stuck_doorbell
+test_composer_holds_recognises_captured_stacked_doorbells
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence

@@ -672,7 +672,7 @@ inbox_steer_check() {  # <window> <task>
           wake "$reason"
         fi
       fi
-      triage_log "steer-inbox delivery attempt: $task ${rec##*/} result=$ring_rc"
+      triage_log "steer-inbox delivery attempt: $task ${rec##*/} result=$ring_rc${FM_TASK_INBOX_RING_NOTE:+ ($FM_TASK_INBOX_RING_NOTE)}"
       ;;
     retry)
       ring_rc=0

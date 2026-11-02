@@ -1253,6 +1253,57 @@ test_structural_composer_check_loads_its_own_backend() {
   pass "fm-control: the structural composer-empty check loads the herdr backend itself"
 }
 
+# agy renders a borderless bare `>` composer that the shared classifier reads
+# as unknown by design, and grok's plain read cannot separate its dim
+# placeholder from a draft. Both reach fm-control exit and relaunch through the
+# structural proof: herdr reports the agent idle, and the plain pane text shows
+# an empty composer in the harness's recorded shape. The screens below are the
+# captured idle frames (docs/verification/agy.md; grok 1.0.5, issue #3436)
+# plus typed, busy, and unproven variants that must stay refused.
+test_structural_composer_check_proves_agy_and_grok() {
+  local rule agy_idle agy_draft agy_busy grok_idle grok_draft grok_ph grok_two
+  rule='──────────────────────────────────────────────────────────────────────────────'
+  agy_idle=$'  The change is in.\n\n>\n'"$rule"$'\n? for shortcuts                                    Gemini 3.8 Flash · low\n'
+  agy_draft=$'  The change is in.\n\n> half-typed draft\n'"$rule"$'\n? for shortcuts                                    Gemini 3.8 Flash · low\n'
+  agy_busy=$'  ⣯  Generating...\n\n>\n'"$rule"$'\nesc to cancel                                       Gemini 3.8 Flash · low\n'
+  grok_idle=$'  done.\n\n  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰────────────────────────────────────────────────────────── Grok 4.6 (xhigh) ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts\n'
+  grok_draft=${grok_idle/❯                  /❯ deploy the fix  }
+  grok_ph=${grok_idle/❯                  /❯ Type a message...}
+  grok_two=$grok_idle$'  ╭──────────────╮\n  │ some dialog  │\n  ╰──────────────╯\n'
+  # shellcheck disable=SC2016 # the probe body expands in the child shell
+  local probe='
+    . "$1/bin/fm-backend.sh"; . "$1/bin/fm-control-lib.sh"
+    fm_backend_source herdr || exit 3
+    fm_backend_herdr_parse_target() { FM_BACKEND_HERDR_SESSION=s; FM_BACKEND_HERDR_PANE=p; }
+    fm_backend_herdr_cli() {
+      case "$3" in
+        get) printf "{\"result\":{\"agent\":{\"agent\":\"%s\",\"agent_status\":\"%s\"}}}" "$AGENT" "${STATUS:-idle}" ;;
+        read) printf "%s\n" "$SCREEN" ;;
+      esac
+    }
+    fm_backend_source() { return 0; }
+    fm_control_composer_structurally_empty herdr default:s:p'
+  AGENT=agy SCREEN=$agy_idle bash -c "$probe" _ "$ROOT" \
+    || fail "an idle herdr agy with the empty bare composer must be proven structurally empty"
+  AGENT=grok SCREEN=$grok_idle bash -c "$probe" _ "$ROOT" \
+    || fail "an idle herdr grok with the empty composer box must be proven structurally empty"
+  AGENT=grok SCREEN=$grok_ph bash -c "$probe" _ "$ROOT" \
+    || fail "a grok composer showing only its placeholder must be proven structurally empty"
+  AGENT=agy SCREEN=$agy_draft bash -c "$probe" _ "$ROOT" \
+    && fail "an agy composer holding a draft must not be proven empty"
+  AGENT=agy SCREEN=$agy_busy bash -c "$probe" _ "$ROOT" \
+    && fail "a busy agy status row must not be proven empty"
+  AGENT=agy STATUS=working SCREEN=$agy_idle bash -c "$probe" _ "$ROOT" \
+    && fail "a working agy must not be proven empty even on an empty-looking screen"
+  AGENT=grok SCREEN=$grok_draft bash -c "$probe" _ "$ROOT" \
+    && fail "a grok composer holding a draft must not be proven empty"
+  AGENT=grok SCREEN=$grok_two bash -c "$probe" _ "$ROOT" \
+    && fail "a grok screen whose last box is not the composer must not be proven empty"
+  AGENT=grok SCREEN='no composer here' bash -c "$probe" _ "$ROOT" \
+    && fail "a grok screen without a composer box must not be proven empty"
+  pass "fm-control: the structural composer-empty check proves idle agy and grok composers and refuses drafts, busy rows, and unproven screens"
+}
+
 # --- 6. marker non-regression -----------------------------------------------
 
 test_secondmate_control_command_carries_no_marker() {
@@ -1435,3 +1486,4 @@ test_secondmate_control_command_carries_no_marker
 test_fm_send_still_marks_the_same_secondmate_task
 test_exit_records_generation_scoped_stop_marker_only_on_verified_exit
 test_structural_composer_check_loads_its_own_backend
+test_structural_composer_check_proves_agy_and_grok
