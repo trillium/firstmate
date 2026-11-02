@@ -12,6 +12,9 @@
 # secondmate request delivers only marker and correlation bytes and leaves the
 # parent waiting on a reply to nothing.
 # Special keys instead of text: fm-send.sh <target> --key Enter
+# A backend=cloud task has no endpoint: the text is delivered by `fm-cloud.sh
+# continue` (a follow-up cloud run on the task's branch); --key is refused.
+#
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca supports Enter and C-c only; T3 Code maps Escape and C-c to a native
 # turn interrupt and treats Enter as a no-op.
@@ -367,6 +370,19 @@ fm_send_resolve_target() { # <raw-target>
       RESOLUTION_TRIED="meta=$meta; placement=remote"
       return 0
     fi
+    if [ "$(fm_meta_get "$meta" backend)" = cloud ]; then
+      # A Claude Code cloud run has no endpoint: its steer is a follow-up cloud run
+      # (bin/fm-cloud.sh continue), routed after option parsing below.
+      id=$(fm_send_id_from_meta "$meta")
+      RESOLVED_TARGET="cloud:$id"
+      TARGET_BACKEND=cloud
+      TARGET_META=$meta
+      TARGET_HARNESS=$(fm_meta_get "$meta" harness)
+      EXPECTED_LABEL="fm-$id"
+      TARGET_SELECTOR=1
+      RESOLUTION_TRIED="meta=$meta; backend=cloud"
+      return 0
+    fi
     RESOLUTION_TRIED="meta=$meta; backend=from-meta"
     target=$(fm_backend_target_of_meta "$meta")
     if [ -z "$target" ]; then
@@ -520,6 +536,23 @@ while :; do
   *) break ;;
   esac
 done
+
+# A cloud task is steered by a follow-up cloud run on its branch. The text is the
+# whole message; keys and typed lifecycle text have no cloud endpoint to reach.
+if [ "$TARGET_BACKEND" = cloud ]; then
+  [ "${1:-}" != --key ] || {
+    echo "error: --key has no cloud endpoint; a cloud task is steered with text only (tried $RESOLUTION_TRIED)" >&2
+    exit 1
+  }
+  [ $# -gt 0 ] || {
+    echo "error: nothing to send to cloud task ${T#cloud:}" >&2
+    exit 1
+  }
+  cloud_args=()
+  for k in $RESOLVE_KEYS; do cloud_args+=(--resolve-key "$k"); done
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-cloud.sh" continue "${cloud_args[@]+"${cloud_args[@]}"}" "${T#cloud:}" "$*"
+  exit $?
+fi
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1

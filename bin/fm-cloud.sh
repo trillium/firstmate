@@ -14,6 +14,7 @@
 #   fm-cloud.sh check <task-id>
 #   fm-cloud.sh land <task-id>
 #   fm-cloud.sh teardown <task-id> [--force]
+#   fm-cloud.sh continue [--resolve-key <key>]... <task-id> <text>
 #   fm-cloud.sh credit
 #   fm-cloud.sh doctor
 #
@@ -59,8 +60,34 @@
 # then retires the check, PR poll, run record and task record and closes the
 # backlog item.
 #
+# Worker -> firstmate: the cloud trailer tells the worker to append local-grammar
+# status lines (`<state> [at=<epoch>]: <text>`, grammar owned by
+# bin/fm-classify-lib.sh) to .fm-cloud/status on claude/<task-id> and push after
+# each one. check fetches that branch into a private bare repository under
+# state/cloud-runs (the project clone is never written) and emits each new line
+# once as a wake line, also appending it to state/<task-id>.status so a
+# needs-decision or blocked opens a decision exactly as a local worker's does.
+# Only the verbs working, blocked, needs-decision, paused, done, failed and
+# resolved are taken; lines are control-stripped and capped. The file is kept out
+# of the PR diff by the worker's LAST commit, `git rm .fm-cloud/status`; check
+# reads the newest commit that still carried the file, so that deletion does not
+# hide the final done: line. Side-ref alternative not used: the worker would need
+# a second branch to push.
+#
+# Firstmate -> worker: the installed claude CLI has no non-interactive send to an
+# existing cloud session (--cloud <session_id> attaches a terminal), so `continue`
+# launches a follow-up cloud run on the same claude/<task-id> branch carrying the
+# brief, the steer and the prior status lines, and records it against the same
+# task (meta cloud_run/cloud_session/cloud_url move to the new run; the old run
+# record is retired). bin/fm-send.sh routes a backend=cloud task here, and its
+# --resolve-key closes the named decision. Replies arrive through the status file.
+#
 # credit reads config/cloud-credit (amount=<usd> and expires=<YYYY-MM-DD>) and
 # reports the days remaining and the runs launched; doctor prints the same line.
+# It also reports runs per task, runs per UTC day, and wall time per run from
+# launch to the last status line, branch move or PR sighting. The dollar balance
+# has no CLI or API: it is read on claude.ai, and this tool never reports dollars
+# spent.
 #
 # cleanup retires a run record and PRINTS the web-only steps that remain; it
 # performs none of them. A run still bound to a task is torn down with teardown. The steps are owned by runbooks-e8k (the
@@ -85,14 +112,34 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 RUNS="$STATE/cloud-runs"
 LAUNCH_LEDGER="$RUNS/.launched"
+ACTIVITY_LEDGER="$RUNS/.activity"
 
 die() { printf 'fm-cloud: %s\n' "$*" >&2; exit 1; }
-usage_die() { printf 'fm-cloud: %s\n' "$*" >&2; sed -n '6,18p' "${BASH_SOURCE[0]}" >&2; exit 2; }
+usage_die() { printf 'fm-cloud: %s\n' "$*" >&2; sed -n '6,19p' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 valid_id() { case "$1" in ''|*[!A-Za-z0-9._-]*|.*) return 1 ;; esac; }
 
 rec_get() {  # <file> <key>
   sed -n "s/^$2=//p" "$1" | head -n 1
+}
+
+rec_set() {  # <file> <key> <value>: replace or add one key=value line
+  local f=$1 k=$2 v=$3 tmp
+  tmp="$f.tmp.$$"
+  { grep -v "^$k=" "$f" || true; printf '%s=%s\n' "$k" "$v"; } > "$tmp" && mv "$tmp" "$f"
+}
+
+epoch_date() {  # <epoch> -> YYYY-MM-DD (UTC)
+  date -u -d "@$1" +%F 2>/dev/null || date -u -r "$1" +%F 2>/dev/null || printf 'unknown'
+}
+
+# Record that a run did something observable (status line, branch move, PR): the
+# run record's last_activity_at and an append-only ledger that outlives teardown,
+# so the credit report can show wall time per run after the record is gone.
+note_activity() {  # <run-id> <epoch>
+  local run=$1 at=$2
+  [ ! -f "$RUNS/$run.run" ] || rec_set "$RUNS/$run.run" last_activity_at "$at"
+  printf '%s %s\n' "$run" "$at" >> "$ACTIVITY_LEDGER"
 }
 
 rec_path() {  # <run-id>
@@ -126,6 +173,20 @@ load_task_libs() {
 cloud_trailer() {  # <task-id> <base-branch>
   printf '\n\n---\nCloud run: work on a branch named claude/%s, push it, and open a pull request against %s.\n' "$1" "${2:-the default branch}"
   printf 'Put no secrets, tokens or credentials in the branch, the pull request or its description.\n'
+  cloud_status_trailer "$1"
+}
+
+# The worker -> firstmate channel. A cloud worker cannot write firstmate's status
+# file, so it appends the same status lines a local worker would (grammar owned by
+# bin/fm-classify-lib.sh) to .fm-cloud/status on its branch and pushes after each
+# one; `fm-cloud.sh check` reads them back.
+cloud_status_trailer() {  # <task-id>
+  printf '\nStatus channel: firstmate cannot see your session, so report by appending one line to .fm-cloud/status on branch claude/%s and pushing that branch right after each append.\n' "$1"
+  # shellcheck disable=SC2016  # backticks are literal prompt text
+  printf 'Line format: <state> [at=<epoch>]: <one short line>, where <epoch> is the number printed by `date +%%s` and <state> is one of working, needs-decision, blocked, paused, done, failed.\n'
+  printf 'Be sparse: working lines only for real milestones (setup done, fix implemented, validation passed). Use blocked: or needs-decision: with the exact question and then stop and wait; a follow-up run will deliver the answer. Never put secrets in a line.\n'
+  # shellcheck disable=SC2016  # backticks are literal prompt text
+  printf 'Finish in this order: open the pull request, append `done [at=<epoch>]: PR <full https url>` and push, then make your LAST commit `git rm .fm-cloud/status` and push, so the file is not in the pull request diff.\n'
 }
 
 # config/cloud-timeout: minutes of silence before a run reports as possibly stuck.
@@ -165,6 +226,39 @@ run_result_branch() {  # <record-file> <task-id>
     case "$ref" in "claude/$task"*) [ -n "$want" ] || want="$ref $sha" ;; esac
   done <<< "$now"
   printf '%s\n' "${want:-$first}"
+}
+
+# Run `claude --cloud <prompt>` from <repo> under a pseudo-terminal and parse its
+# output into CLOUD_URL, CLOUD_SESSION and CLOUD_WARN. The prompt is never
+# printed; the private log is removed afterwards.
+claude_cloud_run() {  # <repo> <prompt> [<environment>]
+  local repo=$1 prompt=$2 env_id=${3:-}
+  local args=(--cloud "$prompt")
+  [ -z "$env_id" ] || args+=(--environment "$env_id")
+  # claude refuses --cloud without a terminal, so run it under a pseudo-terminal
+  # with its output in a private log that is removed afterwards.
+  local log out rc=0
+  log=$(mktemp "${TMPDIR:-/tmp}/fm-cloud.XXXXXX") || die "cannot create a temporary log"
+  chmod 600 "$log"
+  if [ "$(uname -s)" = Darwin ]; then
+    (cd "$repo" && script -q "$log" claude "${args[@]}" </dev/null >/dev/null 2>&1) || rc=$?
+  else
+    local cmdline
+    cmdline=$(printf '%q ' claude "${args[@]}")
+    (cd "$repo" && script -qec "$cmdline" "$log" </dev/null >/dev/null 2>&1) || rc=$?
+  fi
+  out=$(LC_ALL=C sed -e $'s/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' -e 's/\r//g' "$log" 2>/dev/null || true)
+  rm -f "$log"
+  [ "$rc" -eq 0 ] || { printf '%s\n' "$out" | tail -n 5 >&2; die "claude --cloud failed (exit $rc)"; }
+  if printf '%s\n' "$out" | grep -q 'requires an interactive terminal'; then
+    die "claude refused --cloud: no terminal available"
+  fi
+  CLOUD_WARN=$(printf '%s\n' "$out" | grep -E 'commits? ahead of' | head -n 1 || true)
+  CLOUD_URL=$(printf '%s\n' "$out" | grep -Eo 'https://claude\.ai/code/[A-Za-z0-9_./-]+' | head -n 1 || true)
+  CLOUD_SESSION=$(printf '%s\n' "$CLOUD_URL" | sed -n 's#.*/\(session_[A-Za-z0-9_]*\).*#\1#p' | head -n 1)
+  [ -n "$CLOUD_SESSION" ] || CLOUD_SESSION=$(printf '%s\n' "$out" | grep -Eo 'claude --teleport session_[A-Za-z0-9]+' | grep -Eo 'session_[A-Za-z0-9]+' | head -n 1 || true)
+  [ -n "$CLOUD_SESSION" ] || CLOUD_SESSION=$(printf '%s\n' "$out" | grep -Eo 'session_[A-Za-z0-9]+' | head -n 1 || true)
+  return 0
 }
 
 cmd_launch() {
@@ -250,34 +344,9 @@ cmd_launch() {
   before=$(git -C "$repo" ls-remote --heads "$remote_name" 'refs/heads/claude/*' 2>/dev/null \
     | awk '{print $1":"$2}' | paste -sd, - || true)
 
-  local args=(--cloud "$prompt")
-  [ -z "$env_id" ] || args+=(--environment "$env_id")
-  # claude refuses --cloud without a terminal, so run it under a pseudo-terminal
-  # with its output in a private log that is removed afterwards.
-  local log out rc=0
-  log=$(mktemp "${TMPDIR:-/tmp}/fm-cloud.XXXXXX") || die "cannot create a temporary log"
-  chmod 600 "$log"
-  if [ "$(uname -s)" = Darwin ]; then
-    (cd "$repo" && script -q "$log" claude "${args[@]}" </dev/null >/dev/null 2>&1) || rc=$?
-  else
-    local cmdline
-    cmdline=$(printf '%q ' claude "${args[@]}")
-    (cd "$repo" && script -qec "$cmdline" "$log" </dev/null >/dev/null 2>&1) || rc=$?
-  fi
-  out=$(LC_ALL=C sed -e $'s/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' -e 's/\r//g' "$log" 2>/dev/null || true)
-  rm -f "$log"
-  [ "$rc" -eq 0 ] || { printf '%s\n' "$out" | tail -n 5 >&2; die "claude --cloud failed (exit $rc)"; }
-  if printf '%s\n' "$out" | grep -q 'requires an interactive terminal'; then
-    die "claude refused --cloud: no terminal available"
-  fi
-  local warn
-  warn=$(printf '%s\n' "$out" | grep -E 'commits? ahead of' | head -n 1 || true)
-
-  local url session
-  url=$(printf '%s\n' "$out" | grep -Eo 'https://claude\.ai/code/[A-Za-z0-9_./-]+' | head -n 1 || true)
-  session=$(printf '%s\n' "$url" | sed -n 's#.*/\(session_[A-Za-z0-9_]*\).*#\1#p' | head -n 1)
-  [ -n "$session" ] || session=$(printf '%s\n' "$out" | grep -Eo 'claude --teleport session_[A-Za-z0-9]+' | grep -Eo 'session_[A-Za-z0-9]+' | head -n 1 || true)
-  [ -n "$session" ] || session=$(printf '%s\n' "$out" | grep -Eo 'session_[A-Za-z0-9]+' | head -n 1 || true)
+  local warn url session
+  claude_cloud_run "$repo" "$prompt" "$env_id"
+  warn=$CLOUD_WARN; url=$CLOUD_URL; session=$CLOUD_SESSION
 
   local id now
   now=$(date +%s)
@@ -438,6 +507,63 @@ task_run_record() {  # <task-id>
   rec_path "$run"
 }
 
+# The worker's status file from its branch. The file is deleted by the worker's
+# last commit, so it is read from the newest commit that still had it, in a private
+# bare repository under state/cloud-runs (the project clone is never written).
+# Prints the file's text; returns 1 when the remote cannot be read. A branch
+# without the file prints nothing.
+branch_status_text() {  # <record-file> <task-id>
+  local f=$1 task=$2 repo remote url ref sha cache seen_sha c
+  repo=$(rec_get "$f" repo); remote=$(rec_get "$f" remote)
+  ref="refs/heads/claude/$task"
+  sha=$(git -C "$repo" ls-remote --heads "$remote" "$ref" 2>/dev/null | awk 'NR==1{print $1}') || return 1
+  [ -n "$sha" ] || return 0
+  cache="$RUNS/$task.statusrepo"
+  seen_sha=""
+  [ ! -f "$cache.sha" ] || seen_sha=$(cat "$cache.sha")
+  if [ "$sha" != "$seen_sha" ] || [ ! -d "$cache" ]; then
+    [ -d "$cache" ] || git init -q --bare "$cache" 2>/dev/null || return 1
+    url=$(git -C "$repo" remote get-url "$remote" 2>/dev/null) || return 1
+    git --git-dir="$cache" fetch -q --no-tags "$url" "+$ref:refs/heads/status" 2>/dev/null || return 1
+    printf '%s\n' "$sha" > "$cache.sha"
+  fi
+  c=$(git --git-dir="$cache" log -1 --format=%H --diff-filter=AM refs/heads/status -- .fm-cloud/status 2>/dev/null || true)
+  [ -n "$c" ] || return 0
+  git --git-dir="$cache" show "$c:.fm-cloud/status" 2>/dev/null || true
+}
+
+# Emit each status line the worker has pushed since the last check, once. Only
+# lines in the local grammar's verbs are taken (the file is worker-written data):
+# they are control-stripped, capped, stamped when untagged, appended to the task's
+# status log exactly as a local worker's line would be (so a needs-decision opens a
+# decision there), and printed as a wake line.
+ingest_cloud_status() {  # <task-id> <record-file> <run-id>
+  local task=$1 f=$2 run=$3 text n done_n line verb out last_at=""
+  local status="$STATE/$task.status" cnt="$RUNS/$task.statuslines"
+  text=$(branch_status_text "$f" "$task") || return 0
+  [ -n "$text" ] || return 0
+  n=$(printf '%s\n' "$text" | wc -l | tr -d ' ')
+  done_n=0
+  [ ! -f "$cnt" ] || done_n=$(cat "$cnt")
+  case "$done_n" in ''|*[!0-9]*) done_n=0 ;; esac
+  [ "$n" -ge "$done_n" ] || done_n=0  # a rewritten file: prefer a duplicate to a lost line
+  [ "$n" -gt "$done_n" ] || return 0
+  while IFS= read -r line; do
+    line=$(printf '%s' "$line" | tr '\r\t' '  ' | LC_ALL=C tr -d '\000-\037\177')
+    line=${line:0:600}
+    case "$line" in *:*) ;; *) continue ;; esac
+    verb=$(status_line_verb "$line")
+    case "$verb" in working|blocked|needs-decision|paused|done|failed|resolved) ;; *) continue ;; esac
+    line=$(status_stamp_line "$line")
+    printf '%s\n' "$line" >> "$status"
+    out=$line
+    printf 'cloud run %s: %s\n' "$task" "$out"
+    last_at=$(status_line_at_epoch "$line" || true)
+  done < <(printf '%s\n' "$text" | tail -n +$((done_n + 1)))
+  printf '%s\n' "$n" > "$cnt"
+  note_activity "$run" "${last_at:-$(date +%s)}"
+}
+
 # What the watcher runs for a cloud task: print one line only when firstmate
 # should wake, and never fail (a silent check is a quiet one).
 cmd_check() {
@@ -450,6 +576,8 @@ cmd_check() {
   f="$RUNS/$(rec_get "$meta" cloud_run).run"
   [ -f "$f" ] || return 0
   url_s=$(rec_get "$f" url)
+  load_task_libs
+  ingest_cloud_status "$task" "$f" "$(rec_get "$meta" cloud_run)"
   if ! branch=$(run_result_branch "$f" "$task"); then
     return 0  # remote unreachable: say nothing, try again next poll
   fi
@@ -463,6 +591,7 @@ cmd_check() {
     [ ! -f "$RUNS/$(rec_get "$meta" cloud_run).seen" ] || seen=$(cat "$RUNS/$(rec_get "$meta" cloud_run).seen")
     [ "$sig" != "$seen" ] || return 0
     printf '%s\n' "$sig" > "$RUNS/$(rec_get "$meta" cloud_run).seen"
+    note_activity "$(rec_get "$meta" cloud_run)" "$(date +%s)"
     if [ -n "$n" ]; then
       printf 'cloud run %s: PR https://github.com/%s/pull/%s opened from %s - hand it to the landing path with: bin/fm-cloud.sh land %s (session %s)\n' \
         "$task" "$slug" "$n" "$ref" "$task" "${url_s:-unknown}"
@@ -471,13 +600,97 @@ cmd_check() {
     fi
     return 0
   fi
-  age=$(( $(date +%s) - $(rec_get "$f" launched_at) ))
+  local since
+  since=$(rec_get "$f" last_activity_at)
+  case "$since" in ''|*[!0-9]*) since=$(rec_get "$f" launched_at) ;; esac
+  age=$(( $(date +%s) - since ))
   limit=$(( $(cloud_timeout_minutes) * 60 ))
   if [ "$age" -ge "$limit" ] && [ ! -e "$RUNS/$(rec_get "$meta" cloud_run).stuck" ]; then
     : > "$RUNS/$(rec_get "$meta" cloud_run).stuck"
     printf 'cloud run %s: no branch or PR after %s minutes, possibly stuck - check the session %s\n' \
       "$task" "$(( age / 60 ))" "${url_s:-unknown}"
   fi
+  return 0
+}
+
+# Steer a cloud worker. The installed claude CLI has no non-interactive way to
+# message an existing cloud session (--cloud <session_id> only attaches a
+# terminal), so a steer launches a follow-up cloud run on the SAME claude/<task>
+# branch: the brief, the steer, and the worker's prior status file, recorded
+# against the same task. The previous run record is retired; the launch and
+# activity ledgers keep its history for `credit`.
+cmd_continue() {
+  local task="" text="" keys="" k
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --resolve-key) [ $# -ge 2 ] || usage_die "--resolve-key needs a value"; keys="$keys $2"; shift 2 ;;
+      --) shift; break ;;
+      -*) usage_die "unknown continue option: $1" ;;
+      *) break ;;
+    esac
+  done
+  [ $# -ge 2 ] || usage_die "continue needs a task id and the steer text"
+  task=$1; shift; text="$*"
+  [ -n "$text" ] || usage_die "continue needs the steer text"
+  for k in $keys; do valid_id "$k" || usage_die "invalid decision key: $k"; done
+  load_task_libs
+  command -v claude >/dev/null 2>&1 || die "claude CLI not found on PATH (run: fm-cloud.sh doctor)"
+  local f meta old repo remote before status prior prompt now id warn url session
+  f=$(task_run_record "$task") || exit $?
+  meta="$STATE/$task.meta"
+  old=$(rec_get "$meta" cloud_run)
+  [ -f "$DATA/$task/brief.md" ] || die "task $task has no brief at $DATA/$task/brief.md"
+  repo=$(rec_get "$f" repo); remote=$(rec_get "$f" remote)
+  prior=$(branch_status_text "$f" "$task" 2>/dev/null | tail -n 40 || true)
+  prompt="$(cat "$DATA/$task/brief.md")$(cloud_trailer "$task" "$(rec_get "$f" base_branch)")"
+  prompt="$prompt
+---
+Follow-up run for this task. Firstmate steers you with the message below; the work so far is on branch claude/$task. Check out that existing branch, do NOT start a new one, and continue from it. Keep appending to .fm-cloud/status there (recreate it if it is missing).
+
+Steer from firstmate:
+$text
+
+Your earlier status lines (most recent last):
+${prior:-(none pushed)}
+"
+  before=$(git -C "$repo" ls-remote --heads "$remote" 'refs/heads/claude/*' 2>/dev/null | awk '{print $1":"$2}' | paste -sd, - || true)
+  claude_cloud_run "$repo" "$prompt" "$(rec_get "$f" environment)"
+  warn=$CLOUD_WARN; url=$CLOUD_URL; session=$CLOUD_SESSION
+  now=$(date +%s)
+  id="cloud-$now-$$"
+  {
+    printf 'id=%s\n' "$id"
+    printf 'launched_at=%s\n' "$now"
+    printf 'session=%s\n' "$session"
+    printf 'url=%s\n' "$url"
+    printf 'environment=%s\n' "$(rec_get "$f" environment)"
+    printf 'repo=%s\n' "$repo"
+    printf 'remote=%s\n' "$remote"
+    printf 'remote_url=%s\n' "$(rec_get "$f" remote_url)"
+    printf 'base_branch=%s\n' "$(rec_get "$f" base_branch)"
+    printf 'result_branch=claude/*\n'
+    printf 'heads_before=%s\n' "$before"
+    printf 'prompt_bytes=%s\n' "$(printf '%s' "$prompt" | wc -c | tr -d ' ')"
+    printf 'prompt_sha256=%s\n' "$(printf '%s' "$prompt" | sha256_of)"
+    printf 'task=%s\n' "$task"
+    printf 'continues=%s\n' "$old"
+  } > "$RUNS/$id.run"
+  printf '%s %s %s\n' "$id" "$now" "$task" >> "$LAUNCH_LEDGER"
+  rec_set "$meta" cloud_run "$id"
+  rec_set "$meta" cloud_session "$session"
+  rec_set "$meta" cloud_url "$url"
+  rm -f "$f" "${f%.run}.seen" "${f%.run}.stuck"
+  status="$STATE/$task.status"
+  printf 'working [at=%s]: steer delivered by a follow-up cloud run, session %s\n' "$now" "${url:-${session:-unknown}}" >> "$status"
+  for k in $keys; do
+    printf 'resolved [at=%s] [key=%s]: answered by a steer (follow-up cloud run)\n' "$now" "$k" >> "$status"
+  done
+  printf 'run: %s (continues %s)\n' "$id" "$old"
+  printf 'session: %s\n' "${session:-unknown}"
+  printf 'url: %s\n' "${url:-unknown}"
+  printf 'steer: delivered as a follow-up run on claude/%s; replies arrive through the status channel\n' "$task"
+  [ -z "$warn" ] || printf 'warning: %s\n' "$warn"
+  [ -z "$(rec_get "$meta" pr)" ] || printf 'note: a PR is recorded, so the PR poll (not the status channel) owns wakes for this task\n'
   return 0
 }
 
@@ -542,7 +755,9 @@ cmd_teardown() {
   fm_pr_poll_merge_notified_remove "$STATE" "$task" || true
   rm -f "$STATE/$task.check.sh" "$STATE/$task.check-trust" "$STATE/$task.pr-poll" \
     "$STATE/$task.pr-poll-registration" "$STATE/$task.pr-poll-retirement" "$STATE/$task.merge-authority" \
-    "$RUNS/$run.run" "$RUNS/$run.seen" "$RUNS/$run.stuck"
+    "$RUNS/$run.run" "$RUNS/$run.seen" "$RUNS/$run.stuck" \
+    "$RUNS/$task.statuslines" "$RUNS/$task.statusrepo.sha"
+  rm -rf "$RUNS/$task.statusrepo"
   status_retire_presentation_task "$STATE" "$task" || true
   rm -rf "$STATE/$task.inbox"
   if [ "$transition_applies" -eq 1 ]; then
@@ -585,9 +800,38 @@ credit_line() {
   fi
 }
 
+# Usage from the two ledgers: runs per task, runs per UTC day, and wall time per
+# run from launch to its last status line, branch move or PR sighting.
+credit_report() {
+  [ -s "$LAUNCH_LEDGER" ] || { printf 'usage: no runs launched yet\n'; return 0; }
+  local id at task last wall tot=0 n=0
+  printf 'runs per task:\n'
+  awk '{t=($3=="" ? "-" : $3); c[t]++} END{for (t in c) printf "  %s: %d\n", t, c[t]}' "$LAUNCH_LEDGER" | sort
+  printf 'runs per day (UTC):\n'
+  while read -r id at task; do
+    [ -n "$at" ] || continue
+    epoch_date "$at"; printf '\n'
+  done < "$LAUNCH_LEDGER" | sort | uniq -c | awk '{printf "  %s: %d\n", $2, $1}'
+  printf 'wall time per run (launch to last status or PR):\n'
+  while read -r id at task; do
+    [ -n "$id" ] || continue
+    last=""
+    [ ! -f "$ACTIVITY_LEDGER" ] || last=$(awk -v r="$id" '$1==r && $2>m {m=$2} END{if (m) print m}' "$ACTIVITY_LEDGER")
+    if [ -n "$last" ] && [ "$last" -ge "$at" ]; then
+      wall=$(( last - at )); tot=$(( tot + wall )); n=$(( n + 1 ))
+      printf '  %s task=%s: %dm%02ds\n' "$id" "${task:--}" $(( wall / 60 )) $(( wall % 60 ))
+    else
+      printf '  %s task=%s: no activity seen\n' "$id" "${task:--}"
+    fi
+  done < "$LAUNCH_LEDGER"
+  [ "$n" -eq 0 ] || printf '  total with activity: %dm across %d run(s)\n' $(( tot / 60 )) "$n"
+}
+
 cmd_credit() {
   [ $# -eq 0 ] || usage_die "credit takes no arguments"
   credit_line
+  credit_report
+  printf 'balance: the remaining dollar balance has no CLI or API here; read it on claude.ai. The report above counts runs and time only, never dollars.\n'
 }
 
 cmd_doctor() {
@@ -610,6 +854,7 @@ cmd_doctor() {
   if command -v git >/dev/null 2>&1; then printf 'git: present\n'; else printf 'git: MISSING\n'; rc=1; fi
   if command -v gh-axi >/dev/null 2>&1; then printf 'gh-axi: present\n'; else printf 'gh-axi: not installed (optional; status uses git ls-remote)\n'; fi
   credit_line
+  printf 'steer: no supported non-interactive message to an existing cloud session (claude --cloud <session_id> only attaches a terminal); fm-cloud.sh continue relaunches on the task branch\n'
   printf 'still needs the web UI (no CLI): cloud-environment network allowlist and environment variables, Tailscale key minting\n'
   printf 'runbook: runbooks-e8k\n'
   return "$rc"
@@ -622,11 +867,12 @@ case "$sub" in
   status) cmd_status "$@" ;;
   list) cmd_list "$@" ;;
   cleanup) cmd_cleanup "$@" ;;
+  continue) cmd_continue "$@" ;;
   check) cmd_check "$@" ;;
   land) cmd_land "$@" ;;
   teardown) cmd_teardown "$@" ;;
   credit) cmd_credit "$@" ;;
   doctor) cmd_doctor "$@" ;;
-  -h|--help|help) sed -n '2,77p' "${BASH_SOURCE[0]}" ;;
+  -h|--help|help) sed -n '2,104p' "${BASH_SOURCE[0]}" ;;
   *) usage_die "unknown subcommand: $sub" ;;
 esac
