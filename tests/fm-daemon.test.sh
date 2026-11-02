@@ -3344,6 +3344,7 @@ test_inject_msg_herdr_busy_guard_defers() {
   (
     fm_backend_target_exists() { [ "$1" = herdr ] && [ "$2" = "default:w1:p2" ] || fail "unexpected target_exists args: $1 $2"; return 0; }
     pane_is_busy() { return 0; }
+    fm_backend_capture() { printf 'working frame one\n'; }
     fm_backend_composer_state() { fail "composer_state should not be consulted once the busy-guard already deferred"; }
     fm_backend_send_text_submit() { fail "send_text_submit should not run when the busy-guard defers"; }
     if FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" inject_msg "hello" "$state"; then
@@ -3445,6 +3446,80 @@ test_inject_msg_defers_on_unrecognized_composer_state() {
     fi
   ) || fail "unrecognized composer-state inject_msg subshell failed"
   pass "inject_msg: unrecognized composer states defer by default"
+}
+
+# A pane that reads busy but never changes is a stale verdict (a live turn
+# animates its spinner or elapsed counter). The busy guard defers while the tail
+# moves or is young, then steps aside after FM_BUSY_FORCE_SECS of an identical
+# tail; the composer guard still decides, and a changed tail restarts the clock.
+test_inject_msg_busy_guard_forces_after_frozen_tail() {
+  local dir state
+  dir=$(make_supercase inject-busy-frozen)
+  state="$dir/state"
+  afk_enter "$state"
+  (
+    fm_backend_target_exists() { return 0; }
+    pane_is_busy() { return 0; }
+    fm_backend_capture() { cat "$dir/tail"; }
+    fm_backend_composer_state() { printf 'empty'; }
+    fm_backend_send_text_submit() { printf '%s\n' "$3" > "$dir/sent.log"; printf 'empty'; }
+    printf 'Working... (esc to interrupt)\n' > "$dir/tail"
+    # First sight starts the clock and defers.
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" FM_BUSY_FORCE_SECS=600 inject_msg "hello" "$state" && fail "first busy read must defer"
+    [ -f "$state/.subsuper-inject-busy-since" ] || fail "busy marker not recorded"
+    # Young marker with identical tail still defers.
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" FM_BUSY_FORCE_SECS=600 inject_msg "hello" "$state" && fail "young frozen tail must still defer"
+    # A tail that changed restarts the clock instead of forcing.
+    printf 'Working... (esc to interrupt) 12s\n' > "$dir/tail"
+    printf '%s %s\n' "$(( $(date +%s) - 9999 ))" "stale-sum" > "$state/.subsuper-inject-busy-since"
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" FM_BUSY_FORCE_SECS=600 inject_msg "hello" "$state" && fail "a changed tail must restart the clock, not force"
+    [ ! -e "$dir/sent.log" ] || fail "nothing may be sent while the tail still moves"
+    # Same tail, marker older than the limit: forced through to the composer guard.
+    sum=$(printf '%s' "$(cat "$dir/tail")" | cksum | cut -d' ' -f1,2 | tr ' ' '-')
+    printf '%s %s\n' "$(( $(date +%s) - 700 ))" "$sum" > "$state/.subsuper-inject-busy-since"
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" FM_BUSY_FORCE_SECS=600 inject_msg "hello" "$state" || fail "a frozen busy tail past the limit must be delivered"
+    [ ! -e "$state/.subsuper-inject-busy-since" ] || fail "marker must clear after delivery"
+  ) || fail "frozen-tail forced-delivery subshell failed"
+  delivered_digest "$dir/sent.log" | grep -F 'hello' >/dev/null \
+    || fail "forced digest text missing: $(cat "$dir/sent.log" 2>/dev/null)"
+  pass "inject_msg: a busy verdict over a frozen tail is bypassed after FM_BUSY_FORCE_SECS and delivered"
+}
+
+test_inject_msg_busy_force_still_honors_composer_guard() {
+  local dir state
+  dir=$(make_supercase inject-busy-frozen-composer)
+  state="$dir/state"
+  afk_enter "$state"
+  (
+    fm_backend_target_exists() { return 0; }
+    pane_is_busy() { return 0; }
+    fm_backend_capture() { printf 'frozen\n'; }
+    fm_backend_composer_state() { printf 'pending'; }
+    fm_backend_send_text_submit() { fail "send must not run into a pending composer"; }
+    sum=$(printf '%s' 'frozen' | cksum | cut -d' ' -f1,2 | tr ' ' '-')
+    printf '%s %s\n' "$(( $(date +%s) - 700 ))" "$sum" > "$state/.subsuper-inject-busy-since"
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" FM_BUSY_FORCE_SECS=600 inject_msg "hello" "$state" && fail "forced busy bypass must still defer on a pending composer"
+    [ "$INJECT_LAST_FAILURE" != "${INJECT_LAST_FAILURE#deferred: supervisor composer}" ] \
+      || fail "expected the composer guard to be the deferral reason, got: $INJECT_LAST_FAILURE"
+  ) || fail "busy-force composer-guard subshell failed"
+  pass "inject_msg: bypassing a stale busy verdict never bypasses the composer guard"
+}
+
+test_inject_msg_busy_force_disabled_with_zero() {
+  local dir state
+  dir=$(make_supercase inject-busy-frozen-off)
+  state="$dir/state"
+  afk_enter "$state"
+  (
+    fm_backend_target_exists() { return 0; }
+    pane_is_busy() { return 0; }
+    fm_backend_capture() { printf 'frozen\n'; }
+    fm_backend_composer_state() { fail "composer must not be consulted while the guard defers"; }
+    sum=$(printf '%s' 'frozen' | cksum | cut -d' ' -f1,2 | tr ' ' '-')
+    printf '%s %s\n' "$(( $(date +%s) - 99999 ))" "$sum" > "$state/.subsuper-inject-busy-since"
+    if FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="default:w1:p2" FM_BUSY_FORCE_SECS=0 inject_msg "hello" "$state"; then fail "FM_BUSY_FORCE_SECS=0 must keep deferring"; fi
+  ) || fail "busy-force disabled subshell failed"
+  pass "inject_msg: FM_BUSY_FORCE_SECS=0 disables the forced-delivery fallthrough"
 }
 
 test_afk_start_refuses_when_flag_cannot_be_written
@@ -3598,6 +3673,9 @@ test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_defers_on_dead_shell_unknown
 test_inject_msg_defers_on_unrecognized_composer_state
+test_inject_msg_busy_guard_forces_after_frozen_tail
+test_inject_msg_busy_force_still_honors_composer_guard
+test_inject_msg_busy_force_disabled_with_zero
 
 # The Claude background-task exit picker names itself on the stale reason.
 # Away mode self-handles the first sight, so the name has to be saved and

@@ -124,6 +124,12 @@
 #                                   for delivery guards and Grok's fallback
 #          FM_COMPOSER_IDLE_RE      optional shared classifier override; see
 #                                   docs/configuration.md for its safety gates
+#          FM_BUSY_FORCE_SECS       seconds a supervisor pane may read busy with
+#                                   a byte-identical rendered tail before the
+#                                   busy guard stops deferring (a live turn
+#                                   animates; the composer guard still must
+#                                   prove the composer empty; default 600;
+#                                   0 disables)
 #          FM_MAX_DEFER_SECS        max seconds a buffered escalation may sit
 #                                   undelivered before one normal flush attempt;
 #                                   if that cannot confirm a submit, a wedge
@@ -227,6 +233,7 @@ HOUSEKEEPING_TICK_DEFAULT=15
 # the normal flush path and, if that cannot confirm a submit, raises a loud wedge
 # alarm. The escape hatch makes a guard false-positive visible instead of silent.
 MAX_DEFER_SECS_DEFAULT=300
+BUSY_FORCE_SECS_DEFAULT=600
 WEDGE_ALARM_TIMEOUT_SECS_DEFAULT=10
 WEDGE_ALARM_LAST_EPOCH=0
 WEDGE_ALARM_NOTIFIER_PID=
@@ -1578,6 +1585,40 @@ window_for_task() {  # <task-key> [state]
   return 1
 }
 
+# inject_busy_frozen_long_enough: the forced-delivery fallthrough for a busy
+# guard that would otherwise defer forever. A genuinely working supervisor pane
+# keeps changing (spinner frames, an elapsed-time counter), so a pane that reads
+# busy while its captured tail is byte-identical for FM_BUSY_FORCE_SECS
+# (default 600; 0 disables) is a stale busy verdict, for example a native state
+# stuck on working or old output that still matches a busy token. Returns 0
+# only then, and sets INJECT_BUSY_FROZEN_AGE. A changed tail, an unreadable
+# capture, or a young marker returns 1 (keep deferring). Bypassing the busy
+# guard never bypasses the composer guard, which still requires a proven-empty
+# agent composer.
+INJECT_BUSY_MARKER=.subsuper-inject-busy-since
+INJECT_BUSY_FROZEN_AGE=0
+inject_busy_frozen_long_enough() {  # <state> <target> <backend>
+  local state=$1 target=$2 backend=$3 limit tail40 sum marker prev_epoch prev_sum now
+  limit=${FM_BUSY_FORCE_SECS:-$BUSY_FORCE_SECS_DEFAULT}
+  case "$limit" in ''|*[!0-9]*) limit=$BUSY_FORCE_SECS_DEFAULT ;; esac
+  [ "$limit" -gt 0 ] || return 1
+  marker="$state/$INJECT_BUSY_MARKER"
+  tail40=$(fm_backend_capture "$backend" "$target" 40 2>/dev/null) || { rm -f "$marker" 2>/dev/null || true; return 1; }
+  sum=$(printf '%s' "$tail40" | cksum | cut -d' ' -f1,2 | tr ' ' '-')
+  now=$(_now)
+  prev_epoch=; prev_sum=
+  if [ -f "$marker" ]; then
+    read -r prev_epoch prev_sum < "$marker" 2>/dev/null || true
+  fi
+  case "$prev_epoch" in ''|*[!0-9]*) prev_epoch=; esac
+  if [ -z "$prev_epoch" ] || [ "$prev_sum" != "$sum" ]; then
+    printf '%s %s\n' "$now" "$sum" > "$marker" 2>/dev/null || true
+    return 1
+  fi
+  INJECT_BUSY_FROZEN_AGE=$((now - prev_epoch))
+  [ "$INJECT_BUSY_FROZEN_AGE" -ge "$limit" ]
+}
+
 # --- injection --------------------------------------------------------------
 # inject_msg: send one escalation digest to the supervisor endpoint.
 # Returns 0 on successful inject (or empty buffer), non-zero if the endpoint is
@@ -1634,9 +1675,15 @@ inject_msg() {  # <message> [state] [exact] [request-id]
     || { INJECT_LAST_FAILURE="supervisor target $target not found on $backend"; return 1; }
   # (3) Busy-guard: never inject into an in-use supervisor endpoint.
   if pane_is_busy "$target" "$backend"; then
-    INJECT_LAST_FAILURE="deferred: supervisor pane busy (agent mid-turn)"
-    log "inject $INJECT_LAST_FAILURE"
-    return 1
+    if inject_busy_frozen_long_enough "$state" "$target" "$backend"; then
+      log "inject busy-guard bypassed: pane read busy but its rendered tail has not changed for ${INJECT_BUSY_FROZEN_AGE}s (a live turn animates its spinner or elapsed counter); the composer guard below still decides"
+    else
+      INJECT_LAST_FAILURE="deferred: supervisor pane busy (agent mid-turn)"
+      log "inject $INJECT_LAST_FAILURE"
+      return 1
+    fi
+  else
+    rm -f "$state/$INJECT_BUSY_MARKER" 2>/dev/null || true
   fi
   #   b) Composer-guard: pane backends inject ONLY into a confirmed-empty
   #      GENUINE agent composer. The shared classifier (fm_backend_composer_state ->
@@ -1697,6 +1744,7 @@ inject_msg() {  # <message> [state] [exact] [request-id]
     rm -f "$errf"
   fi
   if [ "$verdict" = empty ]; then
+    rm -f "$state/$INJECT_BUSY_MARKER" 2>/dev/null || true
     wedge_alarm_rex_clear  # A delivered digest ends a raised Rex wedge alarm.
     return 0  # Backend confirmed the submit.
   fi

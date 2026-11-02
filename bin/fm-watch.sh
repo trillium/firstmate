@@ -344,6 +344,8 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$(fm_poll_derive
 WATCHER_STALL_BOUND=$(fm_watcher_stall_bound "$POLL")
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
+# FM_WATCH_REAP_TIMEOUT_SECS (default 90) bounds the heartbeat's reaper dry run;
+# a run that exceeds it counts as "nothing actionable" so the loop keeps polling.
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
@@ -3397,8 +3399,17 @@ EOF
 heartbeat_reap_finds_actionable() {
   local reap=${FM_WATCH_REAP_BIN:-$SCRIPT_DIR/fm-reap.sh}
   [ -x "$reap" ] || return 1
-  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$reap" scan --actionable 2>/dev/null \
-    | grep -q .
+  local bound=${FM_WATCH_REAP_TIMEOUT_SECS:-90} out found=1
+  case "$bound" in ''|*[!0-9]*|0) bound=90 ;; esac
+  # Captured to a file, not a pipe: a descendant that outlives the bound would
+  # otherwise keep a pipe reader waiting for end-of-file long after the kill.
+  out=$(mktemp "${TMPDIR:-/tmp}/fm-watch-reap.XXXXXX" 2>/dev/null) || return 1
+  if fm_run_timed "$bound" env FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$reap" scan --actionable >"$out" 2>/dev/null </dev/null \
+    && [ -s "$out" ]; then
+    found=0
+  fi
+  rm -f "$out"
+  return "$found"
 }
 
 heartbeat_scan_finds_actionable() {
