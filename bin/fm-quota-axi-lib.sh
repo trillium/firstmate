@@ -29,6 +29,12 @@ FM_QUOTA_PROVIDER_ID_RE='^[a-z0-9]+(-[a-z0-9]+)*\z'
 #   quota_row($snapshot; $provider; $lane)
 #                                  the one provider row the candidate binds to,
 #                                  or null; schema 5 ignores $lane.
+#   quota_agy_scope($model)        the agy quota scope a model id belongs to
+#                                  (gemini, argon, or claude_gpt), or "" when
+#                                  the id names none. quota-axi publishes agy
+#                                  quota under those bare group scopes rather
+#                                  than model: scopes, and groups a model by
+#                                  the same name tokens (its agyWindowGroup).
 # shellcheck disable=SC2016,SC2034  # jq program text, not shell expansion; read by the sourcing consumers
 FM_QUOTA_ROW_JQ='
   def quota_lane($harness; $model):
@@ -43,6 +49,12 @@ FM_QUOTA_ROW_JQ='
        ([$rows[] | select(.accountKey == "default")] | first) // null)
     else ($rows | first) // null
     end;
+  def quota_agy_scope($model):
+    ($model | ascii_downcase) as $n |
+    if ($n | contains("gemini")) and ($n | contains("argon")) then "argon"
+    elif ($n | contains("gemini")) then "gemini"
+    elif ($n | contains("claude")) or ($n | contains("gpt")) or ($n | contains("3p")) then "claude_gpt"
+    else "" end;
 '
 
 # fm_quota_axi_version_compatible <version-output>

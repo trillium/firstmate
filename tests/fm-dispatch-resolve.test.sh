@@ -494,6 +494,33 @@ TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" 'candidate: gemini:gemini-3.8-flash-high  provider=google  scope=all_models  remaining=72%  spendPriority=0.3  runway=through_reset  -> eligible' "Gemini resolves through its explicit provider"
 assert_contains "$out" "  profile: --harness 'gemini' --model 'gemini-3.8-flash-high'" "Gemini is a typed verified dispatch harness"
 
+# quota-axi publishes agy quota under bare group scopes (gemini, claude_gpt,
+# argon), so an exhausted group must veto only the agy models it covers.
+AGY_SCOPED_RULE="$TMP_ROOT/agy-scoped-rule.json"
+cat > "$AGY_SCOPED_RULE" <<'JSON'
+{"rules":[{"when":"Agy work.","use":[
+  {"harness":"agy","model":"gemini-3.8-flash-high"},
+  {"harness":"agy","model":"gemini-4-argon"},
+  {"harness":"agy","model":"claude-sonnet-4-6-thinking"}]}]}
+JSON
+AGY_SCOPED="$TMP_ROOT/agy-scoped.json"
+jq '(.providers[] | select(.provider == "agy") | .quotaSemantics.effectiveAvailability) = [
+  {"scope":"gemini","status":"known","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"},"selection":{"spendPriority":-2}},
+  {"scope":"argon","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.2}},
+  {"scope":"claude_gpt","status":"known","effectivePercentRemaining":70,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.5}}
+]' "$QUOTA" > "$AGY_SCOPED"
+cp "$AGY_SCOPED_RULE" "$RULES"
+cat > "$RESPONSE" <<'JSON'
+{"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"rule_1","confidence":0.99,"probabilities":{"rule_1":0.99,"default":0.01}}},"usage":{"input_tokens":100,"output_tokens":60}}
+JSON
+reset_log
+TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$AGY_SCOPED" run code out err "$BRIEF"
+expect_code 0 "$code" "agy scoped quota rows resolve"
+assert_contains "$out" 'candidate: agy:gemini-3.8-flash-high  provider=agy  scope=gemini  remaining=0%  spendPriority=-  runway=exhausted_now  -> not eligible: runway exhausted_now at gemini' "an exhausted agy Gemini group vetoes a Gemini model"
+assert_contains "$out" 'candidate: agy:gemini-4-argon  provider=agy  scope=argon  remaining=50%  spendPriority=0.2  runway=through_reset  -> eligible' "Argon binds to its own group, not the exhausted Gemini one"
+assert_contains "$out" 'candidate: agy:claude-sonnet-4-6-thinking  provider=agy  scope=claude_gpt  remaining=70%  spendPriority=0.5  runway=through_reset  -> eligible' "a Claude model on agy binds to the Claude/GPT group"
+assert_contains "$out" "  profile: --harness 'agy' --model 'claude-sonnet-4-6-thinking'" "the healthy agy group is chosen over the exhausted one"
+
 cp "$ROOT/docs/examples/crew-dispatch.json" "$RULES"
 cat > "$RESPONSE" <<'JSON'
 {"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"default","confidence":0.9,"probabilities":{"rule_1":0.02,"rule_2":0.02,"rule_3":0.02,"default":0.94}}},"usage":{"input_tokens":812,"output_tokens":60}}
