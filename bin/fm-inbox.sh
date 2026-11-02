@@ -53,7 +53,10 @@
 # those flags are omitted: a saved note whose wake fails still exits 1. With
 # --request-id or --json, a saved-but-unannounced note exits 3 so a caller can
 # tell it from a genuine failure (exit 1, nothing saved) and repair rather than
-# enqueue again.
+# enqueue again. The announce and the reply-sequence claim wait at most
+# FM_INBOX_LOCK_WAIT_SECS (default 30) for a lock another process holds, so a
+# wedged holder leaves the note saved-but-unannounced for `announce` to repair
+# instead of hanging the writer.
 # `receipts` is the bounded JSON view of pending and handled notes, their
 # acknowledgement, announcement, and any recorded reply. Default bounds omit
 # rather than implying the first page is everything; omitted[] names the
@@ -198,6 +201,11 @@ ANNOUNCED_DIR="$INBOX/.announced"
 REPLIES="$INBOX/.replies"
 
 REPLY_SEQ_LOCK="$INBOX/.replies.lock"
+
+# Longest a note announcement or reply claim waits for a lock another process
+# holds (FM_INBOX_LOCK_WAIT_SECS, default 30). A bad value falls back to 30.
+LOCK_WAIT_SECS=${FM_INBOX_LOCK_WAIT_SECS:-30}
+case "$LOCK_WAIT_SECS" in ''|*[!0-9]*|0) LOCK_WAIT_SECS=30 ;; esac
 
 RECEIPTS_PENDING_BOUND=20
 RECEIPTS_HANDLED_BOUND=20
@@ -344,7 +352,13 @@ announce_note() {  # <id> <summary>
     return 1
   fi
   load_wake_lib || return 1
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
+  # Bounded: a holder that wedges inside the queue lock must not strand the
+  # writer forever. The note is already on disk, so a timeout reports it as
+  # saved but not announced and `announce <id>` repairs it later.
+  if ! fm_lock_acquire_wait_max "$FM_WAKE_QUEUE_LOCK" "$LOCK_WAIT_SECS"; then
+    printf 'fm-inbox: note saved but NOT announced (wake queue lock busy for %ss)\n' "$LOCK_WAIT_SECS" >&2
+    return 1
+  fi
   if note_announced "$id"; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     return 0
@@ -610,7 +624,7 @@ cmd_reply() {
   case "$body" in *[![:space:]]*) ;; *) die "refusing to record an empty reply" ;; esac
   mkdir -p "$REPLIES"
   load_wake_lib || die "the reply sequence needs $FM_ROOT/bin/fm-wake-lib.sh"
-  fm_lock_acquire_wait "$REPLY_SEQ_LOCK" || die "could not claim the reply sequence"
+  fm_lock_acquire_wait_max "$REPLY_SEQ_LOCK" "$LOCK_WAIT_SECS" || die "could not claim the reply sequence (lock busy for ${LOCK_WAIT_SECS}s)"
   if [ -f "$REPLIES/$id" ]; then
     fm_lock_release "$REPLY_SEQ_LOCK"
     die "reply already recorded for $id"

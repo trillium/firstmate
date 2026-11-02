@@ -566,3 +566,42 @@ set -e
 expect_code 1 "$ws_code" "a whitespace-only note is refused"
 assert_contains "$ws_out" "empty note" "the whitespace-only refusal keeps its message"
 pass "a long UTF-8 note files quickly and whitespace-only is refused"
+
+# --- a wedged wake-queue lock holder cannot hang the note writer ------------
+# A live process keeps the wake-queue lock for far longer than the bound. The
+# note must still be saved, the writer must return within the bound with the
+# saved-but-unannounced exit code, and `announce` must repair it once the
+# holder lets go.
+
+home=$(make_home lock-wedged)
+holder_ready="$home/holder.ready"
+(
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$FM_WAKE_QUEUE_LOCK" || exit 1
+    : > "$2"
+    sleep 60
+  ' _ "$ROOT" "$holder_ready"
+) >/dev/null 2>&1 &
+holder_pid=$!
+i=0
+while [ ! -e "$holder_ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+[ -e "$holder_ready" ] || { kill "$holder_pid" 2>/dev/null || true; fail "the lock holder never took the wake-queue lock"; }
+start=$SECONDS
+set +e
+wedged_out=$(FM_INBOX_LOCK_WAIT_SECS=2 run_inbox "$home" note --request-id wedge-1 --json "held lock" 2>/dev/null </dev/null)
+wedged_code=$?
+set -e
+elapsed=$((SECONDS - start))
+kill "$holder_pid" 2>/dev/null || true
+pkill -P "$holder_pid" 2>/dev/null || true
+wait "$holder_pid" 2>/dev/null || true
+expect_code 3 "$wedged_code" "a note behind a wedged queue lock exits saved-but-unannounced"
+[ "$elapsed" -le 15 ] || fail "the note writer waited ${elapsed}s behind a wedged lock, expected the 2s bound"
+assert_equals "1" "$(count_notes "$home")" "the note is saved even though the lock was wedged"
+assert_equals "False" "$(printf '%s' "$wedged_out" | json_get announced)" "nothing claims a wake that was never appended"
+wedged_id=$(printf '%s' "$wedged_out" | json_get id)
+repaired=$(run_inbox "$home" announce --json "$wedged_id") \
+  || fail "announce should repair the note once the lock is free"
+assert_equals "True" "$(printf '%s' "$repaired" | json_get announced)" "announce repairs the held-lock note"
+pass "a wedged wake-queue lock holder cannot hang the note writer"
