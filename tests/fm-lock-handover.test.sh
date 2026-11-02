@@ -314,6 +314,156 @@ test_inbox_list_ids_and_bounds() {
   pass "fm-inbox.sh list prints ids alone or a bounded view that still names every note"
 }
 
+# Run the takeover dance with --finish: A hands the lock to B and stays alive.
+# Leaves the home in the finishing posture; sets FIN_A / FIN_B / FIN_HOME.
+start_finishing_handover() {  # <home-name> [<item>]
+  local item=${2:-finish the pricing banner in ~/Documents/bloom} tmpl rec out waiter
+  FIN_HOME=$(make_home "$1")
+  FIN_A=$(new_harness "$FIN_HOME")
+  FIN_B=$(new_harness "$FIN_HOME")
+  as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" >/dev/null || fail "session A could not take the lock"
+  ( as_session "$FIN_HOME" "$FIN_B" "$LOCK_BIN" handover request --no-start --wait 30 > "$FIN_HOME/request.out" 2>&1 ) &
+  waiter=$!
+  for _ in $(seq 1 100); do
+    [ -f "$FIN_HOME/state/.handover-request" ] && grep -q '^note=' "$FIN_HOME/state/.handover-request" && break
+    sleep 0.1
+  done
+  tmpl="$FIN_HOME/template.md"
+  as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover template --finish > "$tmpl"
+  assert_contains "$(cat "$tmpl")" "## Finishing" "template --finish has no Finishing section"
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover template)
+  assert_not_contains "$out" "## Finishing" "a plain template carries the Finishing section"
+  rec="$FIN_HOME/record.md"
+  fill_template "$tmpl" "$rec"
+  # No "- " item under Finishing yet, so --finish refuses and the lock stays put.
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover release --finish "$rec" 2>&1) \
+    && fail "release --finish without a Finishing item was accepted"
+  assert_contains "$out" 'lists no "- " item' "refusal did not name the empty Finishing list"
+  assert_equals "$FIN_A" "$(cat "$FIN_HOME/state/.lock")" "a refused release --finish moved the lock"
+  printf '%s\n' "- $item" >> "$rec"
+  # A Finishing section is refused on a plain release so nobody believes they are finishing.
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover release "$rec" 2>&1) \
+    && fail "a plain release accepted a record with a Finishing section"
+  assert_contains "$out" "not a release --finish" "plain release refusal did not explain itself"
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover release --finish "$rec" 2>&1) \
+    || fail "release --finish failed: $out"
+  assert_contains "$out" "FINISHING" "release --finish did not announce the finishing posture"
+  wait "$waiter" 2>/dev/null || true
+}
+
+test_finishing_posture_bounds_the_outgoing_session() {
+  local out rc
+  start_finishing_handover finishing "finish the pricing banner in ~/Documents/bloom"
+  assert_equals "$FIN_B" "$(cat "$FIN_HOME/state/.lock")" "the lock did not move to the incoming session"
+  assert_present "$FIN_HOME/state/.handover-finishing" "release --finish wrote no finishing marker"
+  assert_equals "finishing=yes" "$(grep '^finishing=' "$FIN_HOME/state/handover.md")" "record header does not say finishing"
+
+  # The new owner sees the posture and the items in its digest, status, and JSON.
+  out=$(as_session "$FIN_HOME" "$FIN_B" "$LOCK_BIN" handover show --digest)
+  assert_contains "$out" "finishing: ACTIVE" "digest does not show the finishing posture"
+  assert_contains "$out" "finish the pricing banner" "digest does not list the items being finished"
+  assert_contains "$out" "Leave those items to the outgoing session" "new owner is not told to leave the items alone"
+  out=$(as_session "$FIN_HOME" "$FIN_B" "$LOCK_BIN" handover finishing)
+  assert_contains "$out" "finishing: ACTIVE" "finishing status is not active"
+  assert_equals "- finish the pricing banner in ~/Documents/bloom" \
+    "$(as_session "$FIN_HOME" "$FIN_B" "$LOCK_BIN" handover finishing --items)" "--items did not print exactly the items"
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover finishing)
+  assert_contains "$out" "This is the outgoing session" "the outgoing session is not told what to do"
+  as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover finishing --check || fail "--check denies the outgoing session"
+  if as_session "$FIN_HOME" "$FIN_B" "$LOCK_BIN" handover finishing --check; then
+    fail "--check admitted the new owner as the finishing session"
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    out=$(as_session "$FIN_HOME" "$FIN_B" "$LOCK_BIN" handover show --json) || fail "show --json failed"
+    printf '%s' "$out" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+f = d["finishing"]
+assert f["active"] is True and f["items"] == ["- finish the pricing banner in ~/Documents/bloom"], f
+assert d["record"]["finishing"] is True
+' || fail "show --json does not report the finishing posture: $out"
+  fi
+
+  # The outgoing session may not take new work, drain, dispatch, or take the lock back.
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" 2>&1) && fail "the finishing session reacquired the lock"
+  assert_contains "$out" "only finishing" "lock refusal did not name the finishing posture"
+  as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover request --no-start --wait 1 >/dev/null 2>&1 \
+    && fail "the finishing session requested a handover back"
+  run_inbox "$FIN_HOME" note "a new captain ask" >/dev/null || fail "note failed"
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$ROOT/bin/fm-inbox.sh" drain --ack "$(run_inbox "$FIN_HOME" list --ids)" 2>&1) \
+    && fail "the finishing session acknowledged a captain note"
+  assert_contains "$out" "only finishing" "note acknowledgement refusal did not name the finishing posture"
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$ROOT/bin/fm-wake-drain.sh" 2>&1) && fail "the finishing session drained the wake queue"
+  assert_contains "$out" "only finishing" "wake drain refusal did not name the finishing posture"
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$ROOT/bin/fm-spawn.sh" some-task "$FIN_HOME" "" 2>&1) && fail "the finishing session spawned new work"
+  assert_contains "$out" "only finishing" "spawn refusal did not name the finishing posture"
+  # The new owner is not bound by the posture.
+  as_session "$FIN_HOME" "$FIN_B" "$ROOT/bin/fm-inbox.sh" drain --ack "$(run_inbox "$FIN_HOME" list --ids)" >/dev/null 2>&1 \
+    || fail "the new owner could not acknowledge a captain note during the finishing posture"
+
+  # Only the finishing session may end it, and only with a real summary.
+  printf 'did it\n' > "$FIN_HOME/summary.md"
+  as_session "$FIN_HOME" "$FIN_B" "$LOCK_BIN" handover finished "$FIN_HOME/summary.md" >/dev/null 2>&1 \
+    && fail "the new owner ended the outgoing session's finishing posture"
+  : > "$FIN_HOME/empty.md"
+  as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover finished "$FIN_HOME/empty.md" >/dev/null 2>&1 \
+    && fail "finished accepted an empty summary"
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover finished "$FIN_HOME/summary.md" 2>&1) || fail "finished failed: $out"
+  assert_contains "$out" "Exit this session now" "finished did not tell the session to exit"
+  assert_absent "$FIN_HOME/state/.handover-finishing" "finished left the marker behind"
+  assert_equals "$FIN_B" "$(cat "$FIN_HOME/state/.lock")" "finishing disturbed the new owner's lock"
+  grep -q '^## Finished by the outgoing session' "$FIN_HOME/state/handover.md" || fail "record gained no finished section"
+  grep -q '^did it$' "$FIN_HOME/state/handover.md" || fail "record lost the finished summary"
+  grep -q 'finish the pricing banner' "$FIN_HOME/state/handover.md" || fail "record lost the Finishing items"
+  out=$(as_session "$FIN_HOME" "$FIN_B" "$LOCK_BIN" handover show --digest)
+  assert_contains "$out" "Finished by the outgoing session" "new owner's digest does not show what was finished"
+  assert_not_contains "$out" "finishing: ACTIVE" "the digest still shows an active posture after finishing"
+  rc=0
+  as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover finished "$FIN_HOME/summary.md" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "finished ran twice"
+  pass "finishing: the outgoing session stays bounded, the new owner sees it, and finished appends to the record and lifts it"
+}
+
+test_finishing_posture_lifts_when_the_new_owner_dies() {
+  local out
+  start_finishing_handover finishing-dead
+  kill "$FIN_B" 2>/dev/null || true
+  for _ in $(seq 1 50); do kill -0 "$FIN_B" 2>/dev/null || break; sleep 0.1; done
+  out=$(as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover finishing)
+  assert_contains "$out" "stale marker" "a dead new owner did not make the marker stale"
+  if as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" handover finishing --check; then
+    fail "--check admitted a finishing session whose new owner is gone"
+  fi
+  as_session "$FIN_HOME" "$FIN_A" "$LOCK_BIN" >/dev/null 2>&1 || fail "the outgoing session could not reacquire a lock its successor abandoned"
+  assert_equals "$FIN_A" "$(cat "$FIN_HOME/state/.lock")" "reacquisition did not record the outgoing session"
+  pass "the finishing posture lifts when the new owner is gone, so the old session can reacquire normally"
+}
+
+test_plain_release_leaves_no_finishing_posture() {
+  local home a b out waiter tmpl rec
+  home=$(make_home plain-release)
+  a=$(new_harness "$home")
+  b=$(new_harness "$home")
+  as_session "$home" "$a" "$LOCK_BIN" >/dev/null || fail "session A could not take the lock"
+  ( as_session "$home" "$b" "$LOCK_BIN" handover request --no-start --wait 30 >/dev/null 2>&1 ) &
+  waiter=$!
+  for _ in $(seq 1 100); do
+    [ -f "$home/state/.handover-request" ] && grep -q '^note=' "$home/state/.handover-request" && break
+    sleep 0.1
+  done
+  tmpl="$home/t.md"; rec="$home/r.md"
+  as_session "$home" "$a" "$LOCK_BIN" handover template > "$tmpl"
+  fill_template "$tmpl" "$rec"
+  as_session "$home" "$a" "$LOCK_BIN" handover release "$rec" >/dev/null 2>&1 || fail "plain release failed"
+  wait "$waiter" 2>/dev/null || true
+  assert_absent "$home/state/.handover-finishing" "a plain release wrote a finishing marker"
+  assert_contains "$(as_session "$home" "$b" "$LOCK_BIN" handover finishing)" "finishing: none" "plain release shows a finishing posture"
+  if as_session "$home" "$a" "$LOCK_BIN" handover write --finish "$rec" >/dev/null 2>&1; then
+    fail "write accepted --finish"
+  fi
+  pass "a plain release leaves no finishing posture, and --finish is release-only"
+}
+
 test_template_names_notes_registry_and_clones
 test_takeover_writes_record_then_moves_lock
 test_request_takes_free_or_stale_lock_directly
@@ -322,3 +472,6 @@ test_request_fails_when_note_cannot_wake_the_holder
 test_snapshot_is_requestable_and_readable_from_outside
 test_digest_names_old_unaddressed_record_without_printing_it
 test_inbox_list_ids_and_bounds
+test_finishing_posture_bounds_the_outgoing_session
+test_finishing_posture_lifts_when_the_new_owner_dies
+test_plain_release_leaves_no_finishing_posture

@@ -44,6 +44,15 @@ _fm_wake_require_session_lock() {
   . "$FM_WAKE_LIB_DIR/fm-session-lock-lib.sh"
 }
 
+# Refuse <action> inside the outgoing session of a handover's finishing posture
+# (bin/fm-lock.sh header "Graceful handover"). A cheap no-op unless the home
+# has a finishing marker, so ordinary callers never load the identity lib.
+fm_finishing_guard() {  # <action>
+  [ -f "$STATE/.handover-finishing" ] || return 0
+  _fm_wake_require_session_lock
+  fm_handover_finishing_refuse "$STATE" "$1"
+}
+
 # Pass a variable name to capture this frame's pid without forking it in $().
 # On Bash 3.2, exec a child shell so its PPID identifies this frame, unlike $$.
 fm_current_pid() {  # [output-variable]

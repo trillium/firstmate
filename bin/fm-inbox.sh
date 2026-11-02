@@ -1151,6 +1151,9 @@ cmd_list() {
 cmd_drain() {
   if [ "${1:-}" = "--ack" ]; then
     shift
+    if [ -f "$STATE/.handover-finishing" ] && load_wake_lib; then
+      fm_finishing_guard "acknowledge captain inbox notes" || exit 1
+    fi
     [ "$#" -gt 0 ] || die "usage: fm-inbox.sh drain --ack <id>..."
     mkdir -p "$INBOX/handled"
     local id
