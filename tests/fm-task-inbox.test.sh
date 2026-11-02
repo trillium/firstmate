@@ -440,12 +440,12 @@ test_composer_holds_recognises_captured_stacked_doorbells() {
     fm_backend_capture() { cat "$FIXTURE"; }
     fm_task_inbox_composer_holds herdr w:p "$2"'
   for n in one two four; do
-    FIXTURE="$fx/$n.txt" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line" \
+    FIXTURE="$fx/$n.screen" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line" \
       || fail "the captured $n-doorbell composer should read as our own doorbell"
   done
-  FIXTURE="$fx/two.txt" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line and more" \
+  FIXTURE="$fx/two.screen" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line and more" \
     && fail "a composer that does not match the expected line must not read as ours"
-  sed 's/handled\/\.$/handled\/. plus a typed draft/' "$fx/two.txt" > "$state/mixed.txt"
+  sed 's/handled\/\.$/handled\/. plus a typed draft/' "$fx/two.screen" > "$state/mixed.txt"
   FIXTURE="$state/mixed.txt" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line" \
     && fail "doorbells followed by typed text must not read as ours"
   pass "inbox: captured claude composers holding one or many stacked doorbells read as our own, mixed text does not"
