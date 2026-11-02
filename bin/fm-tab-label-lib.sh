@@ -23,3 +23,16 @@ fm_tab_label_lookup() {
   done < "$file"
   return 0
 }
+
+# fm_tab_label_apply_remote <fm-on-script> <config-dir> <id>: rename a remote
+# secondmate's confirmed herdr tab to its label from THIS home's config/tab-labels
+# (the remote host's own home has none). No label means no call; a failed rename
+# only warns, because the tab name is display-only and the launch already stands.
+fm_tab_label_apply_remote() {
+  local fm_on=$1 config=$2 id=$3 label
+  label=$(fm_tab_label_lookup "$config/tab-labels" "$id")
+  [ -n "$label" ] || return 0
+  "$fm_on" "$id" fm-remote-secondmate-control.sh tab-rename "$id" "$label" </dev/null >/dev/null 2>&1 \
+    || echo "warning: could not apply tab label '$label' to remote secondmate $id's herdr tab" >&2
+  return 0
+}

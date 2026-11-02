@@ -591,6 +591,7 @@ macbook-ops 💎🧭 macbook-ops
 ```
 
 Firstmate applies the label when it creates the tab at launch or respawn, and renames an adopted tab at relaunch, so it survives restarts.
+A remote secondmate's tab is renamed over SSH from this home's file after a confirmed launch or relaunch, since the remote host has no copy.
 Without the file, or for an id it does not list, the tab keeps the default `fm-<id>` name, and other backends ignore the file.
 Herdr addresses panes by id, so the label is display only.
 Firstmate never writes a name for the primary session's own tab; that stays whatever the captain set.
