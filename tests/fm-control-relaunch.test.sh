@@ -554,6 +554,24 @@ test_traced_relaunch_keeps_an_armed_pr_poll_authenticated() {
   pass "fm-control relaunch: a traced replacement keeps an armed PR poll authenticated"
 }
 
+# The provenance check on a legacy mixed # Task brief guards the first launch;
+# a relaunch of a task already under way must not be stranded by it.
+test_relaunch_accepts_a_legacy_mixed_task_brief() {
+  local dir out rc
+  dir=$(new_case legacy-brief rl19c)
+  add_ship_task "$dir" rl19c claude
+  cat > "$dir/home/data/rl19c/brief.md" <<LEGACY
+# Task
+Exercise relaunch behavior for rl19c with no marked captain lines.
+Preserve the task while replacing its agent process.
+LEGACY
+
+  out=$(run_control "$dir" rl19c relaunch --note "continuing review work"); rc=$?
+  expect_code 0 "$rc" "relaunch of a legacy mixed brief should succeed"$'\n'"$out"
+  assert_not_contains "$out" "provenance-marked captain words" "relaunch must not apply the first-launch provenance check"
+  pass "fm-control relaunch: a legacy mixed # Task brief relaunches without provenance-marked captain words"
+}
+
 test_relaunch_serializes_concurrent_durable_metadata_publication() {
   local dir control_pid link_pid rc i=0 traceparent prepare launch_release waiting ready release
   dir=$(new_case metadata-race rl28)
@@ -3250,6 +3268,7 @@ test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree
 test_relaunch_preserves_durable_task_metadata
 test_traced_relaunch_keeps_an_armed_pr_poll_authenticated
+test_relaunch_accepts_a_legacy_mixed_task_brief
 test_relaunch_serializes_concurrent_durable_metadata_publication
 test_disabled_relaunch_clears_prior_trace_context
 test_relaunch_appends_the_progress_note_to_the_instructions
