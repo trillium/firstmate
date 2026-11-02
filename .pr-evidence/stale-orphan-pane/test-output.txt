@@ -1,0 +1,1 @@
+ok - handle_push_transition: orphan pane raises no stale wake; owned pane still does

@@ -150,6 +150,13 @@ handle_push_transition() {  # <backend> <session> <record>
   detail=$(fm_transition_detail "$record")
   [ -n "$pane_id" ] || { sleep 1; return; }
   window=$(fm_backend_transition_target "$backend" "$session" "$pane_id")
+  # A pane no task record owns has nobody to supervise: commit the edge so the
+  # reader stops re-delivering it, and raise nothing.
+  if ! fm_backend_meta_for_window "$window" "$STATE" >/dev/null 2>&1; then
+    triage_log "absorbed push $to (orphan pane, no owning task record): $window"
+    fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
+    return
+  fi
   task=$(window_to_task "$window" "$STATE")
   # A declared wait already names the human this transition would report: an
   # external dependency, or the captain a verified hold transferred the work to.

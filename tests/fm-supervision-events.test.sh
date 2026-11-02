@@ -79,6 +79,18 @@ fm_write_meta "$STATE_DIR/tk1.meta" "window=default:wG:pQ" "backend=herdr" "kind
 [ ! -e "$STATE_DIR/.herdr-escalated-default_wG_pQ" ] || fail "a failed durable enqueue must leave the blocked edge eligible for reconnect reconciliation"
 pass "handle_push_transition: enqueue failure cannot commit the Herdr dedupe marker"
 
+reset_state
+fm_write_meta "$STATE_DIR/tk1.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
+handle_push_transition herdr default "$(mkrec wG:pORPHAN blocked)"
+if [ -e "$STATE_DIR/.wake-queue" ] && grep -q 'stale' "$STATE_DIR/.wake-queue"; then
+  fail "an orphan pane must NOT raise a stale wake: $(cat "$STATE_DIR/.wake-queue")"
+fi
+[ ! -s "$WAKE_LOG" ] || fail "an orphan pane must not wake the supervisor"
+[ -e "$STATE_DIR/.herdr-escalated-default_wG_pORPHAN" ] || fail "an orphan edge must be committed so it is not re-delivered"
+handle_push_transition herdr default "$(mkrec wG:pQ blocked)"
+grep -q 'default:wG:pQ' "$STATE_DIR/.wake-queue" || fail "an owned pane must still raise a stale wake"
+pass "handle_push_transition: orphan pane raises no stale wake; owned pane still does"
+
 # --- handle_push_transition: absorb (no wake, no enqueue) for a declared pause -
 
 reset_state
