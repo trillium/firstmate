@@ -1,6 +1,0 @@
-Secondmate holds on macbook-ops: 2 open, oldest firstmate-hook-liveness-20261001-decision-opencode-captain-outcome held 32d
-Secondmate holds on mini1-ops: 15 open, oldest displayd-can-litehtml-round-corners-evidence-from-3d held 26d
-Secondmate holds on mini0-ops: 20 open, oldest app-architecture-scout-decisions held 12d
-Secondmate holds on brain-calendar: 2 open, oldest ocd-proto held 8d
-Secondmate queued items beyond a home summary bound: 47, some may be holds (read that home's own backlog)
-Not checked: secondmate mcpmate - its home summary is 3 day(s) old, so its queued work was not checked
