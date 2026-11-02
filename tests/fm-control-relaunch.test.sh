@@ -495,6 +495,44 @@ test_relaunch_preserves_durable_task_metadata() {
   pass "fm-control relaunch: durable task metadata survives replacement launch publication"
 }
 
+# control_relaunch_tx is spawn-owned; written after the preserved pr= tail it
+# made bin/fm-pr-lib.sh reject the record and drop PR polling for the task.
+test_relaunch_record_keeps_the_pr_identity_valid() {
+  local dir out rc
+  dir=$(new_case pr-identity rl19b)
+  add_ship_task "$dir" rl19b claude
+  {
+    printf '%s\n' 'pr=https://github.com/example/repo/pull/19'
+    printf '%s\n' 'pr_head=0123456789abcdef0123456789abcdef01234567'
+  } >> "$dir/home/state/rl19b.meta"
+
+  out=$(run_control "$dir" rl19b relaunch --note "continuing review work"); rc=$?
+  expect_code 0 "$rc" "relaunch should succeed"$'\n'"$out"
+  [ -n "$(meta_field "$dir" rl19b control_relaunch_tx)" ] \
+    || fail "the relaunch record should still identify its transaction"
+  bash -c 'source "$1/bin/fm-pr-lib.sh" && fm_pr_metadata_identity_parse "$2"' _ "$ROOT" "$dir/home/state/rl19b.meta" \
+    || fail "the relaunched record no longer parses as a valid PR identity"$'\n'"$(cat "$dir/home/state/rl19b.meta")"
+  pass "fm-control relaunch: the republished record keeps its PR identity parseable"
+}
+
+# The provenance check on a legacy mixed # Task brief guards the first launch;
+# a relaunch of a task already under way must not be stranded by it.
+test_relaunch_accepts_a_legacy_mixed_task_brief() {
+  local dir out rc
+  dir=$(new_case legacy-brief rl19c)
+  add_ship_task "$dir" rl19c claude
+  cat > "$dir/home/data/rl19c/brief.md" <<LEGACY
+# Task
+Exercise relaunch behavior for rl19c with no marked captain lines.
+Preserve the task while replacing its agent process.
+LEGACY
+
+  out=$(run_control "$dir" rl19c relaunch --note "continuing review work"); rc=$?
+  expect_code 0 "$rc" "relaunch of a legacy mixed brief should succeed"$'\n'"$out"
+  assert_not_contains "$out" "provenance-marked captain words" "relaunch must not apply the first-launch provenance check"
+  pass "fm-control relaunch: a legacy mixed # Task brief relaunches without provenance-marked captain words"
+}
+
 test_relaunch_serializes_concurrent_durable_metadata_publication() {
   local dir control_pid link_pid rc i=0 traceparent prepare launch_release waiting ready release
   dir=$(new_case metadata-race rl28)
@@ -3067,6 +3105,8 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree
 test_relaunch_preserves_durable_task_metadata
+test_relaunch_record_keeps_the_pr_identity_valid
+test_relaunch_accepts_a_legacy_mixed_task_brief
 test_relaunch_serializes_concurrent_durable_metadata_publication
 test_disabled_relaunch_clears_prior_trace_context
 test_relaunch_appends_the_progress_note_to_the_instructions

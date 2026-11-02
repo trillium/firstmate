@@ -515,7 +515,7 @@ test_launch_preserves_inherited_git_config() {
   read_case_record "$rec"
   # GIT_CONFIG_NOSYSTEM keeps a host system helper (e.g. Xcode git osxkeychain) out of the probe.
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness 'echo WORKER-RAN >&2; GIT_CONFIG_NOSYSTEM=1 git config --get-all credential.helper; git config --get core.hooksPath')
+    "$id" "$PROJ_DIR" --harness 'echo WORKER-RAN >&2; GIT_CONFIG_NOSYSTEM=1 git config --get-all credential.helper; git config --get core.hooksPath; true')
   status=$?
   expect_code 0 "$status" "Git configuration probe should spawn: $out"
   launch=$(cat "$LAUNCH_LOG")
@@ -604,7 +604,7 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   # The unverified-adapter escape hatch is still an agent this fleet launched,
   # so it carries the compact-adviser floor and the AI-trailer strip; nothing
   # else may rewrite the captain's own command.
-  [ "$launch" = "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(fm_test_launch_git_prefix "$launch")custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+  [ "$launch" = "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(fm_test_launch_git_prefix "$launch")custom-agent --flag \"\$('$ROOT/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md')\"" ] || fail "raw launch command changed"$'\n'"actual: $launch"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
@@ -615,7 +615,7 @@ test_chained_raw_launch_strips_ai_trailer_in_every_step() {
   read_case_record "$rec"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" "cd . && git commit -q --allow-empty --trailer 'Co-authored-by: Cursor <cursoragent@cursor.com>' -m 'fix: chained raw launch'")
+    "$id" "$PROJ_DIR" "cd . && git commit -q --allow-empty --trailer 'Co-authored-by: Cursor <cursoragent@cursor.com>' -m 'fix: chained raw launch' && true")
   status=$?
   expect_code 0 "$status" "chained raw launch should spawn: $out"
   launch=$(cat "$LAUNCH_LOG")
