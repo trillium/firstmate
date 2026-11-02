@@ -285,7 +285,6 @@ test_full_pool_defers_and_closes_the_window() {
   id=settle-pool-full-z6
   rec=$(make_primary_case settle-pool-full "$id" 100000)
   read_settle_record "$rec"
-  PROJ_DIR_REAL=$PROJ_DIR
 
   out=$(FM_SPAWN_WT_POLLS=5 FM_SPAWN_WT_POLL_INTERVAL=0.05 \
     FM_FAKE_PANE_STALE="$PROJ_DIR" \
