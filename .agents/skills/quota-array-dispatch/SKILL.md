@@ -37,6 +37,7 @@ It never removes this skill's authority, and its `ambiguous`, `escalate`, and `e
 ## Read the default TOON
 
 Start each intake by running `quota-axi` once with no `--json`, and reuse that TOON for every candidate.
+When `config/claude-accounts` exists in this home, also run `bin/fm-claude-account-quota.sh` once (passing `--model <model>` when model-scoped windows matter) so a `claude` candidate without an explicit `account` is evaluated across all declared accounts rather than the ambient account alone ([contract](../../../docs/configuration.md#automatic-claude-account-switching-configclaude-accounts)).
 Post-consolidation quota-axi (the floor owned by `bin/fm-quota-axi-lib.sh`) puts `spendPriority` in the default `quota[]` block beside `effectivePercentRemaining`, `runway`, `confidence`, `limitedBy`, and `resetsAt`.
 Sparse `exhaustion[]` carries finite-runway seconds only for `projected_exhaustion` and `exhausted_now`.
 Sparse `attention[]` names auth, stale, and unmeasurable facts.

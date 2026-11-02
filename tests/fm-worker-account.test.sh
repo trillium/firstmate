@@ -763,6 +763,238 @@ test_relaunch_reuses_the_recorded_per_launch_account() {
   pass "the relaunch check honors a recorded per-launch account over the home pin"
 }
 
+# install_autoswitch_quota_fake: installs a fake quota-axi in $FAKEBIN that
+# serves $CASE/token-quota.json when CLAUDE_CODE_OAUTH_TOKEN is set and
+# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/quota.json otherwise.
+install_autoswitch_quota_fake() {
+  cat > "$FAKEBIN/quota-axi" <<SH
+#!/usr/bin/env bash
+if [ -n "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  [ ! -f '$CASE/token-quota-fail' ] || exit 1
+  [ -f '$CASE/token-quota.json' ] || exit 1
+  cat '$CASE/token-quota.json'
+  exit 0
+fi
+root=\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}
+[ ! -f "\$root/quota-fail" ] || exit 1
+[ -f "\$root/quota.json" ] || exit 1
+cat "\$root/quota.json"
+SH
+  chmod +x "$FAKEBIN/quota-axi"
+}
+
+# write_claude_quota_snapshot <dest> <all_models_pct> [<spendPriority>] [<runway>] [<model_name> <model_pct>]
+write_claude_quota_snapshot() {
+  local dest=$1 pct=$2 sp=${3:-0.5} runway=${4:-through_reset} mname=${5:-} mpct=${6:-}
+  mkdir -p "$(dirname "$dest")"
+  jq -n --argjson pct "$pct" --argjson sp "$sp" --arg runway "$runway" --arg mname "$mname" --arg mpct "$mpct" '{
+    schemaVersion: 5,
+    providers: [{
+      provider: "claude",
+      quotaSemantics: {
+        status: "known",
+        effectiveAvailability: ([
+          {scope: "all_models", status: "known", effectivePercentRemaining: $pct,
+           runway: {status: $runway}, selection: {spendPriority: $sp}}
+        ] + (if $mname == "" then [] else [
+          {scope: ("model:" + $mname), status: "known", effectivePercentRemaining: ($mpct | tonumber),
+           runway: {status: "through_reset"}, selection: {spendPriority: $sp}}
+        ] end))
+      }
+    }]
+  }' > "$dest"
+}
+
+write_claude_quota_unmeasured() {
+  local dest=$1 status=${2:-rate_limited} err=${3:-Claude quota endpoint rate limited}
+  mkdir -p "$(dirname "$dest")"
+  jq -n --arg st "$status" --arg err "$err" '{
+    schemaVersion: 5,
+    providers: [{
+      provider: "claude",
+      state: {status: $st, error: $err},
+      quotaSemantics: {status: "unknown", effectiveAvailability: []}
+    }]
+  }' > "$dest"
+}
+
+test_autoswitch_both_healthy_picks_higher_headroom_and_records_meta() {
+  local out rc
+  new_case auto-healthy claude
+  install_autoswitch_quota_fake
+  signed_in_claude_root "$HOME_DIR/user-home/.claude"
+  make_token_file "$CASE/token-files/max100.token"
+  printf 'ordinary\ntoken:%s\n' "$CASE/token-files/max100.token" > "$HOME_DIR/config/claude-accounts"
+  printf 'ordinary\n' > "$HOME_DIR/config/claude-account"
+
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 45 0.4
+  write_claude_quota_snapshot "$CASE/token-quota.json" 80 0.7
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-auto-tok); rc=$?
+  expect_code 0 "$rc" "both healthy with higher token headroom should launch: $out"
+  assert_contains "$out" "account=token:max100.token" "higher-headroom setup-token account is chosen"
+  assert_not_contains "$out" "every declared Claude account" "both healthy must not warn"
+  assert_no_token_anywhere acct-auto-tok "$out"
+  assert_grep "account=token:max100.token" "$HOME_DIR/state/acct-auto-tok.meta" "meta records chosen account basename"
+  assert_grep "account_request=token:$CASE/token-files/max100.token" "$HOME_DIR/state/acct-auto-tok.meta" "meta records account_request for relaunch stability"
+  assert_grep "account_reason=auto: token:max100.token 80% usable headroom (ordinary 45%; threshold 20%)" "$HOME_DIR/state/acct-auto-tok.meta" "meta records headroom selection reason"
+  run_pane
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=$TOKEN_SENTINEL" "$CASE/claude-worker" "worker runs on the chosen setup-token account"
+  assert_grep "CLAUDE_CONFIG_DIR=unset" "$CASE/claude-worker" "setup-token worker drops CLAUDE_CONFIG_DIR"
+
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 78 0.6
+  write_claude_quota_snapshot "$CASE/token-quota.json" 52 0.3
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-auto-ord); rc=$?
+  expect_code 0 "$rc" "both healthy with higher ordinary headroom should launch: $out"
+  assert_contains "$out" "account=ordinary" "higher-headroom ordinary account is chosen"
+  assert_grep "account=ordinary" "$HOME_DIR/state/acct-auto-ord.meta" "meta records ordinary account"
+  assert_grep "account_request=ordinary" "$HOME_DIR/state/acct-auto-ord.meta" "meta records ordinary account_request"
+  assert_grep "account_reason=auto: ordinary 78% usable headroom (token:max100.token 52%; threshold 20%)" "$HOME_DIR/state/acct-auto-ord.meta" "meta records ordinary headroom selection reason"
+  run_pane
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=unset" "$CASE/claude-worker" "ordinary worker sheds ambient token"
+  assert_grep "CLAUDE_CONFIG_DIR=unset" "$CASE/claude-worker" "ordinary worker drops ambient root"
+
+  # Model-specific scope bounds usable headroom when --model is supplied.
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 90 0.8 through_reset opus 35
+  write_claude_quota_snapshot "$CASE/token-quota.json" 60 0.5
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-auto-model --model opus); rc=$?
+  expect_code 0 "$rc" "model-bounded headroom selection should launch: $out"
+  assert_contains "$out" "account=token:max100.token" "usable headroom takes the minimum across applicable scopes"
+  assert_grep "account_reason=auto: token:max100.token 60% usable headroom (ordinary 35%; threshold 20%)" "$HOME_DIR/state/acct-auto-model.meta" "model scope headroom is reflected in account_reason"
+  pass "both healthy: selects the declared Claude account with higher usable headroom and records account + reason"
+}
+
+test_autoswitch_skips_low_account_and_honors_configurable_threshold() {
+  local out rc
+  new_case auto-one-low claude
+  install_autoswitch_quota_fake
+  signed_in_claude_root "$HOME_DIR/user-home/.claude"
+  make_token_file "$CASE/token-files/max100.token"
+  printf 'ordinary\ntoken:%s\n' "$CASE/token-files/max100.token" > "$HOME_DIR/config/claude-accounts"
+
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 12 0.1
+  write_claude_quota_snapshot "$CASE/token-quota.json" 65 0.5
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-skip-ord); rc=$?
+  expect_code 0 "$rc" "one low and one healthy should launch on healthy: $out"
+  assert_contains "$out" "account=token:max100.token" "low ordinary account is skipped"
+  assert_not_contains "$out" "every declared Claude account" "one healthy account remaining must not emit all-low warning"
+  assert_grep "account_reason=auto: token:max100.token 65% usable headroom (skipped low ordinary 12%; threshold 20%)" "$HOME_DIR/state/acct-skip-ord.meta" "meta records skipped low ordinary account"
+
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 25 0.2
+  write_claude_quota_snapshot "$CASE/token-quota.json" 0 -1.5 exhausted_now
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-skip-tok); rc=$?
+  expect_code 0 "$rc" "exhausted token and healthy ordinary should launch on ordinary: $out"
+  assert_contains "$out" "account=ordinary" "exhausted setup-token account is skipped"
+  assert_grep "account_reason=auto: ordinary 25% usable headroom (skipped low token:max100.token exhausted_now at all_models; threshold 20%)" "$HOME_DIR/state/acct-skip-tok.meta" "meta records skipped exhausted setup-token account"
+
+  printf '50\n' > "$HOME_DIR/config/claude-account-low-threshold"
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 40 0.4
+  write_claude_quota_snapshot "$CASE/token-quota.json" 55 0.5
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-skip-cfg50); rc=$?
+  expect_code 0 "$rc" "custom 50% threshold should skip 40% account: $out"
+  assert_contains "$out" "account=token:max100.token" "40% account is skipped under 50% threshold"
+  assert_grep "account_reason=auto: token:max100.token 55% usable headroom (skipped low ordinary 40%; threshold 50%)" "$HOME_DIR/state/acct-skip-cfg50.meta" "meta records custom threshold"
+  pass "one low: skips an account below the low-headroom threshold (default 20% or configured) and chooses the healthy account"
+}
+
+test_autoswitch_both_low_warns_and_keeps_pinned_account() {
+  local out rc
+  new_case auto-both-low claude
+  install_autoswitch_quota_fake
+  signed_in_claude_root "$HOME_DIR/user-home/.claude"
+  make_token_file "$CASE/token-files/max100.token"
+  printf 'ordinary\ntoken:%s\n' "$CASE/token-files/max100.token" > "$HOME_DIR/config/claude-accounts"
+  printf 'token:%s\n' "$CASE/token-files/max100.token" > "$HOME_DIR/config/claude-account"
+
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 12 -0.8
+  write_claude_quota_snapshot "$CASE/token-quota.json" 8 -1.1
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-low-pinned); rc=$?
+  expect_code 0 "$rc" "both low should warn and fall back to pinned account: $out"
+  assert_contains "$out" "warning: every declared Claude account is below the 20% headroom threshold (ordinary 12%, token:max100.token 8%); keeping pinned account token:max100.token" "clear stderr warning names all low accounts and pinned fallback"
+  assert_contains "$out" "account=token:max100.token" "pinned account is chosen even though ordinary had 12% vs 8%"
+  assert_no_token_anywhere acct-low-pinned "$out"
+  assert_grep "account_reason=fallback-pinned: all declared accounts below 20% (ordinary 12%, token:max100.token 8%); using pinned token:max100.token" "$HOME_DIR/state/acct-low-pinned.meta" "meta records fallback-pinned reason"
+  run_pane
+  assert_grep "CLAUDE_CODE_OAUTH_TOKEN=$TOKEN_SENTINEL" "$CASE/claude-worker" "worker runs on the fallback pinned setup-token account"
+
+  rm -f "$HOME_DIR/config/claude-account"
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-low-unpinned); rc=$?
+  expect_code 0 "$rc" "both low with no pin should warn and use first declared account: $out"
+  assert_contains "$out" "warning: every declared Claude account is below the 20% headroom threshold (ordinary 12%, token:max100.token 8%); keeping default declared account ordinary" "warning names first declared fallback when config/claude-account is absent"
+  assert_contains "$out" "account=ordinary" "first declared account is used when unpinned"
+  assert_grep "account_reason=fallback-default: all declared accounts below 20% (ordinary 12%, token:max100.token 8%); using ordinary" "$HOME_DIR/state/acct-low-unpinned.meta" "meta records fallback-default reason"
+  pass "both low: emits a clear warning and keeps today's pinned-account fallback"
+}
+
+test_autoswitch_unmeasured_account_stays_eligible_with_disclosed_uncertainty() {
+  local out rc
+  new_case auto-uncertain claude
+  install_autoswitch_quota_fake
+  signed_in_claude_root "$HOME_DIR/user-home/.claude"
+  make_token_file "$CASE/token-files/max100.token"
+  printf 'ordinary\ntoken:%s\n' "$CASE/token-files/max100.token" > "$HOME_DIR/config/claude-accounts"
+  printf 'token:%s\n' "$CASE/token-files/max100.token" > "$HOME_DIR/config/claude-account"
+
+  # ordinary is low (10%), while setup-token measurement is rate-limited / unavailable ->
+  # setup-token stays eligible with disclosed uncertainty (no all-low warning).
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 10 -0.9
+  write_claude_quota_unmeasured "$CASE/token-quota.json" rate_limited "Claude quota endpoint rate limited"
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-uncertain-tok); rc=$?
+  expect_code 0 "$rc" "unmeasured token account should stay eligible when ordinary is low: $out"
+  assert_contains "$out" "account=token:max100.token" "unmeasured setup-token account is chosen over low ordinary"
+  assert_not_contains "$out" "every declared Claude account" "disclosed uncertainty is not treated as low"
+  assert_no_token_anywhere acct-uncertain-tok "$out"
+  assert_grep "account_reason=auto: token:max100.token eligible with disclosed uncertainty (quota unknown: Claude quota endpoint rate limited; skipped low ordinary 10%)" "$HOME_DIR/state/acct-uncertain-tok.meta" "meta discloses uncertainty and skipped low account"
+
+  # When ordinary is measured healthy (45%) and token is unmeasured, measured healthy wins while disclosing uncertainty.
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 45 0.3
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-healthy-over-uncertain); rc=$?
+  expect_code 0 "$rc" "measured healthy should beat unmeasured: $out"
+  assert_contains "$out" "account=ordinary" "measured healthy account wins over unmeasured"
+  assert_grep "account_reason=auto: ordinary 45% usable headroom (token:max100.token unmeasured (quota unknown: Claude quota endpoint rate limited); threshold 20%)" "$HOME_DIR/state/acct-healthy-over-uncertain.meta" "meta discloses the unmeasured sibling"
+
+  # When both accounts are unmeasured (probe fails), pinned account stays eligible with disclosed uncertainty.
+  : > "$HOME_DIR/user-home/.claude/quota-fail"
+  : > "$CASE/token-quota-fail"
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-both-uncertain); rc=$?
+  expect_code 0 "$rc" "both unmeasured should stay eligible without warning: $out"
+  assert_contains "$out" "account=token:max100.token" "pinned unmeasured account is selected"
+  assert_not_contains "$out" "every declared Claude account" "unmeasured accounts must not trigger low warning"
+  assert_grep "eligible with disclosed uncertainty" "$HOME_DIR/state/acct-both-uncertain.meta" "meta records disclosed uncertainty"
+  pass "measurement unavailable keeps the candidate account eligible with disclosed uncertainty"
+}
+
+test_autoswitch_overrides_and_refusals() {
+  local out rc
+  new_case auto-ovr claude
+  install_autoswitch_quota_fake
+  signed_in_claude_root "$HOME_DIR/user-home/.claude"
+  make_token_file "$CASE/token-files/max100.token"
+  printf 'ordinary\ntoken:%s\n' "$CASE/token-files/max100.token" > "$HOME_DIR/config/claude-accounts"
+  write_claude_quota_snapshot "$HOME_DIR/user-home/.claude/quota.json" 10 -0.9
+  write_claude_quota_snapshot "$CASE/token-quota.json" 85 0.8
+
+  # Explicit --account overrides automatic switching.
+  out=$(FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=0 spawn_ship acct-explicit-ovr --account ordinary); rc=$?
+  expect_code 0 "$rc" "explicit --account must override config/claude-accounts: $out"
+  assert_contains "$out" "account=ordinary" "explicit --account wins over higher-headroom sibling"
+  assert_no_grep "account_reason=" "$HOME_DIR/state/acct-explicit-ovr.meta" "explicit --account records no auto account_reason"
+
+  # Malformed threshold refuses before launch.
+  printf '150\n' > "$HOME_DIR/config/claude-account-low-threshold"
+  out=$(spawn_ship acct-bad-thresh); rc=$?
+  expect_code 1 "$rc" "out-of-range threshold must refuse"
+  assert_refused_before_launch acct-bad-thresh "$out" "config/claude-account-low-threshold must hold an integer from 0 through 100"
+  rm -f "$HOME_DIR/config/claude-account-low-threshold"
+
+  # Duplicate or malformed config/claude-accounts refuses before launch without printing any token.
+  printf 'token:%s\ntoken:%s\n' "$CASE/token-files/max100.token" "$CASE/token-files/max100.token" > "$HOME_DIR/config/claude-accounts"
+  out=$(spawn_ship acct-dup-list); rc=$?
+  expect_code 1 "$rc" "duplicate config/claude-accounts entry must refuse"
+  assert_refused_before_launch acct-dup-list "$out" "config/claude-accounts declares the same account twice"
+  assert_not_contains "$out" "$TOKEN_SENTINEL" "refusal never prints token"
+  pass "explicit --account overrides automatic selection, and malformed pool or threshold files refuse before launch"
+}
+
 test_secondmate_account_override
 test_secondmate_account_refusals
 test_per_launch_account_ordinary_overrides_a_token_pin
@@ -789,5 +1021,10 @@ test_token_pin_refusals_never_print_the_token
 test_raw_claude_command_receives_the_token_pin
 test_token_pin_in_a_secondmate_account_file
 test_relaunch_check_and_exec_helper
+test_autoswitch_both_healthy_picks_higher_headroom_and_records_meta
+test_autoswitch_skips_low_account_and_honors_configurable_threshold
+test_autoswitch_both_low_warns_and_keeps_pinned_account
+test_autoswitch_unmeasured_account_stays_eligible_with_disclosed_uncertainty
+test_autoswitch_overrides_and_refusals
 
 echo "# all fm-worker-account tests passed"

@@ -26,7 +26,11 @@
 #   candidate binds to one row through quota_row in
 #   bin/fm-quota-axi-lib.sh, so a Pi lane such as openai-codex-work/...
 #   reads its own account's row and an expanded provider with no row for the
-#   candidate is unmeasured, never blocked), and the spendPriority argmax over
+#   candidate is unmeasured, never blocked; when config/claude-accounts is
+#   present, claude rule floors and claude profiles read per-account numbers
+#   from bin/fm-claude-account-quota.sh --json so a claude profile is not
+#   blocked by the ordinary account alone when another declared account has
+#   headroom), and the spendPriority argmax over
 #   the eligible candidates. The model never sees quota, catalogs, approvals,
 #   confidence floors, `why`, or `use`. With no rules, it returns a non-clear
 #   result so firstmate keeps using the existing intake.
@@ -100,6 +104,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 # shellcheck source=bin/fm-quota-axi-lib.sh
 . "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-worker-account-lib.sh
+. "$SCRIPT_DIR/fm-worker-account-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-env-lib.sh
@@ -135,7 +141,7 @@ usage() {
 BRIEF='' PROJECT='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
 REQUEST='' RESULT='' TEXT=''
-RESP_FILE='' QUOTA='' TASK_TEXT='' SEND_TEXT=''
+RESP_FILE='' QUOTA='' CLAUDE_QUOTA='' TASK_TEXT='' SEND_TEXT=''
 
 # ---- opt-in question/answer log state -------------------------------------------
 # LOG_ARMED turns on only once a question exists, so a run that never sent one
@@ -213,7 +219,7 @@ dispatch_log_emit() {
 cleanup() {
   local rc=$? path
   dispatch_log_emit "$rc" || true
-  for path in "$RULES" "$RESP_FILE" "$QUOTA" "$TASK_TEXT" "$SEND_TEXT"; do
+  for path in "$RULES" "$RESP_FILE" "$QUOTA" "$CLAUDE_QUOTA" "$TASK_TEXT" "$SEND_TEXT"; do
     [ -n "$path" ] && rm -f -- "$path"
   done
   exit "$rc"
@@ -368,6 +374,12 @@ if [ -n "$missing_provider" ]; then
   die "malformed rules file: $RULES_PATH - $missing_provider_detail"
 fi
 
+CLAUDE_ACCOUNTS_LIST=$(fm_worker_account_list claude "$CONFIG") || exit 2
+CLAUDE_LOW_THRESHOLD=20
+if [ -n "$CLAUDE_ACCOUNTS_LIST" ]; then
+  CLAUDE_LOW_THRESHOLD=$(fm_worker_account_low_threshold "$CONFIG") || exit 2
+fi
+
 # ---- harness -> provider map, from the single owner in fm-quota-axi-lib.sh -----
 PMAP='{}'
 while IFS= read -r h; do
@@ -398,6 +410,7 @@ fi
 
 RESP_FILE=$(mktemp) || die "mktemp failed"
 QUOTA=$(mktemp) || die "mktemp failed"
+CLAUDE_QUOTA=$(mktemp) || die "mktemp failed"
 TASK_TEXT=$(mktemp) || die "mktemp failed"
 SEND_TEXT=$(mktemp) || die "mktemp failed"
 
@@ -518,52 +531,83 @@ jq -e --slurpfile rules "$RULES" '
        (.usage.output_tokens | type) == "number"))' \
   "$RESP_FILE" >/dev/null 2>&1 || emit_error "response is not a rule Choice answer"
 
-# ---- quota evidence: one quota-axi --json snapshot -----------------------------
+# ---- quota evidence: one quota-axi --json snapshot (+ per-account claude) ------
 command -v quota-axi >/dev/null 2>&1 || emit_error "quota-axi not installed"
-quota-axi --json > "$QUOTA" 2>/dev/null || emit_error "quota-axi --json failed"
+quota_rc=0
+quota-axi --json > "$QUOTA" 2>/dev/null || quota_rc=$?
+if [ "$quota_rc" -ne 0 ]; then
+  if [ -z "$CLAUDE_ACCOUNTS_LIST" ] || [ ! -s "$QUOTA" ] || ! fm_quota_json_valid < "$QUOTA"; then
+    emit_error "quota-axi --json failed"
+  fi
+fi
 fm_quota_json_valid < "$QUOTA" || emit_error "quota-axi --json returned an invalid snapshot"
+if [ -n "$CLAUDE_ACCOUNTS_LIST" ] && jq -e --argjson pmap "$PMAP" '
+  def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+  any((.rules // [])[]; (.floor.provider // "") == "claude") or
+  any(([((.rules // [])[]) | profiles(.use)[]] + profiles(.default // null))[];
+    .harness == "claude" or ((.provider // $pmap[.harness] // "") == "claude"))
+' "$RULES" >/dev/null 2>&1; then
+  FM_HOME="$FM_HOME" FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-claude-account-quota.sh" --json > "$CLAUDE_QUOTA" ||
+    emit_error "fm-claude-account-quota.sh --json failed"
+else
+  printf '{"accounts":[]}\n' > "$CLAUDE_QUOTA"
+fi
 
 # ---- resolution: declared gates + quota evidence + argmax, all in jq ------------
 RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg none_criterion "$DEFAULT_WHEN" --argjson pmap "$PMAP" \
-  --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" "$FM_QUOTA_ROW_JQ"'
-  ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
+  --argjson claude_low "$CLAUDE_LOW_THRESHOLD" \
+  --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" --slurpfile claude_quota "$CLAUDE_QUOTA" "$FM_QUOTA_ROW_JQ"'
+  ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($claude_quota[0].accounts // []) as $claude_accts | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
   def prov($p; $lane): quota_row($q; $p; $lane);
   def rows($p; $lane): (prov($p; $lane) | .quotaSemantics.effectiveAvailability // []);
   def bare($m): ($m | split("/") | last);
   def provider_of($c): ($c.provider // $pmap[$c.harness] // null);
   def lane_of($c): quota_lane($c.harness; $c.model);
-  def measured($p; $lane):
-    (prov($p; $lane) != null and (["known", "partial"] | index(prov($p; $lane).quotaSemantics.status)) != null);
-  def applicable($p; $lane; $m):
+  def row_measured($p_row):
+    ($p_row != null and (["known", "partial"] | index($p_row.quotaSemantics.status)) != null);
+  def applicable_in_row($p_row; $m):
     (bare($m)) as $bare |
-    [rows($p; $lane)[] | select(
+    [($p_row.quotaSemantics.effectiveAvailability // [])[] | select(
       .scope == "all_models" or .scope == "all_products" or
       ($m != "" and (.scope == ("model:" + $bare) or .scope == ("product:" + $bare)))
     )];
-  def floor_state($f; $p; $lane):
+  def floor_state_row($f; $p_row):
     if $f == null then "none"
-    elif prov($p; $lane) == null or (measured($p; $lane) | not) then "unknown"
-    else [rows($p; $lane)[] | select(.scope == $f.scope)] as $matches
+    elif $p_row == null or (row_measured($p_row) | not) then "unknown"
+    else [($p_row.quotaSemantics.effectiveAvailability // [])[] | select(.scope == $f.scope)] as $matches
       | if ($matches | length) == 0 or any($matches[]; .status != "known") then "unknown"
         elif any($matches[]; .effectivePercentRemaining < $f.min_percent) then "below"
         else "ok"
         end
     end;
+  def floor_state($f; $p; $lane): floor_state_row($f; prov($p; $lane));
+  def claude_acct_row($acct):
+    if $acct.error != null then null
+    else ([($acct.snapshot.providers // [])[] | select(.provider == "claude")] | first)
+    end;
+  def rule_floor_state_eval($f):
+    if $f == null then "none"
+    elif ($claude_accts | length) > 0 and $f.provider == "claude" then
+      ([$claude_accts[] | floor_state_row($f; claude_acct_row(.))]) as $states |
+      if any($states[]; . == "ok") then "ok"
+      elif any($states[]; . == "unknown") then "unknown"
+      else "below"
+      end
+    else floor_state($f; $f.provider; "")
+    end;
   def evidence($rows):
     $rows | map({scope, status, pct: (.effectivePercentRemaining // null), runway: (.runway.status // null), spendPriority: (.selection.spendPriority // null)});
-  def evaluate($c):
-    (provider_of($c)) as $p | (lane_of($c)) as $lane |
-    if $p == null then {profile: $c, eligible: false, reason: "no provider family for harness \($c.harness); declare provider on the profile"}
-    elif prov($p; $lane) == null then
+  def eval_provider_row($c; $p; $lane; $p_row; $has_any_p):
+    if $p_row == null then
       {profile: $c, provider: $p, eligible: true, unranked: true,
-       reason: (if any($q.providers[]; .provider == $p)
+       reason: (if $has_any_p
                 then "provider \($p) has no quota row for account \(if $lane == "" then "default" else $lane end)"
                 else "provider \($p) not in the quota snapshot" end)}
     else
-      (applicable($p; $lane; ($c.model // ""))) as $rows |
+      (applicable_in_row($p_row; ($c.model // ""))) as $rows |
       (evidence($rows)) as $bounds |
-      (floor_state($c.floor; $p; $lane)) as $profile_floor_state |
+      (floor_state_row($c.floor; $p_row)) as $profile_floor_state |
       if any($rows[]; (.runway.status // "") == "exhausted_now") then
         ($rows | map(select((.runway.status // "") == "exhausted_now")) | first) as $bad |
         {profile: $c, provider: $p, bounds: $bounds, scope: $bad.scope, pct: ($bad.effectivePercentRemaining // null), runway: $bad.runway.status, eligible: false, reason: "runway exhausted_now at \($bad.scope)"}
@@ -571,18 +615,18 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
         ($rows | map(select(.status == "known" and (.effectivePercentRemaining | type) == "number" and .effectivePercentRemaining <= 0)) | first) as $bad |
         {profile: $c, provider: $p, bounds: $bounds, scope: $bad.scope, pct: $bad.effectivePercentRemaining, runway: $bad.runway.status, eligible: false, reason: "0% remaining at \($bad.scope)"}
       elif $profile_floor_state == "below" then
-        ([rows($p; $lane)[] | select(
+        ([($p_row.quotaSemantics.effectiveAvailability // [])[] | select(
           .scope == $c.floor.scope and
           .effectivePercentRemaining < $c.floor.min_percent
         )] | first) as $floor_row |
         {profile: $c, provider: $p, bounds: $bounds, scope: ($floor_row.scope // $c.floor.scope), pct: ($floor_row.effectivePercentRemaining // null), runway: ($floor_row.runway.status // null), eligible: false, reason: "profile floor \($c.floor.scope) below \($c.floor.min_percent)%"}
-      elif (measured($p; $lane) | not) then
+      elif (row_measured($p_row) | not) then
         ($rows | first) as $row |
-        {profile: $c, provider: $p, bounds: $bounds, scope: ($row.scope // null), pct: ($row.effectivePercentRemaining // null), runway: ($row.runway.status // null), eligible: true, unranked: true, unknown: true, reason: "provider \($p) unmeasured (\(prov($p; $lane).quotaSemantics.status))"}
+        {profile: $c, provider: $p, bounds: $bounds, scope: ($row.scope // null), pct: ($row.effectivePercentRemaining // null), runway: ($row.runway.status // null), eligible: true, unranked: true, unknown: true, reason: "provider \($p) unmeasured (\($p_row.quotaSemantics.status))"}
       elif ($rows | length) == 0 then
         {profile: $c, provider: $p, bounds: $bounds, eligible: true, unranked: true, unknown: true, reason: "no applicable quota row for provider \($p)"}
       elif $profile_floor_state == "unknown" then
-        ([rows($p; $lane)[] | select(.scope == $c.floor.scope)] | first) as $floor_row |
+        ([($p_row.quotaSemantics.effectiveAvailability // [])[] | select(.scope == $c.floor.scope)] | first) as $floor_row |
         {profile: $c, provider: $p, bounds: $bounds, scope: $c.floor.scope, pct: ($floor_row.effectivePercentRemaining // null), runway: ($floor_row.runway.status // null), eligible: true, unranked: true, unknown: true, reason: "profile floor \($c.floor.scope) is unverifiable: not rankable"}
       elif any($rows[]; .status != "known") then
         ($rows | map(select(.status != "known")) | first) as $bad |
@@ -592,9 +636,70 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
         {profile: $c, provider: $p, bounds: $bounds, scope: $bad.scope, pct: $bad.effectivePercentRemaining, runway: $bad.runway.status, eligible: true, unranked: true, reason: "spendPriority missing or non-numeric at \($bad.scope): not rankable"}
       else
         ($rows | min_by(.selection.spendPriority)) as $limiting |
+        ([$rows[].effectivePercentRemaining] | min) as $headroom |
         {profile: $c, provider: $p, bounds: $bounds, scope: $limiting.scope, pct: $limiting.effectivePercentRemaining,
-         spendPriority: $limiting.selection.spendPriority, runway: $limiting.runway.status, eligible: true, reason: "ok"}
+         headroom: $headroom, spendPriority: $limiting.selection.spendPriority, runway: $limiting.runway.status, eligible: true, reason: "ok"}
       end
+    end;
+  def eval_claude_acct($c; $acct; $apply_low_gate):
+    if $acct.error != null then
+      {profile: $c, provider: "claude", account: $acct.declared, eligible: true, unranked: true, unknown: true, low: false,
+       reason: "claude account \($acct.declared) unmeasured (\($acct.error))"}
+    else
+      claude_acct_row($acct) as $crow |
+      if $crow == null then
+        {profile: $c, provider: "claude", account: $acct.declared, eligible: true, unranked: true, unknown: true, low: false,
+         reason: "claude account \($acct.declared) has no claude quota row"}
+      else
+        (eval_provider_row($c; "claude"; ""; $crow; true) + {account: $acct.declared}) as $ev |
+        (applicable_in_row($crow; ($c.model // ""))) as $crows |
+        ([$crows[] | select(.status == "known" and (.effectivePercentRemaining | type) == "number" and .effectivePercentRemaining < $claude_low)]) as $low_rows |
+        if $apply_low_gate and $ev.eligible and ($low_rows | length) > 0 then
+          ($low_rows | min_by(.effectivePercentRemaining)) as $low_row |
+          $ev + {low: true, low_pct: $low_row.effectivePercentRemaining, low_scope: $low_row.scope}
+        else
+          $ev + {low: false}
+        end
+      end
+    end;
+  def evaluate($c):
+    (provider_of($c)) as $p | (lane_of($c)) as $lane |
+    if $p == null then {profile: $c, eligible: false, reason: "no provider family for harness \($c.harness); declare provider on the profile"}
+    elif ($claude_accts | length) > 0 and $c.harness == "claude" and $p == "claude" then
+      if ($c.account // "") != "" then
+        ([$claude_accts[] | select(.account == $c.account)] | first) as $matched |
+        if $matched != null then eval_claude_acct($c; $matched; false)
+        elif $c.account == "ordinary" then eval_provider_row($c; "claude"; ""; prov("claude"; ""); any($q.providers[]; .provider == "claude"))
+        else
+          (if ($c.account | startswith("token:")) then "token:" + ($c.account | split("/") | last) else $c.account end) as $decl |
+          {profile: $c, provider: "claude", account: $decl, eligible: true, unranked: true, unknown: true,
+           reason: "claude account \($decl) not in config/claude-accounts"}
+        end
+      else
+        ($claude_accts | map(eval_claude_acct($c; .; true))) as $aevals |
+        ([$aevals | to_entries[] | select(.value.eligible and ((.value.unranked // false) | not) and ((.value.low // false) | not))]) as $healthy |
+        ([$aevals[] | select(.eligible and (.unranked // false) and ((.low // false) | not))]) as $unmeasured |
+        ([$aevals[] | select(.eligible and (.low // false))]) as $low_only |
+        if ($healthy | length) > 0 then
+          ($healthy | sort_by([-(.value.headroom), -(.value.spendPriority), .key]) | first | .value)
+        elif ($unmeasured | length) > 0 then
+          ($unmeasured | first)
+        elif ($low_only | length) > 0 then
+          ([$aevals[] | if .low then "\(.account) \(.low_pct)%" else "\(.account): \(.reason)" end] | join(", ")) as $summary |
+          ($low_only | sort_by(-(.low_pct // 0)) | first) as $best_low |
+          {profile: $c, provider: "claude", account: $best_low.account, bounds: ($best_low.bounds // []),
+           scope: ($best_low.scope // null), pct: ($best_low.low_pct // null), runway: ($best_low.runway // null),
+           eligible: false, reason: "all declared claude accounts below \($claude_low)% headroom threshold (\($summary))"}
+        else
+          ([$aevals[] | "\(.account): \(.reason)"] | join("; ")) as $summary |
+          ($aevals | first) as $f |
+          {profile: $c, provider: "claude", account: ($f.account // null), bounds: ($f.bounds // []),
+           scope: ($f.scope // null), pct: ($f.pct // null), runway: ($f.runway // null),
+           eligible: false, reason: "all declared claude accounts ineligible (\($summary))"}
+        end
+      end
+    else
+      eval_provider_row($c; $p; $lane; prov($p; $lane); any($q.providers[]; .provider == $p))
     end;
   def rule_at($c):
     if ($c | test("^rule_[1-9][0-9]*$")) then
@@ -622,7 +727,7 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
    end) as $fb |
   (if $fb.to then $fb.to else $picked end) as $choice |
   (rule_at($choice)) as $rule |
-  (if $rule == null then "none" else floor_state($rule.floor; $rule.floor.provider; "") end) as $rule_floor_state |
+  (if $rule == null then "none" else rule_floor_state_eval($rule.floor) end) as $rule_floor_state |
   (if $choice != "default" and $rule == null then []
    elif $rule == null then profiles($cfg.default // null)
    else profiles($rule.use)
@@ -683,6 +788,7 @@ TEXT=$(jq -r '
   (if .note then "  note: \(.note | flat)" else empty end),
   (if .unranked_note then "  note: \(.unranked_note | flat)" else empty end),
   (.candidates[]? | "  candidate: \(.profile.harness | flat):\(show(.profile.model))"
+      + (if .account then "  account=\(.account | flat)" else "" end)
       + (if .provider then "  provider=\(.provider | flat)" else "" end)
       + (if .scope then "  scope=\(.scope | flat)  remaining=\(show(.pct))%  spendPriority=\(show(.spendPriority))  runway=\(show(.runway))" else "" end)
       + (if (.bounds // [] | length) > 1 then "  bounds=" + ([.bounds[] | "\(.scope | flat):\(show(.pct))%/\((.runway // .status) | flat)"] | join(",")) else "" end)

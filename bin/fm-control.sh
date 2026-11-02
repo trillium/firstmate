@@ -1084,6 +1084,7 @@ resolve_relaunch_profile() {
   # A per-launch account recorded at spawn keeps governing the relaunch unless
   # this one names its own; it does not transfer to a non-Claude runner.
   local account_model=$TARGET_MODEL account_mate='' account_request=''
+  local account_cfg="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" account_list='' account_entry=''
   [ "$account_model" != default ] || account_model=
   [ "$KIND" != secondmate ] || account_mate=$ID
   if [ "$ACCOUNT_SET" = 1 ]; then
@@ -1091,7 +1092,17 @@ resolve_relaunch_profile() {
   elif [ "$TARGET_HARNESS" = claude ]; then
     account_request=$(fm_meta_get "$META" account_request)
   fi
-  fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+  if [ "$TARGET_HARNESS" = claude ] && [ -z "$account_mate" ] && [ -z "$account_request" ]; then
+    account_list=$(fm_worker_account_list claude "$account_cfg") || return 1
+    if [ -n "$account_list" ]; then
+      fm_worker_account_low_threshold "$account_cfg" >/dev/null || return 1
+      while IFS= read -r account_entry; do
+        [ -n "$account_entry" ] || continue
+        fm_worker_account_resolve_declared claude "$account_entry" "config/claude-accounts" "$account_cfg/claude-accounts" "" >/dev/null || return 1
+      done <<< "$account_list"
+    fi
+  fi
+  fm_worker_account_select "$TARGET_HARNESS" "$account_cfg" \
     "$account_model" "$TARGET_HARNESS" "" "$account_mate" "$account_request" >/dev/null || return 1
   fm_omp_profile_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
     "$account_mate" >/dev/null || return 1

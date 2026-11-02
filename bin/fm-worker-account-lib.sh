@@ -13,6 +13,21 @@
 # the same validation, sign-in check, and credential shedding, so the ordinary
 # login and a setup-token account can be used side by side.
 #
+# A home with multiple Claude accounts can declare them in config/claude-accounts
+# (one entry per line, same value grammar as config/claude-account, with no
+# blank lines, duplicates, or control characters). When a Claude ship or scout
+# worker is spawned with no explicit --account override (and is not a relaunch
+# reusing a recorded account_request=), fm_worker_account_choose_claude measures
+# every declared entry through bin/fm-claude-account-quota.sh --json, skips
+# entries below the low-headroom threshold (config/claude-account-low-threshold
+# or FM_CLAUDE_ACCOUNT_LOW_THRESHOLD, default 20%), and chooses the healthy
+# account with the most usable headroom while keeping unmeasured accounts
+# eligible with disclosed uncertainty. When every declared account is low, it
+# warns on stderr and keeps today's fallback (config/claude-account when
+# present, otherwise the first declared entry). The chosen account and its
+# one-line reason are recorded in state/<id>.meta as account=, account_request=,
+# and account_reason=.
+#
 # Pinnable runners, each a credential store inside a root its vendor lets a
 # process select:
 #   claude          CLAUDE_CONFIG_DIR     config/claude-account
@@ -242,6 +257,267 @@ fm_worker_account_value_valid() {
   ' -- "$1"
 }
 
+# fm_worker_account_declared_name <entry>
+# Prints the reported name of a Claude account entry: token:<basename> for a
+# setup-token file, and the literal entry otherwise.
+fm_worker_account_declared_name() {
+  case "$1" in
+  token:*) printf 'token:%s\n' "${1##*/}" ;;
+  *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# fm_worker_account_list <harness> <config-dir>
+# Prints the entries config/claude-accounts declares, one per line, for a
+# Claude launch. Prints nothing and returns 0 for another runner or when the
+# list is absent. On a malformed or unreadable list prints one error naming the
+# file and returns 1.
+fm_worker_account_list() {
+  local harness=$1 cfg="$2/claude-accounts" out rc
+  [ "$harness" = claude ] || return 0
+  if [ -d "$2" ] && [ -x "$2" ] && [ ! -e "$cfg" ] && [ ! -L "$cfg" ]; then
+    return 0
+  fi
+  out=$(perl -MErrno=ENOENT -e '
+    my ($f) = @ARGV;
+    unless (lstat $f) {
+      exit 3 if $! == ENOENT;
+      print STDERR "error: cannot inspect configuration source at $f: $!\n";
+      exit 4;
+    }
+    (-f $f && -r _) or exit 5;
+    open(my $fh, "<", $f) or exit 5;
+    my $body = do { local $/; <$fh> } // "";
+    $body =~ /\A(?:(?:ordinary|(?:token:)?\/[^\x00-\x1f\x7f]*)\n)*(?:ordinary|(?:token:)?\/[^\x00-\x1f\x7f]*)\n?\z/ or exit 6;
+    my %seen;
+    for my $entry (split /\n/, $body) {
+      exit 7 if $seen{$entry}++;
+      print $entry, "\n";
+    }
+  ' -- "$cfg")
+  rc=$?
+  case "$rc" in
+  0) printf '%s\n' "$out" ;;
+  3) return 0 ;;
+  4) return 1 ;;
+  5)
+    echo "error: config/claude-accounts must be a readable regular file: $cfg" >&2
+    return 1
+    ;;
+  7)
+    echo "error: config/claude-accounts declares the same account twice: $cfg" >&2
+    return 1
+    ;;
+  *)
+    echo "error: config/claude-accounts must hold one account per line, each 'ordinary', an absolute path, or token:<absolute path of a setup-token file>, with no blank lines or control characters: $cfg" >&2
+    return 1
+    ;;
+  esac
+}
+
+# fm_worker_account_low_threshold <config-dir>
+# Prints the integer low-headroom percentage threshold (0..100, default 20)
+# below which automatic Claude account selection skips a declared account.
+# FM_CLAUDE_ACCOUNT_LOW_THRESHOLD overrides config/claude-account-low-threshold.
+fm_worker_account_low_threshold() {
+  local cfg="$1/claude-account-low-threshold" env_val=${FM_CLAUDE_ACCOUNT_LOW_THRESHOLD-} out rc
+  if [ -n "${FM_CLAUDE_ACCOUNT_LOW_THRESHOLD+x}" ]; then
+    case "$env_val" in
+    100 | [123456789][0123456789] | [0123456789])
+      printf '%s\n' "$env_val"
+      return 0
+      ;;
+    esac
+    echo "error: FM_CLAUDE_ACCOUNT_LOW_THRESHOLD must be an integer from 0 through 100: $env_val" >&2
+    return 1
+  fi
+  if [ -d "$1" ] && [ -x "$1" ] && [ ! -e "$cfg" ] && [ ! -L "$cfg" ]; then
+    printf '20\n'
+    return 0
+  fi
+  out=$(perl -MErrno=ENOENT -e '
+    my ($f) = @ARGV;
+    unless (lstat $f) {
+      exit 3 if $! == ENOENT;
+      print STDERR "error: cannot inspect configuration source at $f: $!\n";
+      exit 4;
+    }
+    (-f $f && -r _) or exit 5;
+    open(my $fh, "<", $f) or exit 5;
+    my $body = do { local $/; <$fh> } // "";
+    $body =~ /\A(100|[1-9]?[0-9])\n?\z/ or exit 6;
+    print $1;
+  ' -- "$cfg")
+  rc=$?
+  case "$rc" in
+  0) printf '%s\n' "$out" ;;
+  3) printf '20\n' ;;
+  4) return 1 ;;
+  5)
+    echo "error: config/claude-account-low-threshold must be a readable regular file: $cfg" >&2
+    return 1
+    ;;
+  *)
+    echo "error: config/claude-account-low-threshold must hold an integer from 0 through 100 on a single line with no control characters: $cfg" >&2
+    return 1
+    ;;
+  esac
+}
+
+# fm_worker_account_choose_claude <config-dir> <model>
+# Automatic Claude worker account choice when config/claude-accounts exists and
+# no explicit --account or mate pin applies. Prints nothing and returns 0 when
+# config/claude-accounts is absent. Otherwise prints
+# "request<TAB>setting<TAB>reason", emitting one warning on stderr when every
+# declared account is below the low-headroom threshold. Returns 1 on malformed
+# configuration or unusable declared account files.
+fm_worker_account_choose_claude() {
+  local config=$1 model=${2:-} listed threshold entry pin_raw pin_rc pinned_entry=''
+  local quota_json decision chosen setting reason warning
+  listed=$(fm_worker_account_list claude "$config") || return 1
+  [ -n "$listed" ] || return 0
+  threshold=$(fm_worker_account_low_threshold "$config") || return 1
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    fm_worker_account_resolve_declared claude "$entry" "config/claude-accounts" "$config/claude-accounts" "" >/dev/null || return 1
+  done <<< "$listed"
+  pin_raw=$(fm_worker_account_read claude "$config/claude-account")
+  pin_rc=$?
+  case "$pin_rc" in
+  0)
+    pinned_entry=${pin_raw%%$'\t'*}
+    fm_worker_account_resolve_declared claude "$pinned_entry" "config/claude-account" "$config/claude-account" "" >/dev/null || return 1
+    ;;
+  3) pinned_entry='' ;;
+  *)
+    fm_worker_account_resolve claude "$config" "config/claude-account" >/dev/null
+    return 1
+    ;;
+  esac
+  [ "$model" != default ] || model=''
+  if [ -n "$model" ]; then
+    quota_json=$(FM_CONFIG_OVERRIDE="$config" "$FM_WORKER_ACCOUNT_LIB_DIR/fm-claude-account-quota.sh" --json --model "$model") || return 1
+  else
+    quota_json=$(FM_CONFIG_OVERRIDE="$config" "$FM_WORKER_ACCOUNT_LIB_DIR/fm-claude-account-quota.sh" --json) || return 1
+  fi
+  decision=$(jq -r --arg model "$model" --argjson threshold "$threshold" --arg pinned "$pinned_entry" '
+    def flat: tostring | gsub("[\t\r\n]"; " ");
+    def bare($m): ($m | split("/") | last);
+    def declared_of($e):
+      if ($e | startswith("token:")) then "token:" + ($e | split("/") | last) else $e end;
+    def applicable($row):
+      bare($model) as $b |
+      [($row.quotaSemantics.effectiveAvailability // [])[] | select(
+        .scope == "all_models" or .scope == "all_products" or
+        ($model != "" and (.scope == ("model:" + $b) or .scope == ("product:" + $b)))
+      )];
+    def classify($idx; $a):
+      if $a.error != null then
+        {idx: $idx, account: $a.account, declared: $a.declared, state: "unmeasured", detail: ($a.error | flat)}
+      else
+        ([($a.snapshot.providers // [])[] | select(.provider == "claude")] | first) as $row |
+        if $row == null then
+          {idx: $idx, account: $a.account, declared: $a.declared, state: "unmeasured", detail: "no claude quota row"}
+        else
+          applicable($row) as $rows |
+          if any($rows[]; (.runway.status // "") == "exhausted_now") then
+            ($rows | map(select((.runway.status // "") == "exhausted_now")) | first) as $bad |
+            {idx: $idx, account: $a.account, declared: $a.declared, state: "low",
+             pct: ($bad.effectivePercentRemaining // 0),
+             detail: "\($a.declared | flat) exhausted_now at \($bad.scope | flat)"}
+          elif any($rows[]; .status == "known" and (.effectivePercentRemaining | type) == "number" and (.effectivePercentRemaining <= 0 or .effectivePercentRemaining < $threshold)) then
+            ([$rows[] | select(.status == "known" and (.effectivePercentRemaining | type) == "number") | .effectivePercentRemaining] | min) as $min_pct |
+            {idx: $idx, account: $a.account, declared: $a.declared, state: "low",
+             pct: $min_pct,
+             detail: "\($a.declared | flat) \($min_pct)%"}
+          elif (["known", "partial"] | index($row.quotaSemantics.status)) == null then
+            {idx: $idx, account: $a.account, declared: $a.declared, state: "unmeasured",
+             detail: ("quota \($row.quotaSemantics.status // "unknown")"
+               + (if $row.state.error then ": \($row.state.error | flat)"
+                  elif $row.state.status then " (\($row.state.status | flat))"
+                  else "" end))}
+          elif ($rows | length) == 0 then
+            {idx: $idx, account: $a.account, declared: $a.declared, state: "unmeasured", detail: "no applicable quota scope"}
+          elif any($rows[]; .status != "known" or (.effectivePercentRemaining | type) != "number") then
+            {idx: $idx, account: $a.account, declared: $a.declared, state: "unmeasured", detail: "incomplete scope measurement"}
+          else
+            ([$rows[].effectivePercentRemaining] | min) as $headroom |
+            ([$rows[] | .selection.spendPriority | select(type == "number")]) as $sps |
+            (if ($sps | length) == ($rows | length) then ($sps | min) else null end) as $sp |
+            {idx: $idx, account: $a.account, declared: $a.declared, state: "healthy",
+             pct: $headroom, spendPriority: $sp,
+             detail: "\($a.declared | flat) \($headroom)%"}
+          end
+        end
+      end;
+    ([(.accounts // []) | to_entries[] | classify(.key; .value)]) as $evals |
+    ([$evals[] | select(.state == "healthy")]) as $healthy |
+    ([$evals[] | select(.state == "unmeasured")]) as $unmeasured |
+    if ($healthy | length) > 0 then
+      ($healthy | sort_by([-(.pct), -(.spendPriority // -1000000000), .idx]) | first) as $best |
+      ([$evals[] | select(.idx != $best.idx) |
+        if .state == "healthy" then "\(.declared | flat) \(.pct)%"
+        elif .state == "low" then "skipped low \(.detail)"
+        else "\(.declared | flat) unmeasured (\(.detail))"
+        end]) as $others |
+      {
+        chosen: $best.account,
+        setting: "config/claude-accounts",
+        warning: "",
+        reason: ("auto: \($best.declared | flat) \($best.pct)% usable headroom"
+          + (if ($others | length) > 0
+             then " (\($others | join("; ")); threshold \($threshold)%)"
+             else " (threshold \($threshold)%)" end))
+      }
+    elif ($unmeasured | length) > 0 then
+      (([$unmeasured[] | select($pinned != "" and .account == $pinned)] | first) // ($unmeasured | first)) as $best |
+      ([$evals[] | select(.idx != $best.idx) |
+        if .state == "low" then "skipped low \(.detail)"
+        else "\(.declared | flat) unmeasured (\(.detail))"
+        end]) as $others |
+      {
+        chosen: $best.account,
+        setting: "config/claude-accounts",
+        warning: "",
+        reason: ("auto: \($best.declared | flat) eligible with disclosed uncertainty (\($best.detail)"
+          + (if ($others | length) > 0 then "; \($others | join("; "))" else "" end) + ")")
+      }
+    else
+      ([$evals[].detail] | join(", ")) as $low_list |
+      if $pinned != "" then
+        declared_of($pinned) as $pin_decl |
+        {
+          chosen: $pinned,
+          setting: "config/claude-account",
+          warning: "warning: every declared Claude account is below the \($threshold)% headroom threshold (\($low_list)); keeping pinned account \($pin_decl | flat)",
+          reason: "fallback-pinned: all declared accounts below \($threshold)% (\($low_list)); using pinned \($pin_decl | flat)"
+        }
+      else
+        ($evals | first) as $first |
+        {
+          chosen: $first.account,
+          setting: "config/claude-accounts",
+          warning: "warning: every declared Claude account is below the \($threshold)% headroom threshold (\($low_list)); keeping default declared account \($first.declared | flat)",
+          reason: "fallback-default: all declared accounts below \($threshold)% (\($low_list)); using \($first.declared | flat)"
+        }
+      end
+    end |
+    "\(.chosen | flat)\t\(.setting | flat)\t\(.reason | flat)\n\(.warning | flat)"
+  ' <<<"$quota_json") || {
+    echo "error: could not evaluate config/claude-accounts quota readings" >&2
+    return 1
+  }
+  local first_line=${decision%%$'\n'*} rest
+  chosen=${first_line%%$'\t'*}
+  rest=${first_line#*$'\t'}
+  setting=${rest%%$'\t'*}
+  reason=${rest#*$'\t'}
+  warning=${decision#*$'\n'}
+  [ "$warning" != "$decision" ] || warning=''
+  [ -z "$warning" ] || printf '%s\n' "$warning" >&2
+  printf '%s\t%s\t%s\n' "$chosen" "$setting" "$reason"
+}
+
 # fm_worker_account_resolve_declared <harness> <declared> <setting> <where> <providers>
 # The shared back half of a pin: turns one already-parsed declared value into
 # "declared<TAB>root<TAB>providers", validating the token file or root. <where>
@@ -355,32 +631,34 @@ fm_worker_account_check() {
   return 0
 }
 
-# fm_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>] [<secondmate-id>] [<claude-account-override>]
+# fm_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>] [<secondmate-id>] [<claude-account-override>] [<override-setting>]
 # The whole launch-time decision. Prints nothing for an unpinned runner, so
 # the caller keeps today's launch unchanged. For a pinned one prints
 # "declared<TAB>root<TAB>provider", where provider is the Pi launch model's
 # own (empty for Claude), after the model guard and the sign-in check pass. A
-# non-empty <claude-account-override> (the per-launch --account value, same
-# grammar as config/claude-account) replaces the file for this launch and is
-# refused for any runner but Claude. On
+# non-empty <claude-account-override> (the per-launch --account value, or the
+# entry chosen from config/claude-accounts, same grammar as
+# config/claude-account) replaces the file for this launch and is refused for
+# any runner but Claude. On
 # refusal prints one error and returns 1. bin/fm-spawn.sh runs it before any
 # endpoint exists, and bin/fm-control.sh before a relaunch stops the live
 # agent.
 fm_worker_account_select() {
-  local harness=$1 config=$2 model=$3 executable=$4 raw=${5:-} mate=${6:-} override=${7:-}
+  local harness=$1 config=$2 model=$3 executable=$4 raw=${5:-} mate=${6:-} override=${7:-} override_setting=${8:-}
   local selection declared root providers word provider='' selected_config setting
   if [ -n "$override" ]; then
-    # A per-launch account replaces the home-wide and per-secondmate pin for
-    # this one launch; everything after the selection is shared.
+    # A per-launch or auto-selected account replaces the home-wide and
+    # per-secondmate pin for this one launch; everything after the selection is
+    # shared.
+    setting=${override_setting:---account}
     if [ "$harness" != claude ]; then
       echo "error: --account selects a Claude account, but this launch runs $harness; remove --account, or launch with --harness claude" >&2
       return 1
     fi
     fm_worker_account_value_valid "$override" || {
-      echo "error: --account must be 'ordinary', one absolute path, or token:<absolute path of a setup-token file> with no control characters: $override" >&2
+      echo "error: $setting must be 'ordinary', one absolute path, or token:<absolute path of a setup-token file> with no control characters: $override" >&2
       return 1
     }
-    setting="--account"
     selection=$(fm_worker_account_resolve_declared "$harness" "$override" "$setting" "$override" "") || return 1
   else
     selected_config=$(fm_worker_account_config "$harness" "$config" "$mate") || return 1
