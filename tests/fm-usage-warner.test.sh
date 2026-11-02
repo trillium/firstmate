@@ -100,13 +100,13 @@ run_check() {
 test_help_and_usage() {
   local out rc=0
   out=$("$WARNER" --help 2>&1) || rc=$?
-  expect_code 0 "$rc" "--help must exit 0"
+  expect_code 0 "$rc" "--help must exit 0" "$out"
   assert_contains "$out" "check" "--help lists the check action"
   assert_contains "$out" "arm" "--help lists the arm action"
   assert_contains "$out" "disarm" "--help lists the disarm action"
   rc=0
   out=$("$WARNER" bogus 2>&1) || rc=$?
-  expect_code 2 "$rc" "unknown action must exit 2"
+  expect_code 2 "$rc" "unknown action must exit 2" "$out"
   assert_contains "$out" "unknown action" "unknown action is refused loudly"
   pass "fm-usage-warner: help and usage plumbing"
 }
@@ -118,7 +118,7 @@ test_unconfigured_home_stays_silent() {
   fake_quota_axi "$fakebin" '{"id":"five_hour","percentUsed":99}'
   : > "$fakebin/.argv-log"
   out=$(run_check "$home" "$fakebin" 2>&1) || rc=$?
-  expect_code 0 "$rc" "unconfigured check must still exit 0"
+  expect_code 0 "$rc" "unconfigured check must still exit 0" "$out"
   [ -z "$out" ] || fail "an unconfigured home must stay completely silent: $out"
   assert_absent "$home/state/.usage-warner" "an unconfigured check must never write a de-dupe record"
   [ ! -s "$fakebin/.argv-log" ] || fail "an unconfigured home must never call quota-axi at all"
@@ -420,7 +420,7 @@ EOF
   start=$(date +%s)
   out=$(FM_CHECK_TIMEOUT=2 PATH="$fakebin:$PATH" FM_HOME="$home" "$WARNER" check </dev/null 2>&1) || rc=$?
   elapsed=$(( $(date +%s) - start ))
-  expect_code 0 "$rc" "a watcher bound too small for a read must not fail the check"
+  expect_code 0 "$rc" "a watcher bound too small for a read must not fail the check" "$out"
   [ "$elapsed" -lt 2 ] || fail "a skipped read must return inside the watcher bound, took ${elapsed}s"
   assert_contains "$out" "not measured" "a skipped read is reported as not measured"
   assert_contains "$(cat "$home/state/.usage-warner")" "not measured" "the de-dupe record keeps the not-measured report"
@@ -431,11 +431,11 @@ test_unconfigured_invocation_ignores_unused_environment() {
   local home out rc=0
   home=$(make_home unused-env)
   out=$(FM_USAGE_WARNER_TIMEOUT_SECS=0 FM_CHECK_TIMEOUT=bogus FM_HOME="$home" "$WARNER" check </dev/null 2>&1) || rc=$?
-  expect_code 0 "$rc" "an unconfigured check must not fail on environment it does not use"
+  expect_code 0 "$rc" "an unconfigured check must not fail on environment it does not use" "$out"
   [ -z "$out" ] || fail "an unconfigured check must stay silent whatever the environment: $out"
   rc=0
   out=$(FM_USAGE_WARNER_TIMEOUT_SECS=0 FM_CHECK_TIMEOUT=bogus "$WARNER" --help 2>&1) || rc=$?
-  expect_code 0 "$rc" "--help must not fail on environment it does not use"
+  expect_code 0 "$rc" "--help must not fail on environment it does not use" "$out"
   pass "fm-usage-warner: an unconfigured invocation never fails on unused environment"
 }
 
@@ -443,7 +443,7 @@ test_arm_refuses_without_a_configured_threshold() {
   local home out rc=0
   home=$(make_home arm-unconfigured)
   out=$(PATH="$DARWIN_BIN:$PATH" FM_HOME="$home" "$WARNER" arm 2>&1) || rc=$?
-  expect_code 1 "$rc" "arm without a threshold must fail"
+  expect_code 1 "$rc" "arm without a threshold must fail" "$out"
   assert_contains "$out" "no threshold configured" "arm names the reason it refused"
   assert_absent "$home/state/usage-warner.check.sh" "a refused arm must not leave a shim behind"
   pass "fm-usage-warner: arm refuses without a configured threshold, mirroring the opt-in gate"
@@ -458,7 +458,7 @@ test_arm_refuses_on_a_non_macos_platform() {
   printf '#!/bin/sh\necho Linux\n' > "$TMP_ROOT/arm-linux/unamebin/uname"
   chmod +x "$TMP_ROOT/arm-linux/unamebin/uname"
   out=$(FM_HOME="$home" PATH="$TMP_ROOT/arm-linux/unamebin:$fakebin" "$WARNER" arm 2>&1) || rc=$?
-  expect_code 1 "$rc" "arm on a non-macOS platform must fail"
+  expect_code 1 "$rc" "arm on a non-macOS platform must fail" "$out"
   assert_contains "$out" "only available on macOS" "arm names why it refused on a non-macOS platform"
   pass "fm-usage-warner: arm refuses on a platform with no Notification Center path"
 }
@@ -491,7 +491,7 @@ test_arm_refuses_a_symlink_at_the_shim_path() {
   printf '#!/usr/bin/env bash\n' > "$target"
   ln -s "$target" "$home/state/usage-warner.check.sh"
   out=$(FM_HOME="$home" "$WARNER" arm 2>&1) || rc=$?
-  expect_code 1 "$rc" "arm must refuse a symlink at the shim path"
+  expect_code 1 "$rc" "arm must refuse a symlink at the shim path" "$out"
   assert_contains "$out" "could not write" "arm reports the shim write failure"
   assert_absent "$home/state/usage-warner.check-trust" "no trust binding is left behind by a refused arm"
   [ -f "$target" ] || fail "arm must never write through the symlink to its target"

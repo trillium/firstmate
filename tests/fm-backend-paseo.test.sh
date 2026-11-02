@@ -441,13 +441,13 @@ SH
 
   out=$(PATH="$dir/fakebin:$PATH" bash -c '. "$0/bin/backends/paseo.sh"; fm_backend_paseo_cli_json workspace create --json' "$ROOT" 2>"$dir/err")
   status=$?
-  expect_code 0 "$status" "cli_json should succeed when the CLI does"
+  expect_code 0 "$status" "cli_json should succeed when the CLI does" "$out"
   [ "$out" = '{"workspaceId":"wks_bbbbbbbbbbbbbbbb"}' ] || fail "cli_json stdout must be the CLI's JSON alone, got '$out'"
   [ -s "$dir/err" ] && fail "cli_json must not relay the CLI's stderr on success"$'\n'"$(cat "$dir/err")"
 
   out=$(PATH="$dir/fakebin:$PATH" FM_PASEO_FAKE_EXIT=7 bash -c '. "$0/bin/backends/paseo.sh"; fm_backend_paseo_cli_json workspace create --json' "$ROOT" 2>"$dir/err")
   status=$?
-  expect_code 7 "$status" "cli_json should propagate the CLI's failure status"
+  expect_code 7 "$status" "cli_json should propagate the CLI's failure status" "$out"
   assert_contains "$(cat "$dir/err")" "Electron warning: fake" "cli_json should relay the CLI's stderr when the call fails"
   pass "fm_backend_paseo_cli_json: keeps stderr out of parsed JSON and relays it only on failure"
 }

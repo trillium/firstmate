@@ -134,7 +134,7 @@ test_poll_no_token_is_hard_noop() {
   # No .env, no FMX_PAIRING_TOKEN: must exit 0 with no output and touch nothing.
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_PAIRING_TOKEN='' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll no-token exit"
+  expect_code 0 "$rc" "poll no-token exit" "$out"
   [ -z "$out" ] || fail "poll no-token must be silent (got: $out)"
   assert_absent "$home/state/x-inbox" "poll no-token must not create an inbox"
   pass "fm-x-poll is a hard no-op without a token (inert default)"
@@ -149,7 +149,7 @@ test_poll_empty_env_token_overrides_env_file() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_PAIRING_TOKEN='' \
     FAKE_CURL_LOG="$log" FAKE_POLL_CODE=204 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll empty-env-token exit"
+  expect_code 0 "$rc" "poll empty-env-token exit" "$out"
   [ -z "$out" ] || fail "empty env token must disable X mode despite .env token (got: $out)"
   [ ! -f "$log" ] || fail "empty env token must not call the relay"
   assert_absent "$home/state/x-inbox" "empty env token must not create an inbox"
@@ -165,7 +165,7 @@ test_poll_204_is_silent() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" FAKE_POLL_CODE=204 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll 204 exit"
+  expect_code 0 "$rc" "poll 204 exit" "$out"
   [ -z "$out" ] || fail "poll 204 must be silent (got: $out)"
   assert_grep "auth=Authorization: Bearer tok-204" "$log" "poll must send the bearer token"
   grep '^argv=' "$log" | grep -F 'tok-204' >/dev/null 2>&1 \
@@ -184,7 +184,7 @@ test_poll_empty_env_relay_overrides_env_file() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL='' \
     FAKE_CURL_LOG="$log" FAKE_POLL_CODE=204 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll empty-env-relay exit"
+  expect_code 0 "$rc" "poll empty-env-relay exit" "$out"
   [ -z "$out" ] || fail "poll 204 with empty env relay must be silent (got: $out)"
   assert_grep "url=https://myfirstmate.io/connector/poll" "$log" \
     "empty env relay must override .env and fall back to the default relay"
@@ -199,7 +199,7 @@ test_poll_auth_error_reports_once() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=401 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll auth error exit"
+  expect_code 0 "$rc" "poll auth error exit" "$out"
   [ "$out" = "x-mode-error relay returned HTTP 401" ] \
     || fail "poll auth error must emit one visible diagnostic (got: $out)"
   assert_present "$home/state/x-poll.error" "poll auth error must write a dedupe marker"
@@ -208,12 +208,12 @@ test_poll_auth_error_reports_once() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=401 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll repeated auth error exit"
+  expect_code 0 "$rc" "poll repeated auth error exit" "$out"
   [ -z "$out" ] || fail "repeated poll auth error must be quiet after the first diagnostic (got: $out)"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=204 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll recovered auth error exit"
+  expect_code 0 "$rc" "poll recovered auth error exit" "$out"
   [ -z "$out" ] || fail "poll recovery 204 must stay silent (got: $out)"
   assert_absent "$home/state/x-poll.error" "poll 204 must clear the auth diagnostic marker"
   pass "fm-x-poll surfaces auth/config errors once and clears on recovery"
@@ -228,7 +228,7 @@ test_poll_error_private_publication_rejects_unsafe_paths() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-linked-state FAKE_POLL_CODE=401 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll linked state diagnostic exit"
+  expect_code 0 "$rc" "poll linked state diagnostic exit" "$out"
   [ "$out" = "x-mode-error relay returned HTTP 401" ] \
     || fail "poll must still emit a diagnostic when the marker cannot be safely stored (got: $out)"
   assert_absent "$home/external-state/x-poll.error" "poll must not write the diagnostic through a linked state directory"
@@ -243,7 +243,7 @@ test_poll_error_private_publication_rejects_unsafe_paths() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-linked-marker FAKE_POLL_CODE=401 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll linked marker diagnostic exit"
+  expect_code 0 "$rc" "poll linked marker diagnostic exit" "$out"
   [ "$out" = "x-mode-error relay returned HTTP 401" ] \
     || fail "poll must not dedupe through a linked diagnostic marker (got: $out)"
   [ "$(cat "$target")" = "relay returned HTTP 401" ] \
@@ -261,7 +261,7 @@ test_poll_error_private_publication_rejects_unsafe_paths() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-hard-marker FAKE_POLL_CODE=401 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll hardlinked marker diagnostic exit"
+  expect_code 0 "$rc" "poll hardlinked marker diagnostic exit" "$out"
   [ "$out" = "x-mode-error relay returned HTTP 401" ] \
     || fail "poll must not dedupe through a hardlinked diagnostic marker (got: $out)"
   [ "$(cat "$marker")" = "relay returned HTTP 401" ] || fail "poll must preserve the hardlinked marker"
@@ -279,7 +279,7 @@ test_poll_question_stashes_and_marks() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll question exit"
+  expect_code 0 "$rc" "poll question exit" "$out"
   [ "$out" = "x-mention req-7" ] || fail "poll must print compact marker (got: $out)"
   assert_present "$home/state/x-inbox/req-7.json" "poll must stash the question"
   [ "$(jq -r .text "$home/state/x-inbox/req-7.json")" = "what are you building?" ] \
@@ -298,23 +298,23 @@ test_poll_mentions_wake_once_per_durable_offer() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000000 \
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "first offered mention poll exit"
+  expect_code 0 "$rc" "first offered mention poll exit" "$out"
   [ "$out" = "x-mention req-repeat" ] \
     || fail "a newly offered mention must wake once (got: $out)"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000030 \
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "repeated pending mention poll exit"
+  expect_code 0 "$rc" "repeated pending mention poll exit" "$out"
   [ -z "$out" ] || fail "an already offered pending mention must stay silent (got: $out)"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_DISMISS_CODE=200 "$ROOT/bin/fm-x-dismiss.sh" req-repeat); rc=$?
-  expect_code 0 "$rc" "successful dismiss before relay re-offer exit"
+  expect_code 0 "$rc" "successful dismiss before relay re-offer exit" "$out"
   [ "$out" = "req-repeat" ] || fail "the dismiss fixture must succeed before the re-offer"
   rm -f "$home/state/x-inbox/req-repeat.json"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000060 \
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "post-answer re-offer poll exit"
+  expect_code 0 "$rc" "post-answer re-offer poll exit" "$out"
   [ -z "$out" ] || fail "a relay re-offer after inbox cleanup must stay silent (got: $out)"
   assert_absent "$home/state/x-inbox/req-repeat.json" \
     "a suppressed post-answer re-offer must not recreate the drained inbox"
@@ -324,14 +324,14 @@ test_poll_mentions_wake_once_per_durable_offer() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000090 \
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "mention re-offer after local marker loss exit"
+  expect_code 0 "$rc" "mention re-offer after local marker loss exit" "$out"
   [ "$out" = "x-mention req-repeat" ] \
     || fail "a re-offer after local marker loss must wake once (got: $out)"
   body='{"request_id":"req-new","platform":"discord","reply_max_chars":1900,"text":"new status?"}'
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000120 \
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "genuinely new mention poll exit"
+  expect_code 0 "$rc" "genuinely new mention poll exit" "$out"
   [ "$out" = "x-mention req-new" ] \
     || fail "a genuinely new request_id must wake once (got: $out)"
   marker="$home/state/x-context/req-new.offered.json"
@@ -340,7 +340,7 @@ test_poll_mentions_wake_once_per_durable_offer() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700604921 \
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "mention re-offer after marker expiry exit"
+  expect_code 0 "$rc" "mention re-offer after marker expiry exit" "$out"
   [ "$out" = "x-mention req-new" ] \
     || fail "a re-offer after the bounded marker expiry must wake once (got: $out)"
   pass "fm-x-poll wakes once per durable request offer across inbox cleanup"
@@ -356,27 +356,27 @@ test_poll_offer_claim_failure_reports_once() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-claim-failure FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "first offer claim failure poll exit"
+  expect_code 0 "$rc" "first offer claim failure poll exit" "$out"
   [ "$out" = "x-mode-error cannot record mention offer" ] \
     || fail "an offer claim failure must emit one diagnostic (got: $out)"
   assert_present "$home/state/x-poll.claim-error" "offer claim failure must write a dedupe marker"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-claim-failure FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "repeated offer claim failure poll exit"
+  expect_code 0 "$rc" "repeated offer claim failure poll exit" "$out"
   [ -z "$out" ] || fail "a repeated offer claim failure must stay silent (got: $out)"
   assert_present "$home/state/x-poll.claim-error" "a repeated offer claim failure must retain its dedupe marker"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-claim-failure FAKE_POLL_CODE=204 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "no-pending poll after offer claim failure exit"
+  expect_code 0 "$rc" "no-pending poll after offer claim failure exit" "$out"
   [ -z "$out" ] || fail "a no-pending poll must stay silent after an offer claim failure (got: $out)"
   assert_present "$home/state/x-poll.claim-error" \
     "a no-pending poll must retain the offer claim dedupe marker"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-claim-failure FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "re-offered claim failure poll exit"
+  expect_code 0 "$rc" "re-offered claim failure poll exit" "$out"
   [ -z "$out" ] || fail "a re-offered claim failure must stay silent (got: $out)"
   rm "$home/state/x-context"
   mkdir "$home/state/x-context"
@@ -384,7 +384,7 @@ test_poll_offer_claim_failure_reports_once() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-claim-failure FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "recovered offer claim poll exit"
+  expect_code 0 "$rc" "recovered offer claim poll exit" "$out"
   [ "$out" = "x-mention req-claim-failure" ] \
     || fail "a recovered offer claim must emit the mention wake (got: $out)"
   assert_absent "$home/state/x-poll.claim-error" "a successful offer claim must clear the diagnostic marker"
@@ -401,7 +401,7 @@ test_poll_preserves_conversation_context() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll conversation exit"
+  expect_code 0 "$rc" "poll conversation exit" "$out"
   [ "$out" = "x-mention req-c" ] || fail "poll must mark the follow-up mention (got: $out)"
   f="$home/state/x-inbox/req-c.json"
   assert_present "$f" "poll must stash the follow-up"
@@ -417,7 +417,7 @@ test_poll_preserves_conversation_context() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll fresh-mention exit"
+  expect_code 0 "$rc" "poll fresh-mention exit" "$out"
   [ "$(jq -r '.in_reply_to' "$home/state/x-inbox/req-f.json")" = "null" ] \
     || fail "a fresh mention must round-trip in_reply_to as null"
   pass "fm-x-poll preserves in_reply_to conversation context in the inbox"
@@ -458,7 +458,7 @@ test_poll_preserves_inbound_attachment_urls() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll inbound-attachment exit"
+  expect_code 0 "$rc" "poll inbound-attachment exit" "$out"
   [ "$out" = "x-mention req-inbound" ] \
     || fail "an attachment-bearing mention must wake once (got: $out)"
   f="$home/state/x-inbox/req-inbound.json"
@@ -506,7 +506,7 @@ SH
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll inbox commit failure exit"
+  expect_code 0 "$rc" "poll inbox commit failure exit" "$out"
   [ "$out" = "x-mode-error cannot write inbox" ] \
     || fail "poll inbox commit failure must emit an error, not a wake marker (got: $out)"
   assert_absent "$home/state/x-inbox/req-rename.json" "poll must not report a committed inbox file that was not created"
@@ -515,13 +515,13 @@ SH
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll repeated inbox commit failure exit"
+  expect_code 0 "$rc" "poll repeated inbox commit failure exit" "$out"
   [ -z "$out" ] || fail "repeated poll inbox commit failure must be quiet after the first diagnostic (got: $out)"
   rm -f "$fakebin/mv"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll recovered inbox commit failure exit"
+  expect_code 0 "$rc" "poll recovered inbox commit failure exit" "$out"
   [ "$out" = "x-mention req-rename" ] \
     || fail "poll must emit the mention marker once the inbox write succeeds (got: $out)"
   assert_absent "$home/state/x-poll.error" "successful inbox write must clear the diagnostic marker"
@@ -538,7 +538,7 @@ test_poll_inbox_private_publication_rejects_unsafe_paths() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-linked FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll linked inbox dir exit"
+  expect_code 0 "$rc" "poll linked inbox dir exit" "$out"
   [ "$out" = "x-mode-error cannot write inbox" ] \
     || fail "poll must report a linked inbox directory as a write failure (got: $out)"
   assert_absent "$home/external/req-x.json" "poll must not write through a linked inbox directory"
@@ -550,7 +550,7 @@ test_poll_inbox_private_publication_rejects_unsafe_paths() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-public FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll public inbox dir exit"
+  expect_code 0 "$rc" "poll public inbox dir exit" "$out"
   [ "$out" = "x-mode-error cannot write inbox" ] \
     || fail "poll must reject a nonprivate inbox directory (got: $out)"
   assert_absent "$home/state/x-inbox/req-x.json" "poll must not publish into a nonprivate inbox directory"
@@ -565,7 +565,7 @@ test_poll_inbox_private_publication_rejects_unsafe_paths() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-linkdest FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll linked inbox destination exit"
+  expect_code 0 "$rc" "poll linked inbox destination exit" "$out"
   [ "$out" = "x-mode-error cannot write inbox" ] \
     || fail "poll must reject a linked inbox destination (got: $out)"
   [ "$(cat "$target")" = "external sentinel" ] || fail "poll must not write through a linked inbox destination"
@@ -583,7 +583,7 @@ test_poll_inbox_private_publication_rejects_unsafe_paths() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-hard FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll hardlinked inbox destination exit"
+  expect_code 0 "$rc" "poll hardlinked inbox destination exit" "$out"
   [ "$out" = "x-mode-error cannot write inbox" ] \
     || fail "poll must reject a hardlinked inbox destination (got: $out)"
   [ "$(jq -r .text "$dest")" = "old" ] || fail "poll must preserve a rejected hardlinked destination"
@@ -595,7 +595,7 @@ test_poll_inbox_private_publication_rejects_unsafe_paths() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_PAIRING_TOKEN=tok-ok FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll private inbox success exit"
+  expect_code 0 "$rc" "poll private inbox success exit" "$out"
   [ "$out" = "x-mention req-x" ] || fail "poll must still emit a wake after private publication (got: $out)"
   dir="$home/state/x-inbox"
   [ "$(path_mode "$dir")" = 700 ] || fail "poll must create the inbox directory as private"
@@ -612,13 +612,13 @@ test_poll_rejects_unsafe_request_id() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY='{"request_id":"../../etc/x","text":"hi"}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll unsafe id exit"
+  expect_code 0 "$rc" "poll unsafe id exit" "$out"
   [ -z "$out" ] || fail "poll must not emit a marker for an unsafe request_id (got: $out)"
   assert_absent "$home/state/x-inbox/../../etc/x.json" "poll must not write outside the inbox"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY='{"request_id":".hidden","text":"hi"}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll hidden id exit"
+  expect_code 0 "$rc" "poll hidden id exit" "$out"
   [ -z "$out" ] || fail "poll must not emit a marker for a hidden request_id (got: $out)"
   assert_absent "$home/state/x-inbox/.hidden.json" "poll must not stash a hidden inbox file"
   pass "fm-x-poll rejects an unsafe request_id (path-traversal guard)"
@@ -633,7 +633,7 @@ test_reply_success_posts_request_bound_only() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" FAKE_ANSWER_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-7" "Aye, charting a couple of fixes."); rc=$?
-  expect_code 0 "$rc" "reply success exit"
+  expect_code 0 "$rc" "reply success exit" "$out"
   [ "$out" = "req-7" ] || fail "reply must echo only the request_id (got: $out)"
   assert_grep "url=https://relay.test/connector/answer" "$log" "reply must POST /connector/answer"
   assert_grep "method=POST" "$log" "reply must use POST"
@@ -714,7 +714,7 @@ test_reply_help_mentions_image() {
   local home out rc
   home="$TMP_ROOT/reply-help"; mkdir -p "$home"
   out=$(PATH="$BASE_PATH" FM_HOME="$home" "$ROOT/bin/fm-x-reply.sh" --help); rc=$?
-  expect_code 0 "$rc" "reply --help exit"
+  expect_code 0 "$rc" "reply --help exit" "$out"
   assert_contains "$out" "--image <path>" "reply help must mention --image"
   assert_contains "$out" "threaded replies attach it to the opener tweet" \
     "reply help must document thread image placement"
@@ -727,7 +727,7 @@ test_reply_whitespace_text_rejected() {
   err="$home/err.txt"
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" "req-space" "   " 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply whitespace text exit"
+  expect_code 2 "$rc" "reply whitespace text exit" "$out"
   [ -z "$out" ] || fail "whitespace-only reply must not echo the request_id (got: $out)"
   assert_grep "empty reply text" "$err" "reply must reject whitespace-only text"
   assert_absent "$home/state/x-outbox/req-space.json" "whitespace-only dry-run must not record an outbox preview"
@@ -748,42 +748,42 @@ test_reply_rejects_flag_like_arguments() {
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     FMX_REPLY_PLATFORM=x FMX_REPLY_MAX_CHARS=280 \
     "$ROOT/bin/fm-x-reply.sh" req-guard --followup --final "the real completion text" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply --final-as-flag exit"
+  expect_code 2 "$rc" "reply --final-as-flag exit" "$out"
   assert_grep "unknown option '--final'" "$err" "reply must name the unknown option it refused"
   [ -z "$out" ] || fail "a refused reply must not echo the request_id (got: $out)"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-guard --bogus "hi" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply unknown flag exit"
+  expect_code 2 "$rc" "reply unknown flag exit" "$out"
   assert_grep "unknown option '--bogus'" "$err" "reply must name the unknown flag it refused"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" --bogus "hi" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply dash-leading request_id exit"
+  expect_code 2 "$rc" "reply dash-leading request_id exit" "$out"
   assert_grep "unknown option '--bogus'" "$err" "reply must refuse a dash-leading request_id"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-guard "one" "two" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply surplus positional exit"
+  expect_code 2 "$rc" "reply surplus positional exit" "$out"
   assert_grep "unexpected extra arguments" "$err" "reply must refuse extra positional arguments"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-guard --text-file /dev/null extra 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply --text-file with extra positional exit"
+  expect_code 2 "$rc" "reply --text-file with extra positional exit" "$out"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-guard - extra </dev/null 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply stdin marker with extra positional exit"
+  expect_code 2 "$rc" "reply stdin marker with extra positional exit" "$out"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-guard "-leading dash text" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply dash-leading positional text exit"
+  expect_code 2 "$rc" "reply dash-leading positional text exit" "$out"
   assert_grep "unknown option '-leading dash text'" "$err" \
     "reply must refuse dash-leading positional text"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-guard --image --followup "text" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "reply flag-swallowing --image value exit"
+  expect_code 2 "$rc" "reply flag-swallowing --image value exit" "$out"
   assert_grep "missing --image path" "$err" "reply must refuse a dash-leading --image value"
 
   # A dash-leading --text-file operand is refused whether or not a file by that
@@ -812,12 +812,12 @@ test_reply_rejects_flag_like_arguments() {
   printf -- '-leading dash text\n' > "$home/reply.txt"
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-dash-file --text-file "$home/reply.txt" 2>"$err"); rc=$?
-  expect_code 0 "$rc" "reply dash text via --text-file exit"
+  expect_code 0 "$rc" "reply dash text via --text-file exit" "$out"
   [ "$(jq -r .text "$home/state/x-outbox/req-dash-file.json")" = "-leading dash text" ] \
     || fail "--text-file must accept text that starts with '-'"
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-dash-stdin - <<<"-stdin dash text" 2>"$err"); rc=$?
-  expect_code 0 "$rc" "reply dash text via stdin exit"
+  expect_code 0 "$rc" "reply dash text via stdin exit" "$out"
   [ "$(jq -r .text "$home/state/x-outbox/req-dash-stdin.json")" = "-stdin dash text" ] \
     || fail "stdin must accept text that starts with '-'"
   pass "fm-x-reply refuses unknown options and surplus positionals before recording anything"
@@ -1010,20 +1010,20 @@ test_poll_empty_text_is_silent() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY='{"request_id":"req-9","text":""}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll empty-text exit"
+  expect_code 0 "$rc" "poll empty-text exit" "$out"
   [ -z "$out" ] || fail "poll must not emit a marker for an empty question (got: $out)"
   assert_absent "$home/state/x-inbox/req-9.json" "poll must not stash an empty question"
   # Same when .text is missing entirely.
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY='{"request_id":"req-10"}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll missing-text exit"
+  expect_code 0 "$rc" "poll missing-text exit" "$out"
   [ -z "$out" ] || fail "poll must not emit a marker when .text is absent (got: $out)"
   assert_absent "$home/state/x-inbox/req-10.json" "poll must not stash when .text is absent"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY='{"request_id":"req-11","text":" \n\t "}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll whitespace-text exit"
+  expect_code 0 "$rc" "poll whitespace-text exit" "$out"
   [ -z "$out" ] || fail "poll must not emit a marker for a whitespace-only question (got: $out)"
   assert_absent "$home/state/x-inbox/req-11.json" "poll must not stash a whitespace-only question"
   pass "fm-x-poll requires a non-empty question before waking"
@@ -1042,7 +1042,7 @@ test_reply_text_file_and_stdin() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" FAKE_ANSWER_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-1" --text-file "$home/reply.txt"); rc=$?
-  expect_code 0 "$rc" "reply --text-file exit"
+  expect_code 0 "$rc" "reply --text-file exit" "$out"
   [ "$out" = "req-1" ] || fail "reply --text-file must echo only the request_id (got: $out)"
   data=$(grep '^data=' "$log" | tail -1 | sed 's/^data=//')
   # shellcheck disable=SC2016  # single quotes are deliberate: comparing against the literal text
@@ -1053,7 +1053,7 @@ test_reply_text_file_and_stdin() {
   out=$(printf '%s' 'reply via stdin' | PATH="$fakebin:$BASE_PATH" FM_HOME="$home" \
     FMX_RELAY_URL="https://relay.test" FAKE_CURL_LOG="$log" FAKE_ANSWER_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-2" -); rc=$?
-  expect_code 0 "$rc" "reply stdin exit"
+  expect_code 0 "$rc" "reply stdin exit" "$out"
   data=$(grep '^data=' "$log" | tail -1 | sed 's/^data=//')
   [ "$(printf '%s' "$data" | jq -r .text)" = 'reply via stdin' ] \
     || fail "reply via stdin must send the piped text"
@@ -1120,7 +1120,7 @@ test_reply_dry_run_records_not_posts() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_DRY_RUN=1 FAKE_CURL_LOG="$log" \
     "$ROOT/bin/fm-x-reply.sh" "req-1" "Aye, a couple of fixes underway." 2>"$home/err"); rc=$?
-  expect_code 0 "$rc" "dry-run reply exit"
+  expect_code 0 "$rc" "dry-run reply exit" "$out"
   [ "$out" = "req-1" ] || fail "dry-run must still echo the request_id (got: $out)"
   # It must NOT have posted: the fake curl is never invoked, so no POST is logged.
   [ -f "$log" ] && grep -q "method=POST" "$log" && fail "dry-run must not POST to the relay"
@@ -1139,7 +1139,7 @@ test_reply_dry_run_needs_no_token() {
   # No token at all: dry-run still previews (it neither authenticates nor posts).
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" "req-2" "preview without creds" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "dry-run no-token exit"
+  expect_code 0 "$rc" "dry-run no-token exit" "$out"
   [ "$out" = "req-2" ] || fail "dry-run without a token must still echo the request_id (got: $out)"
   assert_present "$home/state/x-outbox/req-2.json" "dry-run without a token must still record the preview"
   pass "fm-x-reply dry-run works without a token"
@@ -1154,7 +1154,7 @@ test_reply_dry_run_from_env_file() {
   printf 'FMX_PAIRING_TOKEN=tok-d\nFMX_DRY_RUN=1\n' > "$home/.env"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" "$ROOT/bin/fm-x-reply.sh" "req-3" "from dotenv" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "dry-run-from-.env exit"
+  expect_code 0 "$rc" "dry-run-from-.env exit" "$out"
   [ "$out" = "req-3" ] || fail "dry-run from .env must echo the request_id (got: $out)"
   [ -f "$log" ] && grep -q "method=POST" "$log" && fail "dry-run from .env must not POST"
   assert_present "$home/state/x-outbox/req-3.json" "dry-run from .env must record the preview"
@@ -1170,7 +1170,7 @@ test_reply_empty_env_dry_run_overrides_env_file() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_DRY_RUN='' FAKE_CURL_LOG="$log" FAKE_ANSWER_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-5" "empty env disables dry run" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "dry-run empty-env override exit"
+  expect_code 0 "$rc" "dry-run empty-env override exit" "$out"
   [ "$out" = "req-5" ] || fail "empty dry-run env override must still echo the request_id (got: $out)"
   assert_grep "method=POST" "$log" "empty dry-run env override must post instead of previewing"
   assert_absent "$home/state/x-outbox/req-5.json" "empty dry-run env override must not record an outbox preview"
@@ -1242,7 +1242,7 @@ test_reply_dry_run_outbox_private_publication_rejects_unsafe_paths() {
 
   home="$TMP_ROOT/reply-outbox-private-success"; mkdir -p "$home"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-x "preview text" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "reply private outbox success exit"
+  expect_code 0 "$rc" "reply private outbox success exit" "$out"
   [ "$out" = "req-x" ] || fail "reply dry-run must still echo the request_id after private publication (got: $out)"
   [ "$(path_mode "$home/state/x-outbox")" = 700 ] || fail "reply dry-run must create the outbox directory as private"
   [ "$(path_mode "$home/state/x-outbox/req-x.json")" = 600 ] || fail "reply dry-run must publish the outbox file as private"
@@ -1392,7 +1392,7 @@ test_reply_rejects_unsafe_inbox_context_reads() {
   chmod 600 "$home/external-inbox/req-linked-dir.json"
   ln -s "$home/external-inbox" "$home/state/x-inbox"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-linked-dir "$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "reply linked inbox dir read exit"
+  expect_code 0 "$rc" "reply linked inbox dir read exit" "$out"
   jq -e '.texts and (.texts|length>1)' "$home/state/x-outbox/req-linked-dir.json" >/dev/null \
     || fail "reply must not trust a linked inbox directory for Discord budget context"
 
@@ -1401,7 +1401,7 @@ test_reply_rejects_unsafe_inbox_context_reads() {
   jq -cn '{request_id:"req-linked-file",platform:"discord",reply_max_chars:1900,text:"question"}' > "$target"
   ln -s "$target" "$home/state/x-inbox/req-linked-file.json"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-linked-file "$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "reply linked inbox file read exit"
+  expect_code 0 "$rc" "reply linked inbox file read exit" "$out"
   jq -e '.texts and (.texts|length>1)' "$home/state/x-outbox/req-linked-file.json" >/dev/null \
     || fail "reply must not trust a linked inbox file for Discord budget context"
 
@@ -1412,7 +1412,7 @@ test_reply_rejects_unsafe_inbox_context_reads() {
   private_artifact_file "$dest"
   ln "$dest" "$hardlink"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-hardlink "$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "reply hardlinked inbox file read exit"
+  expect_code 0 "$rc" "reply hardlinked inbox file read exit" "$out"
   jq -e '.texts and (.texts|length>1)' "$home/state/x-outbox/req-hardlink.json" >/dev/null \
     || fail "reply must not trust a hardlinked inbox file for Discord budget context"
   [ "$(jq -r .platform "$dest")" = "discord" ] || fail "reply must leave a hardlinked inbox lookalike unchanged"
@@ -1423,7 +1423,7 @@ test_reply_rejects_unsafe_inbox_context_reads() {
     > "$home/state/x-inbox/req-public-dir.json"
   private_artifact_file "$home/state/x-inbox/req-public-dir.json"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-public-dir "$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "reply public inbox dir read exit"
+  expect_code 0 "$rc" "reply public inbox dir read exit" "$out"
   jq -e '.texts and (.texts|length>1)' "$home/state/x-outbox/req-public-dir.json" >/dev/null \
     || fail "reply must not trust a nonprivate inbox directory for Discord budget context"
   pass "fm-x-reply rejects unsafe inbox context artifacts"
@@ -1472,7 +1472,7 @@ test_reply_image_live_posts_image_object() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" FAKE_ANSWER_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-img" --image "$img" "Here is the illustration."); rc=$?
-  expect_code 0 "$rc" "reply image live exit"
+  expect_code 0 "$rc" "reply image live exit" "$out"
   [ "$out" = "req-img" ] || fail "image reply must echo only the request_id (got: $out)"
   data=$(grep '^data=' "$log" | tail -1 | sed 's/^data=//')
   [ "$(printf '%s' "$data" | jq -r '.image.media_type')" = "image/png" ] \
@@ -1500,7 +1500,7 @@ test_reply_image_live_streams_payload_file() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" FAKE_ANSWER_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-img-stream" --image "$img" "Here is the illustration."); rc=$?
-  expect_code 0 "$rc" "streamed image reply exit"
+  expect_code 0 "$rc" "streamed image reply exit" "$out"
   [ "$out" = "req-img-stream" ] || fail "streamed image reply must echo only the request_id (got: $out)"
   assert_grep "--data-binary @" "$log" "image reply must stream the POST body from a file"
   grep '^argv=' "$log" | tail -1 | grep -F 'data_base64' >/dev/null 2>&1 \
@@ -1550,7 +1550,7 @@ test_reply_image_dry_run_cleans_payload_temp_files() {
   out=$(PATH="$BASE_PATH" TMPDIR="$tmpdir" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" "req-img-temp-clean" --image "$img" "Here is the image." \
     2>"$home/err"); rc=$?
-  expect_code 0 "$rc" "reply image temp cleanup exit"
+  expect_code 0 "$rc" "reply image temp cleanup exit" "$out"
   [ "$out" = "req-img-temp-clean" ] || fail "image dry-run temp cleanup must echo the request_id (got: $out)"
   leftovers=$(find "$tmpdir" -type f -name 'fm-x-reply.*' -print)
   [ -z "$leftovers" ] || fail "reply temp files must be cleaned (left: $leftovers)"
@@ -1574,7 +1574,7 @@ test_reply_image_path_errors_are_clear() {
   assert_grep "unsupported image media type" "$err" "unsupported image path must explain the error"
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" "req-noarg" --image 2>"$err"); rc=$?
-  expect_code 2 "$rc" "missing --image argument exit"
+  expect_code 2 "$rc" "missing --image argument exit" "$out"
   assert_grep "missing --image path" "$err" "missing --image argument must explain the error"
   pass "fm-x-reply --image rejects missing and unsupported image paths clearly"
 }
@@ -1591,7 +1591,7 @@ test_reply_followup_live_posts_to_followup_endpoint() {
     FMX_REPLY_PLATFORM=x FMX_REPLY_MAX_CHARS=280 \
     FAKE_CURL_LOG="$log" FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-7" --followup "Done, captain - the fix has shipped."); rc=$?
-  expect_code 0 "$rc" "followup live exit"
+  expect_code 0 "$rc" "followup live exit" "$out"
   [ "$out" = "req-7" ] || fail "followup must echo only the request_id (got: $out)"
   assert_grep "url=https://relay.test/connector/followup" "$log" "followup must POST /connector/followup"
   assert_grep "method=POST" "$log" "followup must use POST"
@@ -1614,7 +1614,7 @@ test_reply_followup_409_marker_exits_distinctly() {
     FMX_REPLY_PLATFORM=x FMX_REPLY_MAX_CHARS=280 \
     FAKE_FOLLOWUP_CODE=409 FAKE_FOLLOWUP_BODY='{"error":"followup_unavailable"}' \
     "$ROOT/bin/fm-x-reply.sh" "req-409-marker" --followup "Late follow-up." 2>"$err"); rc=$?
-  expect_code 9 "$rc" "followup 409 marker exit"
+  expect_code 9 "$rc" "followup 409 marker exit" "$out"
   [ -z "$out" ] || fail "followup 409 marker must not echo the request_id (got: $out)"
   assert_grep "confirmed followup_unavailable marker" "$err" \
     "followup 409 marker must be reflected in diagnostics"
@@ -1631,14 +1631,14 @@ test_reply_followup_409_without_marker_still_exits_distinctly() {
     FMX_REPLY_PLATFORM=x FMX_REPLY_MAX_CHARS=280 \
     FAKE_FOLLOWUP_CODE=409 \
     "$ROOT/bin/fm-x-reply.sh" "req-409-bare" --followup "Late follow-up." 2>"$err"); rc=$?
-  expect_code 9 "$rc" "followup bare 409 exit"
+  expect_code 9 "$rc" "followup bare 409 exit" "$out"
   [ -z "$out" ] || fail "followup bare 409 must not echo the request_id (got: $out)"
   assert_grep "marker absent" "$err" "bare followup 409 must use the fallback diagnostic"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_REPLY_PLATFORM=x FMX_REPLY_MAX_CHARS=280 \
     FAKE_FOLLOWUP_CODE=409 FAKE_FOLLOWUP_BODY='{"error":"some_other_conflict"}' \
     "$ROOT/bin/fm-x-reply.sh" "req-409-other" --followup "Late follow-up." 2>"$err"); rc=$?
-  expect_code 9 "$rc" "followup unrelated-body 409 exit"
+  expect_code 9 "$rc" "followup unrelated-body 409 exit" "$out"
   [ -z "$out" ] || fail "followup unrelated-body 409 must not echo the request_id (got: $out)"
   assert_grep "marker absent" "$err" \
     "unrelated followup 409 body must still use the fallback diagnostic"
@@ -1654,7 +1654,7 @@ test_reply_answer_409_is_generic_failure() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_ANSWER_CODE=409 FAKE_ANSWER_BODY='{"error":"followup_unavailable"}' \
     "$ROOT/bin/fm-x-reply.sh" "req-answer-409" "Normal answer." 2>"$err"); rc=$?
-  expect_code 1 "$rc" "answer 409 exit"
+  expect_code 1 "$rc" "answer 409 exit" "$out"
   [ -z "$out" ] || fail "answer 409 must not echo the request_id (got: $out)"
   assert_grep "relay returned HTTP 409" "$err" "answer 409 must stay on the generic failure path"
   pass "fm-x-reply treats answer-endpoint 409 as a generic failure"
@@ -1697,14 +1697,14 @@ test_reply_followup_flag_position_is_flexible() {
     FMX_REPLY_PLATFORM=x FMX_REPLY_MAX_CHARS=280 \
     FAKE_CURL_LOG="$log" FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-a" --text-file "$home/reply.txt" --followup); rc=$?
-  expect_code 0 "$rc" "followup-after-textfile exit"
+  expect_code 0 "$rc" "followup-after-textfile exit" "$out"
   assert_grep "url=https://relay.test/connector/followup" "$log" "--followup after --text-file must still hit followup"
   # Without --followup, the answer endpoint is unchanged.
   log="$home/answer.log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" FAKE_ANSWER_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" "req-a" --text-file "$home/reply.txt"); rc=$?
-  expect_code 0 "$rc" "answer-still-default exit"
+  expect_code 0 "$rc" "answer-still-default exit" "$out"
   assert_grep "url=https://relay.test/connector/answer" "$log" "no flag must keep the answer endpoint"
   pass "fm-x-reply --followup is accepted in any position and leaves the answer path default"
 }
@@ -1714,7 +1714,7 @@ test_reply_followup_dry_run_marks_endpoint() {
   home="$TMP_ROOT/reply-followup-dry"; mkdir -p "$home"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 FMX_REPLY_PLATFORM=x FMX_REPLY_MAX_CHARS=280 \
     "$ROOT/bin/fm-x-reply.sh" "req-d" --followup "Shipped - all green." 2>"$home/err"); rc=$?
-  expect_code 0 "$rc" "followup dry-run exit"
+  expect_code 0 "$rc" "followup dry-run exit" "$out"
   [ "$out" = "req-d" ] || fail "followup dry-run must echo the request_id (got: $out)"
   assert_present "$home/state/x-outbox/req-d.json" "followup dry-run must record the preview"
   [ "$(jq -r '.endpoint' "$home/state/x-outbox/req-d.json")" = "followup" ] \
@@ -1756,7 +1756,7 @@ test_reply_followup_image_dry_run_marks_endpoint_and_compacts_image() {
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 FMX_REPLY_PLATFORM=x FMX_REPLY_MAX_CHARS=280 \
     "$ROOT/bin/fm-x-reply.sh" "req-fu-img-dry" --followup --image "$img" "Done with art." \
     2>"$home/err"); rc=$?
-  expect_code 0 "$rc" "followup image dry-run exit"
+  expect_code 0 "$rc" "followup image dry-run exit" "$out"
   [ "$out" = "req-fu-img-dry" ] || fail "followup image dry-run must echo the request_id (got: $out)"
   [ "$(jq -r '.endpoint' "$home/state/x-outbox/req-fu-img-dry.json")" = "followup" ] \
     || fail "followup image dry-run must carry endpoint marker"
@@ -1786,7 +1786,7 @@ test_poll_records_context_registry_from_relay_platform() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=1700000000 \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll discord registry exit"
+  expect_code 0 "$rc" "poll discord registry exit" "$out"
   [ "$out" = "x-mention req-disc" ] || fail "poll must still print the wake marker (got: $out)"
   reg="$home/state/x-context/req-disc.json"
   assert_present "$reg" "poll must record the durable per-request context"
@@ -1797,14 +1797,14 @@ test_poll_records_context_registry_from_relay_platform() {
   body=$(jq -cn '{request_id:"req-x",tweet_id:"1234567890",reply_max_chars:280,text:"question from x"}')
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll x registry exit"
+  expect_code 0 "$rc" "poll x registry exit" "$out"
   [ "$(jq -r .platform "$home/state/x-context/req-x.json")" = "x" ] \
     || fail "registry must capture the X platform from a numeric tweet_id"
   # A mention with no platform signal at all: no useless empty record is written.
   body=$(jq -cn '{request_id:"req-unk",text:"platformless question"}')
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$body" "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll unknown-platform exit"
+  expect_code 0 "$rc" "poll unknown-platform exit" "$out"
   assert_present "$home/state/x-inbox/req-unk.json" "an unknown-platform mention is still stashed"
   assert_absent "$home/state/x-context/req-unk.json" \
     "no registry record is written when the platform is unknown (no dead entry)"
@@ -1868,7 +1868,7 @@ test_context_registry_private_publication_rejects_unsafe_paths() {
   home="$TMP_ROOT/context-private-success"; mkdir -p "$home"
   out=$(FMX_NOW_OVERRIDE=1700000000 bash -c '. "$1/bin/fm-x-lib.sh"; fmx_context_registry_set "$2/state" req-x x 280' _ "$ROOT" "$home")
   rc=$?
-  expect_code 0 "$rc" "context private publication success"
+  expect_code 0 "$rc" "context private publication success" "$out"
   [ -z "$out" ] || fail "context registry setter must stay silent on success"
   [ "$(path_mode "$home/state/x-context")" = 700 ] || fail "context registry must create the context directory as private"
   [ "$(path_mode "$home/state/x-context/req-x.json")" = 600 ] || fail "context registry must publish the context file as private"
@@ -1929,7 +1929,7 @@ test_private_artifact_publisher_runs_under_system_bash() {
   out=$(/bin/bash -c \
     '. "$1/bin/fm-x-lib.sh"; printf "%s\n" "{\"request_id\":\"req-bash\"}" | fmx_private_artifact_publish_stdin "$2/state/x-outbox" req-bash.json 600' \
     _ "$ROOT" "$home"); rc=$?
-  expect_code 0 "$rc" "private artifact publisher under /bin/bash"
+  expect_code 0 "$rc" "private artifact publisher under /bin/bash" "$out"
   [ -z "$out" ] || fail "private artifact publisher must stay silent under /bin/bash"
   assert_present "$home/state/x-outbox/req-bash.json" "private artifact publisher must create the artifact under /bin/bash"
   [ "$(path_mode "$home/state/x-outbox/req-bash.json")" = 600 ] \
@@ -1976,7 +1976,7 @@ test_context_registry_prunes_expired_records() {
   private_artifact_file "$dir/req-poll-expired.json"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000000 \
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=204 "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll retention sweep exit"
+  expect_code 0 "$rc" "poll retention sweep exit" "$out"
   [ -z "$out" ] || fail "a 204 poll retention sweep must stay silent (got: $out)"
   assert_absent "$dir/req-poll-expired.json" "a recurring empty poll must prune expired registry records"
   jq -cn '{request_id:"req-short-window",platform:"x",reply_max_chars:"280",recorded_at:1699999899}' \
@@ -1985,7 +1985,7 @@ test_context_registry_prunes_expired_records() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000000 \
     FMX_FOLLOWUP_MAX_AGE_SECS=100 FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=204 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "short retention window poll exit"
+  expect_code 0 "$rc" "short retention window poll exit" "$out"
   assert_absent "$dir/req-short-window.json" "a smaller configured follow-up window must prune earlier"
   jq -cn '{request_id:"req-overlong-window",platform:"x",reply_max_chars:"280",recorded_at:1699395199}' \
     > "$dir/req-overlong-window.json"
@@ -1993,7 +1993,7 @@ test_context_registry_prunes_expired_records() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000000 \
     FMX_FOLLOWUP_MAX_AGE_SECS=999999999 FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=204 \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "capped retention window poll exit"
+  expect_code 0 "$rc" "capped retention window poll exit" "$out"
   assert_absent "$dir/req-overlong-window.json" "a configured window must not extend retention past seven days"
   pass "context registry retention is bounded to the seven-day follow-up window"
 }
@@ -2008,13 +2008,13 @@ test_context_registry_preserves_first_seen_timestamp() {
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 \
     FAKE_POLL_BODY='{"request_id":"req-repeat","platform":"x","reply_max_chars":280,"text":"q"}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "first registry poll exit"
+  expect_code 0 "$rc" "first registry poll exit" "$out"
   reg="$home/state/x-context/req-repeat.json"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000100 \
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 \
     FAKE_POLL_BODY='{"request_id":"req-repeat","platform":"x","reply_max_chars":280,"text":"q"}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "repeated registry poll exit"
+  expect_code 0 "$rc" "repeated registry poll exit" "$out"
   [ "$(jq -r .recorded_at "$reg")" = "1700000000" ] \
     || fail "repeated writes must preserve the request's first-seen timestamp"
   pass "context registry rewrites preserve the first-seen timestamp"
@@ -2030,7 +2030,7 @@ test_context_registry_retention_starts_on_successful_live_answer() {
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 \
     FAKE_POLL_BODY='{"request_id":"req-answer-window","platform":"discord","reply_max_chars":1900,"text":"q"}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "answer-window poll exit"
+  expect_code 0 "$rc" "answer-window poll exit" "$out"
   reg="$home/state/x-context/req-answer-window.json"
   [ "$(jq -r .recorded_at "$reg")" = "1700000000" ] \
     || fail "the pending context must start at poll time"
@@ -2038,7 +2038,7 @@ test_context_registry_retention_starts_on_successful_live_answer() {
     FMX_RELAY_URL="https://relay.test" FAKE_POLL_CODE=200 \
     FAKE_POLL_BODY='{"request_id":"req-answer-window","platform":"discord","reply_max_chars":1900,"text":"q"}' \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "repeated answer-window poll exit"
+  expect_code 0 "$rc" "repeated answer-window poll exit" "$out"
   [ "$(jq -r .recorded_at "$reg")" = "1700000000" ] \
     || fail "repeated polling must not move the pending context window"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000200 \
@@ -2049,19 +2049,19 @@ test_context_registry_retention_starts_on_successful_live_answer() {
     || fail "a failed answer must not refresh context retention"
   out=$(FM_HOME="$home" FMX_NOW_OVERRIDE=1700000300 FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-reply.sh" req-answer-window "Working on it." 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "answer-window dry-run exit"
+  expect_code 0 "$rc" "answer-window dry-run exit" "$out"
   [ "$(jq -r .recorded_at "$reg")" = "1700000000" ] \
     || fail "an answer dry-run must not refresh context retention"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700604900 \
     FMX_RELAY_URL="https://relay.test" FAKE_ANSWER_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" req-answer-window "Working on it."); rc=$?
-  expect_code 0 "$rc" "successful answer-window answer exit"
+  expect_code 0 "$rc" "successful answer-window answer exit" "$out"
   [ "$(jq -r .recorded_at "$reg")" = "1700604900" ] \
     || fail "a late successful live initial answer must recreate and start the retained follow-up window"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_NOW_OVERRIDE=1700605000 \
     FMX_RELAY_URL="https://relay.test" FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" req-answer-window --followup "Still working."); rc=$?
-  expect_code 0 "$rc" "answer-window follow-up exit"
+  expect_code 0 "$rc" "answer-window follow-up exit" "$out"
   [ "$(jq -r .recorded_at "$reg")" = "1700604900" ] \
     || fail "a follow-up must not refresh context retention"
   pass "context retention starts only when a live initial answer succeeds"
@@ -2078,7 +2078,7 @@ test_regression_discord_followup_survives_inbox_cleanup() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$(jq -cn '{request_id:"req-disc",platform:"discord",reply_max_chars:1900,text:"q"}')" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll exit"
+  expect_code 0 "$rc" "poll exit" "$out"
   reg="$home/state/x-context/req-disc.json"
   assert_present "$reg" "poll recorded the per-request context"
   # 2. The acknowledgement drains the inbox file (fmx-respond step 2f).
@@ -2092,7 +2092,7 @@ TXT
   [ "$(printf '%s' "$reply" | wc -m | tr -d '[:space:]')" -gt 280 ] \
     || fail "the regression reply must exceed the X 280-char budget to be meaningful"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-disc --followup - <<<"$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "delayed discord follow-up exit"
+  expect_code 0 "$rc" "delayed discord follow-up exit" "$out"
   [ "$out" = "req-disc" ] || fail "follow-up must echo the request_id (got: $out)"
   jq -e 'has("texts")|not' "$home/state/x-outbox/req-disc.json" >/dev/null \
     || fail "a >280 <2000 Discord follow-up must post as ONE message after inbox cleanup - NO (1/2) split"
@@ -2108,13 +2108,13 @@ test_regression_x_followup_still_splits_after_cleanup() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$(jq -cn '{request_id:"req-xs",tweet_id:"777",reply_max_chars:280,text:"q"}')" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll x exit"
+  expect_code 0 "$rc" "poll x exit" "$out"
   rm -f "$home/state/x-inbox/req-xs.json"
   reply="This X follow-up intentionally runs well beyond the default single-tweet budget so it still needs a numbered thread on X. It carries enough plain words to comfortably cross the two hundred and eighty character limit while staying easy to split at word boundaries, which proves the established X behavior is not broken by the Discord platform fix at all."
   [ "$(printf '%s' "$reply" | wc -m | tr -d '[:space:]')" -gt 280 ] \
     || fail "the X regression reply must exceed 280 chars to force a split"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-xs --followup - <<<"$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "delayed x follow-up exit"
+  expect_code 0 "$rc" "delayed x follow-up exit" "$out"
   jq -e '.texts and (.texts|length>1)' "$home/state/x-outbox/req-xs.json" >/dev/null \
     || fail "an X follow-up over 280 characters must still split into a numbered thread"
   [ "$(jq '.texts|map(length)|max' "$home/state/x-outbox/req-xs.json")" -le 280 ] \
@@ -2174,7 +2174,7 @@ TXT
     FAKE_CURL_LOG="$log" FAKE_REQCTX_CODE=200 FAKE_REQCTX_BODY='{"reply_max_chars":1900}' \
     FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-reply.sh" req-relay --followup - <<<"$reply"); rc=$?
-  expect_code 0 "$rc" "live relay-fallback follow-up exit"
+  expect_code 0 "$rc" "live relay-fallback follow-up exit" "$out"
   [ "$out" = "req-relay" ] || fail "relay-fallback follow-up must echo the request_id (got: $out)"
   assert_grep "url=https://relay.test/connector/request-context" "$log" \
     "a live follow-up with partial local context must consult the relay for the missing budget"
@@ -2198,11 +2198,11 @@ test_regression_concurrent_requests_keep_own_platform() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$(jq -cn '{request_id:"req-cd",platform:"discord",reply_max_chars:1900,text:"q"}')" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll concurrent discord exit"
+  expect_code 0 "$rc" "poll concurrent discord exit" "$out"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_POLL_CODE=200 FAKE_POLL_BODY="$(jq -cn '{request_id:"req-cx",tweet_id:"888",reply_max_chars:280,text:"q"}')" \
     "$ROOT/bin/fm-x-poll.sh"); rc=$?
-  expect_code 0 "$rc" "poll concurrent x exit"
+  expect_code 0 "$rc" "poll concurrent x exit" "$out"
   # Each keeps its OWN context - neither overwrote the other.
   [ "$(jq -r .platform "$home/state/x-context/req-cd.json")" = "discord" ] \
     || fail "concurrent Discord request must keep its own platform"
@@ -2218,11 +2218,11 @@ TXT
   [ "$(printf '%s' "$x_reply" | wc -m | tr -d '[:space:]')" -gt 280 ] \
     || fail "the concurrent X reply must exceed 280 chars to force a split"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-cd --followup - <<<"$discord_reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "concurrent discord follow-up exit"
+  expect_code 0 "$rc" "concurrent discord follow-up exit" "$out"
   jq -e 'has("texts")|not' "$home/state/x-outbox/req-cd.json" >/dev/null \
     || fail "the concurrent Discord follow-up must stay one message"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-reply.sh" req-cx --followup - <<<"$x_reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "concurrent x follow-up exit"
+  expect_code 0 "$rc" "concurrent x follow-up exit" "$out"
   jq -e '.texts and (.texts|length>1)' "$home/state/x-outbox/req-cx.json" >/dev/null \
     || fail "the concurrent X follow-up must still split - it kept the X budget"
   pass "concurrent requests each recover their own platform/budget with no cross-overwrite"
@@ -2236,7 +2236,7 @@ test_dismiss_clears_context_registry() {
   private_artifact_file "$reg"
   # A dismissed mention will never get a follow-up, so its context is dropped.
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-dismiss.sh" req-dis 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "dismiss registry-clear exit"
+  expect_code 0 "$rc" "dismiss registry-clear exit" "$out"
   [ "$out" = "req-dis" ] || fail "dismiss must still echo the request_id (got: $out)"
   assert_absent "$reg" "dismiss must clear the durable per-request context"
   pass "fm-x-dismiss clears the durable per-request context (a dismissed mention gets no follow-up)"
@@ -2253,7 +2253,7 @@ test_dismiss_success_posts_request_only() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FAKE_CURL_LOG="$log" FAKE_DISMISS_CODE=200 \
     "$ROOT/bin/fm-x-dismiss.sh" "req-9"); rc=$?
-  expect_code 0 "$rc" "dismiss success exit"
+  expect_code 0 "$rc" "dismiss success exit" "$out"
   [ "$out" = "req-9" ] || fail "dismiss must echo only the request_id (got: $out)"
   assert_grep "url=https://relay.test/connector/dismiss" "$log" "dismiss must POST /connector/dismiss"
   assert_grep "method=POST" "$log" "dismiss must use POST"
@@ -2277,7 +2277,7 @@ test_dismiss_dry_run_records_not_posts() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_DRY_RUN=1 FAKE_CURL_LOG="$log" \
     "$ROOT/bin/fm-x-dismiss.sh" "req-1" 2>"$home/err"); rc=$?
-  expect_code 0 "$rc" "dry-run dismiss exit"
+  expect_code 0 "$rc" "dry-run dismiss exit" "$out"
   [ "$out" = "req-1" ] || fail "dry-run dismiss must still echo the request_id (got: $out)"
   # It must NOT have posted: the fake curl is never invoked, so no POST is logged.
   [ -f "$log" ] && grep -q "method=POST" "$log" && fail "dry-run dismiss must not POST to the relay"
@@ -2297,7 +2297,7 @@ test_dismiss_dry_run_needs_no_token() {
   # No token at all: dry-run still previews (it neither authenticates nor posts).
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-dismiss.sh" "req-2" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "dry-run no-token dismiss exit"
+  expect_code 0 "$rc" "dry-run no-token dismiss exit" "$out"
   [ "$out" = "req-2" ] || fail "dry-run dismiss without a token must still echo the request_id (got: $out)"
   assert_present "$home/state/x-outbox/req-2.json" "dry-run dismiss without a token must still record the preview"
   pass "fm-x-dismiss dry-run works without a token"
@@ -2329,7 +2329,7 @@ test_dismiss_dry_run_outbox_private_publication_rejects_unsafe_paths() {
 
   home="$TMP_ROOT/dismiss-outbox-private-success"; mkdir -p "$home"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 "$ROOT/bin/fm-x-dismiss.sh" req-x 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "dismiss private outbox success exit"
+  expect_code 0 "$rc" "dismiss private outbox success exit" "$out"
   [ "$out" = "req-x" ] || fail "dismiss dry-run must still echo the request_id after private publication (got: $out)"
   [ "$(path_mode "$home/state/x-outbox")" = 700 ] || fail "dismiss dry-run must create the outbox directory as private"
   [ "$(path_mode "$home/state/x-outbox/req-x.json")" = 600 ] || fail "dismiss dry-run must publish the outbox file as private"
@@ -2379,7 +2379,7 @@ test_dismiss_unsafe_request_id_rejected() {
   # Path-traversal-shaped id must be refused before it becomes an outbox filename.
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-dismiss.sh" "../evil" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "dismiss unsafe id exit"
+  expect_code 2 "$rc" "dismiss unsafe id exit" "$out"
   [ -z "$out" ] || fail "dismiss must not echo an unsafe request_id (got: $out)"
   assert_grep "unsafe request_id" "$err" "dismiss must reject an unsafe request_id"
   assert_absent "$home/state/../evil.json" "dismiss must not touch a path for an unsafe id"
@@ -2404,7 +2404,7 @@ test_dismiss_rejects_dash_leading_request_id() {
   err="$home/err.txt"
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-dismiss.sh" --bogus 2>"$err"); rc=$?
-  expect_code 2 "$rc" "dismiss dash-leading request_id exit"
+  expect_code 2 "$rc" "dismiss dash-leading request_id exit" "$out"
   assert_grep "unknown option '--bogus'" "$err" "dismiss must name the unknown option it refused"
   [ -z "$out" ] || fail "a refused dismiss must not echo the request_id (got: $out)"
   assert_absent "$home/state/x-outbox" "a refused dismiss must never write a dry-run outbox"
@@ -2423,7 +2423,7 @@ test_link_records_request_and_timestamp() {
   # stderr is expected and dropped.
   out=$(FM_HOME="$home" FMX_NOW_OVERRIDE=1700000000 \
     "$ROOT/bin/fm-x-link.sh" fix-login-k3 req-42 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "link exit"
+  expect_code 0 "$rc" "link exit" "$out"
   assert_grep "x_request=req-42" "$meta" "link must record the request_id"
   assert_grep "x_request_ts=1700000000" "$meta" "link must record the timestamp"
   assert_grep "x_followups=0" "$meta" "a fresh link must start the follow-up counter at 0"
@@ -2466,7 +2466,7 @@ TXT
 )
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 FMX_NOW_OVERRIDE=1700003600 \
     "$ROOT/bin/fm-x-followup.sh" fix-discord - <<<"$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "Discord follow-up dry-run exit"
+  expect_code 0 "$rc" "Discord follow-up dry-run exit" "$out"
   [ "$out" = "req-discord-follow" ] || fail "Discord follow-up must echo the request_id (got: $out)"
   jq -e 'has("texts")|not' "$home/state/x-outbox/req-discord-follow.json" >/dev/null \
     || fail "Discord follow-up below its message budget must not split after inbox drain"
@@ -2493,7 +2493,7 @@ test_link_resolves_platform_by_request_id_after_inbox_cleanup() {
     FMX_NOW_OVERRIDE=1700000000 FAKE_CURL_LOG="$log" \
     FAKE_REQCTX_CODE=200 FAKE_REQCTX_BODY='{"platform":"discord","reply_max_chars":1900}' \
     "$ROOT/bin/fm-x-link.sh" fix-after-cleanup req-after-cleanup); rc=$?
-  expect_code 0 "$rc" "link after inbox cleanup exit"
+  expect_code 0 "$rc" "link after inbox cleanup exit" "$out"
   assert_grep "url=https://relay.test/connector/request-context" "$log" \
     "link must resolve the platform authoritatively by request_id when the inbox is gone"
   grep '^data=' "$log" | tail -1 | sed 's/^data=//' | jq -e '.request_id == "req-after-cleanup"' >/dev/null \
@@ -2508,7 +2508,7 @@ TXT
 )
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 FMX_NOW_OVERRIDE=1700003600 \
     "$ROOT/bin/fm-x-followup.sh" fix-after-cleanup - <<<"$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "Discord follow-up after relay lookup exit"
+  expect_code 0 "$rc" "Discord follow-up after relay lookup exit" "$out"
   [ "$out" = "req-after-cleanup" ] || fail "follow-up must echo the request_id (got: $out)"
   [ "$(printf '%s' "$reply" | wc -m | tr -d '[:space:]')" -gt 280 ] \
     || fail "the regression reply must exceed the X 280-char budget to be meaningful"
@@ -2532,7 +2532,7 @@ test_link_warns_loudly_when_platform_unresolvable() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=1700000000 FAKE_REQCTX_CODE=404 \
     "$ROOT/bin/fm-x-link.sh" fix-unresolvable req-unresolvable 2>"$err"); rc=$?
-  expect_code 0 "$rc" "link with unresolvable platform still records the link"
+  expect_code 0 "$rc" "link with unresolvable platform still records the link" "$out"
   [ "$out" = "linked fix-unresolvable to X request req-unresolvable" ] \
     || fail "link must still succeed on stdout even when the platform is unknown (got: $out)"
   assert_grep "WARNING" "$err" "an unresolvable platform must warn loudly, never silently default to X"
@@ -2593,7 +2593,7 @@ TXT
 )
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 FMX_NOW_OVERRIDE=1700003600 \
     "$ROOT/bin/fm-x-followup.sh" successor-discord - <<<"$reply" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "Discord recovery follow-up dry-run exit"
+  expect_code 0 "$rc" "Discord recovery follow-up dry-run exit" "$out"
   [ "$out" = "req-discord-recovery" ] || fail "Discord recovery follow-up must echo the request_id (got: $out)"
   jq -e 'has("texts")|not' "$home/state/x-outbox/req-discord-recovery.json" >/dev/null \
     || fail "Discord recovery follow-up below its message budget must not fall back to X splitting"
@@ -2649,13 +2649,13 @@ test_meta_rewrites_do_not_depend_on_tmpdir() {
   printf 'window=w\nkind=ship\n' > "$meta"
   out=$(TMPDIR="$badtmp" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000000 \
     "$ROOT/bin/fm-x-link.sh" fix-meta-k4 req-local 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "link with unusable TMPDIR exit"
+  expect_code 0 "$rc" "link with unusable TMPDIR exit" "$out"
   [ "$out" = "linked fix-meta-k4 to X request req-local" ] \
     || fail "link with unusable TMPDIR must still succeed (got: $out)"
   assert_grep "x_request=req-local" "$meta" "link must record request with an unusable TMPDIR"
   out=$(TMPDIR="$badtmp" FM_HOME="$home" FMX_NOW_OVERRIDE=1700000001 FMX_FOLLOWUP_MAX_AGE_SECS=0 \
     "$ROOT/bin/fm-x-followup.sh" --check fix-meta-k4 2>/dev/null); rc=$?
-  expect_code 1 "$rc" "expired check with unusable TMPDIR exit"
+  expect_code 1 "$rc" "expired check with unusable TMPDIR exit" "$out"
   [ -z "$out" ] || fail "expired check must stay silent (got: $out)"
   assert_no_grep "x_request=" "$meta" "clear must remove request with an unusable TMPDIR"
   assert_no_grep "x_followups=" "$meta" "clear must remove the follow-up counter with an unusable TMPDIR"
@@ -2782,7 +2782,7 @@ test_link_refuses_secondmate_routed_task_with_promised_final_pointer() {
     "$sub" > "$main/data/secondmates.md"
   err="$TMP_ROOT/link-secondmate.err"
   out=$(PATH="$BASE_PATH" FM_HOME="$main" "$ROOT/bin/fm-x-link.sh" routed-k1 req-routed 2>"$err"); rc=$?
-  expect_code 1 "$rc" "secondmate-routed link exit"
+  expect_code 1 "$rc" "secondmate-routed link exit" "$out"
   [ -z "$out" ] || fail "a refused link must print no success line (got: $out)"
   assert_grep "sm-axi" "$err" "the refusal must name the second mate holding the task"
   assert_grep "--work-home secondmate:sm-axi" "$err" \
@@ -2797,7 +2797,7 @@ test_link_refuses_secondmate_routed_task_with_promised_final_pointer() {
   printf 'window=w\nworktree=/wt\nkind=ship\n' > "$main/state/local-k1.meta"
   out=$(PATH="$BASE_PATH" FM_HOME="$main" FMX_NOW_OVERRIDE=1700000000 \
     "$ROOT/bin/fm-x-link.sh" local-k1 req-local 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "local link exit with second mates registered"
+  expect_code 0 "$rc" "local link exit with second mates registered" "$out"
   assert_grep "x_request=req-local" "$main/state/local-k1.meta" \
     "a local task must still link while second mates are registered"
   pass "fm-x-link refuses a second-mate-routed task and points at the promised-final path"
@@ -2840,16 +2840,16 @@ test_followup_check_states() {
   # Within window -> exit 0, prints the request_id.
   out=$(FM_HOME="$home" FMX_NOW_OVERRIDE=1700003600 \
     "$ROOT/bin/fm-x-followup.sh" --check task-a); rc=$?
-  expect_code 0 "$rc" "check within-window exit"
+  expect_code 0 "$rc" "check within-window exit" "$out"
   [ "$out" = "req-a" ] || fail "check within window must print the request_id (got: $out)"
   # Not linked -> exit 1, silent.
   printf 'kind=ship\n' > "$home/state/plain.meta"
   out=$(FM_HOME="$home" "$ROOT/bin/fm-x-followup.sh" --check plain 2>/dev/null); rc=$?
-  expect_code 1 "$rc" "check not-linked exit"
+  expect_code 1 "$rc" "check not-linked exit" "$out"
   [ -z "$out" ] || fail "check on a non-linked task must be silent (got: $out)"
   # Missing meta -> exit 1, silent.
   out=$(FM_HOME="$home" "$ROOT/bin/fm-x-followup.sh" --check nope 2>/dev/null); rc=$?
-  expect_code 1 "$rc" "check missing-meta exit"
+  expect_code 1 "$rc" "check missing-meta exit" "$out"
   pass "fm-x-followup --check reports postable / not-linked correctly"
 }
 
@@ -2861,7 +2861,7 @@ test_followup_check_expired_prunes_link() {
   # 8 days later: past the 7-day window -> exit 1, link pruned, other lines intact.
   out=$(FM_HOME="$home" FMX_NOW_OVERRIDE=$((1700000000 + 8*86400)) \
     "$ROOT/bin/fm-x-followup.sh" --check task-e 2>/dev/null); rc=$?
-  expect_code 1 "$rc" "check expired exit"
+  expect_code 1 "$rc" "check expired exit" "$out"
   [ -z "$out" ] || fail "check on an expired link must be silent (got: $out)"
   assert_no_grep "x_request=" "$meta" "expired check must prune the link"
   assert_grep "kind=ship" "$meta" "expired check must preserve other meta lines"
@@ -2876,7 +2876,7 @@ test_followup_check_cap_reached_prunes_link() {
   meta="$home/state/task-cap.meta"
   out=$(FM_HOME="$home" FMX_NOW_OVERRIDE=1700003600 \
     "$ROOT/bin/fm-x-followup.sh" --check task-cap 2>/dev/null); rc=$?
-  expect_code 1 "$rc" "check cap-reached exit"
+  expect_code 1 "$rc" "check cap-reached exit" "$out"
   [ -z "$out" ] || fail "check at the cap must be silent (got: $out)"
   assert_no_grep "x_request=" "$meta" "a cap-reached check must prune the link"
   assert_grep "kind=ship" "$meta" "cap-reached check must preserve other meta lines"
@@ -2895,7 +2895,7 @@ test_followup_post_increments_counter_keeps_link() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=1700003600 FAKE_CURL_LOG="$log" FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-followup.sh" task-p --text-file "$home/reply.txt"); rc=$?
-  expect_code 0 "$rc" "followup post exit"
+  expect_code 0 "$rc" "followup post exit" "$out"
   [ "$out" = "req-p" ] || fail "followup post must echo the request_id (got: $out)"
   assert_grep "url=https://relay.test/connector/followup" "$log" "post must hit the followup endpoint"
   data=$(grep '^data=' "$log" | tail -1 | sed 's/^data=//')
@@ -2919,7 +2919,7 @@ test_followup_post_final_clears_link_immediately() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=1700003600 FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-followup.sh" task-final --final - <<<"Shipped - all green."); rc=$?
-  expect_code 0 "$rc" "followup --final post exit"
+  expect_code 0 "$rc" "followup --final post exit" "$out"
   [ "$out" = "req-final" ] || fail "followup --final post must echo the request_id (got: $out)"
   assert_no_grep "x_request=" "$meta" "--final must clear the link even with follow-ups remaining under the cap"
   assert_grep "kind=ship" "$meta" "clearing the link must preserve other meta lines"
@@ -2937,7 +2937,7 @@ test_followup_post_cap_reached_clears_link() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=1700003600 FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-followup.sh" task-cap3 - <<<"Third and final update."); rc=$?
-  expect_code 0 "$rc" "followup cap-reaching post exit"
+  expect_code 0 "$rc" "followup cap-reaching post exit" "$out"
   [ "$out" = "req-cap3" ] || fail "followup cap-reaching post must echo the request_id (got: $out)"
   assert_no_grep "x_request=" "$meta" "reaching the cap must clear the link even without --final"
   pass "fm-x-followup clears the link once the third follow-up reaches the cap"
@@ -2959,7 +2959,7 @@ test_followup_post_forwards_image_to_reply_client() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=1700003600 FAKE_CURL_LOG="$log" FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-followup.sh" task-img --image "$img" --final --text-file "$home/reply.txt"); rc=$?
-  expect_code 0 "$rc" "followup wrapper image post exit"
+  expect_code 0 "$rc" "followup wrapper image post exit" "$out"
   [ "$out" = "req-img" ] || fail "followup wrapper image post must echo the request_id (got: $out)"
   data=$(grep '^data=' "$log" | tail -1 | sed 's/^data=//')
   [ "$(printf '%s' "$data" | jq -r '.image.media_type')" = "image/png" ] \
@@ -3013,7 +3013,7 @@ SH
     FMX_NOW_OVERRIDE=1700003600 FAKE_FOLLOWUP_CODE=200 FAKE_CURL_TOUCH_AFTER_POST="$flag" \
     FAKE_MV_FAIL_AFTER_FLAG="$flag" FAKE_MV_FAILED_ONCE="$mvflag" \
     "$ROOT/bin/fm-x-followup.sh" task-rf - <<<"posted but local state write fails" 2>"$err"); rc=$?
-  expect_code 0 "$rc" "followup post state-record failure exit"
+  expect_code 0 "$rc" "followup post state-record failure exit" "$out"
   [ "$out" = "req-rf" ] || fail "posted followup with tombstoned state must echo the request_id (got: $out)"
   assert_no_grep "x_request=" "$meta" "a failed counter write must tombstone the link"
   assert_no_grep "x_followups=" "$meta" "a failed counter write must remove the stale counter"
@@ -3036,7 +3036,7 @@ test_followup_post_relay_rejection_degrades_gracefully() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=1700003600 FAKE_FOLLOWUP_CODE=409 \
     "$ROOT/bin/fm-x-followup.sh" task-409 - <<<"rejected by relay" 2>"$err"); rc=$?
-  expect_code 0 "$rc" "relay-rejected post exit"
+  expect_code 0 "$rc" "relay-rejected post exit" "$out"
   [ -z "$out" ] || fail "a relay-rejected post must echo nothing (got: $out)"
   assert_no_grep "x_request=" "$meta" "a relay rejection must clear the link"
   assert_grep "cap or window" "$err" "a relay rejection must explain itself distinctly from a generic failure"
@@ -3053,7 +3053,7 @@ test_followup_post_expired_skips_and_clears() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FMX_RELAY_URL="https://relay.test" \
     FMX_NOW_OVERRIDE=$((1700000000 + 8*86400)) FAKE_FOLLOWUP_CODE=200 \
     "$ROOT/bin/fm-x-followup.sh" task-x - <<<"too late" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "expired post exit"
+  expect_code 0 "$rc" "expired post exit" "$out"
   [ -z "$out" ] || fail "an expired post must post nothing and echo nothing (got: $out)"
   assert_no_grep "x_request=" "$meta" "an expired post must clear the link"
   assert_absent "$home/state/x-outbox/req-x.json" "an expired post must not record any reply"
@@ -3065,7 +3065,7 @@ test_followup_post_not_linked_is_noop() {
   home="$TMP_ROOT/fu-noop"; mkdir -p "$home/state"
   printf 'kind=ship\n' > "$home/state/plain.meta"
   out=$(FM_HOME="$home" "$ROOT/bin/fm-x-followup.sh" plain - <<<"nothing to do" 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "not-linked post exit"
+  expect_code 0 "$rc" "not-linked post exit" "$out"
   [ -z "$out" ] || fail "a not-linked post must be a silent no-op (got: $out)"
   assert_absent "$home/state/x-outbox" "a not-linked post must not record a reply"
   pass "fm-x-followup is a no-op for a task with no X link"
@@ -3078,7 +3078,7 @@ test_followup_post_dry_run_increments_counter_keeps_link() {
   meta="$home/state/task-d.meta"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 FMX_NOW_OVERRIDE=1700003600 \
     "$ROOT/bin/fm-x-followup.sh" task-d - <<<"Shipped in dry run." 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "dry-run post exit"
+  expect_code 0 "$rc" "dry-run post exit" "$out"
   [ "$out" = "req-d" ] || fail "dry-run post must echo the request_id (got: $out)"
   assert_present "$home/state/x-outbox/req-d.json" "dry-run post must record the would-be follow-up"
   [ "$(jq -r '.endpoint' "$home/state/x-outbox/req-d.json")" = "followup" ] \
@@ -3097,7 +3097,7 @@ test_followup_post_dry_run_final_clears_link() {
   meta="$home/state/task-df.meta"
   out=$(FM_HOME="$home" FMX_DRY_RUN=1 FMX_NOW_OVERRIDE=1700003600 \
     "$ROOT/bin/fm-x-followup.sh" task-df --final - <<<"Shipped in dry run, for real this time." 2>/dev/null); rc=$?
-  expect_code 0 "$rc" "dry-run --final post exit"
+  expect_code 0 "$rc" "dry-run --final post exit" "$out"
   [ "$out" = "req-df" ] || fail "dry-run --final post must echo the request_id (got: $out)"
   assert_no_grep "x_request=" "$meta" "dry-run --final must clear the link just as a live --final post would"
   pass "fm-x-followup dry-run --final clears the link just as a live post would"
@@ -3116,7 +3116,7 @@ test_followup_usage_errors() {
   PATH="$BASE_PATH" FM_HOME="$home" "$ROOT/bin/fm-x-followup.sh" some-task >/dev/null 2>&1; rc=$?
   expect_code 2 "$rc" "followup post no-text-source exit"
   out=$(PATH="$BASE_PATH" FM_HOME="$home" "$ROOT/bin/fm-x-followup.sh" --help); rc=$?
-  expect_code 0 "$rc" "followup --help exit"
+  expect_code 0 "$rc" "followup --help exit" "$out"
   assert_contains "$out" "--image <path>" "followup help must mention --image"
   assert_contains "$out" "threaded replies attach it to the opener tweet" \
     "followup help must document thread image placement"
@@ -3140,13 +3140,13 @@ test_followup_rejects_flag_like_arguments() {
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-followup.sh" plain --bogus - <<<"hi" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "followup unknown option exit"
+  expect_code 2 "$rc" "followup unknown option exit" "$out"
   assert_grep "unknown option '--bogus'" "$err" "followup must name the unknown option it refused"
   [ -z "$out" ] || fail "a refused follow-up must not echo a request_id (got: $out)"
 
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-followup.sh" --bogus - <<<"hi" 2>"$err"); rc=$?
-  expect_code 2 "$rc" "followup dash-leading task id exit"
+  expect_code 2 "$rc" "followup dash-leading task id exit" "$out"
 
   PATH="$BASE_PATH" FM_HOME="$home" "$ROOT/bin/fm-x-followup.sh" --check --bogus >/dev/null 2>"$err"; rc=$?
   expect_code 2 "$rc" "followup --check dash-leading id exit"
@@ -3172,7 +3172,7 @@ test_followup_rejects_flag_like_arguments() {
   # must not report a no-op success, and a live or expired link must survive.
   out=$(PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-followup.sh" plain one two 2>"$err"); rc=$?
-  expect_code 2 "$rc" "followup surplus positionals on an unlinked task exit"
+  expect_code 2 "$rc" "followup surplus positionals on an unlinked task exit" "$out"
   assert_grep "unexpected extra arguments" "$err" "followup must refuse extra positionals when unlinked"
   PATH="$BASE_PATH" FM_HOME="$home" FMX_DRY_RUN=1 \
     "$ROOT/bin/fm-x-followup.sh" plain --text-file /dev/null - <<<"hi" >/dev/null 2>"$err"; rc=$?
