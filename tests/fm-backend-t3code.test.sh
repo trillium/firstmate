@@ -2231,7 +2231,7 @@ test_secondmate_teardown_archives_thread_before_home_removal_without_project_del
   # process rooted in the home can outlive the proven archive.
   (cd "$home/state" && exec sleep 300) &
   PROVIDER_PID=$!
-  out=$( PATH="$(fm_test_base_path_sans "$PATH" lsof)" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$CASE_DIR/home" \
+  out=$( PATH="$(fm_test_base_path_sans "$PATH" lsof)" FM_LSOF_FALLBACK_DIRS="" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$CASE_DIR/home" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     "$ROOT/bin/fm-teardown.sh" "$id" --force 2>&1 )
   rc=$?

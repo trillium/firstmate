@@ -235,6 +235,11 @@
 #   A batch reports such a pair as `batch: DEFERRED` and exits 75 when nothing
 #   else failed. A relaunch and a --secondmate spawn are never counted against
 #   capacity.
+#   A fresh ship or scout spawn whose `treehouse get` is refused because the pool
+#   has no slot this clone may take ("all N worktrees are in use, dirty, or not
+#   provably this clone's") reads that refusal from the pane, closes the bare
+#   window it opened, prints one `deferred:` line carrying treehouse's own
+#   sentence, and exits 75 the same way, leaving the task queued.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
@@ -3007,6 +3012,21 @@ case "$ARG3" in
       ;;
     esac
   done
+  # A named adapter template embeds the launch-brief arg itself; a raw command
+  # has no such placeholder and would start the agent at an empty prompt.
+  # Append it after the caller's own argv. Kimi rejects a positional prompt and
+  # gets its brief pointer after its readiness gate, and a command that already
+  # names __BRIEF__ is left alone.
+  case "$HARNESS" in
+  kimi*) : ;;
+  *)
+    # shellcheck disable=SC2016 # literal text, expanded by the launched shell
+    case "$LAUNCH" in
+    *__BRIEF__*) : ;;
+    *) LAUNCH=$LAUNCH' "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    esac
+    ;;
+  esac
   ;;
 '')
   # No explicit harness: resolve from config. A secondmate AGENT launches on the
@@ -4055,7 +4075,12 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     else
       LEGACY_TASK_BODY=$(fm_brief_heading_body "$BRIEF" "# Task")
       CAPTAIN_INTENT=$(fm_brief_marked_captain_words "$LEGACY_TASK_BODY")
-      if [ -z "$(printf '%s' "$CAPTAIN_INTENT" | tr -d '[:space:]')" ]; then
+      # The provenance check guards the first launch only: a relaunch resumes a
+      # task whose worker already started under this brief, so a legacy mixed
+      # brief must not strand it. The overlay is then omitted below (it would
+      # carry an empty intent) and the brief's own rule still tells the worker to
+      # ask firstmate before starting no-mistakes.
+      if [ "$RELAUNCH" -eq 0 ] && [ -z "$(printf '%s' "$CAPTAIN_INTENT" | tr -d '[:space:]')" ]; then
         echo "error: legacy mixed # Task brief has no provenance-marked captain words for no-mistakes --intent; add [captain] lines or migrate to ## Captain's intent and ## Firstmate spec" >&2
         exit 1
       fi
@@ -4087,7 +4112,8 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     fm_brief_worker_role "$STATE" "$ID" "$FM_ROOT" &&
       printf '\n' &&
       cat "$SOURCE_BRIEF" &&
-      if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+      if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ] \
+         && [ -n "$(printf '%s' "$CAPTAIN_INTENT" | tr -d '[:space:]')" ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"
       fi
   } >"$BRIEF_TMP" || {
@@ -4397,6 +4423,43 @@ spawn_worktree_isolated() { # <path>
     return 1
   fi
   return 0
+}
+
+# spawn_treehouse_pool_full_reason: treehouse's own refusal when its pool has no
+# slot this clone may take ("all N worktrees are in use, dirty, or not provably
+# this clone's ..."), read from the pane the interactive `treehouse get` was
+# typed into. It prints that one line and succeeds only when the pane shows it,
+# so a pane that is merely slow to move still reaches the ordinary deadline.
+spawn_treehouse_pool_full_reason() { # <target>
+  local shown line
+  shown=$(fm_backend_capture "$BACKEND" "$1" 40 "$W" 2>/dev/null) || return 1
+  line=$(printf '%s\n' "$shown" | grep -E 'all [0-9]+ worktrees are in use, dirty, or not provably this clone' | tail -n 1) || return 1
+  [ -n "$line" ] || return 1
+  # Trim the pane's own indentation and any prompt decoration around the text.
+  line=${line#"${line%%[![:space:]]*}"}
+  line=${line%"${line##*[![:space:]]}"}
+  printf '%s' "$line"
+}
+
+# spawn_defer_pool_full: a full or foreign pool is a place-to-run shortage, not
+# a spawn failure. No slot was leased and no launch, record, or backlog move
+# exists yet, so close the bare window this spawn opened for the refused
+# `treehouse get` (Orca and the Herdr projection close their own endpoints on
+# abort) and exit 75, the same queued verdict a capacity deferral gives, so the
+# task stays exactly as queued as it was.
+spawn_defer_pool_full() { # <treehouse-reason>
+  local reason=$1 abort_tab_id=
+  if [ "$BACKEND" != orca ] && [ "${HERDR_PROJECTED:-0}" -ne 1 ] &&
+    [ "$SPAWN_LAUNCH_SENT" = 0 ] && [ -n "${T:-}" ]; then
+    [ "$BACKEND" != zellij ] || abort_tab_id=${ZELLIJ_TAB_ID:-}
+    if fm_backend_kill "$BACKEND" "$T" "$abort_tab_id" "fm-$ID" 2>/dev/null; then
+      SPAWN_ENDPOINT_CLOSED=1
+    else
+      echo "warning: could not close window $T after treehouse refused task $ID a worktree; close it by hand" >&2
+    fi
+  fi
+  echo "deferred: treehouse has no worktree for project $(basename "$PROJ_ABS") ('$reason'); task $ID was not launched and its backlog item stays queued - free a pool slot (see 'treehouse status') and dispatch it again" >&2
+  exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
 }
 
 # spawn_endpoint_hint: the operator pointer for a pre-launch refusal. Only a
@@ -5872,6 +5935,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     candidate=""
     last_seen=""
     last_reason="the pane reported no path"
+    pool_full_reason=""
     wt_polls=${FM_SPAWN_WT_POLLS:-60}
     wt_poll_interval=${FM_SPAWN_WT_POLL_INTERVAL:-1}
     for _ in $(seq 1 "$wt_polls"); do
@@ -5888,6 +5952,9 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
       else
         candidate=""
         [ -z "$p" ] || last_reason=$SPAWN_WT_REASON
+        if pool_full_reason=$(spawn_treehouse_pool_full_reason "$WT_TARGET"); then
+          spawn_defer_pool_full "$pool_full_reason"
+        fi
       fi
       /bin/sleep "$wt_poll_interval"
     done
@@ -7012,11 +7079,14 @@ preserve_relaunch_meta() {
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
-  if [ "$RELAUNCH" -eq 1 ]; then
-    preserve_relaunch_meta
-  fi
+  # control_relaunch_tx is spawn-owned and must precede the preserved tail: the
+  # preserved lines include pr=, and bin/fm-pr-lib.sh rejects any unknown key
+  # written after pr= (the PR record then drops out of polling).
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"
+  fi
+  if [ "$RELAUNCH" -eq 1 ]; then
+    preserve_relaunch_meta
   fi
 } >"$SPAWN_META_PATH" || {
   echo "error: task record for $ID could not be prepared at $SPAWN_META_PATH" >&2
