@@ -149,6 +149,7 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
    Deferred or aged holds follow the presentation safety rule above instead.
    After the decisions, render one line per snapshot `not_done` row as "Not done: <title> - <state> <since>: <why> - <needs>".
    Disclose any `not_done` omitted entry, and never drop a row because an earlier digest already reported it.
+   Then render one line per snapshot `secondmate_holds` row as "Secondmate holds on <home>: <count> open, oldest <oldest_id> held <oldest_age_days>d" ("unknown" for a null age), read-only: the captain answers these in the second mate home, so never list them one by one or answer them from here, and disclose any `secondmate_holds` omitted entry.
    Include `contributions.captain` rows in this section, deduplicating any row already represented by its live captain hold or merge call.
    Show the other contribution actors only as counts beside the checked/known coverage, and disclose `captain_omitted`, `unmeasured_homes`, stale verdicts and checks with no verdict when nonzero.
    Empty-state: "Nothing needs your action right now" is allowed only when `contributions.proven_clear` is true and the existing decision set and `not_done` are empty.

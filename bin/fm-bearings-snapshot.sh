@@ -112,6 +112,7 @@ FM_BEARINGS_GATES=${FM_BEARINGS_GATES:-20}
 FM_BEARINGS_REPORTS=${FM_BEARINGS_REPORTS:-20}
 FM_BEARINGS_RECORDED_PRS=${FM_BEARINGS_RECORDED_PRS:-20}
 FM_BEARINGS_NOT_DONE=${FM_BEARINGS_NOT_DONE:-20}
+FM_BEARINGS_SM_HOLDS=${FM_BEARINGS_SM_HOLDS:-20}
 FM_BEARINGS_UNHEALTHY=${FM_BEARINGS_UNHEALTHY:-20}
 FM_BEARINGS_PR_REPOS=${FM_BEARINGS_PR_REPOS:-10}
 FM_BEARINGS_PR_LIMIT=${FM_BEARINGS_PR_LIMIT:-20}
@@ -129,6 +130,7 @@ validate_bound FM_BEARINGS_GATES "$FM_BEARINGS_GATES"
 validate_bound FM_BEARINGS_REPORTS "$FM_BEARINGS_REPORTS"
 validate_bound FM_BEARINGS_RECORDED_PRS "$FM_BEARINGS_RECORDED_PRS"
 validate_bound FM_BEARINGS_NOT_DONE "$FM_BEARINGS_NOT_DONE"
+validate_bound FM_BEARINGS_SM_HOLDS "$FM_BEARINGS_SM_HOLDS"
 validate_bound FM_BEARINGS_UNHEALTHY "$FM_BEARINGS_UNHEALTHY"
 validate_bound FM_BEARINGS_PR_REPOS "$FM_BEARINGS_PR_REPOS"
 validate_bound FM_BEARINGS_PR_LIMIT "$FM_BEARINGS_PR_LIMIT"
@@ -141,6 +143,7 @@ usage: fm-bearings-snapshot.sh [--json] [--include-prs] [--fields <list>]
                                [--all-reports] [--all-queued]
                                [--all-recorded-prs] [--all-unhealthy]
                                [--all-pr-repos] [--all-not-done]
+                               [--all-secondmate-holds]
 
 Compact bearings projection over fm-fleet-snapshot.sh. TOON by default.
 Default collection performs bounded concurrent remote-ledger reads for registered
@@ -154,6 +157,9 @@ Default fields: schema, home, generated, prs, in_flight{id,kind,state,repo,name,
   gates{id,title,blocked_by,reason,owner,filed}, reports{id,path}, recorded_prs{id,url},
   not_done{home,id,title,state,since,why,needs} (captain-authorized work that is blocked,
   unstarted, or stalled, projected from bin/fm-stalled-work.sh --json, which owns the contract),
+  secondmate_holds{home,count,oldest_id,oldest_age_days} (one line per registered
+  secondmate home with open captain holds in its own backlog, read-only, projected from
+  bin/fm-stalled-work.sh --json),
   unhealthy_endpoints{...} (only when non-empty), omitted{surface,reveal}.
 Default gates are selected newest filed first before their bound; undated gates
   retain input order after dated gates.
@@ -170,7 +176,7 @@ For every registered secondmate, readable structured facts from its own home are
 Opt-in surfaces: --fields bodies|paths|actions|endpoints, --all-in-flight,
   --all-decisions (all open decisions and captain holds in the bounded snapshot),
   --all-secondmates, --all-landed, --all-reports, --all-queued, --all-recorded-prs,
-  --all-unhealthy, --all-pr-repos, --all-not-done, --include-prs (adds candidate_prs).
+  --all-unhealthy, --all-pr-repos, --all-not-done, --all-secondmate-holds, --include-prs (adds candidate_prs).
 Raise FM_BEARINGS_PR_LIMIT to expand per-repository open-PR results.
 EOF
 }
@@ -187,6 +193,7 @@ ALL_RECORDED_PRS=0
 ALL_UNHEALTHY=0
 ALL_PR_REPOS=0
 ALL_NOT_DONE=0
+ALL_SM_HOLDS=0
 FIELDS=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -202,6 +209,7 @@ while [ $# -gt 0 ]; do
     --all-unhealthy) ALL_UNHEALTHY=1 ;;
     --all-pr-repos) ALL_PR_REPOS=1 ;;
     --all-not-done) ALL_NOT_DONE=1 ;;
+    --all-secondmate-holds) ALL_SM_HOLDS=1 ;;
     --fields) shift; FIELDS=${1:-} ;;
     --fields=*) FIELDS=${1#--fields=} ;;
     -h|--help) usage; exit 0 ;;
@@ -354,10 +362,14 @@ fi
 # --- not-done sweep (read-only; bin/fm-stalled-work.sh owns the contract) ----
 NOT_DONE='[]'
 NOT_DONE_UNREAD=0
+SM_HOLDS='[]'
+SM_HOLDS_UNSEEN=0
 if ND_RAW=$(FM_STALLED_REMOTE_FETCH=0 fm_run_timed 90 "$SCRIPT_DIR/fm-stalled-work.sh" --json 2>/dev/null) \
   && printf '%s' "$ND_RAW" | jq -e '.not_done | type == "array"' >/dev/null 2>&1; then
   NOT_DONE=$(printf '%s' "$ND_RAW" | jq -c '.not_done | map({home,id,title,state,since,why,needs})')
   NOT_DONE_UNREAD=$(printf '%s' "$ND_RAW" | jq -r '.unavailable | length')
+  SM_HOLDS=$(printf '%s' "$ND_RAW" | jq -c '(.secondmate_hold_homes // []) | map({home,count,oldest_id,oldest_age_days})')
+  SM_HOLDS_UNSEEN=$(printf '%s' "$ND_RAW" | jq -r '.secondmate_holds_unseen // 0')
 else
   NOT_DONE_UNREAD=-1
 fi
@@ -386,6 +398,10 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   --argjson not_done_all "$NOT_DONE" \
   --argjson not_done_unread "$NOT_DONE_UNREAD" \
   --argjson all_not_done "$ALL_NOT_DONE" \
+  --argjson sm_holds_n "$FM_BEARINGS_SM_HOLDS" \
+  --argjson sm_holds_all "$SM_HOLDS" \
+  --argjson sm_holds_unseen "$SM_HOLDS_UNSEEN" \
+  --argjson all_sm_holds "$ALL_SM_HOLDS" \
   --argjson unhealthy_n "$FM_BEARINGS_UNHEALTHY" \
   --argjson include_prs "$INCLUDE_PRS" \
   --argjson all_in_flight "$ALL_IN_FLIGHT" \
@@ -668,6 +684,7 @@ MODEL=$(printf '%s' "$SNAP" | jq \
               + ($gates_all | newest_filed_first
                  | if $all_queued == 1 then . else .[:$gates_n] end)),
       reports: (if $all_reports == 1 then $reports_all else $reports_all[:$reports_n] end),
+      secondmate_holds: (if $all_sm_holds == 1 then $sm_holds_all else $sm_holds_all[:$sm_holds_n] end),
       not_done: (if $all_not_done == 1 then $not_done_all else $not_done_all[:$not_done_n] end),
       recorded_prs: (if $all_recorded_prs == 1 then $recorded_prs_all else $recorded_prs_all[:$recorded_prs_n] end)
     }
@@ -711,6 +728,8 @@ MODEL=$(printf '%s' "$SNAP" | jq \
         (if $all_decisions == 0 and $decisions_marked_deferred > 0 then {surface:("captain holds bucketed blocked, dated, or aged: \($decisions_marked_deferred)"), reveal:"--all-decisions"} else empty end),
         (if $all_queued == 0 and ($gates_all | length) > $gates_n then {surface:("gates showing \($gates_n) of \($gates_all | length)"), reveal:"--all-queued"} else empty end),
         (if $all_reports == 0 and ($reports_all | length) > $reports_n then {surface:("reports showing \($reports_n) of \($reports_all | length)"), reveal:"--all-reports"} else empty end),
+        (if $all_sm_holds == 0 and ($sm_holds_all | length) > $sm_holds_n then {surface:("secondmate_holds showing \($sm_holds_n) of \($sm_holds_all | length) homes"), reveal:"--all-secondmate-holds"} else empty end),
+        (if $sm_holds_unseen > 0 then {surface:("secondmate queued items beyond the bound of a home summary (some may be holds): \($sm_holds_unseen)"), reveal:"read the backlog of that secondmate home"} else empty end),
         (if $all_not_done == 0 and ($not_done_all | length) > $not_done_n then {surface:("not_done showing \($not_done_n) of \($not_done_all | length)"), reveal:"--all-not-done"} else empty end),
         (if $not_done_unread == -1 then {surface:"not_done sweep could not run, so stalled work was not checked", reveal:"run bin/fm-stalled-work.sh"}
          elif $not_done_unread > 0 then {surface:("not_done sources not read: \($not_done_unread)"), reveal:"run bin/fm-stalled-work.sh"} else empty end),

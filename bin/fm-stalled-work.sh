@@ -2,7 +2,7 @@
 # fm-stalled-work.sh - list captain-authorized work that is blocked, never
 # started, or stalled, in a form that reaches the captain.
 #
-# Usage: fm-stalled-work.sh [--json | --plain] [--quiet] [--resume] [--notify] [--help]
+# Usage: fm-stalled-work.sh [--json | --plain] [--quiet] [--resume] [--notify] [--holds] [--help]
 #
 # Why: work the captain authorized can sit blocked for weeks with its only
 # record a note on a bead. This is the read-only sweep behind the NOT DONE
@@ -72,6 +72,18 @@
 # to write. Firstmate runs `bin/fm-stalled-work.sh --notify` on each heartbeat
 # and posts any output to status-kvo.
 #
+# --holds prints the read-only secondmate-hold rollup instead of the not-done
+# list: every open captain hold in each registered secondmate's own backlog, as
+# compact count-plus-oldest line per home (home, open count, oldest hold id and
+# its age in whole days, "unknown" when it has no recorded date), from the same
+# published home summaries. The captain also answers holds in the secondmate
+# panes, so holds are not repeated one by one as main-home calls; this only
+# makes them visible from here. It never edits those backlogs and cannot answer
+# a hold. At most FM_STALLED_HOLDS_MAX (default 20) homes print, then one line
+# counts the rest, plus holds a home summary was too long to carry. --json also
+# carries the complete secondmate_holds[] list (home, id, title, age_days). With --quiet it prints nothing when no
+# hold is open and every source was read.
+#
 # Environment: FM_HOME selects the home. FM_STALLED_GRACE_HOURS (default 24),
 # FM_STALLED_STALL_HOURS (default 48), FM_STALLED_BLOCKED_MIN_SECONDS (default
 # 3600), and FM_STALLED_NOW (epoch seconds, tests) tune the sweep.
@@ -92,7 +104,7 @@ usage() {
   sed -n '2,${/^#/!q;p;}' "$0" | sed 's/^# \{0,1\}//'
 }
 
-FORMAT=toon QUIET=0 RESUME=0 NOTIFY=0
+FORMAT=toon QUIET=0 RESUME=0 NOTIFY=0 HOLDS=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h | --help) usage; exit 0 ;;
@@ -102,6 +114,7 @@ while [ "$#" -gt 0 ]; do
     --quiet) QUIET=1 ;;
     --resume) RESUME=1 ;;
     --notify) NOTIFY=1 ;;
+    --holds) HOLDS=1 ;;
     *) printf 'fm-stalled-work: unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
@@ -116,6 +129,8 @@ for v in "$GRACE_H" "$STALL_H" "$BLOCKED_MIN"; do
   case "$v" in '' | *[!0-9]*) echo 'fm-stalled-work: tuning values must be whole numbers' >&2; exit 2 ;; esac
 done
 NOW=${FM_STALLED_NOW:-$(date -u +%s)}
+HOLDS_MAX=${FM_STALLED_HOLDS_MAX:-20}
+case "$HOLDS_MAX" in '' | *[!0-9]* | 0) echo 'fm-stalled-work: FM_STALLED_HOLDS_MAX must be a positive whole number' >&2; exit 2 ;; esac
 
 UNAVAIL='[]'
 unavailable() {  # <source> <reason>
@@ -222,7 +237,8 @@ if [ -f "$REG" ]; then
       continue
     fi
     SMS=$(printf '%s' "$SMS" | jq -c --arg id "$sid" --argjson s "$summary" '
-      . + [{id:$id, generated_epoch:($s.generated_epoch // 0), queued:$s.queued, holds:($s.holds // [])}]')
+      . + [{id:$id, generated_epoch:($s.generated_epoch // 0), queued:$s.queued, holds:($s.holds // []),
+            decisions_open:($s.decisions_open // []), queued_total:($s.counts.queued // ($s.queued | length))}]')
   done < "$REG"
 fi
 
@@ -309,12 +325,66 @@ MODEL=$(jq -n -c \
             needs_for(.reason; "firstmate: ask the secondmate to clear the blocker"); "secondmate-ledger"; {}) ]
   ) as $rows
   | ($rows | group_by(.home + "\u0000" + .id) | map(sort_by(-.age_seconds)[0]) | sort_by(-.age_seconds)) as $dedup
+  | ([ $sms[] as $m
+        | ([ $m.queued[] | select(.hold_kind == "captain" and .hold_reason != null)
+             | {id, title:(.title // .id), age_days:(.hold_age_days // null), bucket:(.hold_bucket // null)} ]
+           + [ $m.decisions_open[]? | select(.source == "backlog" and .verb == "captain-hold")
+               | {id, title:(.summary // .id), age_days:(.hold_age_days // null), bucket:(.hold_bucket // null)} ])
+        | group_by(.id) | map(.[0])[]
+        | {home:$m.id, id, title:(.title | scrub | clip(80)), age_days, bucket}
+      ] | sort_by([(if .age_days == null then 1 else 0 end), -(.age_days // 0), .home, .id])) as $holds
+  | ([ $sms[] | ((.queued_total // 0) - (.queued | length)) | select(. > 0) ] | add // 0) as $holds_unseen
   | {schema:"fm-stalled-work.v1", generated:($now | todate), count:($dedup | length),
-     not_done:$dedup, unavailable:$unavail}
+     not_done:$dedup, secondmate_holds:$holds,
+     secondmate_hold_homes:([ $holds | group_by(.home)[]
+       | {home:.[0].home, count:length, oldest_id:.[0].id, oldest_age_days:.[0].age_days} ]
+       | sort_by([(if .oldest_age_days == null then 1 else 0 end), -(.oldest_age_days // 0), .home])), secondmate_holds_unseen:$holds_unseen, unavailable:$unavail}
 ')
 [ -n "$MODEL" ] || { echo 'fm-stalled-work: classification failed' >&2; exit 1; }
 COUNT=$(printf '%s' "$MODEL" | jq -r '.count')
 UNAVAIL_N=$(printf '%s' "$MODEL" | jq -r '.unavailable | length')
+
+unavailable_list() {
+  printf '%s' "$MODEL" | jq -r '.unavailable[] | "Not checked: \(.source) - \(.reason)"'
+}
+
+# --- --holds: the secondmate-hold rollup ------------------------------------
+if [ "$HOLDS" -eq 1 ]; then
+  HOLDS_N=$(printf '%s' "$MODEL" | jq -r '.secondmate_hold_homes | length')
+  HOLDS_UNSEEN=$(printf '%s' "$MODEL" | jq -r '.secondmate_holds_unseen')
+  HOLDS_HIDDEN=$(( HOLDS_N > HOLDS_MAX ? HOLDS_N - HOLDS_MAX : 0 ))
+  if [ "$QUIET" -eq 1 ] && [ "$HOLDS_N" -eq 0 ] && [ "$HOLDS_UNSEEN" -eq 0 ]; then
+    [ "$UNAVAIL_N" -eq 0 ] || unavailable_list
+    exit 0
+  fi
+  case "$FORMAT" in
+    json)
+      printf '%s' "$MODEL" | jq '{schema, generated, secondmate_hold_homes, secondmate_holds, secondmate_holds_unseen, unavailable}' ;;
+    plain)
+      printf '%s' "$MODEL" | jq -r --argjson max "$HOLDS_MAX" '.secondmate_hold_homes[:$max][]
+        | "Secondmate holds on \(.home): \(.count) open, oldest \(.oldest_id) held \(if .oldest_age_days == null then "unknown" elif .oldest_age_days == 0 then "under a day" else "\(.oldest_age_days)d" end)"'
+      [ "$HOLDS_HIDDEN" -le 0 ] || printf 'Secondmate holds not shown: %s more home(s) (raise FM_STALLED_HOLDS_MAX)\n' "$HOLDS_HIDDEN"
+      [ "$HOLDS_UNSEEN" -le 0 ] || printf 'Secondmate queued items beyond a home summary bound: %s, some may be holds (read that home'"'"'s own backlog)\n' "$HOLDS_UNSEEN"
+      unavailable_list ;;
+    *)
+      printf '%s' "$MODEL" | jq -r --argjson max "$HOLDS_MAX" --argjson hidden "$HOLDS_HIDDEN" --argjson unseen "$HOLDS_UNSEEN" '
+        def q:
+          if type == "number" then tostring else
+          tostring
+          | if (. == "") or test("^\\s|\\s$") or (. == "true" or . == "false" or . == "null")
+               or test("^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$")
+               or test("[:\"\\\\\\[\\]{},]") or test("[[:cntrl:]]") or test("^-")
+            then "\"" + (gsub("\\\\"; "\\\\") | gsub("\""; "\\\"") | gsub("\n"; "\\n")) + "\""
+            else . end end;
+        .secondmate_hold_homes[:$max] as $rows
+        | "schema: \(.schema)", "generated: \(.generated)",
+          (if ($rows | length) == 0 then "secondmate_hold_homes: []"
+           else "secondmate_hold_homes[\($rows | length)]{home,count,oldest_id,oldest_age_days}:",
+                ($rows[] as $r | "  " + ([ "home","count","oldest_id","oldest_age_days" ] | map($r[.] | q) | join(","))) end),
+          "omitted_homes: \($hidden)", "unseen_beyond_home_summary: \($unseen)"' ;;
+  esac
+  exit 0
+fi
 
 # --- --resume: emit, never run ----------------------------------------------
 RESUME_LINES=''
@@ -363,9 +433,6 @@ fi
 plain_list() {  # <model-json>
   printf '%s' "$1" | jq -r '.not_done[]
     | "Not done: \(.title) (\(.id)\(if .home == "main" then "" else " on " + .home end)) - \(.state) \(.since): \(.why) - \(.needs)"'
-}
-unavailable_list() {
-  printf '%s' "$MODEL" | jq -r '.unavailable[] | "Not checked: \(.source) - \(.reason)"'
 }
 
 render() {

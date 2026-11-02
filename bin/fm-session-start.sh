@@ -838,6 +838,16 @@ if [ -n "$NOT_DONE_OUT" ]; then
   printf '%s\n' "$NOT_DONE_OUT"
 fi
 
+# SECONDMATE HOLDS: open captain holds in registered second mate homes, one
+# count-plus-oldest line per home (bin/fm-stalled-work.sh --holds owns the
+# contract). Read-only and silent when none are open.
+SM_HOLDS_OUT=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" fm_run_timed 60 \
+  "$SCRIPT_DIR/fm-stalled-work.sh" --holds --quiet --plain 2>/dev/null) || SM_HOLDS_OUT=
+if [ -n "$SM_HOLDS_OUT" ]; then
+  subsection "SECONDMATE HOLDS (open captain holds in second mate homes, read-only)"
+  printf '%s\n' "$SM_HOLDS_OUT"
+fi
+
 # --- 4. supervision operating instructions ----------------------------------
 stage supervision-instructions
 AFK_PRESENT=0
