@@ -1878,7 +1878,11 @@ fm_backend_herdr_launcher_identity() {  # <session>
     fi
   fi
   if [ -z "$tab" ] || [ -z "$workspace" ]; then
-    echo "error: herdr launcher pane '$pane' returned an ambiguous tab or workspace identity in session '$session'; refusing to place a worker without its exact parent workspace" >&2
+    # No live pane matched this shell's working directory and the claimed id
+    # answers with no tab or workspace of its own, so the launcher's pane no
+    # longer exists or names no tab. That is a stale identity, not an ambiguous
+    # one: name the three injected values a live shell has to refresh.
+    echo "error: herdr launcher pane '$pane' is stale - in session '$session' that pane no longer exists or names no tab or workspace; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace" >&2
     return 1
   fi
 

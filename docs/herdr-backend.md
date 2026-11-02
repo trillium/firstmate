@@ -128,6 +128,8 @@ Older injection shapes are unverified, so a claimed launcher pane without the in
 
 With presentation spaces disabled, a crewmate or scout is created in the exact workspace that identity currently resolves to.
 That workspace is read live from Herdr rather than from the injected snapshot, so the worker always appears beside the agent that launched it.
+When the injected pane id is a stale snapshot, the adapter resolves the launcher's own pane from the one live pane whose foreground working directory matches this shell, and that pane still passes the tab and workspace agreement proofs.
+No live match, several matches, or a contradictory record refuses with a message naming the stale pane id and the three injected values to refresh.
 Duplicate labels elsewhere in the session are irrelevant, and the globally focused workspace is never the target.
 A `--secondmate` launch is the deliberate exception: it stands up that secondmate home's own workspace instead of joining the launcher's.
 
@@ -137,7 +139,7 @@ A claimed parent identity that cannot be resolved exactly stops the spawn before
 That covers:
 
 - A missing or unusable socket identity.
-- A closed or unreadable launcher pane.
+- A closed launcher pane that no live pane, matched by working directory, replaces.
 - A pane and tab that disagree about their workspace.
 - A workspace missing from the session.
 - A pane belonging to another named session or Herdr server.

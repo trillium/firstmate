@@ -1162,6 +1162,8 @@ test_launcher_identity_stale_snapshot_without_a_pane_list_refuses() {
   status=$?
   expect_code 1 "$status" "a stale snapshot with no live pane list must refuse, not adopt the focused fallback"
   assert_contains "$out" "wVQ:p2" "the stale-snapshot refusal did not name the pane it could not resolve"
+  assert_contains "$out" "is stale" "the stale-snapshot refusal blamed an ambiguity instead of naming the pane stale"
+  assert_contains "$out" "refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID" "the stale-snapshot refusal did not name the values to refresh"
   pass "fm_backend_herdr_launcher_identity: refuses a stale snapshot when no live pane resolves"
 }
 
