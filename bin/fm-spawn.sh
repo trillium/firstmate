@@ -2398,12 +2398,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   #           `unreadable` is rechecked too, because a stopped Rex server
   #           reads as unreachable to a read that never starts it
   #           (fm_control_absence_recheck_applies owns that rule).
-  #   tmux  - REFUSES, always. A task record carries no socket identity for its
-  #           endpoint, and a server-wide inventory describes only the server
-  #           this process addresses, so no read available here can tell "gone"
-  #           from "on a server I cannot see". A tmux `missing` therefore stays
-  #           as deadlocked as it was before this change - deliberately, and
-  #           with the reason stated rather than guessed past.
+  #   tmux  - sweeps every socket of the user's tmux directory for the
+  #           recorded session:window (fm_backend_tmux_socket_sweep): proven
+  #           gone only when every socket answered and none has it. A window
+  #           present on one socket, or a socket that cannot be queried,
+  #           refuses.
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
@@ -4835,6 +4834,20 @@ EOF
     T=$(fm_backend_rex_target "$FM_REX_TASK_SESSION_ID" "$FM_REX_TASK_BLOCK_ID")
     SES=${T%%:*}
     WT_TARGET=$T
+  elif [ "$BACKEND" = tmux ]; then
+    # The recorded window is proven absent from every tmux socket
+    # (fm_backend_tmux_socket_sweep), so create ONE fresh window for the same
+    # task, opened directly in the recorded worktree and published below as
+    # window=. It goes back in the RECORDED session while that session still
+    # exists on this seat's server, and otherwise where an ordinary spawn from
+    # this seat would put it. Nothing here touches the worktree or its work.
+    SES=${RELAUNCH_TARGET%%:*}
+    if ! tmux has-session -t "=$SES" 2>/dev/null; then
+      SES=$(fm_backend_tmux_container_ensure)
+    fi
+    T="$SES:$W"
+    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
+    WT_TARGET="$WID"
   else
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -4844,8 +4857,8 @@ EOF
     #
     # Herdr reaches here only on a PROVEN-gone pane: its every read is scoped to
     # the session the record names (fm_control_endpoint_absence_verdict owns
-    # that argument). tmux and every secondmate were already refused, and rex
-    # took the branch above, so there is no dispatch left to make.
+    # that argument). Every secondmate was already refused, and rex and tmux
+    # took the branches above, so there is no dispatch left to make.
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
     # presentation projection: projection is a presentation-only layout that is

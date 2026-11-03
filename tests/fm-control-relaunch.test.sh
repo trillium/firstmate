@@ -59,6 +59,20 @@ make_tmux_stub() {  # <dir>
 #!/usr/bin/env bash
 set -u
 D=$FM_FAKE_DIR
+# The all-sockets absence sweep addresses one socket at a time (-S <path>);
+# each socket's canned answer lives in $D/sockets/<basename>: BROKEN is a
+# non-definitive failure, DEAD a socket with no server behind it, anything else
+# is that server's session:window inventory.
+if [ "${1:-}" = -S ]; then
+  sock=${2##*/}
+  shift 2
+  [ "${1:-}" = list-windows ] || exit 0
+  case "$(cat "$D/sockets/$sock" 2>/dev/null)" in
+    BROKEN) echo 'lost server' >&2; exit 1 ;;
+    DEAD) echo "error connecting to $sock (Connection refused)" >&2; exit 1 ;;
+  esac
+  cat "$D/sockets/$sock"; exit 0
+fi
 case "${1:-}" in
   send-keys)
     shift
@@ -240,10 +254,10 @@ run_control() {  # <case-dir> <args...>
   # store (bin/fm-claude-trust.sh), and a relaunch reaches it through fm-control.sh, so this runs against a throwaway HOME;
   # without it this suite would write the developer's real ~/.claude.json.
   mkdir -p "$dir/user-home"
-  env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
+  env -u TMUX -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
     -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
     PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
-    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' TMUX_TMPDIR="$dir/tmuxtmp" \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
     FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_REAL_GIT="${FM_REAL_GIT:-}" FM_FAKE_GIT_FAILURE="${FM_FAKE_GIT_FAILURE:-}" \
@@ -262,10 +276,10 @@ run_spawn() {  # <case-dir> <args...>
   # store (bin/fm-claude-trust.sh), so it runs against a throwaway HOME;
   # without it this suite would write the developer's real ~/.claude.json.
   mkdir -p "$dir/user-home"
-  env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
+  env -u TMUX -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
     -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
     PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
-    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' TMUX_TMPDIR="$dir/tmuxtmp" \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
     "$SPAWN" "$@" 2>&1
 }
@@ -2425,12 +2439,23 @@ strand_endpoint() {  # <case-dir> <id>
   : > "$1/fake/windows"
 }
 
-# Every tmux `missing` refuses on BOTH verbs, whatever produced it. tmux is the
-# one verified backend whose absence cannot be proven from a task record: the
-# record carries no socket identity for the endpoint, and any inventory
-# describes only the server this process happens to address. So a window that
-# is merely on a server this seat cannot reach is indistinguishable from one
-# that was destroyed, and neither verb will guess.
+# tmux absence is proven by sweeping every socket in the user's tmux directory
+# for the recorded session:window (fm_backend_tmux_socket_sweep): gone only when
+# every socket answered and none has it. Anything else refuses on BOTH verbs.
+
+# add_tmux_socket <case-dir> <name> <canned-answer>: a real unix socket file in
+# the case's tmux directory (the sweep only trusts sockets) whose canned answer
+# the stub serves from $D/sockets/<name>.
+add_tmux_socket() {  # <case-dir> <name> <answer>
+  local dir=$1 name=$2 answer=$3 sd
+  sd="$dir/tmuxtmp/tmux-$(id -u)"
+  mkdir -p "$sd" "$dir/fake/sockets"
+  # Bind relative to the directory: the full path may exceed sun_path's limit.
+  ( cd "$sd" && perl -MSocket -e 'socket(S, PF_UNIX, SOCK_STREAM, 0) or die; bind(S, sockaddr_un($ARGV[0])) or die' "$name" ) \
+    || fail "could not create the fake tmux socket $name"
+  printf '%s\n' "$answer" > "$dir/fake/sockets/$name"
+}
+
 assert_tmux_missing_refuses() {  # <case-dir> <id> <what-was-staged>
   local dir=$1 id=$2 what=$3 out rc brief_before
 
@@ -2456,36 +2481,45 @@ assert_tmux_missing_refuses() {  # <case-dir> <id> <what-was-staged>
   [ ! -s "$dir/fake/literal" ] || fail "a refused transaction must launch nothing ($what)"
 }
 
-test_tmux_refuses_a_window_missing_from_its_session() {
-  local dir
+test_tmux_relaunch_proceeds_when_the_window_is_absent_on_every_socket() {
+  local dir out rc
   dir=$(new_case tmux-gone rl60)
   add_ship_task "$dir" rl60 claude
   strand_endpoint "$dir" rl60
-  assert_tmux_missing_refuses "$dir" rl60 "window absent from a readable session inventory"
-  pass "tmux: a window absent from its session refuses both verbs rather than being assumed gone"
+  # Two live servers that lack the window and one socket with no server behind
+  # it: all three answered, so absence is proven.
+  add_tmux_socket "$dir" default $'other:fm-else\nfmses:fm-unrelated'
+  add_tmux_socket "$dir" side 'fmses:fm-someone'
+  add_tmux_socket "$dir" stale DEAD
+
+  out=$(run_control "$dir" rl60 relaunch --note "revive"); rc=$?
+  expect_code 0 "$rc" "a window absent from every socket must relaunch"$'\n'"$out"
+  assert_contains "$(cat "$dir/fake/created-windows")" "fm-rl60" \
+    "the relaunch must re-create the endpoint"
+  [ -d "$dir/wt" ] || fail "the worktree must be untouched"
+  pass "tmux: a window absent on every socket of the user tmux directory is proven gone and relaunches"
 }
 
-test_tmux_refuses_a_session_that_cannot_be_found() {
+test_tmux_refuses_a_window_still_present_on_one_socket() {
   local dir
-  dir=$(new_case tmux-nosession rl61)
+  dir=$(new_case tmux-elsewhere rl61)
   add_ship_task "$dir" rl61 claude
-  # Real tmux's answer to a renamed session, and to a different
-  # TMUX_TMPDIR/socket: definitive about the SESSION, silent about whether the
-  # window and its agent survived elsewhere.
-  : > "$dir/fake/session-missing"
-  assert_tmux_missing_refuses "$dir" rl61 "recorded session not found"
-  pass "tmux: an unfindable session refuses both verbs, so a live agent is never duplicated"
+  strand_endpoint "$dir" rl61
+  add_tmux_socket "$dir" default 'fmses:fm-else'
+  add_tmux_socket "$dir" other 'fmses:fm-rl61'
+  assert_tmux_missing_refuses "$dir" rl61 "window alive on another socket"
+  pass "tmux: a window present on any one socket refuses both verbs"
 }
 
-test_tmux_refuses_when_the_server_is_gone() {
+test_tmux_refuses_when_a_socket_cannot_be_queried() {
   local dir
-  dir=$(new_case tmux-noserver rl62)
+  dir=$(new_case tmux-unreadable rl62)
   add_ship_task "$dir" rl62 claude
-  # No server on the socket this process addresses. Another server may still be
-  # running the task's window, and the record cannot say which socket is its.
-  : > "$dir/fake/server-dead"
-  assert_tmux_missing_refuses "$dir" rl62 "no tmux server on this socket"
-  pass "tmux: a dead server on this socket refuses both verbs rather than proving absence"
+  strand_endpoint "$dir" rl62
+  add_tmux_socket "$dir" default 'fmses:fm-else'
+  add_tmux_socket "$dir" broken BROKEN
+  assert_tmux_missing_refuses "$dir" rl62 "one socket unreadable"
+  pass "tmux: a socket that cannot be queried refuses both verbs rather than proving absence"
 }
 
 test_reclaim_refuses_an_unreadable_endpoint() {
@@ -3136,9 +3170,9 @@ test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_moves_a_pane_outside_the_worktree_back
 test_relaunch_from_a_shell_left_in_home_starts_in_the_worktree
 test_relaunch_refuses_a_primary_checkout_worktree_before_stopping
-test_tmux_refuses_a_window_missing_from_its_session
-test_tmux_refuses_a_session_that_cannot_be_found
-test_tmux_refuses_when_the_server_is_gone
+test_tmux_relaunch_proceeds_when_the_window_is_absent_on_every_socket
+test_tmux_refuses_a_window_still_present_on_one_socket
+test_tmux_refuses_when_a_socket_cannot_be_queried
 test_reclaim_refuses_an_unreadable_endpoint
 test_herdr_relaunch_resumes_only_the_registered_pi_session
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server
