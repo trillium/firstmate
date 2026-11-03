@@ -3942,6 +3942,24 @@ SH
 # that accepted window spans two separate lifecycle owners.
 # Queued forge merges are also uncovered because they land asynchronously after
 # the local merge command and its task control lock have returned.
+test_answer_warns_about_sibling_holds_on_the_same_pr() {
+  local home pr err
+  home=$(make_home sibling-warn)
+  pr=https://github.com/sample/sample/pull/39
+  tasks_in "$home" add sib-a "Sibling A" --kind ship --repo sample >/dev/null || fail "add a"
+  tasks_in "$home" add sib-b "Sibling B" --kind ship --repo sample >/dev/null || fail "add b"
+  run_captain "$home" hold sib-a --reason "approve merge of $pr" >/dev/null 2>&1 || fail "hold a"
+  run_captain "$home" hold sib-b --reason "also approve $pr" >/dev/null 2> "$home/hold.err" || fail "hold b"
+  assert_contains "$(cat "$home/hold.err")" "sib-a" "hold did not warn about the existing hold"
+  printf 'Merge it.\n' > "$home/ans.txt"
+  run_captain "$home" answer sib-b --release --decision-file "$home/ans.txt" >/dev/null 2> "$home/ans.err" \
+    || fail "answer failed"
+  err=$(cat "$home/ans.err")
+  assert_contains "$err" "sib-a" "answer did not name the sibling hold"
+  assert_contains "$err" "answer sib-a --release" "answer did not print the release command"
+  pass "answering a hold warns about sibling holds naming the same PR"
+}
+
 test_released_merge_passes_the_entrypoint_and_lands() {
   local home id pr repo wt show json
   home=$(make_home released-merge-entrypoint)
@@ -4834,6 +4852,7 @@ test_local_merge_entrypoint_separates_an_unreadable_record_from_an_absent_one
 test_merge_entrypoints_validate_identity_and_state_before_locking
 test_merge_entrypoints_refuse_a_reused_task_incarnation
 test_merge_entrypoints_serialize_forced_teardown_before_task_reads
+test_answer_warns_about_sibling_holds_on_the_same_pr
 test_released_merge_passes_the_entrypoint_and_lands
 test_teardown_refuses_a_ship_when_the_captain_hold_cannot_be_read
 test_verify_resolves_a_hold_migrated_to_beads_notes

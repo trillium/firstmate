@@ -1064,6 +1064,43 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how> <origi
   printf '%s %s %s\n' "$id" "$how" "$origin_state"
 }
 
+# Other open captain holds that name the same PR URL(s) as <id>. Warning only:
+# one answer must not be silently undercut by a sibling hold, but siblings are
+# never released automatically. Best effort; never fails the caller.
+pr_urls_in() {  # <text>
+  printf '%s\n' "$1" | fm_hold_reason_decode_stream | grep -Eo 'https?://[^ )"<>]+/(pull|merge_requests)/[0-9]+' | LC_ALL=C sort -u
+}
+
+warn_sibling_holds() {  # <task-id> <show-output> <verb>
+  local id=$1 mine urls sib sshow stext saved_show=$TASK_SHOW_OUTPUT sibs=''
+  mine=$(pr_urls_in "$2")
+  [ -n "$mine" ] || return 0
+  urls=$(open_task_ids 2>/dev/null) || return 0
+  while IFS= read -r sib; do
+    [ -n "$sib" ] && [ "$sib" != "$id" ] || continue
+    task_show "$sib" 2>/dev/null || continue
+    sshow=$TASK_SHOW_OUTPUT
+    [ "$(show_field "$sshow" state)" != done ] || continue
+    [ "$(show_field_value "$sshow" hold_kind)" = captain ] || continue
+    stext=$(pr_urls_in "$sshow")
+    [ -n "$(printf '%s\n%s\n' "$mine" "$stext" | LC_ALL=C sort | uniq -d)" ] || continue
+    sibs="$sibs $sib"
+  done <<EOF
+$urls
+EOF
+  TASK_SHOW_OUTPUT=$saved_show
+  [ -n "$sibs" ] || return 0
+  if [ "$3" = hold ]; then
+    printf 'fm-captain-hold: warning: %s names a PR already held by other open captain hold(s):%s\n' "$id" "$sibs" >&2
+  else
+    printf 'fm-captain-hold: warning: PR(s) in %s are also named by other open captain hold(s):%s; fm-pr-merge will still refuse until they are released\n' "$id" "$sibs" >&2
+    for sib in $sibs; do
+      printf '  release with: bin/fm-captain-hold.sh answer %s --release --decision-file <path>\n' "$sib" >&2
+    done
+  fi
+  return 0
+}
+
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 stored_reason previous_origin='' previous_id hold_status=0
@@ -1181,6 +1218,7 @@ command_hold() {
   occurrence=$(( $(resolution_record_count "$(show_field "$show" body)") + 1 ))
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id lost its hold-set stamp while being held"
+  warn_sibling_holds "$id" "$show"$'\n'"$reason" hold
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
   printf '%s\n' "$id"
 }
@@ -1363,6 +1401,7 @@ command_answer() {
       printf '%s: %s\n' "$outcome" "$id"
       return 0
     fi
+    warn_sibling_holds "$id" "$show" answer
     write_resolution_record "$id" "$outcome" "$body"
     if ! close_answered "$id" "$release"; then
       fail "could not close answered captain-held task $id"
