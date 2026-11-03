@@ -627,3 +627,51 @@ fm_session_lock_inspect() {  # <state>
   # shellcheck disable=SC2034 # Output global, read by lock status and inbox ready.
   FM_LOCK_INSPECT_LIVE_HARNESS=false
 }
+
+# --- handover finishing posture (bin/fm-lock.sh handover release --finish) ----
+# After a handover the outgoing session may stay alive in a bounded "finishing"
+# posture, recorded in state/.handover-finishing: key=value header lines
+# (fm_handover_finishing=v1, outgoing_pid, outgoing_session, to_pid, started_at,
+# record_written_at), a `--` line, then one line per item it may still complete.
+# The posture is ACTIVE only while both sessions are live harnesses and the
+# lock is held by to_pid; once the new owner is gone the marker is stale and
+# every caller treats it as absent. Header field <key> of the marker in state
+# dir $1, empty when missing.
+fm_handover_finishing_field() {  # <state> <key>
+  awk -v key="$2" '$0 == "--" { exit } index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' \
+    "$1/.handover-finishing" 2>/dev/null
+}
+
+# True when state dir $1 holds a finishing marker whose outgoing session and
+# new lock owner are both live. Sets nothing; read the fields for detail.
+fm_handover_finishing_active() {  # <state>
+  local state=$1 outgoing to_pid lock_pid
+  [ -f "$state/.handover-finishing" ] || return 1
+  outgoing=$(fm_handover_finishing_field "$state" outgoing_pid)
+  to_pid=$(fm_handover_finishing_field "$state" to_pid)
+  fm_session_pid_valid "$outgoing" && fm_session_pid_valid "$to_pid" || return 1
+  lock_pid=$(head -n 1 "$state/.lock" 2>/dev/null || true)
+  [ "$lock_pid" = "$to_pid" ] || return 1
+  fm_harness_pid_alive "$to_pid" && fm_harness_pid_alive "$outgoing"
+}
+
+# True when this process is inside the outgoing session of an active finishing
+# posture for state dir $1.
+fm_handover_finishing_self() {  # <state>
+  local outgoing pids
+  fm_handover_finishing_active "$1" || return 1
+  outgoing=$(fm_handover_finishing_field "$1" outgoing_pid)
+  pids=$(fm_harness_ancestry_pids 2>/dev/null) || return 1
+  fm_harness_pid_listed "$outgoing" "$pids"
+}
+
+# Refuse an action the finishing session may not take: new work, wake-queue
+# drain, dispatch, or re-acquiring the lock. Returns 1 (with the diagnostic on
+# stderr) only inside the finishing session; every other caller passes.
+fm_handover_finishing_refuse() {  # <state> <action>
+  # fm-lock.sh handover itself acknowledges the request note after the lock moves.
+  [ "${FM_HANDOVER_INTERNAL:-}" != 1 ] || return 0
+  fm_handover_finishing_self "$1" || return 0
+  echo "error: this session handed this home over and is only finishing the items named in its handover record: it may not $2. Complete those items, then run bin/fm-lock.sh handover finished <summary-file> and exit; the new owner holds the lock." >&2
+  return 1
+}

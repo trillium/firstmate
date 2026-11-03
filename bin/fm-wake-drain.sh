@@ -236,6 +236,8 @@ case "${1:-}" in
   *) echo "usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]" >&2; exit 2 ;;
 esac
 
+fm_finishing_guard "drain or acknowledge the wake queue" || exit 1
+
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
 
 # Defense in depth for the supervision chain: this script runs at the top of
