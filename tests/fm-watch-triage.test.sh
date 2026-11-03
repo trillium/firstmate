@@ -814,7 +814,11 @@ churn_config() {  # <dir> [off]
 # unchanging fixture pane could reach the stale backbone.
 wait_for_absorbed() {  # <state> <pid> <needle>
   local state=$1 pid=$2 needle=$3 i=0
-  while [ "$i" -lt 100 ]; do
+  # Startup (interpreter, libraries, lock) slows with host contention; time the
+  # wait for the absorb only from when the watcher owns its lock, and give it a
+  # generous 60s ceiling. A watcher that never absorbs still fails at the ceiling.
+  wait_for_watcher_lock "$pid" "$state" || return 1
+  while [ "$i" -lt 600 ]; do
     grep -Fq "$needle" "$state/.watch-triage.log" 2>/dev/null && return 0
     kill -0 "$pid" 2>/dev/null || return 1
     sleep 0.1
