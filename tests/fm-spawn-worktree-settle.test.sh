@@ -67,6 +67,7 @@ case "${1:-}" in
     exit 0 ;;
   kill-window) : > "$window_file"; exit 0 ;;
   has-session|new-session) exit 0 ;;
+  capture-pane) printf '%s\n' "${FM_FAKE_CAPTURE_TEXT:-}"; exit 0 ;;
   send-keys) exit 0 ;;
 esac
 exit 0
@@ -275,7 +276,26 @@ test_unborn_head_project_is_refused_at_once() {
   pass "a project with an unborn HEAD is refused at once with its cause named"
 }
 
+# The pool-full refusal treehouse prints into the pane when other clones of the
+# same origin hold the free slots must be named in the spawn's own error.
+test_shared_pool_refusal_names_the_cause() {
+  local rec id out status
+  id=settle-shared-pool-z6
+  rec=$(make_primary_case settle-shared-pool "$id" 100000)
+  read_settle_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+
+  out=$(FM_FAKE_CAPTURE_TEXT="all 5 worktrees are in use, dirty, or not provably this clone's (2 belong to another clone; max_trees = 5)" run_settle_spawn "$id")
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a pane that never entered a worktree"
+  assert_contains "$out" "belong to another clone of the same origin" \
+    "the refusal did not name the shared-pool cause"
+  assert_contains "$out" "max_trees" "the refusal did not name the remedy"
+  pass "a shared-pool treehouse refusal is named in the spawn error"
+}
+
 test_single_stale_first_read_is_not_accepted
+test_shared_pool_refusal_names_the_cause
 test_spawn_polling_ignores_a_path_sleep_shim
 test_already_settled_pane_costs_one_confirm_read
 test_transient_primary_checkout_is_not_accepted
