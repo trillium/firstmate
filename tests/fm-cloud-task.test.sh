@@ -27,6 +27,8 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin HEAD:refs/heads/main
 git -C "$REPO" push -q origin HEAD:refs/heads/claude/old-run
 
+export FM_CLAUDE_JSON="$TMP_ROOT/claude.json"
+printf '{"projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$(cd "$REPO" && pwd -P)" > "$FM_CLAUDE_JSON"
 cat > "$FAKEBIN/claude" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$FM_STUB_ARGS"
