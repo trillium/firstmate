@@ -266,15 +266,17 @@ arm_remote_recovery() {  # <fakebin> <home> <ssh-log> <dir>
 }
 
 run_remote_recovery() {  # <fakebin> <home> <ssh-log> <corr> [extra env...]
-  local fb=$1 home=$2 ssh_log=$3 corr=$4
+  local fb=$1 home=$2 ssh_log=$3 corr=$4 script
   shift 4
+  # shellcheck disable=SC2016 # literal on purpose: expanded by the inner bash
+  script='. "$1/bin/fm-pending-reply-lib.sh"
+    fm_pending_reply_send_recovery "$2/state" "$3" 2>&1
+    fm_pending_reply_maybe_escalate "$2/state" "$3" 2>/dev/null'
   env FM_PENDING_REPLY_NOW=100000 PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
     FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_SEND_SETTLE=0 \
     FM_SSH_BIN="$fb/fake-ssh" FM_SSH_LOG="$ssh_log" FM_SSH_COUNT="$ssh_log.count" \
     FM_REMOTE_CODE_ROOT="$ROOT" FM_PENDING_REPLY_GRACE_SECS=0 "$@" \
-    bash -c '. "$1/bin/fm-pending-reply-lib.sh"
-      fm_pending_reply_send_recovery "$2/state" "$3" 2>&1
-      fm_pending_reply_maybe_escalate "$2/state" "$3" 2>/dev/null' _ "$ROOT" "$home" "$corr"
+    bash -c "$script" _ "$ROOT" "$home" "$corr"
 }
 
 test_remote_recovery_duplicate_is_not_a_failure() {
