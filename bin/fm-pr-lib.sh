@@ -751,13 +751,13 @@ fm_pr_poll_publish_prepared() {
 # returns 1, so the watcher's rejection record can name it. Cleared on entry to
 # fm_pr_poll_artifacts_valid; read only after that returns nonzero.
 fm_pr_poll_fail() {  # <predicate-slug>
-  FM_PR_POLL_FAILED_PREDICATE=$1
+  export FM_PR_POLL_FAILED_PREDICATE=$1
   return 1
 }
 
 fm_pr_poll_artifacts_valid() {
   local state=$1 id=$2 template=$3 data_identity check_identity
-  FM_PR_POLL_FAILED_PREDICATE=
+  export FM_PR_POLL_FAILED_PREDICATE=
   fm_pr_poll_artifacts_content_valid "$state" "$id" "$template" || return 1
   data_identity=$(fm_pr_file_identity "$state/$id.pr-poll") || { fm_pr_poll_fail data-identity-unreadable; return 1; }
   check_identity=$(fm_pr_file_identity "$state/$id.check.sh") || { fm_pr_poll_fail check-identity-unreadable; return 1; }

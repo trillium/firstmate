@@ -3830,12 +3830,12 @@ pr_poll_rejection_deferred() {  # <id>
   fi
   if [ -e "$STATE/$id.pr-poll" ] || [ -e "$STATE/$id.pr-poll-registration" ]; then
     if fm_pr_poll_artifacts_valid "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
-      PR_POLL_REJECT_WHY=snapshot-capture-failed
+      PR_POLL_REJECT_WHY="snapshot-capture-failed"
     else
       PR_POLL_REJECT_WHY=${FM_PR_POLL_FAILED_PREDICATE:-artifacts-invalid}
     fi
   else
-    PR_POLL_REJECT_WHY=not-a-valid-state-check
+    PR_POLL_REJECT_WHY="not-a-valid-state-check"
   fi
   return 1
 }
