@@ -1,0 +1,56 @@
+=== S0 baseline (base commit 69023626): 0600 check ===
+before: mode 600
+$ <base-69023626>/bin/fm-check-register.sh poll
+error: custom check is unavailable
+[exit 1]
+after: mode 600; trust: ls: cannot access '/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.oJISSo/state/poll.check-trust': No such file or directory
+$ <worktree>/bin/fm-watch-checkpoint.sh --seconds 5
+check: rejected unauthenticated state checks: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.oJISSo/state/poll.check.sh
+[exit 0]
+
+=== S1 fixed: 0600 check normalized, registered, and fired by the watcher ===
+before: mode 600
+$ <worktree>/bin/fm-check-register.sh poll
+registered: state/poll.check.sh
+[exit 0]
+after: mode 700; trust: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.zXRFUu/state/poll.check-trust
+$ <worktree>/bin/fm-watch-checkpoint.sh --seconds 5
+check: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.zXRFUu/state/poll.check.sh: custom check poll fired
+[exit 0]
+
+=== S2 fixed: 0755 and 0644 checks normalized to 0700; 0700 untouched ===
+$ <worktree>/bin/fm-check-register.sh m0755
+registered: state/m0755.check.sh
+[exit 0]
+m0755 -> mode 700
+$ <worktree>/bin/fm-check-register.sh m0644
+registered: state/m0644.check.sh
+[exit 0]
+m0644 -> mode 700
+$ <worktree>/bin/fm-check-register.sh m0700
+registered: state/m0700.check.sh
+[exit 0]
+m0700 -> mode 700
+
+=== S3 adversarial: hard-linked 0600 check refused, named, not chmodded, no trust ===
+$ <worktree>/bin/fm-check-register.sh poll
+error: custom check state/poll.check.sh must be a single-link file on the state device; not registered, the watcher will refuse it
+[exit 1]
+after: mode 600 (other link 600); trust: ls: cannot access '/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.anLRwV/state/poll.check-trust': No such file or directory
+$ <worktree>/bin/fm-watch-checkpoint.sh --seconds 4
+check: rejected unauthenticated state checks: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.anLRwV/state/poll.check.sh
+[exit 0]
+
+=== S4 adversarial: symlinked check refused, target not chmodded ===
+$ <worktree>/bin/fm-check-register.sh poll
+error: custom check is unavailable
+[exit 1]
+target mode 600; trust: ls: cannot access '/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.dM0kk3/state/poll.check-trust': No such file or directory
+
+=== S5 adversarial: check edited after registration is not fired ===
+$ <worktree>/bin/fm-check-register.sh poll
+registered: state/poll.check.sh
+[exit 0]
+$ <worktree>/bin/fm-watch-checkpoint.sh --seconds 4
+check: rejected unauthenticated state checks: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.oIC0fE/state/poll.check.sh
+[exit 0]
