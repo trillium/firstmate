@@ -1,0 +1,97 @@
+### S1 claude profile with setup-token account passes through
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","model":"sonnet","account":"token:/keys/second.token"}}]}
+dispatch-resolve:
+  status: clear
+  model: lab-1   latency_ms: 19   tokens: 1/1
+  rule: rule_1 (A simple bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  note: rule matched
+  candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+  profile: --harness 'claude' --model 'sonnet' --account 'token:/keys/second.token'
+exit=0
+
+### S1b ordinary account
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","account":"ordinary"}}]}
+dispatch-resolve:
+  status: clear
+  model: lab-1   latency_ms: 15   tokens: 1/1
+  rule: rule_1 (A simple bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  note: rule matched
+  candidate: claude:-  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+  profile: --harness 'claude' --account 'ordinary'
+exit=0
+
+### S2 profile without account: no --account (unchanged)
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","model":"sonnet"}}]}
+dispatch-resolve:
+  status: clear
+  model: lab-1   latency_ms: 13   tokens: 1/1
+  rule: rule_1 (A simple bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  note: rule matched
+  candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+  profile: --harness 'claude' --model 'sonnet'
+exit=0
+
+### S3 two profiles differing only by account -> genuine tie escalate
+rules: {"rules":[{"when":"A simple bug fix.","use":[{"harness":"claude","model":"sonnet","account":"ordinary"},{"harness":"claude","model":"sonnet","account":"/accounts/second"}]}]}
+dispatch-resolve:
+  status: escalate
+  model: lab-1   latency_ms: 15   tokens: 1/1
+  rule: rule_1 (A simple bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  reason: genuine spendPriority tie
+  note: rule matched
+  candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+  candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+exit=0
+
+### S3b same profile duplicated without accounts is still a duplicate config error
+rules: {"rules":[{"when":"A simple bug fix.","use":[{"harness":"claude","model":"sonnet"},{"harness":"claude","model":"sonnet"}]}]}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each rule use must not contain duplicate harness, model, and effort profiles
+exit=2
+
+### S4a relative account refused
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","account":"relative/path"}}]}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+exit=2
+
+### S4b newline-terminated ordinary refused
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","account":"ordinary
+"}}]}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+exit=2
+
+### S4c newline-terminated token path refused
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","account":"token:/keys/x.token
+"}}]}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+exit=2
+
+### S4d embedded newline refused
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","account":"/a
+ordinary"}}]}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+exit=2
+
+### S4e non-claude account refused
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"cursor","model":"cursor-grok-4.6-medium","account":"ordinary"}}]}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+exit=2
+
+### S4f non-string account refused (default)
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude"}}],"default":{"harness":"claude","account":7}}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each default profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+exit=2
+
+### S4g empty account refused
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","account":""}}]}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+exit=2
+
+### S4h token: without absolute path refused
+rules: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","account":"token:rel"}}]}
+error: malformed rules file: $LAB/config/crew-dispatch.json - each use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+exit=2
+

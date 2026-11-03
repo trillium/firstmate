@@ -1,0 +1,16 @@
+Parent-of-feature (dd805512~1) vs HEAD resolver output, latency masked
+IDENTICAL: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","model":"sonnet"}}]}
+IDENTICAL: {"rules":[{"when":"A simple bug fix.","use":[{"harness":"claude","model":"sonnet"},{"harness":"cursor","model":"cursor-grok-4.6-medium"}]}]}
+IDENTICAL: {"rules":[{"when":"A simple bug fix.","use":[{"harness":"claude","model":"sonnet"},{"harness":"claude","model":"sonnet"}]}]}
+IDENTICAL: {"rules":[{"when":"A simple bug fix.","use":{"harness":"claude","model":5}}]}
+
+--- sample (HEAD) output for first case:
+dispatch-resolve:
+  status: clear
+  model: lab-1   latency_ms: 16   tokens: 1/1
+  rule: rule_1 (A simple bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  note: rule matched
+  candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+  profile: --harness 'claude' --model 'sonnet'
+exit=0

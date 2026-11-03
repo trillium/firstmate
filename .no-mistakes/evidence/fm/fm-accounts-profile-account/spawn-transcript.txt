@@ -1,0 +1,74 @@
+=== declared list (config/claude-accounts) ===
+ordinary
+$LAB/acct-signed-out
+
+=== spawn scenario sp1 ===
+dispatch-resolve:
+  status: clear
+  model: lab-1   latency_ms: 15   tokens: 1/1
+  rule: rule_1 (A simple bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  note: rule matched
+  candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+  profile: --harness 'claude' --model 'sonnet' --account '/accounts/undeclared'
+exit=0
++ fm-spawn.sh sp-undeclared $LAB/projects/pager --scout --harness 'claude' --model 'sonnet' --account '/accounts/undeclared'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+error: account '/accounts/undeclared' is not declared in config/claude-accounts; name a declared entry with --account
+fm-spawn exit=1
+
+=== spawn scenario sp2 ===
+dispatch-resolve:
+  status: clear
+  model: lab-1   latency_ms: 13   tokens: 1/1
+  rule: rule_1 (A simple bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  note: rule matched
+  candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+  profile: --harness 'claude' --model 'sonnet' --account '$LAB/acct-signed-out'
+exit=0
++ fm-spawn.sh sp-signedout $LAB/projects/pager --scout --harness 'claude' --model 'sonnet' --account '$LAB/acct-signed-out'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+error: config/claude-accounts pins Claude workers to $LAB/acct-signed-out, which is not signed in (claude auth status); sign in with CLAUDE_CONFIG_DIR=$LAB/acct-signed-out claude, then /login, or change the pin
+fm-spawn exit=1
+
+=== spawn scenario sp3 ===
+dispatch-resolve:
+  status: clear
+  model: lab-1   latency_ms: 13   tokens: 1/1
+  rule: rule_1 (A simple bug fix.)   confidence: 0.95
+  probabilities: rule_1=0.95 default=0.05
+  note: rule matched
+  candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=0.42  runway=through_reset  -> eligible
+  profile: --harness 'claude' --model 'sonnet' --account 'ordinary'
+exit=0
++ fm-spawn.sh sp-ordinary $LAB/projects/pager --scout --harness 'claude' --model 'sonnet' --account 'ordinary'
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+spawned sp-ordinary harness=claude kind=scout window=primary:fm-sp-ordinary worktree=~/.treehouse/pager-818a6f/1/pager account=ordinary
+fm-spawn exit=0
+
+=== state/sp-ordinary.meta (account/harness/model/kind) ===
+harness=claude
+kind=scout
+model=sonnet
+account=ordinary
+
+=== worker pane (lab tmux fm-lab, window fm-sp-ordinary) ===
+ ▐▛███▛█   Claude Code v2.1.309
+▝▜██████▀  Sonnet 5.5 · Claude Ultra
+ ▝▝   ▝▝   ~/.treehouse/pager-818a6f/1/pager
+⚠ Your login expires in 2 days · run /login to renew
+❯ : Firstmate operational input waiting: read '$LAB/state/operational-inbox/1793699151-d66694a98f6ed5a6.msg' and handle its contents
+  as Firstmate operational input.
+  Searched for 1 pattern, read 1 file, ran 2 shell commands
+⏺ README has 1 line. wc -l README returns 1, and the file is 3 bytes: "hi" plus a newline.
+  I wrote that one sentence to report.md and attested an empty captain-call inventory with fm-captain-hold.sh complete --none. The command accepted it. I then appended the done line to the status
+  file.
+✻ Cooked for 14s · done 1:46 AM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+
+=== worker status file ===
+done [at=1793699165]: README has 1 line

@@ -1,0 +1,37 @@
+### B1 claude accounts of all three kinds accepted
+config: {"rules":[{"when":"big feature","use":[{"harness":"claude","account":"ordinary"},{"harness":"claude","account":"/accounts/second"},{"harness":"claude","account":"token:/keys/third.token"}]}]}
+CREW_DISPATCH lines:
+(none - config accepted)
+
+### B2 relative account flagged
+config: {"rules":[{"when":"big feature","use":[{"harness":"claude","account":"relative"}]}]}
+CREW_DISPATCH lines:
+CREW_DISPATCH: invalid config/crew-dispatch.json - use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+
+### B3 newline-terminated ordinary flagged
+config: {"rules":[{"when":"big feature","use":[{"harness":"claude","account":"ordinary
+"}]}]}
+CREW_DISPATCH lines:
+CREW_DISPATCH: invalid config/crew-dispatch.json - use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+
+### B4 newline-terminated absolute path flagged
+config: {"rules":[{"when":"big feature","use":[{"harness":"claude","account":"/accounts/second
+"}]}]}
+CREW_DISPATCH lines:
+CREW_DISPATCH: invalid config/crew-dispatch.json - use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+
+### B5 non-claude account flagged
+config: {"rules":[{"when":"big feature","use":[{"harness":"codex","account":"ordinary"}]}]}
+CREW_DISPATCH lines:
+CREW_DISPATCH: invalid config/crew-dispatch.json - use profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+
+### B6 default non-string account flagged
+config: {"default":{"harness":"claude","account":7}}
+CREW_DISPATCH lines:
+CREW_DISPATCH: invalid config/crew-dispatch.json - default profile account must be ordinary, an absolute path, or token:<absolute path>, on a claude profile only
+
+### B7 no-account profile with malformed model keeps main message
+config: {"rules":[{"when":"x","use":{"harness":"codex","model":5}}]}
+CREW_DISPATCH lines:
+CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings when present
+
