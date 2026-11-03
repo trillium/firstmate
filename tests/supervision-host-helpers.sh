@@ -381,6 +381,7 @@ host_exited() { [ -s "$1/host.rc" ]; }
 # The host's recorded pid, once it names a live process. The record is the
 # host's own, so a read that lands before it is written, or between two of its
 # rewrites, must be retried rather than turned into a TERM sent to nobody.
+# shellcheck disable=SC2329 # Invoked from the cases that source this file.
 live_host_pid() {  # <home>
   local pid
   pid=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$1/state/.supervision-host" 2>/dev/null)
@@ -390,6 +391,7 @@ live_host_pid() {  # <home>
 # TERM the running host and wait for it to hand back. A failure names the pid
 # and whether it was still alive, so a signal that never went out reads
 # differently from a host that ignored one.
+# shellcheck disable=SC2329 # Invoked from the cases that source this file.
 term_host() {  # <home> <label>
   local home=$1 label=$2 pid='' i=0
   while [ "$i" -lt 100 ]; do
