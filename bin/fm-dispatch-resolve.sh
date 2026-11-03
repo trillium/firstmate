@@ -539,7 +539,8 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
     (bare($m)) as $bare |
     [rows($p; $lane)[] | select(
       .scope == "all_models" or .scope == "all_products" or
-      ($m != "" and (.scope == ("model:" + $bare) or .scope == ("product:" + $bare)))
+      ($m != "" and (.scope == ("model:" + $bare) or .scope == ("product:" + $bare))) or
+      ($p == "agy" and $m != "" and quota_agy_scope($bare) != "" and .scope == quota_agy_scope($bare))
     )];
   def floor_state($f; $p; $lane):
     if $f == null then "none"
