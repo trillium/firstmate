@@ -64,7 +64,7 @@ git -C "$HOME_DIR" init -q
 
 ctl() {
   PATH="$FAKEBIN:$BASE_PATH" TMUX='' FM_GATE_REFUSE_BYPASS=1 FM_SPAWN_NO_GUARD=1 \
-    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$HOME_DIR" \
+    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$HOME_DIR" FM_REMOTE_HERDR_SESSION=fm-remote \
     "$ROOT/bin/fm-remote-secondmate-control.sh" "$@"
 }
 

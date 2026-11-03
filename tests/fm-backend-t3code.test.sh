@@ -1441,6 +1441,8 @@ test_spawn_claude_refuses_worktree_settings_symlink_or_tracked() {
       printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$proj/.claude/settings.local.json"
       git -C "$proj" add .claude/settings.local.json
       git -C "$proj" -c user.name=t -c user.email=t@example.invalid commit -qm "track local settings"
+      # A pooled slot starts from origin's tip, so the tracked file must be there.
+      git -C "$proj" push -q origin HEAD
     else
       target="$CASE_DIR/outside-settings.json"
       printf '{"env":{"OUTSIDE":"1"}}\n' > "$target"

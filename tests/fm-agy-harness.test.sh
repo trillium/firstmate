@@ -893,6 +893,7 @@ test_agy_secondmate_launch_pre_trusts_home_and_records_meta() {
   printf '# Charter\n\nSecondmate charter for %s.\n' "$id" > "$sm_home/data/charter.md"
   printf 'projects/\nstate/\ndata/\nconfig/\n.no-mistakes/\n' > "$sm_home/.gitignore"
   git -C "$sm_home" init -q -b main
+  fm_register_secondmate "$HOME_DIR/data/secondmates.md" "$id" "$sm_home"
   rc=0
   out=$(HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \

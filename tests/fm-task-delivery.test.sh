@@ -575,7 +575,8 @@ test_local_merge_refuses_a_stale_recorded_branch() {
   git -C "$wt" add work || fail "could not stage worker commit"
   git -C "$wt" -c user.email=test@example.com -c user.name=test commit -qm work \
     || fail "could not commit worker work"
-  printf 'project=%s\nmode=local-only\nbranch=fm/%s\nworktree=%s\n' "$proj" "$id" "$wt" \
+  printf 'project=%s\nmode=local-only\nbranch=fm/%s\nworktree=%s\nlocal_done_head=%s\n' \
+    "$proj" "$id" "$wt" "$(git -C "$proj" rev-parse "fm/$id")" \
     > "$home/state/$id.meta"
   before=$(git -C "$proj" rev-parse HEAD)
   status=0

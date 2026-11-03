@@ -101,7 +101,7 @@ run_doctor() { # <home> <bin> <out> [args...]; DOCTOR_SESSION unset = env unset
 
 mkdir -p "$TMP_ROOT/project-home"
 
-make_world default
+make_world default with-herdr
 unset DOCTOR_SESSION
 run_doctor "$WORLD_HOME" "$WORLD_BIN" "$WORLD_OUT"
 assert_grep "check launchagent=skip: the shared 'default' server is owned by the host, not a Firstmate launch agent" "$WORLD_OUT" "the unset default did not skip agent management with the deployed wording"
@@ -109,7 +109,7 @@ assert_grep "check launchagent-legacy=ok: no legacy dev.firstmate.herdr.fm-remot
 assert_no_grep "dev.firstmate.herdr.default" "$WORLD_OUT" "the shared default session wrongly derived a Firstmate label"
 pass "unset FM_REMOTE_HERDR_SESSION leaves the shared default session host-owned"
 
-make_world custom
+make_world custom with-herdr
 DOCTOR_SESSION=custom run_doctor "$WORLD_HOME" "$WORLD_BIN" "$WORLD_OUT"
 assert_grep "check launchagent=fixable: no Firstmate herdr launch agent at $WORLD_HOME/Library/LaunchAgents/dev.firstmate.herdr.custom.plist" "$WORLD_OUT" "FM_REMOTE_HERDR_SESSION=custom did not derive label dev.firstmate.herdr.custom"
 pass "FM_REMOTE_HERDR_SESSION=custom manages its derived label"
@@ -139,5 +139,9 @@ make_world legacy-unprovable
 printf '%s\n' "unprovable legacy plist" > "$WORLD_HOME/Library/LaunchAgents/dev.firstmate.herdr.fm-remote.plist"
 unset DOCTOR_SESSION
 run_doctor "$WORLD_HOME" "$WORLD_BIN" "$WORLD_OUT"
-assert_grep "check launchagent-legacy=skip: legacy launch agent dev.firstmate.herdr.fm-remote left alone because its fm-remote session state cannot be proven without herdr" "$WORLD_OUT" "check mode guessed at an unprovable legacy session"
+# With no herdr CLI the doctor selects no backend and runs no legacy-agent check
+# at all, so the leftover agent is neither flagged fixable nor touched.
+assert_no_grep "launchagent-legacy=fixable" "$WORLD_OUT" "check mode guessed at an unprovable legacy session"
+run_doctor "$WORLD_HOME" "$WORLD_BIN" "$WORLD_OUT" --fix
+assert_present "$WORLD_HOME/Library/LaunchAgents/dev.firstmate.herdr.fm-remote.plist" "--fix retired a legacy agent whose session could not be proven idle"
 pass "the unprovable leftover fm-remote agent is left alone"
