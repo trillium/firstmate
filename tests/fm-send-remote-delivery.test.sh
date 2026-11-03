@@ -135,6 +135,7 @@ rc=0
 env FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
   "$FM_REMOTE_CODE_ROOT/bin/$cmd" "${rargs[@]:1}" < "$stdin_file" || rc=$?
 if [ "${FM_FAKE_SSH_AMBIGUOUS:-0}" = 1 ] \
+  || { [ -n "${FM_FAKE_SSH_AMBIGUOUS_UNTIL:-}" ] && [ "$count" -le "$FM_FAKE_SSH_AMBIGUOUS_UNTIL" ]; } \
   || { [ "${FM_FAKE_SSH_AFTER_AMBIGUOUS_RC:-0}" -ne 0 ] && [ "$count" -eq 1 ]; }; then
   exit 255
 fi
@@ -249,6 +250,74 @@ if expected not in record:
     raise SystemExit("remote inbox record omitted the large steer body")
 PY
   pass "fm-send remote: large text steers use stdin instead of the SSH exec argument"
+}
+
+# A delivered remote request whose reply is missing, driven to the real
+# recovery repost through the real fm-send. Echoes the pending record path.
+arm_remote_recovery() {  # <fakebin> <home> <ssh-log> <dir>
+  local fb=$1 home=$2 ssh_log=$3 dir=$4 rc=0 pend
+  send_env "$fb" "$home" "$ssh_log" "$SEND" rsm "please rename the metric" \
+    >"$dir/orig.out" 2>"$dir/orig.err" || rc=$?
+  expect_code 0 "$rc" "the original steer must be delivered: $(cat "$dir/orig.err")"
+  pend=$(pending_record "$home")
+  fm_pending_reply_set "$pend" request_turn_completed_epoch 100 || return 1
+  FM_PENDING_REPLY_GRACE_SECS=0 fm_pending_reply_note_remote_channel_caught_up "$home/state" rsm 200 || return 1
+  printf '%s\n' "$pend"
+}
+
+run_remote_recovery() {  # <fakebin> <home> <ssh-log> <corr> [extra env...]
+  local fb=$1 home=$2 ssh_log=$3 corr=$4
+  shift 4
+  (
+    export FM_PENDING_REPLY_NOW=100000 PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
+      FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_SEND_SETTLE=0 \
+      FM_SSH_BIN="$fb/fake-ssh" FM_SSH_LOG="$ssh_log" FM_SSH_COUNT="$ssh_log.count" \
+      FM_REMOTE_CODE_ROOT="$ROOT" FM_PENDING_REPLY_GRACE_SECS=0
+    [ "$#" -eq 0 ] || export "$@"
+    fm_pending_reply_send_recovery "$home/state" "$corr" 2>&1
+    fm_pending_reply_maybe_escalate "$home/state" "$corr" 2>/dev/null
+  )
+}
+
+test_remote_recovery_duplicate_is_not_a_failure() {
+  local dir fb ssh_log home rhome pend corr
+  dir="$TMP_ROOT/remote-recovery-dup"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); ssh_log="$dir/ssh.log"; : > "$ssh_log"
+  rhome=$(setup_remote_secondmate_home remote-recovery-dup)
+  home=$(setup_remote_parent_home remote-recovery-dup "$rhome")
+  pend=$(arm_remote_recovery "$fb" "$home" "$ssh_log" "$dir") || fail "could not arm recovery"
+  corr=$(fm_pending_reply_get "$pend" corr_id)
+  : > "$ssh_log.count"; printf '0\n' > "$ssh_log.count"
+  # The repost reaches the remote inbox, but both transport attempts report
+  # ssh 255 afterwards (completion unknown). The retry lands on the same record.
+  run_remote_recovery "$fb" "$home" "$ssh_log" "$corr" FM_FAKE_SSH_AMBIGUOUS_UNTIL=2 >"$dir/rec.out" || true
+  [ "$(fm_pending_reply_get "$pend" phase)" = recovery_sent ] \
+    || fail "a repost the remote already holds must count as delivered: $(cat "$pend") $(cat "$dir/rec.out")"
+  [ "$(fm_pending_reply_get "$pend" recovery_delivery_outcome)" = confirmed ] \
+    || fail "the recovery outcome must be confirmed"
+  [ "$(find "$rhome/state/parent-route/rsm.inbox" -name '*.msg' | wc -l | tr -d ' ')" = 2 ] \
+    || fail "the retry must dedup onto one repost record (original + repost)"
+  if grep -Fq 'recovery-delivery' "$home/state/rsm.status" 2>/dev/null; then
+    fail "no recovery-delivery blocked line may be written: $(cat "$home/state/rsm.status")"
+  fi
+  pass "fm-send remote: a recovery repost the remote already holds is delivered, not a blocked decision"
+}
+
+test_remote_recovery_real_failure_still_blocks() {
+  local dir fb ssh_log home rhome pend corr
+  dir="$TMP_ROOT/remote-recovery-fail"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); ssh_log="$dir/ssh.log"; : > "$ssh_log"
+  rhome=$(setup_remote_secondmate_home remote-recovery-fail)
+  home=$(setup_remote_parent_home remote-recovery-fail "$rhome")
+  pend=$(arm_remote_recovery "$fb" "$home" "$ssh_log" "$dir") || fail "could not arm recovery"
+  corr=$(fm_pending_reply_get "$pend" corr_id)
+  # Nothing executes remotely: the transport is genuinely down.
+  run_remote_recovery "$fb" "$home" "$ssh_log" "$corr" FM_FAKE_SSH_RC=255 >"$dir/rec.out" || true
+  [ "$(fm_pending_reply_get "$pend" phase)" = escalated ] \
+    || fail "a genuine transport failure must still escalate: $(cat "$pend")"
+  grep -Fq 'pending-reply-recovery-delivery-failed:' "$home/state/rsm.status" \
+    || fail "a genuine transport failure must still write the blocked line: $(cat "$home/state/rsm.status" 2>&1)"
+  pass "fm-send remote: a genuine recovery transport failure still writes its blocked line"
 }
 
 test_remote_steer_lands_in_remote_inbox() {
@@ -822,6 +891,8 @@ test_local_pending_does_not_close_resolve_key() {
 test_remote_large_steer_uses_stdin
 test_remote_steer_lands_in_remote_inbox
 test_remote_rerun_is_idempotent
+test_remote_recovery_duplicate_is_not_a_failure
+test_remote_recovery_real_failure_still_blocks
 test_remote_retry_failure_preserves_ambiguous_expectation
 test_remote_fire_and_forget_never_arms_reply_recovery
 test_remote_send_revalidates_after_retirement_lock

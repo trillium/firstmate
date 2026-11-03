@@ -981,6 +981,29 @@ fm_pending_reply_recovery_message() {  # <record-path>
   printf '%s' "$msg"
 }
 
+# One fm-send of the recovery message. A remote send can end with completion
+# unknown (transport lost or over budget after the remote inbox may already
+# hold the record). The recovery body is a pure function of the record, so the
+# remote enqueue deduplicates an identical resend onto that same record: one
+# identical retry turns such an unconfirmed result into a definite one, and a
+# duplicate the remote already holds reads as delivered rather than failed. A
+# failure fm-send did not mark unconfirmed is a genuine failure and is never
+# retried.
+fm_pending_reply_send_recovery_once() {  # <parent-home> <corr_id> <task_id> <message>
+  local parent_home=$1 corr=$2 task_id=$3 msg=$4 errf rc=0 attempt
+  errf=$(mktemp "${TMPDIR:-/tmp}/fm-recovery-send.XXXXXX") || return 1
+  for attempt in 1 2; do
+    rc=0
+    env FM_HOME="$parent_home" FM_PENDING_REPLY_EXISTING_CORR="$corr" \
+      "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg" 2>"$errf" || rc=$?
+    cat "$errf" >&2
+    [ "$rc" -ne 0 ] || break
+    grep -Fq 'is unconfirmed (' "$errf" || break
+  done
+  rm -f "$errf"
+  return "$rc"
+}
+
 # Deliver the recovery message once. Caller must hold phase awaiting_report with
 # turn completed and grace elapsed. Uses FM_PENDING_REPLY_SEND_HOOK when set
 # (tests), otherwise invokes fm-send with FM_PENDING_REPLY_EXISTING_CORR so a
@@ -1056,8 +1079,7 @@ fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
   else
     if [ -z "$parent_home" ] || [ ! -d "$parent_home" ]; then
       send_status=1
-    elif ! env FM_HOME="$parent_home" FM_PENDING_REPLY_EXISTING_CORR="$corr" \
-      "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg"; then
+    elif ! fm_pending_reply_send_recovery_once "$parent_home" "$corr" "$task_id" "$msg"; then
       send_status=1
     fi
   fi
