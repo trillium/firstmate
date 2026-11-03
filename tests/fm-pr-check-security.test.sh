@@ -3958,6 +3958,69 @@ SH
   pass "a poll armed before a volume renumber is re-recorded under the control lock and keeps detecting merges"
 }
 
+test_relaunch_meta_keeps_poll_valid() {
+  local dir state
+  dir=$(make_case relaunch-meta)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/1
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "fixture poll not valid before relaunch"
+  printf 'control_relaunch_tx=123.20261102T000000Z.4\n' >> "$state/task-a.meta"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "control_relaunch_tx after pr= invalidated the poll (${FM_PR_POLL_FAILED_PREDICATE:-})"
+  printf 'bogus_key=1\n' >> "$state/task-a.meta"
+  ! fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "an unknown key after pr= was accepted"
+  [ "$FM_PR_POLL_FAILED_PREDICATE" = meta-pr-identity-invalid ] \
+    || fail "wrong predicate named: $FM_PR_POLL_FAILED_PREDICATE"
+  pass "relaunch transaction key after pr= keeps the poll valid; unknown keys still refused"
+}
+
+test_rejection_names_predicate_and_defers_registration() {
+  local dir state rc lock
+  dir=$(make_case reject-predicate)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/1
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+  # Tampered check: refused and the wake names the predicate.
+  printf '# tampered\n' >> "$state/task-a.check.sh"
+  set +e
+  run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "tamper watcher failed: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    *'rejected untrusted state checks'*'task-a.check.sh=registration-template-hash-mismatch'*) ;;
+    *) fail "tampered check not rejected with its predicate: $(cat "$dir/watch.out")" ;;
+  esac
+  ack_watcher_cycle "$state" || fail "ack failed"
+
+  # Mid-registration: publish lock held, so the same invalid state is skipped.
+  dir=$(make_case reject-midreg)
+  state="$dir/home/state"
+  write_poll_meta "$state" task-a https://github.com/o/r/pull/1
+  seed_canonical_poll "$dir" task-a https://github.com/o/r/pull/1
+  cp -p "$state/task-a.pr-poll-registration" "$dir/registration.saved"
+  rm -f "$state/task-a.pr-poll-registration"
+  lock="$state/.pr-poll-publish-task-a.lock"
+  # The holder is a registration in flight: it publishes the registration, then
+  # releases the lock. Until then the sweep must skip the poll, not reject it.
+  bash -c '. "$1"; fm_lock_acquire_wait "$2" && sleep 3 && mv -f "$3" "$4" && fm_lock_release "$2"' \
+    bash "$ROOT/bin/fm-wake-lib.sh" "$lock" "$dir/registration.saved" "$state/task-a.pr-poll-registration" &
+  local holder=$!
+  sleep 1
+  [ -e "$lock" ] || [ -L "$lock" ] || fail "fixture could not hold the publish lock"
+  set +e
+  FM_TEST_GH_STATE=MERGED FM_TEST_CHECK_TIMEOUT=1 run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  set -e
+  wait "$holder" 2>/dev/null || true
+  case "$(cat "$dir/watch.out")" in
+    *'rejected untrusted state checks'*) fail "mid-registration poll was rejected: $(cat "$dir/watch.out")" ;;
+  esac
+  [ ! -e "$state/.rejected-checks" ] || fail "mid-registration poll was recorded as rejected"
+  grep -q 'task-a.check.sh: merged' "$dir/watch.out" || fail "poll was not retried once registered: $(cat "$dir/watch.out")"
+  pass "rejection names the failed predicate; mid-registration polls are deferred"
+}
+
 test_device_rerecord_refuses_tampered_artifacts() {
   local mutation dir state out rc registration_sha shifted_device replacement exercised=
   for mutation in swapped-check altered-check swapped-sidecar altered-sidecar altered-template-hash \
@@ -4284,6 +4347,8 @@ test_poll_publication_refuses_unsafe_destinations
 test_live_artifact_single_link_and_privacy_validation
 test_registered_poll_survives_template_update_and_relaunch
 test_device_renumbered_poll_stays_armed
+test_relaunch_meta_keeps_poll_valid
+test_rejection_names_predicate_and_defers_registration
 test_device_rerecord_refuses_tampered_artifacts
 test_device_rerecord_serializes_direct_rearm
 test_device_rerecord_serializes_rerecord

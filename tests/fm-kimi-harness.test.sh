@@ -340,7 +340,7 @@ test_kimi_launch_then_send_is_verified() {
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model kimi-code/k3 --effort high)
   rc=$?
-  expect_code 0 "$rc" "verified kimi launch-then-send should succeed"
+  expect_code 0 "$rc" "verified kimi launch-then-send should succeed" "$out"
   assert_contains "$out" "spawned $id harness=kimi" "kimi spawn did not report success"
 
   launch=$(cat "$CASE_DIR/launch.log")
@@ -623,7 +623,7 @@ test_kimi_hook_is_silent_and_requires_registered_workspace_token() {
   read_spawn_record "$rec"
   out=$(run_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id")
   rc=$?
-  expect_code 0 "$rc" "Kimi spawn should succeed before hook authentication checks"
+  expect_code 0 "$rc" "Kimi spawn should succeed before hook authentication checks" "$out"
   hook="$HOME_DIR/.kimi-code/fm-turn-end.sh"
   target="$HOME_DIR/state/$id.turn-ended"
   token=$(sed -n 's/^token=//p' "$WT_DIR/.fm-kimi-turnend")
@@ -635,7 +635,7 @@ test_kimi_hook_is_silent_and_requires_registered_workspace_token() {
   out=$(printf '{"hook_event_name":"Stop","session_id":"ordinary","cwd":"%s","stop_hook_active":false}\n' "$no_token" \
     | HOME="$HOME_DIR" bash "$hook" 2>&1)
   rc=$?
-  expect_code 0 "$rc" "Kimi hook must never block a tokenless session"
+  expect_code 0 "$rc" "Kimi hook must never block a tokenless session" "$out"
   [ -z "$out" ] || fail "Kimi hook printed into a tokenless session: $out"
   snapshot_after=$(find "$no_token" -mindepth 1 -print)
   [ "$snapshot_before" = "$snapshot_after" ] || fail "Kimi hook wrote inside a tokenless workspace"
@@ -645,7 +645,7 @@ test_kimi_hook_is_silent_and_requires_registered_workspace_token() {
   out=$(printf '{"hook_event_name":"Stop","session_id":"crew","cwd":"%s","stop_hook_active":false}\n' "$WT_DIR" \
     | HOME="$HOME_DIR" bash "$hook" 2>&1)
   rc=$?
-  expect_code 0 "$rc" "registered Kimi hook invocation did not exit zero"
+  expect_code 0 "$rc" "registered Kimi hook invocation did not exit zero" "$out"
   [ -z "$out" ] || fail "registered Kimi hook invocation printed output: $out"
   assert_present "$target" "registered Kimi hook invocation did not touch the turn-end marker"
 
@@ -655,7 +655,7 @@ test_kimi_hook_is_silent_and_requires_registered_workspace_token() {
   out=$(printf '{"hook_event_name":"Stop","session_id":"crew","cwd":"%s","stop_hook_active":false}\n' "$WT_DIR" \
     | HOME="$HOME_DIR" PATH="$fakebin" "$hook" 2>&1)
   rc=$?
-  expect_code 0 "$rc" "Kimi hook without jq must still exit zero"
+  expect_code 0 "$rc" "Kimi hook without jq must still exit zero" "$out"
   [ -z "$out" ] || fail "Kimi hook without jq printed output: $out"
   assert_absent "$target" "Kimi hook without jq touched the turn-end marker"
   pass "Kimi hook stays silent and inert without a Firstmate registry token"
@@ -687,7 +687,7 @@ test_kimi_teardown_removes_pointer_and_registry_token() {
   foreign_dir="/tmp/fm-$id+zzzzzzzz"
   out=$(run_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id")
   rc=$?
-  expect_code 0 "$rc" "Kimi spawn should succeed before teardown"
+  expect_code 0 "$rc" "Kimi spawn should succeed before teardown" "$out"
   token=$(sed -n 's/^token=//p' "$WT_DIR/.fm-kimi-turnend")
   mkdir -p "$foreign_dir"
   printf 'other home\n' > "$foreign_dir/launch.sh"
@@ -720,7 +720,7 @@ test_kimi_falls_back_to_expanded_home_binary() {
   fm_fake_exit0 "$(dirname "$fallback")" kimi
   out=$(run_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id")
   rc=$?
-  expect_code 0 "$rc" "Kimi HOME fallback spawn should succeed"
+  expect_code 0 "$rc" "Kimi HOME fallback spawn should succeed" "$out"
   launch=$(cat "$CASE_DIR/launch.log")
   [ "$launch" = "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(fm_test_launch_git_prefix "$launch")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI '$fallback' --auto" ] \
     || fail "Kimi fallback did not expand HOME into an absolute executable: $launch"
@@ -787,7 +787,7 @@ test_kimi_fresh_worktree_trust_is_answered_and_verified() {
   rc=0
   out=$(FM_KIMI_READY_POLLS=3 FM_FAKE_KIMI_TRUST=fresh run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
-  expect_code 0 "$rc" "fresh Kimi trust dialog should advance into verified delivery"
+  expect_code 0 "$rc" "fresh Kimi trust dialog should advance into verified delivery" "$out"
   assert_contains "$out" "spawned $id harness=kimi" \
     "Kimi spawn did not continue after the trust dialog cleared"
   [ "$(wc -l < "$CASE_DIR/trust-enter.log" | tr -d ' ')" = 1 ] \
@@ -805,7 +805,7 @@ test_kimi_swallowed_trust_enter_is_retried_until_the_dialog_clears() {
   rc=0
   out=$(FM_KIMI_READY_POLLS=5 FM_FAKE_KIMI_TRUST=fresh FM_FAKE_KIMI_TRUST_CLEARS=after-second run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
-  expect_code 0 "$rc" "a swallowed first trust Enter should be retried into a verified spawn"
+  expect_code 0 "$rc" "a swallowed first trust Enter should be retried into a verified spawn" "$out"
   assert_contains "$out" "spawned $id harness=kimi" \
     "Kimi spawn did not recover from a swallowed trust keypress"
   [ "$(wc -l < "$CASE_DIR/trust-enter.log" | tr -d ' ')" = 2 ] \
@@ -823,7 +823,7 @@ test_kimi_banner_before_the_dialog_paints_does_not_pass_readiness() {
   rc=0
   out=$(FM_KIMI_READY_POLLS=5 FM_FAKE_KIMI_TRUST=late run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
-  expect_code 0 "$rc" "a banner captured before the dialog painted should wait, then trust and deliver"
+  expect_code 0 "$rc" "a banner captured before the dialog painted should wait, then trust and deliver" "$out"
   assert_contains "$out" "spawned $id harness=kimi" \
     "Kimi spawn did not survive a banner captured before the trust dialog painted"
   [ "$(wc -l < "$CASE_DIR/trust-enter.log" | tr -d ' ')" = 1 ] \
@@ -843,7 +843,7 @@ test_kimi_answered_dialog_left_in_history_does_not_restart_the_answer() {
   rc=0
   out=$(FM_KIMI_READY_POLLS=3 FM_FAKE_KIMI_TRUST=fresh FM_FAKE_KIMI_HISTORY_KEEPS_DIALOG=yes run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
-  expect_code 0 "$rc" "an answered trust dialog still in scrollback should not block the spawn"
+  expect_code 0 "$rc" "an answered trust dialog still in scrollback should not block the spawn" "$out"
   assert_contains "$out" "spawned $id harness=kimi" \
     "Kimi spawn did not complete with the answered trust dialog still in scrollback"
   case "$out" in
@@ -865,7 +865,7 @@ test_kimi_blank_viewport_frame_costs_only_its_poll() {
   out=$(FM_KIMI_READY_POLLS=4 FM_FAKE_KIMI_TRUST=fresh FM_FAKE_KIMI_BLANK_AFTER_TRUST=yes \
     FM_FAKE_KIMI_HISTORY_KEEPS_DIALOG=yes run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
-  expect_code 0 "$rc" "a blank viewport frame should cost one poll, not the spawn"
+  expect_code 0 "$rc" "a blank viewport frame should cost one poll, not the spawn" "$out"
   assert_contains "$out" "spawned $id harness=kimi" \
     "Kimi spawn did not survive a blank viewport frame after the trust answer"
   case "$out" in
@@ -907,7 +907,7 @@ test_kimi_answers_a_trust_dialog_with_a_wrapped_hint() {
   rc=0
   out=$(FM_KIMI_READY_POLLS=3 FM_FAKE_KIMI_TRUST=wrapped run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
-  expect_code 0 "$rc" "a trust dialog whose hint wrapped in a narrow pane should be answered"
+  expect_code 0 "$rc" "a trust dialog whose hint wrapped in a narrow pane should be answered" "$out"
   assert_contains "$out" "spawned $id harness=kimi" \
     "Kimi spawn did not survive a trust dialog with a wrapped navigation hint"
   [ "$(wc -l < "$CASE_DIR/trust-enter.log" | tr -d ' ')" = 1 ] \
@@ -925,7 +925,7 @@ test_kimi_blank_frame_between_banners_restarts_the_ready_count() {
   rc=0
   out=$(FM_KIMI_READY_POLLS=6 FM_FAKE_KIMI_TRUST=blink run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
-  expect_code 0 "$rc" "banners split by a blank frame should not read as two ready captures"
+  expect_code 0 "$rc" "banners split by a blank frame should not read as two ready captures" "$out"
   assert_contains "$out" "spawned $id harness=kimi" \
     "Kimi spawn did not wait out a blank frame before the trust dialog painted"
   [ "$(wc -l < "$CASE_DIR/trust-enter.log" | tr -d ' ')" = 1 ] \
@@ -1180,7 +1180,7 @@ test_kimi_230_prompt_with_no_project_servers_is_answered_and_verified() {
   rc=0
   out=$(FM_KIMI_READY_POLLS=3 FM_FAKE_KIMI_TRUST=230 run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id") || rc=$?
-  expect_code 0 "$rc" "the recorded 2.3.0 prompt with no project servers should be answered into a verified spawn"
+  expect_code 0 "$rc" "the recorded 2.3.0 prompt with no project servers should be answered into a verified spawn" "$out"
   assert_contains "$out" "spawned $id harness=kimi" "Kimi spawn did not continue after the 2.3.0 prompt cleared"
   [ "$(wc -l < "$CASE_DIR/trust-enter.log" | tr -d ' ')" = 1 ] \
     || fail "the 2.3.0 prompt was not answered exactly once"

@@ -414,12 +414,12 @@ test_thread_create_uncertain_and_refused_outcomes() {
   t3_case create-outcomes
   t3_world_set 'w.dropTools = { t3_thread_launch: 1 }'
   out=$(t3_run 'fm_backend_t3code_thread_create proj-1 fm-lost "" "$1" "$2"' "$REPO" "$selection" 2>&1); rc=$?
-  expect_code 1 "$rc" "a launch whose reply was lost is uncertain (exit 1)"
+  expect_code 1 "$rc" "a launch whose reply was lost is uncertain (exit 1)" "$out"
   [ "$(t3_dispatch_types)" = 't3_thread_launch!' ] || fail "a lost launch must not be retried without an idempotency key, got '$(t3_dispatch_types)'"
   : > "$LOG"
   t3_world_set 'w.bindWorktree = "/somewhere/else"'
   out=$(t3_run 'fm_backend_t3code_thread_create proj-1 fm-bound "" "$1" "$2"' "$REPO" "$selection" 2>&1); rc=$?
-  expect_code 4 "$rc" "a thread T3 bound elsewhere is archived and refused (exit 4)"
+  expect_code 4 "$rc" "a thread T3 bound elsewhere is archived and refused (exit 4)" "$out"
   assert_contains "$out" "archived it" "the binding refusal must say the thread was archived"
   [ "$(t3_dispatch_types)" = 't3_thread_launch t3_thread_organize' ] || fail "the mis-bound thread must be archived, got '$(t3_dispatch_types)'"
   pass "fm_backend_t3code_thread_create: a lost reply is uncertain and never retried; a mis-bound thread is archived and refused"
@@ -1356,7 +1356,7 @@ test_tracked_codex_overlay_recovery() {
   printf '\n# worker edit\n' >> "$proj/.codex/config.toml"
   cp "$proj/.codex/config.toml" "$CASE_DIR/edited.toml"
   out=$("$ROOT/bin/fm-t3code-codex-env.sh" cleanup "$proj" 2>&1); rc=$?
-  expect_code 1 "$rc" "cleanup must refuse unexpected configuration edits"
+  expect_code 1 "$rc" "cleanup must refuse unexpected configuration edits" "$out"
   assert_contains "$out" "configuration changed" "cleanup must explain the conflict"
   cmp -s "$CASE_DIR/edited.toml" "$proj/.codex/config.toml" || fail "refused cleanup must preserve edits"
   # Simulate interruption after restoring the file but before restoring Git flags.
@@ -1368,7 +1368,7 @@ test_tracked_codex_overlay_recovery() {
   for policy in '["shell_environment_policy"]' 'shell_environment_policy.set.FOO = "bar"' 'shell_environment_policy = { set = { FOO = "bar" } }'; do
     printf '%s\n' "$policy" > "$proj/.codex/config.toml"
     out=$("$ROOT/bin/fm-t3code-codex-env.sh" check "$proj" 2>&1); rc=$?
-    expect_code 1 "$rc" "every TOML spelling of a project policy must refuse"
+    expect_code 1 "$rc" "every TOML spelling of a project policy must refuse" "$out"
     assert_contains "$out" "[shell_environment_policy]" "policy conflict must name the table"
   done
   pass "tracked Codex overlay: edited files survive refusal, interrupted restoration recovers, quoted and dotted policy keys refuse"
@@ -1421,7 +1421,7 @@ test_spawn_claude_refuses_worktree_symlink() {
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$CASE_DIR/home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$CONFIG" \
     FM_PROJECTS_OVERRIDE="$CASE_DIR/unused-projects" FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --scout --model claude-sonnet-5 --backend t3code 2>&1 ); rc=$?
-  expect_code 1 "$rc" "a symlinked worktree channel must refuse"
+  expect_code 1 "$rc" "a symlinked worktree channel must refuse" "$out"
   assert_contains "$out" "CLAUDE.local.md already exists" "refusal must name the channel"
   [ "$(cat "$target")" = 'keep these instructions' ] || fail "symlink target was changed"
   [ -L "$wt/CLAUDE.local.md" ] || fail "symlink must remain after refused spawn"
@@ -1478,7 +1478,7 @@ test_untracked_codex_config_is_preserved() {
   mkdir -p "$proj/.codex"
   printf 'model = "captain-model"\n' > "$proj/.codex/config.toml"
   out=$("$ROOT/bin/fm-t3code-codex-env.sh" check "$proj" 2>&1); rc=$?
-  expect_code 1 "$rc" "pre-existing untracked Codex config must refuse"
+  expect_code 1 "$rc" "pre-existing untracked Codex config must refuse" "$out"
   assert_contains "$out" "untracked configuration already exists" "refusal must explain ownership"
   "$ROOT/bin/fm-t3code-codex-env.sh" cleanup "$proj" || fail "cleanup must leave a pre-existing config alone"
   [ "$(cat "$proj/.codex/config.toml")" = 'model = "captain-model"' ] || fail "cleanup changed the captain's config"
@@ -1961,7 +1961,7 @@ test_uncertain_thread_launch_keeps_lease() {
   t3_world_set 'w.dropTools = { t3_thread_launch: 1 }'
   t3_worker_setup "$id"
   out=$(t3_worker_spawn "$id" claude --model claude-sonnet-5); rc=$?
-  expect_code 1 "$rc" "a lost launch response must abort spawn"
+  expect_code 1 "$rc" "a lost launch response must abort spawn" "$out"
   [ "$(t3_dispatch_types)" = 't3_thread_launch!' ] || fail "a launch without an idempotency key must not be retried, got '$(t3_dispatch_types)'"
   assert_contains "$out" "did not report an outcome" "an uncertain launch must say so"
   assert_contains "$out" "stays leased until any thread T3 bound to it is found" "an uncertain launch must retain the slot"
@@ -2300,7 +2300,7 @@ test_teardown_refuses_when_t3_is_unreachable() {
   out=$( PATH="$fb:$PATH" FM_T3_TREEHOUSE_LOG="$LOG" FM_T3_TREEHOUSE_WT="$wt" \
     FM_ROOT_OVERRIDE="$neutral" FM_HOME="$CASE_DIR/home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$CONFIG" \
     "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 ); rc=$?
-  expect_code 1 "$rc" "a server the capability gate refuses must stop teardown before cleanup"
+  expect_code 1 "$rc" "a server the capability gate refuses must stop teardown before cleanup" "$out"
   assert_contains "$out" "lacks t3_thread_launch" "the gate refusal must name the missing tool"
   [ -z "$(t3_dispatch_types)" ] || fail "a gate-refused teardown must not mutate"
   [ "$(t3_log_line_of 'r.tool === "treehouse"')" -eq 0 ] || fail "a gate-refused teardown must not return the slot"
@@ -2464,7 +2464,7 @@ test_answer_script_reads_and_answers_questions() {
     || fail "the answer must reach t3_pending_request_respond, got '$(t3_fake_calls t3_pending_request_respond)'"
   fm_write_meta "$CTRL_STATE/tmuxtask.meta" "window=s:w" "kind=ship"
   out=$(run_answer tmuxtask); rc=$?
-  expect_code 1 "$rc" "a non-T3 task has no pending requests to answer"
+  expect_code 1 "$rc" "a non-T3 task has no pending requests to answer" "$out"
   pass "fm-t3-answer.sh: lists a T3 worker's pending questions and answers one by request id"
 }
 

@@ -170,7 +170,7 @@
 #                          line reported a PR that the check sweep's
 #                          fm-pr-check.sh scan could not record; the line
 #                          names the task, the PR, and the refusal
-#   check: rejected untrusted state checks: <paths>
+#   check: rejected untrusted state checks: <paths>; failed predicate: <path>=<predicate>...
 #                          unsafe state checks were refused without execution;
 #                          raised once per distinct rejected set (paths, mode,
 #                          mtime), then kept in state/.rejected-checks
@@ -4044,6 +4044,36 @@ rerecord_device_shifted_pr_poll() {  # <id>
   return 0
 }
 
+# Decide a refused state check (robots-r7x06). A check can fail validation only
+# because bin/fm-pr-check.sh is mid-publication, so a refusal first waits out
+# the publish lock, then revalidates. Returns 0 when the poll is mid-registration
+# or valid on the second look (the caller skips it until the next sweep); returns
+# 1 for a genuine refusal with PR_POLL_REJECT_WHY naming the failed predicate.
+PR_POLL_REJECT_WHY=
+pr_poll_rejection_deferred() {  # <id>
+  local id=$1 lock="$STATE/.pr-poll-publish-$1.lock"
+  PR_POLL_REJECT_WHY=
+  if ! fm_lock_acquire_wait_max "$lock" "$CHECK_TIMEOUT"; then
+    triage_log "PR poll for $id is still being registered; skipping it until the next sweep"
+    return 0
+  fi
+  fm_lock_release "$lock" || true
+  if fm_pr_poll_snapshot_capture "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
+    triage_log "PR poll for $id finished registering during the sweep; retrying next sweep"
+    return 0
+  fi
+  if [ -e "$STATE/$id.pr-poll" ] || [ -e "$STATE/$id.pr-poll-registration" ]; then
+    if fm_pr_poll_artifacts_valid "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
+      PR_POLL_REJECT_WHY="snapshot-capture-failed"
+    else
+      PR_POLL_REJECT_WHY=${FM_PR_POLL_FAILED_PREDICATE:-artifacts-invalid}
+    fi
+  else
+    PR_POLL_REJECT_WHY="not-a-valid-state-check"
+  fi
+  return 1
+}
+
 resurface_after_downtime() {
   # Handling successors already have a predecessor-delivered wake on the way.
   # Re-announcing from this cycle is what turned a lost handshake into an
@@ -4241,6 +4271,7 @@ while :; do
   # CHECK_INTERVAL, so most cycles skip this block and fall straight through.
   if [ "$(age_of "$STATE/.last-check")" -ge "$CHECK_INTERVAL" ]; then
     rejected_checks=
+    rejected_why=
     contribution_check_output=
     # Record each PR a task reported but nobody recorded, so its merge poll
     # below runs in this same sweep (bin/fm-pr-check.sh owns the scan).
@@ -4269,6 +4300,7 @@ while :; do
           out=$FM_CHECK_RESULT
         else
           rejected_checks="$rejected_checks $c"
+          rejected_why="$rejected_why $c=x-watch-shim-invalid"
           continue
         fi
       else
@@ -4305,7 +4337,11 @@ while :; do
           fm_custom_check_snapshot_cleanup
         else
           fm_custom_check_snapshot_cleanup
+          if pr_poll_rejection_deferred "$id"; then
+            continue
+          fi
           rejected_checks="$rejected_checks $c"
+          rejected_why="$rejected_why $c=$PR_POLL_REJECT_WHY"
           continue
         fi
       fi
@@ -4403,7 +4439,7 @@ EOF
       done
       rejected_sig=$(printf '%s' "$rejected_sig" | LC_ALL=C sort)
       if [ "$(cat "$rejected_record" 2>/dev/null)" != "$rejected_sig" ]; then
-        reason="check: rejected untrusted state checks:$rejected_checks"
+        reason="check: rejected untrusted state checks:$rejected_checks; failed predicate:$rejected_why"
         fm_wake_append check untrusted-state-checks "$reason" || exit 1
         if printf '%s\n' "$rejected_sig" > "$rejected_record.tmp.$$"; then
           mv -f "$rejected_record.tmp.$$" "$rejected_record"

@@ -176,7 +176,7 @@ test_no_profile_keeps_claude_profile_defaults() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn without profile flags should succeed"
+  expect_code 0 "$status" "claude spawn without profile flags should succeed" "$out"
   assert_contains "$out" "spawned $id harness=claude" "spawn did not report claude"
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude default default
 
@@ -199,7 +199,7 @@ test_claude_launch_brief_publishes_record_doorbell() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn for the doorbell check should succeed"
+  expect_code 0 "$status" "claude spawn for the doorbell check should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   doorbell=$(claude_launch_brief_arg "$launch")
   case "$doorbell" in
@@ -277,7 +277,7 @@ test_non_cursor_launch_clears_inherited_cursor_markers() {
   out=$(CURSOR_AGENT=1 CURSOR_INVOKED_AS=cursor-agent \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn under Cursor markers should succeed"
+  expect_code 0 "$status" "claude spawn under Cursor markers should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI" \
     "non-cursor launch must clear both inherited Cursor identity markers"
@@ -440,7 +440,7 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 1 "$status" "ship spawn without explicit harness should fail when dispatch profiles are active"
+  expect_code 1 "$status" "ship spawn without explicit harness should fail when dispatch profiles are active" "$out"
   assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
     "spawn did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "ship refusal should happen before meta is written"
@@ -456,7 +456,7 @@ test_active_dispatch_profile_requires_explicit_harness_for_scout() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
   status=$?
-  expect_code 1 "$status" "scout spawn without explicit harness should fail when dispatch profiles are active"
+  expect_code 1 "$status" "scout spawn without explicit harness should fail when dispatch profiles are active" "$out"
   assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
     "scout refusal did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "scout refusal should happen before meta is written"
@@ -475,7 +475,7 @@ test_active_dispatch_profile_allows_explicit_harness() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort high)
   status=$?
-  expect_code 0 "$status" "explicit harness should satisfy active dispatch-profile requirement"
+  expect_code 0 "$status" "explicit harness should satisfy active dispatch-profile requirement" "$out"
   assert_contains "$out" "spawned $id harness=codex" "spawn did not report explicit codex harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
   launch=$(cat "$LAUNCH_LOG")
@@ -494,7 +494,7 @@ test_active_dispatch_profile_allows_positional_harness() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id" "$PROJ_DIR" codex --model gpt-5 --effort high)
   status=$?
-  expect_code 0 "$status" "positional harness should satisfy active dispatch-profile requirement"
+  expect_code 0 "$status" "positional harness should satisfy active dispatch-profile requirement" "$out"
   assert_contains "$out" "spawned $id harness=codex" "spawn did not report positional codex harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
   pass "active crew-dispatch profile allows the legacy positional harness form"
@@ -599,7 +599,7 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id" "$PROJ_DIR" "custom-agent --flag")
   status=$?
-  expect_code 0 "$status" "raw launch command should satisfy active dispatch-profile requirement"
+  expect_code 0 "$status" "raw launch command should satisfy active dispatch-profile requirement" "$out"
   assert_contains "$out" "spawned $id harness=custom-agent" "spawn did not report raw command harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
   launch=$(cat "$LAUNCH_LOG")
@@ -641,7 +641,7 @@ test_claude_threads_model_and_effort() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model sonnet --effort high)
   status=$?
-  expect_code 0 "$status" "claude spawn with profile flags should succeed"
+  expect_code 0 "$status" "claude spawn with profile flags should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" claude sonnet high
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "$CLAUDE_CONTROL_CHANNEL_FLAG --model 'sonnet' --effort 'high'" \
@@ -658,7 +658,7 @@ test_codex_threads_model_and_effort() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model gpt-5 --effort high)
   status=$?
-  expect_code 0 "$status" "codex spawn with profile flags should succeed"
+  expect_code 0 "$status" "codex spawn with profile flags should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5' -c 'model_reasoning_effort=\"high\"' --dangerously-bypass-approvals-and-sandbox" \
@@ -674,7 +674,7 @@ test_codex_threads_model_and_max_effort() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model gpt-5.6-luna --effort max)
   status=$?
-  expect_code 0 "$status" "codex Luna spawn with max effort should succeed"
+  expect_code 0 "$status" "codex Luna spawn with max effort should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5.6-luna max
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5.6-luna' -c 'model_reasoning_effort=\"max\"' --dangerously-bypass-approvals-and-sandbox" \
@@ -690,7 +690,7 @@ test_codex_omits_max_effort_for_unsupported_model() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model gpt-5 --effort max)
   status=$?
-  expect_code 0 "$status" "codex spawn with an unsupported model max effort should omit the effort flag"
+  expect_code 0 "$status" "codex spawn with an unsupported model max effort should omit the effort flag" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 max
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5' --dangerously-bypass-approvals-and-sandbox" \
@@ -772,7 +772,7 @@ test_codex_approval_mode_contract() {
       fi
       status=$?
       if [ "$value" = invalid ] || [ "$value" = split ]; then
-        expect_code 1 "$status" "invalid Codex approval setting must refuse"
+        expect_code 1 "$status" "invalid Codex approval setting must refuse" "$out"
         assert_contains "$out" 'config/codex-approval-mode' 'refusal must name setting'
         assert_absent "$HOME_DIR/state/$id.meta" 'invalid setting published metadata'
         [ ! -s "$LAUNCH_LOG" ] || fail 'invalid setting launched a worker'
@@ -800,7 +800,7 @@ test_grok_threads_model_and_reasoning_effort() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model grok-4 --effort high)
   status=$?
-  expect_code 0 "$status" "grok spawn with profile flags should succeed"
+  expect_code 0 "$status" "grok spawn with profile flags should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" grok grok-4 high
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "grok --always-approve --model 'grok-4' --reasoning-effort 'high'" \
@@ -817,7 +817,7 @@ test_grok_omits_invalid_max_reasoning_effort() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model grok-4 --effort max)
   status=$?
-  expect_code 0 "$status" "grok spawn with unsupported max reasoning effort should omit the effort flag"
+  expect_code 0 "$status" "grok spawn with unsupported max reasoning effort should omit the effort flag" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" grok grok-4 max
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "grok --always-approve --model 'grok-4' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < " \
@@ -836,7 +836,7 @@ test_grok_omits_invalid_xhigh_reasoning_effort() {
   # grok 0.2.99 rejects xhigh (accepted set is only low|medium|high).
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model grok-4 --effort xhigh)
   status=$?
-  expect_code 0 "$status" "grok spawn with unsupported xhigh reasoning effort should omit the effort flag"
+  expect_code 0 "$status" "grok spawn with unsupported xhigh reasoning effort should omit the effort flag" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" grok grok-4 xhigh
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "grok --always-approve --model 'grok-4' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < " \
@@ -855,7 +855,7 @@ test_cursor_threads_model_workspace_and_omits_effort_axis() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model cursor-grok-4.5-high --effort high)
   status=$?
-  expect_code 0 "$status" "cursor spawn with a model-qualified reasoning class should succeed"
+  expect_code 0 "$status" "cursor spawn with a model-qualified reasoning class should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" cursor cursor-grok-4.5-high high
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "--trust --yolo --model 'cursor-grok-4.5-high' --workspace '$WT_DIR'" \
@@ -889,7 +889,7 @@ test_cursor_refuses_model_absent_from_live_catalog() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model cursor-grok-4.5)
   status=$?
-  expect_code 1 "$status" "cursor spawn should refuse a model absent from a successful catalog"
+  expect_code 1 "$status" "cursor spawn should refuse a model absent from a successful catalog" "$out"
   assert_contains "$out" "Cursor model 'cursor-grok-4.5' is not available" \
     "cursor model refusal did not identify the unavailable model"
   assert_contains "$out" "--list-models" \
@@ -908,7 +908,7 @@ test_cursor_failed_catalog_probe_does_not_block_spawn() {
     out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
       --model cursor-catalog-unreachable)
   status=$?
-  expect_code 0 "$status" "cursor spawn should fail open when the bounded catalog query fails"
+  expect_code 0 "$status" "cursor spawn should fail open when the bounded catalog query fails" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "--model 'cursor-catalog-unreachable'" \
     "failed catalog lookup incorrectly removed the requested model"
@@ -924,7 +924,7 @@ test_opencode_threads_model_and_effort_variant() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model anthropic/claude-sonnet-4-5 --effort high)
   status=$?
-  expect_code 0 "$status" "opencode spawn with model and effort should succeed"
+  expect_code 0 "$status" "opencode spawn with model and effort should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" opencode anthropic/claude-sonnet-4-5 high
   assert_grep "opencode_version=2.0.21" "$HOME_DIR/state/$id.meta" \
     "opencode 2.x spawn must record the detected version in meta"
@@ -950,7 +950,7 @@ test_opencode_without_effort_keeps_launch_config_unchanged() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model anthropic/claude-sonnet-4-5)
   status=$?
-  expect_code 0 "$status" "opencode spawn without effort should succeed"
+  expect_code 0 "$status" "opencode spawn without effort should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" opencode anthropic/claude-sonnet-4-5 default
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" \
@@ -969,7 +969,7 @@ test_opencode_emits_variant_for_openai_family_effort() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model openai/gpt-5.6-sol --effort xhigh)
   status=$?
-  expect_code 0 "$status" "opencode spawn with an openai model and effort should succeed"
+  expect_code 0 "$status" "opencode spawn with an openai model and effort should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" opencode openai/gpt-5.6-sol xhigh
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" \
@@ -987,7 +987,7 @@ test_opencode_omits_variant_when_model_family_lacks_effort() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --model anthropic/claude-sonnet-4-5 --effort medium)
   status=$?
-  expect_code 0 "$status" "opencode spawn with an unsupported family effort should succeed"
+  expect_code 0 "$status" "opencode spawn with an unsupported family effort should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" opencode anthropic/claude-sonnet-4-5 medium
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" \
@@ -1011,7 +1011,7 @@ test_opencode1_passes_model_flag_and_variant_only_config() {
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model anthropic/claude-sonnet-4-5 --effort high)
   status=$?
-  expect_code 0 "$status" "opencode 1.x spawn with model and effort should succeed"
+  expect_code 0 "$status" "opencode 1.x spawn with model and effort should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" opencode anthropic/claude-sonnet-4-5 high
   assert_grep "opencode_version=1.18.32" "$HOME_DIR/state/$id.meta" \
     "opencode 1.x spawn must record the detected version in meta"
@@ -1036,7 +1036,7 @@ test_opencode1_without_effort_keeps_permission_only_config() {
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model anthropic/claude-sonnet-4-5)
   status=$?
-  expect_code 0 "$status" "opencode 1.x spawn without effort should succeed"
+  expect_code 0 "$status" "opencode 1.x spawn without effort should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" \
     "OPENCODE_CONFIG_CONTENT='{\"permission\":{\"*\":\"allow\"}}' '$FAKEBIN_DIR/opencode' --model 'anthropic/claude-sonnet-4-5' --prompt" \
@@ -1061,7 +1061,7 @@ test_opencode_probe_and_launch_share_resolved_executable() {
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model anthropic/claude-sonnet-4-5)
   status=$?
-  expect_code 0 "$status" "opencode spawn should succeed"
+  expect_code 0 "$status" "opencode spawn should succeed" "$out"
   [ -s "$probelog" ] || fail "version probe did not execute the resolved opencode executable"
   probed=$(cat "$probelog")
   case "$probed" in
@@ -1267,7 +1267,7 @@ test_native_pi_ultra_is_explicit_and_model_scoped() {
   read_case_record "$rec"
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     'pi --offline' --model codex-native/gpt-6-astra --effort ultra 2>&1)
-  expect_code 1 "$?" "raw launch silently omitted the native Ultra flag"
+  expect_code 1 "$?" "raw launch silently omitted the native Ultra flag" "$out"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "raw Ultra launch published metadata"
   assert_contains "$out" "canonical --harness pi or pi-signed" "raw launch refusal was not actionable"
   pass "Ultra is explicit for native Pi and Pi-signed, including direct-PR, and refuses unsupported profiles before provisioning"
@@ -1300,7 +1300,7 @@ test_pi_scout_launch_enters_recorded_worktree() {
     "$id" "$PROJ_DIR" --scout --harness pi)
   status=$?
   unset FM_TEST_PANE_LOG
-  expect_code 0 "$status" "Pi scout spawn should succeed"
+  expect_code 0 "$status" "Pi scout spawn should succeed" "$out"
   assert_grep "cd -- '$WT_DIR'" "$CASE_DIR/pane.log" \
     "Pi scout spawn must enter the recorded worktree before launching the agent"
   pass "Pi scout spawn enters the recorded worktree before launch"
@@ -1315,7 +1315,7 @@ test_pi_threads_model_and_max_effort() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model openai-codex/gpt-5.6-sol --effort max)
   status=$?
-  expect_code 0 "$status" "pi spawn with max effort should succeed"
+  expect_code 0 "$status" "pi spawn with max effort should succeed" "$out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" pi openai-codex/gpt-5.6-sol max
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular --model 'openai-codex/gpt-5.6-sol' --thinking 'max' -e" \
@@ -1336,7 +1336,7 @@ test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model openai-codex/gpt-5.6-sol --effort max)
   status=$?
-  expect_code 0 "$status" "pi-signed spawn with max effort should succeed"
+  expect_code 0 "$status" "pi-signed spawn with max effort should succeed" "$out"
   assert_contains "$out" "spawned $id harness=pi-signed" "pi-signed spawn did not preserve its visible identity"
   assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed openai-codex/gpt-5.6-sol max
   launch=$(cat "$LAUNCH_LOG")
@@ -1418,7 +1418,7 @@ test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
   status=$?
-  expect_code 0 "$status" "pi-signed persistent secondmate spawn should succeed"
+  expect_code 0 "$status" "pi-signed persistent secondmate spawn should succeed" "$out"
   assert_contains "$out" "spawned $id harness=pi-signed kind=secondmate" \
     "pi-signed secondmate spawn did not preserve its runtime identity"
   assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed default default
@@ -1471,7 +1471,7 @@ test_pi_worker_launch_omits_seeded_home_approve() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "pi ship spawn should succeed"
+  expect_code 0 "$status" "pi ship spawn should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular" \
     "pi worker launch lost its regular TUI probe"
@@ -1491,7 +1491,7 @@ test_pi_worker_declines_project_mcp_servers() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "pi ship spawn in an MCP project should succeed"
+  expect_code 0 "$status" "pi ship spawn in an MCP project should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular --no-approve" \
     "pi worker in a project with MCP servers must decline project trust"
@@ -1504,7 +1504,7 @@ test_pi_worker_declines_project_mcp_servers() {
   out=$(FM_TEST_PI_VERSION=0.50.0 \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "pi without --no-approve must still spawn"
+  expect_code 0 "$status" "pi without --no-approve must still spawn" "$out"
   assert_not_contains "$(cat "$LAUNCH_LOG")" "approve" \
     "pi without advertised --no-approve must omit the flag"
   pass "Pi workers decline project MCP servers only when the project declares them"
@@ -1696,7 +1696,7 @@ test_pi_exclude_tools_absent_and_empty_lists() {
   rec=$(make_spawn_case excl-absent pi "$id")
   read_case_record "$rec"
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
-  expect_code 0 "$?" "Pi spawn without the file should succeed"
+  expect_code 0 "$?" "Pi spawn without the file should succeed" "$out"
   assert_not_contains "$(cat "$LAUNCH_LOG")" "--exclude-tools" "an absent file must add no exclusions"
 
   id=excl-empty-z9c
@@ -1704,7 +1704,7 @@ test_pi_exclude_tools_absent_and_empty_lists() {
   read_case_record "$rec"
   write_exclude_file "$HOME_DIR" '# nothing yet' ''
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
-  expect_code 0 "$?" "Pi spawn with a comment-only file should succeed"
+  expect_code 0 "$?" "Pi spawn with a comment-only file should succeed" "$out"
   assert_not_contains "$(cat "$LAUNCH_LOG")" "--exclude-tools" "a file with no entries must add no exclusions"
 
   local harness
@@ -1743,7 +1743,7 @@ test_exclude_tools_non_pi_runtime_refuses_non_empty_list() {
   write_exclude_file "$HOME_DIR" 'mcp__srv__writeTool'
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" "pi Verify this adapter")
   status=$?
-  expect_code 1 "$status" "a raw launch with a non-empty exclusion list must refuse"
+  expect_code 1 "$status" "a raw launch with a non-empty exclusion list must refuse" "$out"
   assert_contains "$out" "config/crew-exclude-tools" "the raw-launch refusal must name the config file"
   [ ! -s "$LAUNCH_LOG" ] || fail "a raw launch ignored the exclusion list"
   pass "a runtime that cannot hide tools, or a raw launch, refuses a non-empty exclusion list"
@@ -1854,7 +1854,7 @@ test_batch_forwards_shared_profile_flags() {
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
   status=$?
-  expect_code 0 "$status" "batch spawn with shared profile flags should succeed"
+  expect_code 0 "$status" "batch spawn with shared profile flags should succeed" "$out"
   assert_contains "$out" "spawned $id1 harness=codex" "first batch task did not use shared harness"
   assert_contains "$out" "spawned $id2 harness=codex" "second batch task did not use shared harness"
   assert_meta_profile "$HOME_DIR/state/$id1.meta" codex gpt-5 high
@@ -1874,7 +1874,7 @@ test_claude_forwards_firstmate_config_dir_when_set() {
   out=$(FM_TEST_CLAUDE_CONFIG_DIR="$CASE_DIR/claude-work" \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn with CLAUDE_CONFIG_DIR set should succeed"
+  expect_code 0 "$status" "claude spawn with CLAUDE_CONFIG_DIR set should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "CLAUDE_CONFIG_DIR='$CASE_DIR/claude-work' env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude --dangerously-skip-permissions $(claude_worker_add_dirs "$HOME_DIR" "$id")--settings '$(cd "$HOME_DIR/state" && pwd -P)/$id.claude-settings.json'" \
     "claude launch did not forward firstmate's CLAUDE_CONFIG_DIR to the crewmate pane"
@@ -1889,7 +1889,7 @@ test_lavish_server_address_is_exported_to_worker_launch() {
   printf '%s\n' '100.99.161.42' > "$HOME_DIR/config/lavish-axi-host"
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "a configured Lavish server address should allow the worker spawn"
+  expect_code 0 "$status" "a configured Lavish server address should allow the worker spawn" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "export LAVISH_AXI_HOST='100.99.161.42';" \
     "worker launch did not export the primary-owned Lavish server address"
@@ -1911,7 +1911,7 @@ SH
   out=$(FM_FAKE_PANE_LOG="$pane_log" \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "an absent Lavish host configuration should allow the worker spawn"
+  expect_code 0 "$status" "an absent Lavish host configuration should allow the worker spawn" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_not_contains "$launch" "LAVISH_AXI_HOST" \
     "an absent configuration changed the host in the worker launch"
@@ -1934,7 +1934,7 @@ test_claude_omits_config_dir_prefix_when_unset() {
   # default path where fm-spawn adds no prefix.
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn without CLAUDE_CONFIG_DIR should succeed"
+  expect_code 0 "$status" "claude spawn without CLAUDE_CONFIG_DIR should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_not_contains "$launch" "CLAUDE_CONFIG_DIR=" \
     "claude launch must not add a config-dir prefix when firstmate has no CLAUDE_CONFIG_DIR set"
@@ -1950,7 +1950,7 @@ test_non_claude_harness_ignores_config_dir() {
   out=$(FM_TEST_CLAUDE_CONFIG_DIR="/opt/test/claude-work" \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "codex spawn with CLAUDE_CONFIG_DIR set should succeed"
+  expect_code 0 "$status" "codex spawn with CLAUDE_CONFIG_DIR set should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_not_contains "$launch" "CLAUDE_CONFIG_DIR=" \
     "non-claude harness launch must not receive the claude-specific config-dir prefix"
@@ -2128,7 +2128,7 @@ test_active_dispatch_profile_does_not_block_secondmate_launch() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
   status=$?
-  expect_code 0 "$status" "secondmate spawn should be exempt from the dispatch-profile explicit harness requirement"
+  expect_code 0 "$status" "secondmate spawn should be exempt from the dispatch-profile explicit harness requirement" "$out"
   assert_contains "$out" "spawned $id harness=codex kind=secondmate" "secondmate launch did not use secondmate harness resolution"
   assert_grep "kind=secondmate" "$HOME_DIR/state/$id.meta" "secondmate meta missing kind=secondmate"
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex default default
@@ -2197,7 +2197,7 @@ test_launch_environment_invalid_config_refuses() {
     printf '%s\n' "$bad" > "$HOME_DIR/config/launch-env-allowlist"
     out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
     status=$?
-    expect_code 1 "$status" "invalid allowlist must refuse spawn"
+    expect_code 1 "$status" "invalid allowlist must refuse spawn" "$out"
     assert_contains "$out" 'launch-env-allowlist' "refusal must identify the config file"
     [ ! -s "$LAUNCH_LOG" ] || fail "invalid allowlist delivered a launch command"
     [ ! -f "$HOME_DIR/state/$id.meta" ] || fail "invalid allowlist published a task"
@@ -2501,7 +2501,7 @@ test_claude_permission_mode_absent_defaults_to_bypass() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn with no claude-permission-mode should succeed"
+  expect_code 0 "$status" "claude spawn with no claude-permission-mode should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" --dangerously-skip-permissions)
   [ "$launch" = "$expected" ] || fail "absent config/claude-permission-mode did not default to bypass"$'\n'"expected: $expected"$'\n'"actual:   $launch"
@@ -2517,7 +2517,7 @@ test_claude_permission_mode_auto_opts_into_model_reviewed_launch() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn with claude-permission-mode=auto should succeed"
+  expect_code 0 "$status" "claude spawn with claude-permission-mode=auto should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" '--permission-mode auto')
   [ "$launch" = "$expected" ] || fail "explicit auto did not produce the model-reviewed launch"$'\n'"expected: $expected"$'\n'"actual:   $launch"
@@ -2534,7 +2534,7 @@ test_claude_permission_mode_bypass_swaps_only_the_permission_flag() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn with claude-permission-mode=bypass should succeed"
+  expect_code 0 "$status" "claude spawn with claude-permission-mode=bypass should succeed" "$out"
   assert_contains "$out" "spawned $id harness=claude" "bypass spawn did not report claude"
   launch=$(cat "$LAUNCH_LOG")
   expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" --dangerously-skip-permissions)
@@ -2552,7 +2552,7 @@ test_claude_permission_mode_auto_reaches_scout_launch() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
   status=$?
-  expect_code 0 "$status" "claude scout spawn with claude-permission-mode=auto should succeed"
+  expect_code 0 "$status" "claude scout spawn with claude-permission-mode=auto should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "claude --permission-mode auto " "scout launch did not carry --permission-mode auto"
   assert_not_contains "$launch" "--dangerously-skip-permissions" "scout launch must not request bypass mode"
@@ -2607,7 +2607,7 @@ test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 1 "$status" "an unrecognized claude-permission-mode token must refuse the spawn"
+  expect_code 1 "$status" "an unrecognized claude-permission-mode token must refuse the spawn" "$out"
   assert_contains "$out" "config/claude-permission-mode holds 'yolo'" "refusal must name the file and the offending token"
   assert_contains "$out" "bypass" "refusal must list bypass as an accepted value"
   assert_contains "$out" "--permission-mode auto" "refusal must list auto as an accepted value"
@@ -2625,7 +2625,7 @@ test_non_claude_harness_ignores_claude_permission_mode() {
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness codex)
   status=$?
-  expect_code 0 "$status" "codex spawn under claude-permission-mode=auto should succeed"
+  expect_code 0 "$status" "codex spawn under claude-permission-mode=auto should succeed" "$out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex " "codex launch did not run codex"
   assert_not_contains "$launch" "--permission-mode" "the claude permission flag must not leak into a codex launch"

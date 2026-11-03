@@ -207,7 +207,7 @@ test_rovo_launch_then_send_is_verified() {
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model auto --effort high)
   rc=$?
-  expect_code 0 "$rc" "verified rovo launch-then-send should succeed"
+  expect_code 0 "$rc" "verified rovo launch-then-send should succeed" "$out"
   assert_contains "$out" "spawned $id harness=rovo" "rovo spawn did not report success"
 
   launch=$(cat "$CASE_DIR/launch.log")
@@ -258,7 +258,7 @@ test_rovo_effort_xhigh_is_recorded_but_omitted() {
   read_spawn_record "$rec"
   out=$(run_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" --effort xhigh)
   rc=$?
-  expect_code 0 "$rc" "rovo spawn with an unsupported effort should still succeed"
+  expect_code 0 "$rc" "rovo spawn with an unsupported effort should still succeed" "$out"
   launch=$(cat "$CASE_DIR/launch.log")
   assert_not_contains "$launch" "efficiencyLevel" "rovo launch set agent.efficiencyLevel for an unsupported effort value"
   # --config-override still carries the mandatory allowedExternalPaths grant
@@ -278,7 +278,7 @@ test_rovo_effort_high_sets_config_override() {
   read_spawn_record "$rec"
   out=$(run_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" --effort high)
   rc=$?
-  expect_code 0 "$rc" "rovo spawn with a supported effort should succeed"
+  expect_code 0 "$rc" "rovo spawn with a supported effort should succeed" "$out"
   launch=$(cat "$CASE_DIR/launch.log")
   assert_contains "$launch" 'efficiencyLevel' "rovo launch did not set agent.efficiencyLevel via --config-override"
   assert_contains "$launch" '"high"' "rovo launch did not carry the requested efficiency level"

@@ -24,7 +24,7 @@
 # Output is one stable, parseable, token-tight line firstmate can read every
 # heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
+#   state: <working|parked|done|blocked|paused|failed|idle|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
 #
 # A run-step reading whose run came from inventory selection ends its detail
 # with a `run: <id>` field naming that run, and a terminal one appends
@@ -1623,6 +1623,14 @@ if [ -n "$LOG_VERB" ]; then
   if [ "$LOG_STATE" != unknown ]; then
     emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")"
   fi
+fi
+
+# A live secondmate that has not written a status line yet is idle, not
+# unknown: it idles on its own watcher until routed work arrives. Reaching here
+# means the endpoint answered above (a dead or unreadable one already emitted),
+# so a log with no events at all is proof of an idle, healthy mate.
+if [ "$KIND" = secondmate ] && ! grep -q '[^[:space:]]' "$LOG" 2>/dev/null; then
+  emit idle pane "no events yet (an idle secondmate is healthy)"
 fi
 
 emit unknown none "no current-state source available"

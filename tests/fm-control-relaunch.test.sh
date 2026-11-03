@@ -61,6 +61,20 @@ make_tmux_stub() {  # <dir>
 #!/usr/bin/env bash
 set -u
 D=$FM_FAKE_DIR
+# The all-sockets absence sweep addresses one socket at a time (-S <path>);
+# each socket's canned answer lives in $D/sockets/<basename>: BROKEN is a
+# non-definitive failure, DEAD a socket with no server behind it, anything else
+# is that server's session:window inventory.
+if [ "${1:-}" = -S ]; then
+  sock=${2##*/}
+  shift 2
+  [ "${1:-}" = list-windows ] || exit 0
+  case "$(cat "$D/sockets/$sock" 2>/dev/null)" in
+    BROKEN) echo 'lost server' >&2; exit 1 ;;
+    DEAD) echo "error connecting to $sock (Connection refused)" >&2; exit 1 ;;
+  esac
+  cat "$D/sockets/$sock"; exit 0
+fi
 case "${1:-}" in
   send-keys)
     shift
@@ -242,10 +256,10 @@ run_control() {  # <case-dir> <args...>
   # store (bin/fm-claude-trust.sh), and a relaunch reaches it through fm-control.sh, so this runs against a throwaway HOME;
   # without it this suite would write the developer's real ~/.claude.json.
   mkdir -p "$dir/user-home"
-  env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
+  env -u TMUX -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
     -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
     PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
-    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' TMUX_TMPDIR="$dir/tmuxtmp" \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
     FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_REAL_GIT="${FM_REAL_GIT:-}" FM_FAKE_GIT_FAILURE="${FM_FAKE_GIT_FAILURE:-}" \
@@ -264,10 +278,10 @@ run_spawn() {  # <case-dir> <args...>
   # store (bin/fm-claude-trust.sh), so it runs against a throwaway HOME;
   # without it this suite would write the developer's real ~/.claude.json.
   mkdir -p "$dir/user-home"
-  env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
+  env -u TMUX -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
     -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
     PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
-    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' \
+    HOME="$dir/user-home" CLAUDE_CONFIG_DIR='' TMUX_TMPDIR="$dir/tmuxtmp" \
     FM_SPAWN_NO_GUARD=1 GROK_HOME="$dir/grokhome" \
     "$SPAWN" "$@" 2>&1
 }
@@ -405,7 +419,7 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
 
   out=$(run_control "$dir" rl43 relaunch --note "preserve the pending draft"); rc=$?
 
-  expect_code 1 "$rc" "a relaunch must refuse before typing an exit command into pending composer text"
+  expect_code 1 "$rc" "a relaunch must refuse before typing an exit command into pending composer text" "$out"
   assert_contains "$out" "composer visibly holds pending text" \
     "the refusal should name the pending composer text"
   [ "$(cat "$dir/fake/command")" = claude ] \
@@ -423,7 +437,7 @@ test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven() {
   out=$(FM_FAKE_COMPOSER_READ_FAIL=1 \
     run_control "$dir" rl44 relaunch --note "preserve on an unreadable composer"); rc=$?
 
-  expect_code 1 "$rc" "a relaunch must refuse before typing an exit command when the composer state cannot be proven empty"
+  expect_code 1 "$rc" "a relaunch must refuse before typing an exit command when the composer state cannot be proven empty" "$out"
   assert_contains "$out" "not proven empty" \
     "the refusal should name the unproven composer state, not claim pending text"
   assert_not_contains "$out" "visibly holds pending text" \
@@ -696,7 +710,7 @@ test_relaunch_requires_a_note_for_a_ship_task() {
   add_ship_task "$dir" rl3 claude
   before=$(cat "$dir/home/data/rl3/brief.md")
   out=$(run_control "$dir" rl3 relaunch); rc=$?
-  expect_code 1 "$rc" "a ship relaunch without a note should refuse"
+  expect_code 1 "$rc" "a ship relaunch without a note should refuse" "$out"
   assert_contains "$out" "requires --note" "the refusal should name the missing note"
   [ "$(cat "$dir/home/data/rl3/brief.md")" = "$before" ] \
     || fail "a refused relaunch must not touch the instructions"
@@ -891,7 +905,7 @@ test_prefixed_recorded_harness_requires_explicit_replacement() {
   cp "$brief" "$dir/brief.before"
 
   out=$(run_control "$dir" rl34 relaunch --note "continue safely"); rc=$?
-  expect_code 1 "$rc" "implicit relaunch from a prefixed command should refuse"
+  expect_code 1 "$rc" "implicit relaunch from a prefixed command should refuse" "$out"
   assert_contains "$out" "original launch command cannot be reconstructed from its recorded basename" \
     "the refusal should name the missing launch identity"
   assert_contains "$out" "would substitute the canonical adapter 'grok'" \
@@ -937,7 +951,7 @@ test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop() {
     "$dir/home/state/$id.meta" > "$dir/home/state/$id.meta.tmp"
   mv "$dir/home/state/$id.meta.tmp" "$dir/home/state/$id.meta"
   out=$(run_control "$dir" "$id" relaunch --model openai-codex/gpt-6-astra --note "invalid native effort transfer"); rc=$?
-  expect_code 1 "$rc" "Ultra transferred to ordinary Pi"
+  expect_code 1 "$rc" "Ultra transferred to ordinary Pi" "$out"
   assert_contains "$out" "ultra effort requires pi or pi-signed" "model-aware relaunch refusal missing"
   [ "$(cat "$dir/fake/command")" = pi ] || fail "invalid Ultra relaunch stopped the running agent"
   [ ! -s "$dir/fake/literal" ] || fail "invalid Ultra relaunch sent lifecycle input"
@@ -970,7 +984,7 @@ test_signed_out_worker_account_pin_refuses_before_stop() {
   printf '%s\n' "$dir/work" > "$dir/home/config/claude-account"
   cp "$dir/home/state/$id.meta" "$dir/meta-before"
   out=$(run_control "$dir" "$id" relaunch --note "account signed out"); rc=$?
-  expect_code 1 "$rc" "a relaunch under a signed-out account pin must refuse"
+  expect_code 1 "$rc" "a relaunch under a signed-out account pin must refuse" "$out"
   assert_contains "$out" "config/claude-account pins Claude workers to $dir/work, which is not signed in" \
     "the refusal should name the pin and the signed-out root"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "a signed-out pin must refuse before the running agent stops"
@@ -1063,7 +1077,7 @@ SH
     cp "$dir/home/state/$id.meta" "$dir/meta-before"
     : > "$dir/fake/literal"
     out=$(run_control "$dir" "$id" relaunch); rc=$?
-    expect_code 1 "$rc" "a signed-out mate account must refuse before stop"
+    expect_code 1 "$rc" "a signed-out mate account must refuse before stop" "$out"
     assert_contains "$out" "$pin" "the refusal must name the mate setting"
     assert_contains "$out" 'not signed in' "the refusal must name the reason"
     [ "$(cat "$dir/fake/command")" = "$harness" ] || fail "the running mate must remain alive"
@@ -1112,13 +1126,13 @@ test_exclude_tools_refusals_happen_before_the_agent_stops() {
   mkdir -p "$dir/home/config"
   printf '%s\n' 'two words' > "$dir/home/config/crew-exclude-tools"
   out=$(run_control "$dir" "$id" relaunch --note "bad list"); rc=$?
-  expect_code 1 "$rc" "a malformed exclusion list must refuse the relaunch"
+  expect_code 1 "$rc" "a malformed exclusion list must refuse the relaunch" "$out"
   assert_contains "$out" "config/crew-exclude-tools has a malformed entry" "refusal must name the entry"
   [ "$(cat "$dir/fake/command")" = pi ] || fail "a malformed exclusion list stopped the running agent"
   [ ! -s "$dir/fake/literal" ] || fail "a refused relaunch sent lifecycle input"
   printf '%s\n' 'mcp__srv__writeTool' > "$dir/home/config/crew-exclude-tools"
   out=$(run_control "$dir" "$id" relaunch --harness codex --note "switch runtime"); rc=$?
-  expect_code 1 "$rc" "relaunching onto a runtime that cannot hide tools must refuse"
+  expect_code 1 "$rc" "relaunching onto a runtime that cannot hide tools must refuse" "$out"
   assert_contains "$out" "config/crew-exclude-tools" "refusal must name the config file"
   [ "$(cat "$dir/fake/command")" = pi ] || fail "an unhonorable exclusion list stopped the running agent"
   [ ! -s "$dir/fake/literal" ] || fail "a refused relaunch sent lifecycle input"
@@ -1141,7 +1155,7 @@ test_relaunch_onto_an_unverified_harness_is_refused() {
   dir=$(new_case badharness rl8)
   add_ship_task "$dir" rl8 claude
   out=$(run_control "$dir" rl8 relaunch --harness someagent --note "x"); rc=$?
-  expect_code 1 "$rc" "an unverified target harness should refuse"
+  expect_code 1 "$rc" "an unverified target harness should refuse" "$out"
   assert_contains "$out" "not a verified harness" "the refusal should name the unverified adapter"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
   pass "fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics"
@@ -1531,7 +1545,7 @@ test_secondmate_relaunch_onto_a_crewmate_only_adapter_refuses_before_stop() {
   printf '%s\n' "fm-sm7" > "$dir/fake/windows"
   printf '%s' "$dir/smhome" > "$dir/fake/cwd"
   out=$(run_control "$dir" sm7 relaunch --harness muse); rc=$?
-  expect_code 1 "$rc" "a crewmate-only adapter should refuse a secondmate relaunch"
+  expect_code 1 "$rc" "a crewmate-only adapter should refuse a secondmate relaunch" "$out"
   assert_contains "$out" "not verified to run a secondmate task" \
     "the refusal should name the kind the adapter cannot run"
   [ "$(cat "$dir/fake/command")" = claude ] \
@@ -1787,7 +1801,7 @@ test_missing_worktree_refuses_before_stopping_anything() {
   add_ship_task "$dir" rl10 claude
   rm -rf "$dir/wt"
   out=$(run_control "$dir" rl10 relaunch --note "x"); rc=$?
-  expect_code 1 "$rc" "a missing worktree should refuse"
+  expect_code 1 "$rc" "a missing worktree should refuse" "$out"
   assert_contains "$out" "recorded worktree" "the refusal should name the missing local copy"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
   [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must send nothing"
@@ -1803,7 +1817,7 @@ test_relaunch_refuses_a_recorded_worktree_that_is_the_primary_home() {
   sed -i.bak "s#^worktree=.*#worktree=$dir/home#" "$dir/home/state/rl11.meta"
   printf 'zsh' > "$dir/fake/command"
   out=$(run_spawn "$dir" rl11 --relaunch 2>&1); rc=$?
-  expect_code 1 "$rc" "a worktree that is the primary home should refuse"
+  expect_code 1 "$rc" "a worktree that is the primary home should refuse" "$out"
   assert_contains "$out" "primary home or checkout" "the refusal should name the primary home"
   [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must launch nothing"
   pass "fm-spawn --relaunch: a recorded worktree that is the primary home refuses"
@@ -1816,7 +1830,7 @@ test_relaunch_refuses_a_recorded_worktree_that_is_the_project_primary_checkout()
   sed -i.bak "s#^worktree=.*#worktree=$dir/proj#" "$dir/home/state/rl12.meta"
   printf 'zsh' > "$dir/fake/command"
   out=$(run_spawn "$dir" rl12 --relaunch 2>&1); rc=$?
-  expect_code 1 "$rc" "a worktree that is the project primary checkout should refuse"
+  expect_code 1 "$rc" "a worktree that is the project primary checkout should refuse" "$out"
   assert_contains "$out" "primary home or checkout" "the refusal should name the primary checkout"
   [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must launch nothing"
   pass "fm-spawn --relaunch: a recorded worktree that is the project primary checkout refuses"
@@ -1828,7 +1842,7 @@ test_missing_instructions_refuse_before_stopping_anything() {
   add_ship_task "$dir" rl11 claude
   rm -f "$dir/home/data/rl11/brief.md"
   out=$(run_control "$dir" rl11 relaunch --note "x"); rc=$?
-  expect_code 1 "$rc" "missing instructions should refuse"
+  expect_code 1 "$rc" "missing instructions should refuse" "$out"
   assert_contains "$out" "no instructions" "the refusal should name the missing instructions"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
   pass "fm-control relaunch: a worker with nothing to work from is never launched"
@@ -1855,7 +1869,7 @@ test_checkpoint_refuses_uninspectable_head_and_status() {
   make_git_failure_stub "$dir"
   out=$(FM_REAL_GIT="$real_git" FM_FAKE_GIT_FAILURE=head \
     run_control "$dir" rl22 relaunch --note "x"); rc=$?
-  expect_code 1 "$rc" "an uninspectable HEAD should refuse"
+  expect_code 1 "$rc" "an uninspectable HEAD should refuse" "$out"
   assert_contains "$out" "HEAD cannot be inspected" "the refusal should name the failed HEAD proof"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "HEAD inspection failure must not stop the agent"
 
@@ -1864,7 +1878,7 @@ test_checkpoint_refuses_uninspectable_head_and_status() {
   make_git_failure_stub "$dir"
   out=$(FM_REAL_GIT="$real_git" FM_FAKE_GIT_FAILURE=status \
     run_control "$dir" rl23 relaunch --note "x"); rc=$?
-  expect_code 1 "$rc" "an uninspectable worktree status should refuse"
+  expect_code 1 "$rc" "an uninspectable worktree status should refuse" "$out"
   assert_contains "$out" "status cannot be inspected" "the refusal should name the failed dirty-state proof"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "status inspection failure must not stop the agent"
   pass "fm-control relaunch: checkpoint inspection failures refuse before stopping"
@@ -2094,7 +2108,7 @@ test_secondmate_relaunch_refuses_an_unmarked_home() {
   } > "$home/state/sm2.meta"
   printf '%s\n' "fm-sm2" > "$dir/fake/windows"
   out=$(run_control "$dir" sm2 relaunch); rc=$?
-  expect_code 1 "$rc" "a home marked for another secondmate should refuse"
+  expect_code 1 "$rc" "a home marked for another secondmate should refuse" "$out"
   assert_contains "$out" "not marked as its own seeded secondmate home" \
     "the refusal should name the identity mismatch"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
@@ -2125,7 +2139,7 @@ test_secondmate_checkpoint_refuses_unreadable_child_state() {
   printf '%s\n' "fm-sm5" > "$dir/fake/windows"
   printf '%s' "$dir/smhome" > "$dir/fake/cwd"
   out=$(run_control "$dir" sm5 relaunch); rc=$?
-  expect_code 1 "$rc" "a non-readable child record should refuse"
+  expect_code 1 "$rc" "a non-readable child record should refuse" "$out"
   assert_contains "$out" "not a readable regular file" "the refusal should name the unreadable child record"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "child record failure must not stop the secondmate"
   pass "fm-control relaunch: unreadable child records fail checkpoint"
@@ -2138,7 +2152,7 @@ test_secondmate_checkpoint_refuses_unreadable_child_state() {
   chmod 000 "$dir/smhome/state"
   out=$(run_control "$dir" sm5 relaunch); rc=$?
   chmod 755 "$dir/smhome/state"
-  expect_code 1 "$rc" "an unlistable state directory should refuse"
+  expect_code 1 "$rc" "an unlistable state directory should refuse" "$out"
   assert_contains "$out" "no readable state directory" \
     "the refusal should name the unlistable home state directory"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "unlistable child state must not stop the secondmate"
@@ -2222,7 +2236,7 @@ test_concurrent_relaunch_is_refused() {
   out=$(run_control "$dir" rl19 relaunch --note "concurrent"); rc=$?
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
-  expect_code 1 "$rc" "a second concurrent control action should refuse"
+  expect_code 1 "$rc" "a second concurrent control action should refuse" "$out"
   assert_contains "$out" "another lifecycle action is already running" \
     "the refusal should name the concurrent action"
   [ "$(cat "$dir/fake/command")" = claude ] \
@@ -2253,7 +2267,7 @@ test_direct_spawn_relaunch_participates_in_the_lifecycle_lock() {
   out=$(run_spawn "$dir" rl26 --relaunch --harness claude); rc=$?
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
-  expect_code 1 "$rc" "direct relaunch spawn should refuse a held lifecycle lock"
+  expect_code 1 "$rc" "direct relaunch spawn should refuse a held lifecycle lock" "$out"
   assert_contains "$out" "another lifecycle action is already running" \
     "direct relaunch spawn should name lifecycle contention"
   [ -z "$(cat "$dir/fake/literal")" ] || fail "contended direct relaunch spawn must deliver no launch bytes"
@@ -2280,7 +2294,7 @@ test_promotion_participates_in_the_lifecycle_lock_before_metadata_resolution() {
   out=$(FM_HOME="$dir/home" "$PROMOTE" rl29 --mode direct-PR --yolo on 2>&1); rc=$?
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
-  expect_code 1 "$rc" "promotion should refuse a concurrent lifecycle action"
+  expect_code 1 "$rc" "promotion should refuse a concurrent lifecycle action" "$out"
   assert_contains "$out" "another lifecycle action is already running" \
     "promotion should lock before interpreting the task metadata"
   [ "$(meta_field "$dir" rl29 kind)" = ship ] \
@@ -2295,7 +2309,7 @@ test_spawn_relaunch_refuses_a_live_agent() {
   dir=$(new_case live rl15)
   add_ship_task "$dir" rl15 claude
   out=$(run_spawn "$dir" rl15 --relaunch --harness claude); rc=$?
-  expect_code 1 "$rc" "relaunching into a live endpoint should refuse"
+  expect_code 1 "$rc" "relaunching into a live endpoint should refuse" "$out"
   assert_contains "$out" "positively agent-free endpoint" "the refusal should demand an agent-free endpoint"
   assert_contains "$out" "fm-control.sh rl15 exit" "the refusal should point at the way to stop it"
   pass "fm-spawn --relaunch: refuses to launch a second agent into a live endpoint"
@@ -2318,7 +2332,7 @@ SH
   chmod +x "$dir/fakebin/tmux"
 
   out=$(run_spawn "$dir" rl37 --relaunch --harness claude); rc=$?
-  expect_code 1 "$rc" "relaunching from symlinked metadata should refuse"
+  expect_code 1 "$rc" "relaunching from symlinked metadata should refuse" "$out"
   assert_contains "$out" "task record resolves outside its authorized directory" \
     "relaunch did not identify the unsafe task record"
   [ -L "$meta" ] || fail "relaunch replaced or removed the symlinked record"
@@ -2373,7 +2387,7 @@ test_spawn_relaunch_refuses_a_pending_authoritative_close() {
   printf 'zsh' > "$dir/fake/command"
 
   out=$(run_spawn "$dir" rl36 --relaunch --harness claude); rc=$?
-  expect_code 1 "$rc" "relaunching over a pending close should refuse"
+  expect_code 1 "$rc" "relaunching over a pending close should refuse" "$out"
   assert_contains "$out" "pending authoritative backlog close" \
     "the refusal should identify the close that still owns the task"
   cmp -s "$dir/meta.before" "$meta" \
@@ -2390,13 +2404,13 @@ test_spawn_relaunch_refuses_contradicting_flags() {
   add_ship_task "$dir" rl16 claude
   printf 'zsh' > "$dir/fake/command"
   out=$(run_spawn "$dir" rl16 --relaunch --backend herdr); rc=$?
-  expect_code 1 "$rc" "--backend should be refused alongside --relaunch"
+  expect_code 1 "$rc" "--backend should be refused alongside --relaunch" "$out"
   assert_contains "$out" "recorded backend" "the refusal should name the recorded backend rule"
   out=$(run_spawn "$dir" rl16 --relaunch --scout); rc=$?
-  expect_code 1 "$rc" "--scout should be refused alongside --relaunch"
+  expect_code 1 "$rc" "--scout should be refused alongside --relaunch" "$out"
   assert_contains "$out" "recorded kind" "the refusal should name the recorded kind rule"
   out=$(run_spawn "$dir" rl16 "$dir/proj" --relaunch); rc=$?
-  expect_code 1 "$rc" "a project positional should be refused alongside --relaunch"
+  expect_code 1 "$rc" "a project positional should be refused alongside --relaunch" "$out"
   assert_contains "$out" "takes the task id only" "the refusal should name the positional rule"
   pass "fm-spawn --relaunch: every identity axis comes from the record, and a contradicting flag refuses"
 }
@@ -2406,7 +2420,7 @@ test_spawn_relaunch_refuses_an_unrecorded_task() {
   dir=$(new_case norecord rl17)
   add_ship_task "$dir" rl17 claude
   out=$(run_spawn "$dir" nosuchtask --relaunch); rc=$?
-  expect_code 1 "$rc" "an unrecorded task should refuse"
+  expect_code 1 "$rc" "an unrecorded task should refuse" "$out"
   assert_contains "$out" "needs an existing task record" "the refusal should name the missing record"
   pass "fm-spawn --relaunch: an unrecorded task is refused"
 }
@@ -2446,7 +2460,7 @@ test_relaunch_refuses_a_primary_checkout_worktree_before_stopping() {
   sed -i.bak "s|^worktree=.*|worktree=$dir/proj|" "$dir/home/state/rl18p.meta"
   printf '%s' "$HOME" > "$dir/fake/cwd"
   out=$(run_control "$dir" rl18p relaunch --note "rebase"); rc=$?
-  expect_code 1 "$rc" "a primary-checkout worktree should refuse"
+  expect_code 1 "$rc" "a primary-checkout worktree should refuse" "$out"
   assert_contains "$out" "primary checkout" "the refusal should name the primary checkout"
   ! grep -qx '/exit' "$dir/fake/literal" || fail "the agent must not be stopped before the refusal"
   [ "$(cat "$dir/fake/command")" = claude ] || fail "the original agent must still be running"
@@ -2470,12 +2484,23 @@ strand_endpoint() {  # <case-dir> <id>
   : > "$1/fake/windows"
 }
 
-# Every tmux `missing` refuses on BOTH verbs, whatever produced it. tmux is the
-# one verified backend whose absence cannot be proven from a task record: the
-# record carries no socket identity for the endpoint, and any inventory
-# describes only the server this process happens to address. So a window that
-# is merely on a server this seat cannot reach is indistinguishable from one
-# that was destroyed, and neither verb will guess.
+# tmux absence is proven by sweeping every socket in the user's tmux directory
+# for the recorded session:window (fm_backend_tmux_socket_sweep): gone only when
+# every socket answered and none has it. Anything else refuses on BOTH verbs.
+
+# add_tmux_socket <case-dir> <name> <canned-answer>: a real unix socket file in
+# the case's tmux directory (the sweep only trusts sockets) whose canned answer
+# the stub serves from $D/sockets/<name>.
+add_tmux_socket() {  # <case-dir> <name> <answer>
+  local dir=$1 name=$2 answer=$3 sd
+  sd="$dir/tmuxtmp/tmux-$(id -u)"
+  mkdir -p "$sd" "$dir/fake/sockets"
+  # Bind relative to the directory: the full path may exceed sun_path's limit.
+  ( cd "$sd" && perl -MSocket -e 'socket(S, PF_UNIX, SOCK_STREAM, 0) or die; bind(S, sockaddr_un($ARGV[0])) or die' "$name" ) \
+    || fail "could not create the fake tmux socket $name"
+  printf '%s\n' "$answer" > "$dir/fake/sockets/$name"
+}
+
 assert_tmux_missing_refuses() {  # <case-dir> <id> <what-was-staged>
   local dir=$1 id=$2 what=$3 out rc brief_before
 
@@ -2501,36 +2526,45 @@ assert_tmux_missing_refuses() {  # <case-dir> <id> <what-was-staged>
   [ ! -s "$dir/fake/literal" ] || fail "a refused transaction must launch nothing ($what)"
 }
 
-test_tmux_refuses_a_window_missing_from_its_session() {
-  local dir
+test_tmux_relaunch_proceeds_when_the_window_is_absent_on_every_socket() {
+  local dir out rc
   dir=$(new_case tmux-gone rl60)
   add_ship_task "$dir" rl60 claude
   strand_endpoint "$dir" rl60
-  assert_tmux_missing_refuses "$dir" rl60 "window absent from a readable session inventory"
-  pass "tmux: a window absent from its session refuses both verbs rather than being assumed gone"
+  # Two live servers that lack the window and one socket with no server behind
+  # it: all three answered, so absence is proven.
+  add_tmux_socket "$dir" default $'other:fm-else\nfmses:fm-unrelated'
+  add_tmux_socket "$dir" side 'fmses:fm-someone'
+  add_tmux_socket "$dir" stale DEAD
+
+  out=$(run_control "$dir" rl60 relaunch --note "revive"); rc=$?
+  expect_code 0 "$rc" "a window absent from every socket must relaunch"$'\n'"$out"
+  assert_contains "$(cat "$dir/fake/created-windows")" "fm-rl60" \
+    "the relaunch must re-create the endpoint"
+  [ -d "$dir/wt" ] || fail "the worktree must be untouched"
+  pass "tmux: a window absent on every socket of the user tmux directory is proven gone and relaunches"
 }
 
-test_tmux_refuses_a_session_that_cannot_be_found() {
+test_tmux_refuses_a_window_still_present_on_one_socket() {
   local dir
-  dir=$(new_case tmux-nosession rl61)
+  dir=$(new_case tmux-elsewhere rl61)
   add_ship_task "$dir" rl61 claude
-  # Real tmux's answer to a renamed session, and to a different
-  # TMUX_TMPDIR/socket: definitive about the SESSION, silent about whether the
-  # window and its agent survived elsewhere.
-  : > "$dir/fake/session-missing"
-  assert_tmux_missing_refuses "$dir" rl61 "recorded session not found"
-  pass "tmux: an unfindable session refuses both verbs, so a live agent is never duplicated"
+  strand_endpoint "$dir" rl61
+  add_tmux_socket "$dir" default 'fmses:fm-else'
+  add_tmux_socket "$dir" other 'fmses:fm-rl61'
+  assert_tmux_missing_refuses "$dir" rl61 "window alive on another socket"
+  pass "tmux: a window present on any one socket refuses both verbs"
 }
 
-test_tmux_refuses_when_the_server_is_gone() {
+test_tmux_refuses_when_a_socket_cannot_be_queried() {
   local dir
-  dir=$(new_case tmux-noserver rl62)
+  dir=$(new_case tmux-unreadable rl62)
   add_ship_task "$dir" rl62 claude
-  # No server on the socket this process addresses. Another server may still be
-  # running the task's window, and the record cannot say which socket is its.
-  : > "$dir/fake/server-dead"
-  assert_tmux_missing_refuses "$dir" rl62 "no tmux server on this socket"
-  pass "tmux: a dead server on this socket refuses both verbs rather than proving absence"
+  strand_endpoint "$dir" rl62
+  add_tmux_socket "$dir" default 'fmses:fm-else'
+  add_tmux_socket "$dir" broken BROKEN
+  assert_tmux_missing_refuses "$dir" rl62 "one socket unreadable"
+  pass "tmux: a socket that cannot be queried refuses both verbs rather than proving absence"
 }
 
 test_reclaim_refuses_an_unreadable_endpoint() {
@@ -2543,7 +2577,7 @@ test_reclaim_refuses_an_unreadable_endpoint() {
   : > "$dir/fake/inventory-broken"
 
   out=$(run_spawn "$dir" rl63 --relaunch --harness claude); rc=$?
-  expect_code 1 "$rc" "an unreadable endpoint must still refuse"
+  expect_code 1 "$rc" "an unreadable endpoint must still refuse" "$out"
   assert_contains "$out" "positively agent-free endpoint" \
     "only a POSITIVELY proven agent-free endpoint may be relaunched into"
   assert_absent "$dir/fake/created-windows" \
@@ -2974,7 +3008,7 @@ test_herdr_reclaim_of_a_secondmate_names_its_own_owner() {
   printf '%s\n' "kind=secondmate" "home=$dir/wt" >> "$dir/home/state/rl76.meta"
 
   out=$(run_spawn "$dir" rl76 --relaunch --harness claude); rc=$?
-  expect_code 1 "$rc" "a secondmate reclaim belongs to the secondmate respawn path"
+  expect_code 1 "$rc" "a secondmate reclaim belongs to the secondmate respawn path" "$out"
   assert_contains "$out" "--secondmate" "the refusal should name the path that owns this recovery"
   assert_not_contains "$(cat "$dir/fake/herdr-log")" "tab create" \
     "the refusal must happen before any endpoint is created"
@@ -3182,9 +3216,9 @@ test_spawn_relaunch_refuses_an_unrecorded_task
 test_spawn_relaunch_moves_a_pane_outside_the_worktree_back
 test_relaunch_from_a_shell_left_in_home_starts_in_the_worktree
 test_relaunch_refuses_a_primary_checkout_worktree_before_stopping
-test_tmux_refuses_a_window_missing_from_its_session
-test_tmux_refuses_a_session_that_cannot_be_found
-test_tmux_refuses_when_the_server_is_gone
+test_tmux_relaunch_proceeds_when_the_window_is_absent_on_every_socket
+test_tmux_refuses_a_window_still_present_on_one_socket
+test_tmux_refuses_when_a_socket_cannot_be_queried
 test_reclaim_refuses_an_unreadable_endpoint
 test_herdr_relaunch_resumes_only_the_registered_pi_session
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server
@@ -3256,7 +3290,7 @@ test_relaunch_clears_control_exit_marker_only_when_published() {
   # Pre-stop refusal (missing --note for a ship) keeps the prior exit marker intact.
   rc=0
   out=$(run_control "$dir" rl81 relaunch) || rc=$?
-  expect_code 1 "$rc" "ship relaunch without --note must refuse"
+  expect_code 1 "$rc" "ship relaunch without --note must refuse" "$out"
   assert_present "$dir/home/state/rl81.control-exit" "refused relaunch must preserve prior control-exit"
 
   # Published replacement retires control-exit so the new incarnation can be reaped normally.

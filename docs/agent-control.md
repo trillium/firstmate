@@ -33,7 +33,7 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
-| `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. An endpoint reading `missing` (or, on Rex, `unreadable`) goes through the same [absence proof](#reclaiming-a-task-whose-endpoint-is-gone) the reclaim uses before anything is claimed about it, and only Herdr and Rex can supply one (T3 Code refuses `exit` before reading anything): proven gone reports `endpoint-gone` (the agent went with it, and the endpoint this verb normally preserves did not survive), a pane that turns out to be there and idle is the ordinary `already-stopped`, one whose agent is back takes the ordinary interrupt-then-exit path. A tmux `missing` always refuses rather than claim a stop it cannot see. |
+| `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. An endpoint reading `missing` (or, on Rex, `unreadable`) goes through the same [absence proof](#reclaiming-a-task-whose-endpoint-is-gone) the reclaim uses before anything is claimed about it, and only Herdr and Rex can supply one (T3 Code refuses `exit` before reading anything): proven gone reports `endpoint-gone` (the agent went with it, and the endpoint this verb normally preserves did not survive), a pane that turns out to be there and idle is the ordinary `already-stopped`, one whose agent is back takes the ordinary interrupt-then-exit path. A tmux `missing` refuses unless the all-sockets sweep proves the window gone. |
 | `relaunch` | Replace the running agent with a new one in the same worktree - and the same endpoint whenever that endpoint still exists - on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the endpoint the task's record now names, and that record names the harness that is actually running. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
@@ -107,7 +107,7 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 A Herdr pane or workspace, or a Rex block, can be destroyed out from under a live task by churn, a session restart, or a stopped Rex server.
 The task's worktree, branch, commits, and uncommitted changes all survive that; only its terminal does not.
 
-**Reclaim is Herdr- and Rex-only.** On tmux, both verbs refuse a `missing` endpoint, leaving it exactly as deadlocked as it was before this mechanism existed - deliberately, and with the reason stated rather than guessed past.
+**Reclaim is Herdr-, Rex-, and tmux-capable.** On tmux, both verbs refuse a `missing` endpoint unless the all-sockets sweep below proves it gone.
 
 Two endpoint verdicts are agent-free, and both license a relaunch:
 
@@ -128,9 +128,11 @@ An unreachable endpoint can still hold the live agent a rebind would duplicate, 
   [Rex's server-stop limits](rex-backend.md#active-limits) distinguish a restored shell from a missing block.
   A block that is still there is classified from its process view, so `dead` is adopted and `alive` refuses ([`docs/rex-backend.md`](rex-backend.md) "Cleanup and the absence proof").
   Rex's passive reads never start a server, so a stopped Rex server reads `unreadable` rather than `missing`; a Rex `unreadable` therefore goes through this recheck too, and still refuses unless the recheck settles it.
-- **tmux cannot.** `list-windows -a` describes only the tmux server the *current process* addresses (its `TMUX_TMPDIR`/socket), and a task record carries no socket identity for its endpoint.
-  A different but running server would answer "not anywhere" about a window it was never able to see, so a server-wide read cannot tell a destroyed window from one on a server this process cannot address.
-  There is no read available that closes that gap, so tmux always refuses - for a renamed session, a moved window, a foreign socket, and a dead server alike.
+- **tmux sweeps every socket.** A task record carries no socket identity for its endpoint, and `list-windows -a` describes only the server the current process addresses.
+  So the proof asks every socket in the user's tmux directory (`${TMUX_TMPDIR:-/tmp}/tmux-<uid>`, plus the socket `$TMUX` names) for the recorded `session:window`; it is read-only and never starts a server.
+  The window absent from all of them (a socket with no server behind it counts as an answer) is `gone`.
+  The window present on any socket, a socket that cannot be queried, or a recorded window that is an index or id rather than a name all stay `unproven` and refuse.
+  The sweep never touches the worktree or its unlanded work; the relaunch re-creates only the endpoint.
 - **T3 Code refuses `exit` before this proof.** Its [native status table](t3code-backend.md#restart-and-liveness-behavior) owns absence and unreadability, including an archived thread whose active run is still draining.
   T3 Code still cannot reclaim the task because a thread keeps its conversation, so no fresh agent can replace it and `relaunch` refuses before this proof can authorize a replacement.
 
@@ -197,7 +199,7 @@ The worktree and the task's records are unaffected either way.
   Only a positively classified state acts; a Rex `unreadable` acts only once the absence proof above settles it.
 - `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
 - `fm-spawn --relaunch` independently refuses unless the endpoint is positively agent-free - either a `dead` endpoint that survives, or a Herdr or Rex endpoint proven gone by the absence proof above - so a replacement can never join a live agent.
-  An `alive`, `ambiguous`, or `unreadable` verdict all refuse (a Rex `unreadable` after the absence proof cannot settle it), and so does any endpoint whose absence is not provable, which on tmux is every `missing`; absence is claimed only from positive evidence of it.
+  An `alive`, `ambiguous`, or `unreadable` verdict all refuse (a Rex `unreadable` after the absence proof cannot settle it), and so does any endpoint whose absence is not provable, which on tmux is a window still present on any socket or a socket that cannot be queried; absence is claimed only from positive evidence of it.
   It also requires the shell to be in the recorded worktree: every backend but Orca (which owns its own task worktree with no current-path probe) gets one explicit `cd` to the recorded path, then a pre-launch path read that refuses before any harness starts unless it confirms the endpoint is sitting in the recorded copy.
 
 ## Capability matrix
@@ -221,7 +223,7 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 ## Verification
 
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
-- `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and the endpoint-absence proof both verbs share - the Herdr reclaim of a destroyed endpoint, and tmux refusing one it cannot prove absent.
+- `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and the endpoint-absence proof both verbs share - the Herdr reclaim of a destroyed endpoint, and the tmux all-sockets sweep (relaunch when absent everywhere, refusal when present on one socket or a socket is unreadable).
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
 - `tests/fm-backend-rex.test.sh` and `tests/fm-backend-rex-smoke.test.sh` - the Rex classifier and absence proof against a stateful fake CLI and a private test server; [`docs/verification/runtime-backends.md`](verification/runtime-backends.md#rex) records the live `interrupt`, `exit`, endpoint-gone, and reclaim runs.
 - `tests/fm-backend-t3code.test.sh` - the t3code exit and relaunch refusals and the native interrupt against a fake T3 server.

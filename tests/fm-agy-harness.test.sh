@@ -636,7 +636,7 @@ test_agy_launch_carries_the_brief_with_model_effort_and_autonomy() {
   out=$(run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model gemini-3.8-flash-low --effort low)
   rc=$?
-  expect_code 0 "$rc" "agy spawn with a listed model should succeed"
+  expect_code 0 "$rc" "agy spawn with a listed model should succeed" "$out"
   launch=$(cat "$CASE_DIR/launch.log")
   assert_contains "$launch" "$FAKEBIN_DIR/agy" "agy launch did not pin the resolved absolute binary"
   assert_contains "$launch" "--prompt-interactive" "agy launch did not carry the brief via --prompt-interactive"
@@ -662,7 +662,7 @@ test_agy_effort_suffixed_model_omits_conflicting_effort() {
   out=$(run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model gemini-3.8-flash-high --effort medium 2>&1)
   rc=$?
-  expect_code 0 "$rc" "agy spawn with an effort-pinned model should succeed"
+  expect_code 0 "$rc" "agy spawn with an effort-pinned model should succeed" "$out"
   launch=$(cat "$CASE_DIR/launch.log")
   assert_contains "$launch" "--model 'gemini-3.8-flash-high'" "agy launch lost the requested model"
   assert_not_contains "$launch" "--effort" "agy launch passed --effort that agy rejects as conflicting with the model id"
@@ -678,7 +678,7 @@ test_agy_effort_xhigh_is_recorded_but_omitted() {
   out=$(run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model gemini-3.8-flash-low --effort xhigh)
   rc=$?
-  expect_code 0 "$rc" "agy spawn with an unsupported effort should still succeed"
+  expect_code 0 "$rc" "agy spawn with an unsupported effort should still succeed" "$out"
   launch=$(cat "$CASE_DIR/launch.log")
   assert_not_contains "$launch" "--effort" "agy launch passed a known-bad effort value"
   meta="$HOME_DIR/state/$id.meta"
@@ -708,7 +708,7 @@ test_agy_unreachable_listing_launches_unvalidated() {
   rc=0
   out=$(FM_FAKE_AGY_MODELS_FAIL=1 run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" \
     "$FAKEBIN_DIR" "$id" --model gemini-3.8-flash-low) || rc=$?
-  expect_code 0 "$rc" "an unreachable model listing must not block the spawn"
+  expect_code 0 "$rc" "an unreachable model listing must not block the spawn" "$out"
   [ -s "$CASE_DIR/launch.log" ] || fail "an unreachable listing produced no launch command"
   assert_contains "$out" "listing is unreachable" "an unreachable listing launched without its notice"
   pass "fm-spawn: an unreachable agy listing establishes nothing and launches"
@@ -724,7 +724,7 @@ test_agy_hung_listing_is_cut_off_and_launches() {
   out=$(FM_FAKE_AGY_MODELS_HANG=1 run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" \
     "$FAKEBIN_DIR" "$id" --model gemini-3.8-flash-low) || rc=$?
   elapsed=$(( $(date +%s) - started ))
-  expect_code 0 "$rc" "a hung model listing must not block the spawn"
+  expect_code 0 "$rc" "a hung model listing must not block the spawn" "$out"
   [ "$elapsed" -lt 20 ] || fail "the model probe was not cut off by its bound (took ${elapsed}s)"
   assert_contains "$out" "did not answer within 1s" "a hung listing launched without its timeout notice"
   [ -s "$CASE_DIR/launch.log" ] || fail "a hung listing produced no launch command"
@@ -744,7 +744,7 @@ test_agy_zero_model_timeout_is_clamped_to_the_default_bound() {
     run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" \
     "$FAKEBIN_DIR" "$id" --model gemini-3.8-flash-low) || rc=$?
   elapsed=$(( $(date +%s) - started ))
-  expect_code 0 "$rc" "a hung listing with a zero bound must not block the spawn"
+  expect_code 0 "$rc" "a hung listing with a zero bound must not block the spawn" "$out"
   [ "$elapsed" -lt 25 ] || fail "a zero model bound disabled the deadline (took ${elapsed}s)"
   assert_contains "$out" "did not answer within 15s" \
     "a zero model bound was not clamped to the documented default"
@@ -768,7 +768,7 @@ test_agy_fresh_worktree_is_pre_trusted_and_launches_without_a_dialog() {
   out=$(run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model gemini-3.8-flash-low)
   rc=$?
-  expect_code 0 "$rc" "an agy spawn into a fresh worktree should succeed"
+  expect_code 0 "$rc" "an agy spawn into a fresh worktree should succeed" "$out"
   assert_contains "$out" "spawned $id harness=agy" "agy spawn did not report success"
   assert_not_contains "$out" "could not pre-register" "a legitimate worktree failed trust pre-registration"
   assert_agy_trusted "$store" "$WT_DIR" "the spawn did not pre-register the worktree in agy's trust store"
@@ -793,7 +793,7 @@ test_agy_dialog_despite_registration_is_answered_once() {
   out=$(FM_FAKE_AGY_IGNORE_TRUST=1 run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" \
     "$FAKEBIN_DIR" "$id" --model gemini-3.8-flash-low)
   rc=$?
-  expect_code 0 "$rc" "an agy spawn whose dialog renders despite registration should succeed"
+  expect_code 0 "$rc" "an agy spawn whose dialog renders despite registration should succeed" "$out"
   [ "$(cat "$CASE_DIR/agy.state")" = busy ] \
     || fail "the spawn reported success before the pane reached a busy turn (state: $(cat "$CASE_DIR/agy.state"))"
   enters=$(count_enter_sends "$CASE_DIR/tmux-calls.log")
@@ -813,7 +813,7 @@ test_agy_unregistered_path_ignores_busy_until_the_dialog_is_answered() {
   out=$(FM_FAKE_AGY_RACE=1 run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" \
     "$FAKEBIN_DIR" "$id" --model gemini-3.8-flash-low)
   rc=$?
-  expect_code 0 "$rc" "an agy spawn that meets the dialog after a premature busy verdict should still succeed"
+  expect_code 0 "$rc" "an agy spawn that meets the dialog after a premature busy verdict should still succeed" "$out"
   assert_contains "$out" "could not pre-register agy workspace trust" \
     "a broken store did not surface the registration warning"
   after=$(cat "$store")
@@ -923,7 +923,7 @@ test_agy_spawn_arms_no_busy_wiring() {
   out=$(run_agy_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model gemini-3.8-flash-low)
   rc=$?
-  expect_code 0 "$rc" "agy spawn should succeed"
+  expect_code 0 "$rc" "agy spawn should succeed" "$out"
   statedir="$HOME_DIR/state"
   [ -e "$statedir/$id.busy-gen" ] && fail "agy spawn armed a busy generation nothing could clear" || true
   for sidecar in "$statedir/$id.agy-"*; do

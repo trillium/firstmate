@@ -307,7 +307,7 @@ test_hook_silent_when_no_work_in_flight() {
   local dir out status
   dir=$(make_primary_dir "$TMP_ROOT/hook-idle")
   out=$(run_hook "$dir" false); status=$?
-  expect_code 0 "$status" "hook must exit 0 with no in-flight work"
+  expect_code 0 "$status" "hook must exit 0 with no in-flight work" "$out"
   [ -z "$out" ] || fail "hook produced output with no in-flight work: $out"
   pass "fm-turnend-guard: silent no-op with nothing in flight"
 }
@@ -318,7 +318,7 @@ test_hook_blocks_when_fresh_beacon_has_no_live_lock() {
   : > "$dir/state/task1.meta"
   touch "$dir/state/.last-watcher-beat"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "hook must block when a fresh beacon has no live watcher lock"
+  expect_code 2 "$status" "hook must block when a fresh beacon has no live watcher lock" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: blocks when a fresh beacon has no live watcher lock"
 }
@@ -329,7 +329,7 @@ test_hook_blocks_source_only_home() {
   mkdir -p "$dir/state/procevent"
   : > "$dir/state/procevent/source-only.source"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "non-Claude hook must block when a source-only home has no watcher"
+  expect_code 2 "$status" "non-Claude hook must block when a source-only home has no watcher" "$out"
   assert_contains "$out" "1 process-event source(s) registered" "block reason must identify the source-only supervision need"
   pass "fm-turnend-guard: non-Claude path blocks a source-only home"
 }
@@ -342,7 +342,7 @@ test_hook_blocks_when_dead_lock_has_fresh_beacon() {
   record_watcher_lock "$dir" "$dead" "dead watcher identity"
   touch "$dir/state/.last-watcher-beat"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "hook must block when the watcher lock pid is dead despite a fresh beacon"
+  expect_code 2 "$status" "hook must block when the watcher lock pid is dead despite a fresh beacon" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: blocks on a dead watcher lock even when the beacon is fresh"
 }
@@ -363,7 +363,7 @@ test_hook_silent_with_live_lock_and_fresh_beacon() {
   out=$(run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "hook must exit 0 with a live identity-matched watcher lock and fresh beacon"
+  expect_code 0 "$status" "hook must exit 0 with a live identity-matched watcher lock and fresh beacon" "$out"
   [ -z "$out" ] || fail "hook produced output despite a live fresh watcher lock: $out"
   pass "fm-turnend-guard: silent no-op with a live watcher lock and fresh beacon"
 }
@@ -432,7 +432,7 @@ test_hook_blocks_with_live_lock_and_stale_beacon() {
   out=$(run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "hook must block when a live watcher lock has an ancient beacon"
+  expect_code 2 "$status" "hook must block when a live watcher lock has an ancient beacon" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: blocks on a live watcher lock with an ancient beacon"
 }
@@ -442,7 +442,7 @@ test_hook_blocks_when_unhealthy_in_primary() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-block")
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "hook must block (exit 2) when in-flight work has no live watcher"
+  expect_code 2 "$status" "hook must block (exit 2) when in-flight work has no live watcher" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   assert_contains "$out" "TURN WOULD END BLIND" "block banner must read as an alarm"
   pass "fm-turnend-guard: blocks with the exact required reason in the primary when unhealthy"
@@ -455,7 +455,7 @@ test_hook_blocks_from_fm_home_state() {
   mkdir -p "$home/state"
   : > "$home/state/task1.meta"
   out=$(printf '{"stop_hook_active":false}' | PATH="$BLIND_BIN:$PATH" CLAUDECODE=1 FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
-  expect_code 2 "$status" "hook must inspect the active FM_HOME state dir"
+  expect_code 2 "$status" "hook must inspect the active FM_HOME state dir" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: blocks from active FM_HOME state, not only repo-root state"
 }
@@ -468,7 +468,7 @@ test_hook_x_mode_reason_sources_cadence() {
   : > "$dir/config/x-mode.env"
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "hook must block when in-flight X-mode work has no live watcher"
+  expect_code 2 "$status" "hook must block when in-flight X-mode work has no live watcher" "$out"
   assert_contains "$out" "source '$home/config/x-mode.env' first" "block reason must source the effective X-mode cadence"
   pass "fm-turnend-guard: X-mode repair reason sources the cadence config"
 }
@@ -478,7 +478,7 @@ test_hook_x_mode_only_blocks_in_default_mode() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-x-mode-only")
   : > "$dir/state/x-watch.check.sh"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "default hook mode must block an X-mode-only blind turn"
+  expect_code 2 "$status" "default hook mode must block an X-mode-only blind turn" "$out"
   assert_contains "$out" "X-mode relay polling needs supervision" "X-mode-only blind stop must identify its supervision need"
   pass "fm-turnend-guard: X-mode-only supervision remains guarded in default mode"
 }
@@ -488,7 +488,7 @@ test_hook_registered_check_only_blocks_with_check_banner() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-check-only")
   register_custom_check "$dir/state" issue-comments
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "default hook mode must block a registered-check-only blind turn"
+  expect_code 2 "$status" "default hook mode must block a registered-check-only blind turn" "$out"
   assert_contains "$out" "1 registered custom check(s), but no live watcher" "check-only blind stop must identify its supervision need"
   assert_not_contains "$out" "X-mode relay polling needs supervision" "check-only blind stop must not be misreported as relay polling"
   pass "fm-turnend-guard: registered-check-only supervision is named in the block banner"
@@ -501,7 +501,7 @@ test_hook_ignores_repo_state_when_fm_home_set() {
   mkdir -p "$home/state"
   : > "$dir/state/task1.meta"
   out=$(printf '{"stop_hook_active":false}' | FM_HOME="$home" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
-  expect_code 0 "$status" "hook must ignore repo-root state when FM_HOME selects another state dir"
+  expect_code 0 "$status" "hook must ignore repo-root state when FM_HOME selects another state dir" "$out"
   [ -z "$out" ] || fail "hook produced output from stale repo-root state despite FM_HOME: $out"
   pass "fm-turnend-guard: ignores stale repo-root state when FM_HOME is set"
 }
@@ -514,7 +514,7 @@ test_hook_uses_state_override() {
   mkdir -p "$home/state" "$state"
   : > "$state/task1.meta"
   out=$(printf '{"stop_hook_active":false}' | PATH="$BLIND_BIN:$PATH" CLAUDECODE=1 FM_HOME="$home" FM_STATE_OVERRIDE="$state" bash "$dir/bin/fm-turnend-guard.sh" 2>&1); status=$?
-  expect_code 2 "$status" "hook must let FM_STATE_OVERRIDE win over FM_HOME/state"
+  expect_code 2 "$status" "hook must let FM_STATE_OVERRIDE win over FM_HOME/state" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: uses FM_STATE_OVERRIDE ahead of FM_HOME/state"
 }
@@ -524,7 +524,7 @@ test_hook_loop_guard_allows_retry() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-loopguard")
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" true); status=$?
-  expect_code 0 "$status" "hook must allow the stop when stop_hook_active is already true"
+  expect_code 0 "$status" "hook must allow the stop when stop_hook_active is already true" "$out"
   [ -z "$out" ] || fail "hook produced output on the loop-guarded retry: $out"
   pass "fm-turnend-guard: stop_hook_active=true always allows the stop (never blocks twice in one turn)"
 }
@@ -539,7 +539,7 @@ test_hook_blocks_in_secondmate_own_home() {
   dir=$(make_secondmate_dir "$TMP_ROOT/hook-secondmate")
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "hook must guard a secondmate's own home like the main primary when unhealthy"
+  expect_code 2 "$status" "hook must guard a secondmate's own home like the main primary when unhealthy" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   assert_contains "$out" "TURN WOULD END BLIND" "block banner must read as an alarm"
   pass "fm-turnend-guard: blocks a blind turn end in a secondmate's own home (.fm-secondmate-home no longer excludes it)"
@@ -551,7 +551,7 @@ test_hook_silent_in_idle_secondmate_home() {
   local dir out status
   dir=$(make_secondmate_dir "$TMP_ROOT/hook-secondmate-idle")
   out=$(run_hook "$dir" false); status=$?
-  expect_code 0 "$status" "hook must stay silent in an idle, empty-queue secondmate home"
+  expect_code 0 "$status" "hook must stay silent in an idle, empty-queue secondmate home" "$out"
   [ -z "$out" ] || fail "idle secondmate home produced guard output: $out"
   pass "fm-turnend-guard: idle-by-default - silent in a secondmate home with nothing in flight"
 }
@@ -564,7 +564,7 @@ test_hook_secondmate_loop_guard_allows_retry() {
   dir=$(make_secondmate_dir "$TMP_ROOT/hook-secondmate-loopguard")
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" true); status=$?
-  expect_code 0 "$status" "hook must allow the stop in a secondmate home when stop_hook_active is already true"
+  expect_code 0 "$status" "hook must allow the stop in a secondmate home when stop_hook_active is already true" "$out"
   [ -z "$out" ] || fail "secondmate loop-guarded retry produced output: $out"
   pass "fm-turnend-guard: stop_hook_active=true allows the stop in a secondmate home (never blocks twice in one turn)"
 }
@@ -591,7 +591,7 @@ test_hook_secondmate_reinvoke_recovery_loop() {
   record_watcher_lock "$dir" "$pid" "$identity"
   touch "$dir/state/.last-watcher-beat"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 0 "$status" "secondmate turn must end silently while its watcher is live (Stop #1)"
+  expect_code 0 "$status" "secondmate turn must end silently while its watcher is live (Stop #1)" "$out"
   [ -z "$out" ] || {
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -606,7 +606,7 @@ test_hook_secondmate_reinvoke_recovery_loop() {
   : > "$dir/state/child2.meta"
   touch "$dir/state/.last-watcher-beat"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "secondmate recovery turn must not end blind after the watcher exits (Stop #2)"
+  expect_code 2 "$status" "secondmate recovery turn must not end blind after the watcher exits (Stop #2)" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: secondmate deferred-death recovery - silent while watched, forces re-arm once the watcher exits"
 }
@@ -622,7 +622,7 @@ test_hook_silent_in_secondmate_child_worktree() {
   make_secondmate_child_worktree_dir "$home" "$dir" >/dev/null
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 0 "$status" "hook must stay exempt in a secondmate's own child crew/scout worktree"
+  expect_code 0 "$status" "hook must stay exempt in a secondmate's own child crew/scout worktree" "$out"
   [ -z "$out" ] || fail "hook produced output inside a secondmate's child worktree: $out"
   pass "fm-turnend-guard: inert in a secondmate's own child worktree (linked git worktree) even when unhealthy"
 }
@@ -642,7 +642,7 @@ test_hook_blocks_in_treehouse_leased_secondmate_home() {
   [ "$gd" != "$gcd" ] || fail "leased-home fixture must be a linked worktree (git-dir != git-common-dir), got equal: $gd"
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "hook must GUARD a treehouse-leased (linked) secondmate home via its marker when unhealthy"
+  expect_code 2 "$status" "hook must GUARD a treehouse-leased (linked) secondmate home via its marker when unhealthy" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   assert_contains "$out" "TURN WOULD END BLIND" "block banner must read as an alarm"
   pass "fm-turnend-guard: blocks a blind turn end in a treehouse-leased LINKED secondmate home (marker force-include)"
@@ -660,7 +660,7 @@ test_hook_exempts_linked_worktree_with_stray_marker() {
   : > "$dir/.fm-secondmate-home"
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 0 "$status" "an empty/invalid marker must not spoof force-inclusion in a linked worktree"
+  expect_code 0 "$status" "an empty/invalid marker must not spoof force-inclusion in a linked worktree" "$out"
   [ -z "$out" ] || fail "stray empty marker wrongly force-included a linked worktree: $out"
   pass "fm-turnend-guard: an invalid (empty) marker cannot spoof inclusion; linked worktree stays exempt"
 }
@@ -677,7 +677,7 @@ test_hook_exempts_linked_worktree_with_non_ascii_marker() {
   printf 'caf\xc3\xa9\n' > "$dir/.fm-secondmate-home"
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 0 "$status" "a non-ASCII marker id must not spoof force-inclusion in a linked worktree"
+  expect_code 0 "$status" "a non-ASCII marker id must not spoof force-inclusion in a linked worktree" "$out"
   [ -z "$out" ] || fail "non-ASCII marker wrongly force-included a linked worktree: $out"
   pass "fm-turnend-guard: a non-ASCII marker cannot spoof inclusion; linked worktree stays exempt"
 }
@@ -689,7 +689,7 @@ test_hook_silent_in_crewmate_worktree() {
   make_crewmate_worktree_dir "$base" "$dir" >/dev/null
   : > "$dir/state/task1.meta"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 0 "$status" "hook must never block inside a crewmate task worktree"
+  expect_code 0 "$status" "hook must never block inside a crewmate task worktree" "$out"
   [ -z "$out" ] || fail "hook produced output inside a crewmate task worktree: $out"
   pass "fm-turnend-guard: inert in a crewmate/scout task worktree (linked git worktree) even when unhealthy"
 }
@@ -705,7 +705,7 @@ test_hook_silent_without_jq() {
   done
   out=$(printf '{"stop_hook_active":false}' | PATH="$fakebin" bash "$dir/bin/fm-turnend-guard.sh" 2>&1)
   status=$?
-  expect_code 0 "$status" "hook must fail open (exit 0) when jq is unavailable"
+  expect_code 0 "$status" "hook must fail open (exit 0) when jq is unavailable" "$out"
   [ -z "$out" ] || fail "hook produced output without jq: $out"
   pass "fm-turnend-guard: fails open (never blocks) when jq is missing"
 }
@@ -715,7 +715,7 @@ test_hook_silent_without_stdin() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-nostdin")
   : > "$dir/state/task1.meta"
   out=$(bash "$dir/bin/fm-turnend-guard.sh" < /dev/null 2>&1); status=$?
-  expect_code 0 "$status" "hook must exit 0 on empty/absent stdin"
+  expect_code 0 "$status" "hook must exit 0 on empty/absent stdin" "$out"
   [ -z "$out" ] || fail "hook produced output on empty stdin: $out"
   pass "fm-turnend-guard: silent no-op on empty stdin"
 }
@@ -751,7 +751,7 @@ test_grok_adapter_forces_one_resume_when_unhealthy() {
 EOF
   chmod +x "$fakebin/grok"
   out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "grok adapter must fail open after queuing a forced resume"
+  expect_code 0 "$status" "grok adapter must fail open after queuing a forced resume" "$out"
   [ -z "$out" ] || fail "grok adapter printed output: $out"
   assert_contains "$(cat "$log")" 'active=1' "grok adapter must mark its forced resume as loop-guarded"
   assert_contains "$(cat "$log")" '<--resume>' "grok adapter must resume the current session"
@@ -774,7 +774,7 @@ printf 'called\n' >> "$log"
 EOF
   chmod +x "$fakebin/grok"
   out=$(printf '{"sessionId":"session-test","hookEventName":"stop"}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" GROK_TURNEND_GUARD_ACTIVE=1 bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "grok adapter must allow its own forced resume turn to end"
+  expect_code 0 "$status" "grok adapter must allow its own forced resume turn to end" "$out"
   [ -z "$out" ] || fail "grok adapter printed output while loop-guarded: $out"
   [ ! -e "$log" ] || fail "grok adapter spawned another resume while loop-guarded: $(cat "$log")"
   pass "fm-turnend-guard-grok: legacy environment loop guard prevents a nested resume loop"
@@ -789,7 +789,7 @@ test_grok_adapter_native_false_blocks_without_resume() {
   printf '#!/usr/bin/env bash\nprintf called >> %q\n' "$log" > "$fakebin/grok"
   chmod +x "$fakebin/grok"
   out=$(printf '%s' '{"sessionId":"native","stopHookActive":false}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 2 "$status" "native stopHookActive=false must return the shared blocking status"
+  expect_code 2 "$status" "native stopHookActive=false must return the shared blocking status" "$out"
   assert_contains "$out" 'TURN WOULD END BLIND' "native block must pass shared guard feedback to Grok"
   [ ! -e "$log" ] || fail "native path started grok --resume"
   pass "fm-turnend-guard-grok: native false delegates blocking feedback with zero resume processes"
@@ -804,7 +804,7 @@ test_grok_adapter_native_true_allows_without_resume() {
   printf '#!/usr/bin/env bash\nprintf called >> %q\n' "$log" > "$fakebin/grok"
   chmod +x "$fakebin/grok"
   out=$(printf '%s' '{"sessionId":"native","stopHookActive":true}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "native stopHookActive=true must allow the bounded continuation to stop"
+  expect_code 0 "$status" "native stopHookActive=true must allow the bounded continuation to stop" "$out"
   [ -z "$out" ] || fail "native true produced output: $out"
   [ ! -e "$log" ] || fail "native true started grok --resume"
   pass "fm-turnend-guard-grok: native true remains bounded and starts no resume process"
@@ -815,12 +815,12 @@ test_grok_adapter_snake_case_native_and_camel_precedence() {
   dir=$(make_primary_dir "$TMP_ROOT/grok-native-spellings")
   : > "$dir/state/task1.meta"
   out=$(printf '%s' '{"sessionId":"native","stop_hook_active":false}' | GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 2 "$status" "typed snake_case false must select native blocking"
+  expect_code 2 "$status" "typed snake_case false must select native blocking" "$out"
   assert_contains "$out" 'TURN WOULD END BLIND' "snake_case native block lost feedback"
   out=$(printf '%s' '{"sessionId":"native","stopHookActive":true,"stop_hook_active":false}' | GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "camelCase true must win over snake_case false"
+  expect_code 0 "$status" "camelCase true must win over snake_case false" "$out"
   out=$(printf '%s' '{"sessionId":"native","stopHookActive":false,"stop_hook_active":true}' | GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 2 "$status" "camelCase false must win over snake_case true"
+  expect_code 2 "$status" "camelCase false must win over snake_case true" "$out"
   pass "fm-turnend-guard-grok: both spellings are typed and camelCase has deterministic precedence"
 }
 
@@ -844,12 +844,12 @@ test_grok_adapter_invalid_inputs_start_neither_path() {
     '{"sessionId":"x","sessionId":"y"}'
   do
     out=$(printf '%s' "$payload" | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-    expect_code 0 "$status" "invalid Grok payload must conservatively allow without choosing a path"
+    expect_code 0 "$status" "invalid Grok payload must conservatively allow without choosing a path" "$out"
     [ -z "$out" ] || fail "invalid Grok payload produced output: $out"
   done
   [ ! -e "$log" ] || fail "invalid Grok payload started a resume process"
   out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | PATH="$fakebin:$PATH" GROK_WORKSPACE_ROOT="$TMP_ROOT/missing-grok-root" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "missing shared-guard prerequisite must conservatively allow"
+  expect_code 0 "$status" "missing shared-guard prerequisite must conservatively allow" "$out"
   [ -z "$out" ] || fail "missing prerequisite produced output: $out"
   [ ! -e "$log" ] || fail "missing prerequisite started a resume process"
   pass "fm-turnend-guard-grok: malformed, invalidly typed, and missing-prerequisite payloads start neither path"
@@ -868,13 +868,13 @@ test_grok_adapter_missing_jq_and_no_supervision_allow() {
   printf '#!/usr/bin/env bash\nprintf called >> %q\n' "$log" > "$fakebin/grok"
   chmod +x "$fakebin/grok"
   out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | PATH="$fakebin" GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "missing jq must conservatively allow"
+  expect_code 0 "$status" "missing jq must conservatively allow" "$out"
   [ -z "$out" ] || fail "missing jq produced output: $out"
   [ ! -e "$log" ] || fail "missing jq started a resume process"
 
   dir=$(make_primary_dir "$TMP_ROOT/grok-native-no-work")
   out=$(printf '%s' '{"sessionId":"x","stopHookActive":false}' | GROK_WORKSPACE_ROOT="$dir" bash "$dir/bin/fm-turnend-guard-grok.sh" 2>&1); status=$?
-  expect_code 0 "$status" "healthy no-supervision-needed native stop must allow"
+  expect_code 0 "$status" "healthy no-supervision-needed native stop must allow" "$out"
   [ -z "$out" ] || fail "no-supervision-needed native stop produced output: $out"
   pass "fm-turnend-guard-grok: missing jq and no-supervision-needed stops stay silent and bounded"
 }
@@ -962,7 +962,7 @@ EOF
   chmod +x "$dir/bin/fm-turnend-guard.sh"
   payload=$(jq -cn --arg cwd "$outside" '{cwd:$cwd,stop_hook_active:false}')
   out=$(printf '%s' "$payload" | (cd "$dir" && bash -c "$command") 2>&1); status=$?
-  expect_code 0 "$status" "codex hook must execute successfully when payload cwd is outside the firstmate root"
+  expect_code 0 "$status" "codex hook must execute successfully when payload cwd is outside the firstmate root" "$out"
   assert_contains "$out" "guard=$expected_root/bin/fm-turnend-guard.sh" "codex hook must use the hook process root"
   assert_contains "$out" "$payload" "codex hook must pass the original payload to the guard"
   pass ".codex/hooks.json: Stop hook uses hook process root when payload cwd is outside"
@@ -1000,7 +1000,7 @@ EOF
   mkdir -p "$subdir"
   payload=$(jq -cn --arg cwd "$subdir" '{cwd:$cwd,stop_hook_active:false}')
   out=$(printf '%s' "$payload" | (cd "$dir" && bash -c "$command") 2>&1); status=$?
-  expect_code 0 "$status" "codex hook must not execute a nested project guard"
+  expect_code 0 "$status" "codex hook must not execute a nested project guard" "$out"
   assert_contains "$out" "guard=$expected_root/bin/fm-turnend-guard.sh" "codex hook must keep using the outer firstmate guard"
   assert_not_contains "$out" "nested guard executed" "codex hook must not execute nested project code"
   pass ".codex/hooks.json: Stop hook ignores nested git root guard scripts"
@@ -1450,7 +1450,7 @@ test_hook_claude_mode_reblocks_stop_hook_active_when_unhealthy() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-reblock")
   : > "$dir/state/task1.meta"
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
-  expect_code 2 "$status" "--claude mode must re-block a stop_hook_active=true stop while unhealthy with no auto-arm claim"
+  expect_code 2 "$status" "--claude mode must re-block a stop_hook_active=true stop while unhealthy with no auto-arm claim" "$out"
   assert_contains "$out" "TURN WOULD END BLIND" "--claude re-block must carry the blind-turn banner"
   assert_contains "$out" "Stop-owned auto-arm did not claim" "--claude re-block must explain the missing auto-arm claim"
   pass "fm-turnend-guard --claude: re-blocks a loop-guarded stop while unhealthy and unclaimed (incident regression)"
@@ -1461,7 +1461,7 @@ test_hook_claude_mode_reblocks_x_mode_without_tasks() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-x-mode")
   : > "$dir/state/x-watch.check.sh"
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
-  expect_code 2 "$status" "--claude mode must re-block an X-mode-only stop when no auto-arm claims recovery"
+  expect_code 2 "$status" "--claude mode must re-block an X-mode-only stop when no auto-arm claims recovery" "$out"
   assert_contains "$out" "X-mode relay polling needs supervision" "--claude X-mode re-block must name the active supervision need"
   [ -f "$dir/state/.turnend-claude-blocks" ] || fail "--claude X-mode re-block must consume the shared block budget"
   pass "fm-turnend-guard --claude: X-mode-only homes re-block when auto-arm recovery is absent"
@@ -1500,7 +1500,7 @@ test_hook_claude_mode_repeated_failed_to_arming_interleavings_reach_fail_open() 
   : > "$dir/state/.claude-autoarm-failure-notified"
   printf 'epoch=3 owner_pid=999 outcome=failed updated_at=%s\n' "$(date +%s)" > "$dir/state/.claude-autoarm-epoch"
   out=$(run_hook_claude "$dir" true); status=$?
-  expect_code 0 "$status" "the first verified failed epoch must own its automatic handoff"
+  expect_code 0 "$status" "the first verified failed epoch must own its automatic handoff" "$out"
 
   epoch=3
   for i in 1 2 3 4; do
@@ -1521,7 +1521,7 @@ test_hook_claude_mode_repeated_failed_to_arming_interleavings_reach_fail_open() 
   done
 
   out=$(run_hook_claude "$dir" true); status=$?
-  expect_code 0 "$status" "repeated failed-to-arming interleavings must reach terminal fail-open"
+  expect_code 0 "$status" "repeated failed-to-arming interleavings must reach terminal fail-open" "$out"
   assert_contains "$out" 'FIRSTMATE SUPERVISION IS GENUINELY DOWN' "arming interleavings stalled before the bounded fail-open"
   assert_present "$dir/state/.claude-autoarm-failure-alarmed" "arming interleavings did not consume the one-time alarm"
   pass "fm-turnend-guard --claude: repeated failed-to-arming races make bounded monotonic progress"
@@ -1586,7 +1586,7 @@ test_hook_claude_mode_allows_on_fresh_rewake_epoch() {
   : > "$dir/state/task1.meta"
   printf 'epoch=3 owner_pid=999 outcome=rewake updated_at=%s\n' "$(date +%s)" > "$dir/state/.claude-autoarm-epoch"
   out=$(run_hook_claude "$dir" true); status=$?
-  expect_code 0 "$status" "--claude mode must allow the stop whose rewake the auto-arm already owns"
+  expect_code 0 "$status" "--claude mode must allow the stop whose rewake the auto-arm already owns" "$out"
   [ -z "$out" ] || fail "--claude rewake-epoch allow produced output: $out"
   pass "fm-turnend-guard --claude: fresh rewake epoch prevents a duplicate continuation for the same event"
 }
@@ -1609,7 +1609,7 @@ test_hook_claude_mode_blocks_on_abandoned_autoarm_claim() {
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "an owner lock left behind by a finished claim must not pass for recovery under way"
+  expect_code 2 "$status" "an owner lock left behind by a finished claim must not pass for recovery under way" "$out"
   assert_contains "$out" "TURN WOULD END BLIND" "abandoned-claim block must carry the blind-turn banner"
   assert_contains "$out" "2 task(s) in flight" "abandoned-claim block must name the unsupervised work"
   pass "fm-turnend-guard --claude: an abandoned auto-arm claim no longer allows a blind stop (incident regression)"
@@ -1638,7 +1638,7 @@ test_hook_claude_mode_blocks_on_pid_reused_arming_claim() {
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a claim whose recorded identity no longer matches its live pid must not pass for recovery under way"
+  expect_code 2 "$status" "a claim whose recorded identity no longer matches its live pid must not pass for recovery under way" "$out"
   assert_contains "$out" "TURN WOULD END BLIND" "reused-pid claim block must carry the blind-turn banner"
   assert_contains "$out" "2 task(s) in flight" "reused-pid claim block must name the unsupervised work"
   pass "fm-turnend-guard --claude: a claim whose pid was reused stops counting as recovery even while its entry reads arming"
@@ -1663,7 +1663,7 @@ test_hook_claude_mode_blocks_on_stuck_arming_claim() {
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a live owner stuck arming past grace with a stale beacon must not pass for recovery under way"
+  expect_code 2 "$status" "a live owner stuck arming past grace with a stale beacon must not pass for recovery under way" "$out"
   assert_contains "$out" "TURN WOULD END BLIND" "stuck-arming claim block must carry the blind-turn banner"
   assert_contains "$out" "2 task(s) in flight" "stuck-arming claim block must name the unsupervised work"
   pass "fm-turnend-guard --claude: a hung owner frozen at arming with no watcher beat no longer allows a blind stop"
@@ -1688,7 +1688,7 @@ test_hook_claude_mode_allows_on_open_generation_claim() {
   out=$(run_hook_claude "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "--claude mode must allow when a live open generation claim owns recovery"
+  expect_code 0 "$status" "--claude mode must allow when a live open generation claim owns recovery" "$out"
   [ -z "$out" ] || fail "open-generation-claim allow produced output: $out"
   pass "fm-turnend-guard --claude: a live open generation claim owns recovery with no lock held"
 }
@@ -1710,7 +1710,7 @@ test_hook_claude_mode_blocks_on_stuck_generation_claim() {
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a stuck generation claim must not pass for recovery under way"
+  expect_code 2 "$status" "a stuck generation claim must not pass for recovery under way" "$out"
   assert_contains "$out" "TURN WOULD END BLIND" "stuck-generation-claim block must carry the blind-turn banner"
   assert_contains "$out" "2 task(s) in flight" "stuck-generation-claim block must name the unsupervised work"
   pass "fm-turnend-guard --claude: a stuck generation claim no longer allows a blind stop"
@@ -1733,7 +1733,7 @@ test_hook_claude_mode_terminal_fail_open_clears_abandoned_claim() {
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "the verified attended fail-open still ends the turn once it is spent"
+  expect_code 0 "$status" "the verified attended fail-open still ends the turn once it is spent" "$out"
   assert_contains "$out" 'FIRSTMATE SUPERVISION IS GENUINELY DOWN' "an abandoned claim suppressed the episode's attended alarm"
   assert_present "$dir/state/.claude-autoarm-failure-alarmed" "abandoned-claim terminal path did not consume the one-time alarm"
   assert_absent "$dir/state/.claude-autoarm.lock" "abandoned-claim terminal path left the stale claim in place"
@@ -1748,14 +1748,14 @@ test_hook_claude_mode_preserves_fresh_failed_progression() {
   : > "$dir/state/.claude-autoarm-failure-notified"
   printf 'epoch=3 owner_pid=999 outcome=failed updated_at=%s\n' "$(date +%s)" > "$dir/state/.claude-autoarm-epoch"
   out=$(run_hook_claude "$dir" true); status=$?
-  expect_code 0 "$status" "the first fresh failed epoch must count as its automatic continuation"
+  expect_code 0 "$status" "the first fresh failed epoch must count as its automatic continuation" "$out"
   [ -z "$out" ] || fail "fresh failed-epoch allow produced output: $out"
   assert_present "$dir/state/.turnend-claude-blocks" "fresh failed epoch did not preserve bounded progression"
   count=$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")
   [ "$count" = 0 ] || fail "the owned first failed epoch must not consume a blocked-stop count, got $count"
   printf 'epoch=4 owner_pid=999 outcome=failed-suppressed updated_at=%s\n' "$(date +%s)" > "$dir/state/.claude-autoarm-epoch"
   out=$(run_hook_claude "$dir" true); status=$?
-  expect_code 2 "$status" "a later fresh failed epoch must consume the bounded progression"
+  expect_code 2 "$status" "a later fresh failed epoch must consume the bounded progression" "$out"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "fresh failure progression emitted the attended fail-open alarm too early"
   count=$(sed -n '2s/^count=//p' "$dir/state/.turnend-claude-blocks")
   [ "$count" = 1 ] || fail "the later failed epoch must advance the blocked-stop count, got $count"
@@ -1770,7 +1770,7 @@ test_hook_claude_mode_integrated_monotonic_fail_open() {
   write_integrated_failed_arm "$dir"
 
   out=$(run_integrated_autoarm "$dir"); status=$?
-  expect_code 2 "$status" "the first exhausted auto-arm cycle must emit its one failure notice"
+  expect_code 2 "$status" "the first exhausted auto-arm cycle must emit its one failure notice" "$out"
   assert_contains "$out" "automatic supervision mechanism is broken" "the first integrated failure notice is missing"
   guard_out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); guard_status=$?
   expect_code 0 "$guard_status" "the first failed epoch must own its Stop handoff"
@@ -1794,7 +1794,7 @@ test_hook_claude_mode_integrated_monotonic_fail_open() {
   done
 
   out=$(run_integrated_autoarm "$dir"); status=$?
-  expect_code 0 "$status" "the auto-arm must not re-trigger continuation after the final fail-open"
+  expect_code 0 "$status" "the auto-arm must not re-trigger continuation after the final fail-open" "$out"
   assert_contains "$out" "suppressed continuation" "post-fail-open auto-arm did not carry its one-line reason: $out"
   assert_not_contains "$out" "automatic supervision mechanism is broken" "post-fail-open auto-arm repeated the operator notice: $out"
   guard_out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); guard_status=$?
@@ -1814,7 +1814,7 @@ test_hook_claude_mode_integrated_monotonic_fail_open() {
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   rm -rf "$dir/state/.watch.lock"
-  expect_code 0 "$status" "positive watcher recovery must make the auto-arm silent"
+  expect_code 0 "$status" "positive watcher recovery must make the auto-arm silent" "$out"
   assert_absent "$dir/state/.claude-autoarm-failure-notified" "positive recovery left the failure notice marker"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "positive recovery left the attended alarm marker"
   assert_absent "$dir/state/.turnend-claude-blocks" "positive recovery left the bounded block budget"
@@ -1824,7 +1824,7 @@ test_hook_claude_mode_integrated_monotonic_fail_open() {
   [ "$count" = 1 ] || fail "the independent post-recovery failure must start at count 1, got $count"
 
   out=$(run_integrated_autoarm "$dir"); status=$?
-  expect_code 2 "$status" "a later failure after positive recovery must start a new episode"
+  expect_code 2 "$status" "a later failure after positive recovery must start a new episode" "$out"
   assert_contains "$out" "automatic supervision mechanism is broken" "the new failure episode notice was suppressed"
   pass "fm-turnend-guard --claude: integrated fresh failures reach one bounded fail-open, stop continuation, and reset on recovery"
 }
@@ -1843,7 +1843,7 @@ test_hook_claude_mode_frozen_epoch_reaches_bounded_fail_open() {
   write_integrated_failed_arm "$dir"
 
   out=$(run_integrated_autoarm "$dir"); status=$?
-  expect_code 2 "$status" "the exhausted auto-arm cycle must emit its one failure notice before going quiet"
+  expect_code 2 "$status" "the exhausted auto-arm cycle must emit its one failure notice before going quiet" "$out"
   guard_out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); guard_status=$?
   expect_code 0 "$guard_status" "the first failed epoch must own its Stop handoff"
   epoch_line=$(sed -n '1p' "$dir/state/.claude-autoarm-epoch")
@@ -1940,7 +1940,7 @@ test_hook_claude_mode_recovery_contention_is_not_ordinary_allow() {
   mkdir -p "$dir/state/.turnend-claude-blocks.lock"
   printf '%s\n' "$holder" > "$dir/state/.turnend-claude-blocks.lock/pid"
   out=$(run_hook_claude "$dir" false); status=$?
-  expect_code 2 "$status" "a healthy guard must continue when the episode reset lock is busy"
+  expect_code 2 "$status" "a healthy guard must continue when the episode reset lock is busy" "$out"
   [ -z "$out" ] || fail "guard recovery contention produced output: $out"
   assert_present "$dir/state/.turnend-claude-blocks" "guard contention partially cleared the block budget"
   assert_present "$dir/state/.claude-autoarm-failure-notified" "guard contention partially cleared the failure notice"
@@ -1950,7 +1950,7 @@ test_hook_claude_mode_recovery_contention_is_not_ordinary_allow() {
   out=$(run_hook_claude "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "the healthy guard must allow after completing the episode reset"
+  expect_code 0 "$status" "the healthy guard must allow after completing the episode reset" "$out"
   assert_absent "$dir/state/.turnend-claude-blocks" "successful guard reset left the block budget"
   assert_absent "$dir/state/.claude-autoarm-failure-notified" "successful guard reset left the failure notice"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "successful guard reset left the attended alarm"
@@ -2175,7 +2175,7 @@ test_hook_claude_mode_stale_rewake_epoch_blocks() {
   printf 'epoch=3 owner_pid=999 outcome=rewake updated_at=1\n' > "$dir/state/.claude-autoarm-epoch"
   touch -t 202001010000 "$dir/state/.claude-autoarm-epoch"
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
-  expect_code 2 "$status" "--claude mode must not treat an ancient rewake epoch as this event's recovery"
+  expect_code 2 "$status" "--claude mode must not treat an ancient rewake epoch as this event's recovery" "$out"
   pass "fm-turnend-guard --claude: stale rewake epoch does not allow a blind stop"
 }
 
@@ -2201,7 +2201,7 @@ test_hook_claude_mode_verified_failure_alarm_is_loud_and_once() {
   seed_claude_failure "$dir"
   seed_claude_budget "$dir" 3
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status=$?
-  expect_code 0 "$status" "verified failure with exhausted budget must take the bounded attended fail-open"
+  expect_code 0 "$status" "verified failure with exhausted budget must take the bounded attended fail-open" "$out"
   assert_contains "$out" 'FIRSTMATE SUPERVISION IS GENUINELY DOWN' "bounded fail-open alarm was not unmistakable"
   assert_contains "$out" 'Keep this session attended' "bounded fail-open alarm omitted the attended-session action"
   assert_contains "$out" 'diagnose the automatic Stop-hook and watcher startup' "bounded fail-open alarm omitted automatic-mechanism diagnosis"
@@ -2221,14 +2221,14 @@ test_hook_claude_mode_fail_open_requires_notice_and_failure_epoch() {
   touch -t 202001010000 "$no_notice/state/.claude-autoarm-epoch"
   seed_claude_budget "$no_notice" 3
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$no_notice" true); status=$?
-  expect_code 2 "$status" "an exhausted failure epoch without the consumed notice must remain blocking"
+  expect_code 2 "$status" "an exhausted failure epoch without the consumed notice must remain blocking" "$out"
 
   notice_only=$(make_primary_dir "$TMP_ROOT/hook-claude-alarm-no-epoch")
   : > "$notice_only/state/task1.meta"
   : > "$notice_only/state/.claude-autoarm-failure-notified"
   seed_claude_budget "$notice_only" 3
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$notice_only" true); status=$?
-  expect_code 2 "$status" "a consumed notice without an exhausted failure epoch must remain blocking"
+  expect_code 2 "$status" "a consumed notice without an exhausted failure epoch must remain blocking" "$out"
   pass "fm-turnend-guard --claude: fail-open requires both exhausted retries and consumed notice"
 }
 
@@ -2240,7 +2240,7 @@ test_hook_claude_mode_away_mode_never_uses_stop_autoarm_fail_open() {
   seed_claude_failure "$dir"
   seed_claude_budget "$dir" 3
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" true); status=$?
-  expect_code 2 "$status" "away mode must not use a stale Stop-autoarm failure to fail open"
+  expect_code 2 "$status" "away mode must not use a stale Stop-autoarm failure to fail open" "$out"
   assert_contains "$out" 'Away mode owns watcher supervision' "away-mode block lost its daemon ownership guidance"
   assert_absent "$dir/state/.claude-autoarm-failure-alarmed" "away mode consumed the Stop-autoarm attended alarm"
   pass "fm-turnend-guard --claude: away ownership excludes the Stop-autoarm fail-open"
@@ -2251,7 +2251,7 @@ test_hook_claude_mode_allow_resets_budget() {
   dir=$(make_primary_dir "$TMP_ROOT/hook-claude-reset")
   : > "$dir/state/task1.meta"
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
-  expect_code 2 "$status" "first --claude block must exit 2"
+  expect_code 2 "$status" "first --claude block must exit 2" "$out"
   [ -f "$dir/state/.turnend-claude-blocks" ] || fail "--claude block must record the consecutive-block budget"
   : > "$dir/state/.claude-autoarm-failure-notified"
   : > "$dir/state/.claude-autoarm-failure-alarmed"
@@ -2268,12 +2268,12 @@ test_hook_claude_mode_allow_resets_budget() {
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   rm -rf "$dir/state/.watch.lock"
-  expect_code 0 "$status" "--claude must allow once the watcher is healthy again"
+  expect_code 0 "$status" "--claude must allow once the watcher is healthy again" "$out"
   [ ! -f "$dir/state/.turnend-claude-blocks" ] || fail "--claude allow must reset the consecutive-block budget"
   [ ! -f "$dir/state/.claude-autoarm-failure-notified" ] || fail "positive watcher recovery must reset the failure notice"
   [ ! -f "$dir/state/.claude-autoarm-failure-alarmed" ] || fail "positive watcher recovery must reset the attended alarm"
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
-  expect_code 2 "$status" "a later unhealthy chain must re-block from a fresh budget"
+  expect_code 2 "$status" "a later unhealthy chain must re-block from a fresh budget" "$out"
   pass "fm-turnend-guard --claude: positive watcher recovery resets failure episode state"
 }
 
@@ -2304,7 +2304,7 @@ test_hook_claude_mode_secondmate_reblocks_like_primary() {
   dir=$(make_secondmate_dir "$TMP_ROOT/hook-claude-sm-reblock")
   : > "$dir/state/task1.meta"
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=200 run_hook_claude "$dir" true); status=$?
-  expect_code 2 "$status" "--claude mode must re-block in a marked secondmate home exactly like the main primary"
+  expect_code 2 "$status" "--claude mode must re-block in a marked secondmate home exactly like the main primary" "$out"
   assert_contains "$out" "TURN WOULD END BLIND" "--claude secondmate re-block must carry the blind-turn banner"
   sleep 60 &
   pid=$!
@@ -2312,7 +2312,7 @@ test_hook_claude_mode_secondmate_reblocks_like_primary() {
   out=$(run_hook_claude "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "--claude mode must allow a claimed secondmate home"
+  expect_code 0 "$status" "--claude mode must allow a claimed secondmate home" "$out"
   pass "fm-turnend-guard --claude: secondmate home re-blocks unclaimed and allows auto-arm-claimed stops"
 }
 
@@ -2362,12 +2362,12 @@ test_hook_away_daemon_allows_between_watcher_cycles() {
     fail "could not identify live away-mode daemon holder"
   }
   out=$(run_hook "$dir" false); status=$?
-  expect_code 0 "$status" "away mode with a live daemon must not block between watcher cycles"
+  expect_code 0 "$status" "away mode with a live daemon must not block between watcher cycles" "$out"
   [ -z "$out" ] || fail "away-mode daemon ownership still produced a block banner: $out"
   out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=100 run_hook_claude "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "--claude away mode with a live daemon must not block between watcher cycles"
+  expect_code 0 "$status" "--claude away mode with a live daemon must not block between watcher cycles" "$out"
   [ -z "$out" ] || fail "--claude away-mode daemon ownership still produced a block banner: $out"
   pass "fm-turnend-guard: a live away-mode daemon satisfies supervision with no watcher holding the lock"
 }
@@ -2387,7 +2387,7 @@ test_hook_away_daemon_allows_over_dead_watcher_lock() {
   out=$(run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a live away-mode daemon must outweigh a watcher lock its exited child left behind"
+  expect_code 0 "$status" "a live away-mode daemon must outweigh a watcher lock its exited child left behind" "$out"
   [ -z "$out" ] || fail "away-mode daemon ownership still produced a block banner: $out"
   pass "fm-turnend-guard: away-mode daemon ownership survives a leftover dead watcher lock"
 }
@@ -2396,7 +2396,7 @@ test_hook_away_mode_blocks_without_any_supervisor() {
   local dir out status
   dir=$(make_away_home_between_cycles "$TMP_ROOT/hook-afk-no-supervisor")
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "away mode with no daemon and no watcher must still block"
+  expect_code 2 "$status" "away mode with no daemon and no watcher must still block" "$out"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
   pass "fm-turnend-guard: away mode with no daemon and no watcher still blocks"
 }
@@ -2407,7 +2407,7 @@ test_hook_away_mode_blocks_on_dead_daemon() {
   dead=$(nonexistent_pid)
   record_daemon_lock "$dir" "$dead" "dead daemon identity"
   out=$(run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "a daemon lock left by a dead daemon must not satisfy supervision"
+  expect_code 2 "$status" "a daemon lock left by a dead daemon must not satisfy supervision" "$out"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
   pass "fm-turnend-guard: away mode blocks on a dead away-mode daemon"
 }
@@ -2423,7 +2423,7 @@ test_hook_away_mode_blocks_on_pid_reused_daemon() {
   out=$(run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a live pid whose recorded identity does not match must not satisfy supervision"
+  expect_code 2 "$status" "a live pid whose recorded identity does not match must not satisfy supervision" "$out"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
   pass "fm-turnend-guard: away mode blocks on a pid-reused away-mode daemon lock"
 }
@@ -2442,7 +2442,7 @@ test_hook_away_mode_blocks_on_stale_beacon() {
   out=$(run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a live daemon that stopped restarting its watcher must block once the beacon goes stale"
+  expect_code 2 "$status" "a live daemon that stopped restarting its watcher must block once the beacon goes stale" "$out"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
   pass "fm-turnend-guard: away-mode daemon ownership never substitutes for a fresh beacon"
 }
@@ -2461,7 +2461,7 @@ test_hook_daemon_lock_is_ignored_without_away_mode() {
   out=$(run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "with away mode off the strict watcher predicate must be unchanged"
+  expect_code 2 "$status" "with away mode off the strict watcher predicate must be unchanged" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: a daemon lock proves nothing while away mode is off"
 }
@@ -2493,7 +2493,7 @@ test_hook_away_daemon_allows_beacon_within_poll_derived_grace() {
   out=$(FM_GUARD_GRACE='' FM_POLL=600 run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a live daemon with a beacon within the poll-derived grace must not block"
+  expect_code 0 "$status" "a live daemon with a beacon within the poll-derived grace must not block" "$out"
   [ -z "$out" ] || fail "away-mode daemon within poll-derived grace still produced a block banner: $out"
   pass "fm-turnend-guard: away-mode beacon freshness uses the poll-derived grace, not the flat default"
 }
@@ -2504,7 +2504,7 @@ test_hook_away_daemon_blocks_dead_daemon_despite_poll_derived_grace() {
   dead=$(nonexistent_pid)
   record_daemon_lock "$dir" "$dead" "dead daemon identity"
   out=$(FM_GUARD_GRACE='' FM_POLL=600 run_hook "$dir" false); status=$?
-  expect_code 2 "$status" "a wider poll-derived grace must not paper over a dead daemon"
+  expect_code 2 "$status" "a wider poll-derived grace must not paper over a dead daemon" "$out"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
   pass "fm-turnend-guard: a dead away-mode daemon still blocks under the poll-derived grace"
 }
@@ -2526,7 +2526,7 @@ test_hook_away_daemon_blocks_beacon_older_than_poll_derived_grace() {
   out=$(FM_GUARD_GRACE='' FM_POLL=600 run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a beacon older than the poll-derived grace must still block"
+  expect_code 2 "$status" "a beacon older than the poll-derived grace must still block" "$out"
   assert_contains "$out" "$AWAY_REQUIRED_REASON" "away-mode block must point at the daemon, not normal supervision"
   pass "fm-turnend-guard: the poll-derived grace is bounded, not unlimited"
 }
@@ -2550,7 +2550,7 @@ test_hook_no_afk_ignores_poll_derived_grace() {
   out=$(FM_GUARD_GRACE='' FM_POLL=600 run_hook "$dir" false); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "without .afk, FM_POLL must not widen the strict watcher predicate's grace"
+  expect_code 2 "$status" "without .afk, FM_POLL must not widen the strict watcher predicate's grace" "$out"
   assert_contains "$out" "$REQUIRED_REASON" "block reason must contain the exact required instruction"
   pass "fm-turnend-guard: with away mode off, the poll-derived grace never applies"
 }

@@ -925,10 +925,19 @@ assert_not_contains() {
   esac
 }
 
-# expect_code <expected> <actual> <label>
+# expect_code <expected> <actual> <label> [<captured-output>]
+# The optional fourth argument is the command output captured alongside the
+# status. A mismatch prints it under the same '--- output ---' marker the
+# assert_* helpers use, so a red run names the cause instead of only the code.
+# A passing run stays silent.
 expect_code() {
   local expected=$1 actual=$2 label=$3
-  [ "$actual" = "$expected" ] || fail "$label: expected exit $expected, got $actual"
+  if [ "$actual" != "$expected" ]; then
+    if [ "$#" -ge 4 ] && [ -n "$4" ]; then
+      fail "$label: expected exit $expected, got $actual"$'\n'"--- output ---"$'\n'"$4"
+    fi
+    fail "$label: expected exit $expected, got $actual"
+  fi
 }
 
 # assert_grep <pattern> <file> <msg>: fixed-string grep must match in <file>.

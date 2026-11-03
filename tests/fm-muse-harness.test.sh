@@ -253,7 +253,7 @@ $rec
 EOF
   out=$(run_muse_spawn "$home" "$proj" "$wt" "$fakebin" "$id" --mode no-mistakes --yolo off)
   status=$?
-  expect_code 0 "$status" "muse spawn should succeed"
+  expect_code 0 "$status" "muse spawn should succeed" "$out"
   assert_contains "$out" "spawned $id harness=muse" "muse spawn did not report success"
 
   launch=$(cat "$home/launch.log")
@@ -954,7 +954,7 @@ EOF
     out=$(run_muse_spawn "$home" "$proj" "$wt" "$fakebin" "$id" --mode no-mistakes --yolo off)
     status=$?
     if [ "$setting" = withheld ]; then
-      expect_code 1 "$status" "withheld Muse key must not satisfy preflight"
+      expect_code 1 "$status" "withheld Muse key must not satisfy preflight" "$out"
       assert_contains "$out" "no worker-reachable credential" "missing credential explanation"
       assert_absent "$home/state/$id.meta" "withheld Muse key still launched a worker"
     else

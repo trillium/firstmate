@@ -421,11 +421,15 @@ for _teardown_source in \
   fm-wake-lib.sh \
   fm-path-lib.sh \
   fm-lease-lib.sh \
-  fm-sim-lib.sh
+  fm-sim-lib.sh \
+  fm-session-lock-lib.sh
 do
   teardown_require_source "$SCRIPT_DIR/$_teardown_source"
 done
 unset _teardown_source
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$SCRIPT_DIR/fm-session-lock-lib.sh"
+fm_session_lock_refuse_mutator "$STATE" fm-teardown || exit 1
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh

@@ -1224,7 +1224,7 @@ test_launcher_identity_refuses_a_pane_from_another_session_name() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=someother \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher pane naming another herdr session must refuse"
+  expect_code 1 "$status" "a launcher pane naming another herdr session must refuse" "$out"
   assert_contains "$out" "cross-session parent identity" "the cross-session refusal did not explain itself"
   [ ! -s "$log" ] || fail "a cross-session launcher identity must be refused before any herdr call"
   pass "fm_backend_herdr_launcher_identity: refuses a launcher pane that names a different herdr session"
@@ -1238,7 +1238,7 @@ test_launcher_identity_refuses_a_missing_server_socket() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher pane without an injected server socket must refuse"
+  expect_code 1 "$status" "a launcher pane without an injected server socket must refuse" "$out"
   assert_contains "$out" "no injected socket identity" "the missing-socket refusal did not explain itself"
   [ ! -s "$log" ] || fail "a missing-socket launcher identity must be refused before any herdr call"
   pass "fm_backend_herdr_launcher_identity: refuses a claimed pane without exact server identity"
@@ -1254,7 +1254,7 @@ test_launcher_identity_refuses_a_pane_from_another_server_socket() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/other.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher pane on a different herdr server socket must refuse"
+  expect_code 1 "$status" "a launcher pane on a different herdr server socket must refuse" "$out"
   assert_contains "$out" "cross-session parent identity" "the cross-socket refusal did not explain itself"
   assert_not_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''get' "a cross-server launcher identity must be refused before its pane is trusted"
   pass "fm_backend_herdr_launcher_identity: refuses a launcher pane whose injected socket belongs to another herdr server"
@@ -1271,7 +1271,7 @@ test_launcher_identity_refuses_an_unreadable_pane() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/fmtest.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher pane that no longer reads must refuse, not fall back to a label search"
+  expect_code 1 "$status" "a launcher pane that no longer reads must refuse, not fall back to a label search" "$out"
   assert_contains "$out" "w7:p3" "the unreadable-pane refusal did not name the pane it could not resolve"
   assert_contains "$out" "could not be read" "the unreadable-pane refusal did not say the pane could not be read"
   pass "fm_backend_herdr_launcher_identity: refuses as unreadable when the launcher's own pane was destroyed"
@@ -1318,7 +1318,7 @@ test_launcher_identity_refuses_a_pane_and_tab_that_disagree() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/fmtest.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a pane and tab that disagree about their workspace must refuse"
+  expect_code 1 "$status" "a pane and tab that disagree about their workspace must refuse" "$out"
   assert_contains "$out" "contradictory parent identity" "the contradictory-identity refusal did not explain itself"
   pass "fm_backend_herdr_launcher_identity: refuses when the launcher's pane and tab disagree about their workspace"
 }
@@ -1335,7 +1335,7 @@ test_launcher_identity_refuses_a_workspace_missing_from_the_session() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/fmtest.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher workspace absent from the session listing must refuse"
+  expect_code 1 "$status" "a launcher workspace absent from the session listing must refuse" "$out"
   assert_contains "$out" "stale parent identity" "the stale-workspace refusal did not explain itself"
   pass "fm_backend_herdr_launcher_identity: refuses when the launcher's workspace is gone from its own session"
 }
@@ -1366,7 +1366,7 @@ test_workspace_ensure_refuses_an_ambiguous_label_with_no_launcher() {
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SESSION=fmtest \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_ensure fmtest /tmp' "$ROOT" 2>&1 )
   status=$?
-  expect_code 3 "$status" "two same-labeled home workspaces with no launcher identity must refuse"
+  expect_code 3 "$status" "two same-labeled home workspaces with no launcher identity must refuse" "$out"
   assert_contains "$out" "labeled 'firstmate'" "the ambiguity refusal did not name the duplicated label"
   assert_contains "$out" "w1 w7" "the ambiguity refusal did not name the candidate workspaces"
   assert_not_contains "$(cat "$log")" $'\x1f''workspace'$'\x1f''create' "an ambiguous placement must not mint a third same-labeled workspace"

@@ -3286,6 +3286,48 @@ test_no_run_idle_secondmate_resolved_event_not_state() {
   pass "a trailing resolved: event does not corrupt state render (idle stays idle)"
 }
 
+# A secondmate with meta but no status line yet is idle when its endpoint is
+# live, and keeps the unknown reading when the endpoint is gone or a status
+# line already exists.
+test_secondmate_without_status_reads_idle_when_endpoint_live() {
+  reset_fakes
+  local d out
+  d=$(new_case mate-no-status)
+  mkdir -p "$d/wt"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/mate.meta" "window=fm:fm-mate" "worktree=$d/wt" "kind=secondmate" "home=$d/wt"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: idle" "live endpoint with no status log reads idle"
+  assert_contains "$out" "no events yet" "the idle reading says no events were recorded"
+  : > "$d/state/mate.status"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: idle" "an empty status log is the same as none"
+  printf 'resolved [key=race]: went with subscribe-before-write\n' > "$d/state/mate.status"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: unknown" "an existing status log keeps today's reading"
+  printf 'working: reconciling routed items\n' > "$d/state/mate.status"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: working" "a real status line still wins"
+  pass "live secondmate with no status reads idle; existing status unchanged"
+}
+
+test_secondmate_without_status_dead_endpoint_stays_unknown() {
+  reset_fakes
+  local d out
+  d=$(new_case mate-no-status-dead)
+  mkdir -p "$d/wt"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/mate.meta" "window=fm:fm-gone" "worktree=$d/wt" "kind=secondmate" "home=$d/wt"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_TMUX_MISSING=1
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: unknown" "dead endpoint with no status stays unknown"
+  assert_not_contains "$out" "state: idle" "a dead endpoint is never idle"
+  pass "dead secondmate endpoint with no status keeps the unknown reading"
+}
+
 test_dead_window_ignores_stale_status_log() {
   reset_fakes
   local d; d=$(new_case dead-window)
@@ -3448,7 +3490,7 @@ test_torn_down_worktree() {
   fm_write_meta "$d/state/gone-k.meta" "window=fm:fm-gone-k" "worktree=$d/no-such-worktree" "kind=ship"
   local out rc
   out=$(run_crew_state "$d" gone-k); rc=$?
-  expect_code 0 "$rc" "torn-down worktree exits 0"
+  expect_code 0 "$rc" "torn-down worktree exits 0" "$out"
   assert_contains "$out" "state: unknown" "torn-down -> unknown"
   assert_contains "$out" "source: none" "torn-down -> none source"
   pass "torn-down worktree is handled gracefully"
@@ -3504,7 +3546,7 @@ test_remote_alive_with_log_uses_status_log() {
   make_fakebin "$d" >/dev/null
   printf 'working: refactoring the quota adapter\n' > "$d/state/rsm.status"
   out=$(FM_FAKE_REMOTE_STATE_OUT=alive FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
-  expect_code 0 "$rc" "remote alive exits 0"
+  expect_code 0 "$rc" "remote alive exits 0" "$out"
   assert_contains "$out" "state: working" "alive remote mate with a working log reads working"
   assert_contains "$out" "source: status-log" "alive remote mate reads current activity from the routed log"
   assert_contains "$out" "remote endpoint alive on remote-mac" "the remote liveness read should be visible"
@@ -3518,7 +3560,7 @@ test_remote_alive_idle_is_healthy_not_gone() {
   d=$(setup_remote_case remote-alive-idle)
   make_fakebin "$d" >/dev/null
   out=$(FM_FAKE_REMOTE_STATE_OUT=alive FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
-  expect_code 0 "$rc" "remote alive-idle exits 0"
+  expect_code 0 "$rc" "remote alive-idle exits 0" "$out"
   assert_contains "$out" "source: remote-endpoint" "the remote endpoint is the reported source"
   assert_contains "$out" "alive on remote-mac" "an idle remote mate reads alive"
   assert_not_contains "$out" "worktree gone" "a healthy remote mate must never read as torn down"
@@ -3533,7 +3575,7 @@ test_remote_unreachable_is_unknown_remote_not_dead() {
   make_fakebin "$d" >/dev/null
   printf 'working: refactoring the quota adapter\n' > "$d/state/rsm.status"
   out=$(FM_FAKE_SSH_RC=255 run_remote_crew_state "$d" rsm); rc=$?
-  expect_code 0 "$rc" "unreachable remote exits 0"
+  expect_code 0 "$rc" "unreachable remote exits 0" "$out"
   assert_contains "$out" "unknown-remote" "an unreachable remote must be labeled unknown-remote"
   assert_contains "$out" "not proof of death" "an unreachable remote must not read as dead"
   assert_not_contains "$out" "worktree gone" "an unreachable remote must never read as torn down"
@@ -3547,7 +3589,7 @@ test_remote_dead_reports_remote_verdict() {
   d=$(setup_remote_case remote-dead)
   make_fakebin "$d" >/dev/null
   out=$(FM_FAKE_REMOTE_STATE_OUT=dead FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
-  expect_code 0 "$rc" "remote dead exits 0"
+  expect_code 0 "$rc" "remote dead exits 0" "$out"
   assert_contains "$out" "remote endpoint dead on remote-mac" \
     "a genuinely dead remote endpoint reports the remote host's own verdict"
   pass "fm-crew-state remote: the remote host's own dead verdict is reported truthfully"
@@ -3559,7 +3601,7 @@ test_missing_meta() {
   make_fakebin "$d" >/dev/null
   local out rc
   out=$(run_crew_state "$d" ghost-z); rc=$?
-  expect_code 0 "$rc" "missing meta exits 0"
+  expect_code 0 "$rc" "missing meta exits 0" "$out"
   assert_contains "$out" "state: unknown" "missing meta -> unknown"
   assert_contains "$out" "source: none" "missing meta -> none source"
   pass "missing meta is handled gracefully"
@@ -6845,6 +6887,8 @@ test_no_run_idle_pane_uses_keyed_log
 test_no_run_idle_pane_paused
 test_no_run_idle_pane_custom_paused_verb
 test_no_run_idle_secondmate_resolved_event_not_state
+test_secondmate_without_status_reads_idle_when_endpoint_live
+test_secondmate_without_status_dead_endpoint_stays_unknown
 test_dead_window_ignores_stale_status_log
 test_gone_window_in_live_session_ignores_stale_status_log
 test_no_run_tmux_unreadable_reads_unreachable_not_gone

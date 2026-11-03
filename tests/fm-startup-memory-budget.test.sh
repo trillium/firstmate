@@ -198,7 +198,7 @@ test_budget_accounting_reports_all_three_files_and_safe_failure() {
   out=$(FM_HOME="$home" "$BUDGET" report 2>&1)
   rc=$?
   set -e
-  expect_code 2 "$rc" "unsafe memory input should fail the accounting command"
+  expect_code 2 "$rc" "unsafe memory input should fail the accounting command" "$out"
   assert_contains "$out" 'memory file is not an ordinary regular file' \
     "accounting failure did not identify the unsafe memory file"
   [ "$(<"$outside")" = outside ] || fail "accounting failure changed a symlink target"
@@ -291,7 +291,7 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
   out=$(run_config_push "$root" "$home" "$fakebin" "$log" 2>&1)
   rc=$?
   set -e
-  expect_code 1 "$rc" "unsafe inherited destination should stop propagation"
+  expect_code 1 "$rc" "unsafe inherited destination should stop propagation" "$out"
   assert_contains "$out" 'startup-memory-budget: error - unsafe or invalid destination: file is hardlinked' \
     "unsafe inherited destination did not produce a concrete propagation error"
   [ "$(<"$outside")" = 555 ] || fail "unsafe destination handling changed its hardlinked source"
@@ -317,7 +317,7 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
   out=$(run_config_push "$root" "$home" "$fakebin" "$log" 2>&1)
   rc=$?
   set -e
-  expect_code 1 "$rc" "unsafe primary budget should stop propagation"
+  expect_code 1 "$rc" "unsafe primary budget should stop propagation" "$out"
   assert_contains "$out" 'startup-memory-budget: error - unsafe or invalid primary source: file is symlinked' \
     "unsafe primary budget did not produce a concrete propagation error"
   [ ! -e "$sm/config/startup-memory-budget" ] \
