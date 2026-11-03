@@ -39,7 +39,7 @@ def fail(message: str) -> None:
 
 def git_tracked(root: Path, patterns: list[str]) -> list[str]:
     proc = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z", "--", *patterns],
+        ["git", "-C", str(root), "ls-files", "-z", "--", *patterns, ":(exclude).pr-evidence"],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
