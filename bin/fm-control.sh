@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>] [--account <value>]
+#                                         [--effort <level>] [--account <value> | --rotate-account]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -290,6 +290,7 @@ ACCOUNT_SET=0
 NOTE=
 NOTE_SET=0
 control_want_value=
+ROTATE_ACCOUNT=0
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
     case "$control_arg" in
@@ -317,6 +318,7 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --rotate-account) ROTATE_ACCOUNT=1 ;;
     --account) control_want_value=account ;;
     --account=*) NEW_ACCOUNT=${control_arg#--account=}; ACCOUNT_SET=1 ;;
     --note) control_want_value=note ;;
@@ -340,6 +342,8 @@ if [ "$VERB" != relaunch ]; then
     || die "--harness, --model, --effort, --account, and --note apply to 'relaunch' only"
 fi
 [ "$ACCOUNT_SET" = 0 ] || [ -n "$NEW_ACCOUNT" ] || die "--account requires a non-empty value"
+[ "$ROTATE_ACCOUNT" = 0 ] || [ "$ACCOUNT_SET" = 0 ] || die "--rotate-account and --account are mutually exclusive"
+[ "$ROTATE_ACCOUNT" = 0 ] || [ "$VERB" = relaunch ] || die "--rotate-account applies to 'relaunch' only"
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
@@ -1186,6 +1190,13 @@ resolve_relaunch_profile() {
   local account_cfg="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   [ "$account_model" != default ] || account_model=
   [ "$KIND" != secondmate ] || account_mate=$ID
+  if [ "$ROTATE_ACCOUNT" = 1 ]; then
+    # Usage-limit rotation: move to the next account in config/claude-token-accounts.
+    [ "$TARGET_HARNESS" = claude ] || { echo "error: --rotate-account applies to Claude workers" >&2; return 1; }
+    NEW_ACCOUNT=$(fm_worker_account_rotation_next "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+      "$(fm_meta_get "$META" account_request)") || return 1
+    ACCOUNT_SET=1
+  fi
   if [ "$ACCOUNT_SET" = 1 ]; then
     account_request=$NEW_ACCOUNT
   elif [ "$TARGET_HARNESS" = claude ]; then

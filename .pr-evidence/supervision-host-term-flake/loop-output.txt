@@ -1,5 +1,0 @@
-Case: test_undelivered_dialog_is_fed_again_on_the_next_turn
-Load: one busy-loop per CPU core, 5 copies of the case in parallel, 4 rounds (20 runs)
-Result: 19 ok, 1 not ok
-The one failure is "mirror boundary: the first wake was not handled" - the case's
-earlier 25s wait for the first engine turn under that load; it fails before any TERM step.

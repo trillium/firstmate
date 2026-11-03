@@ -1,3 +1,0 @@
-$ PATH=<gnu stat first> fm-lab-home.sh tmux-dir <lab>
-before: stat: cannot read file system information for '%Lp' / cannot secure tmux directory (exit 1)
-after:  prints the private tmux directory (exit 0)

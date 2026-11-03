@@ -3591,6 +3591,12 @@ elif [ "$HARNESS" = claude ] && [ -z "$WORKER_ACCOUNT_MATE" ] && [ -z "$ACCOUNT_
       auto_account_rest=${AUTO_ACCOUNT#*$'\t'}
       ACCOUNT_OVERRIDE_SETTING=${auto_account_rest%%$'\t'*}
       ACCOUNT_REASON=${auto_account_rest#*$'\t'}
+    elif [ -z "$RAW_COMMAND" ] && [ ! -e "$CONFIG/claude-account" ] && [ ! -e "$CONFIG/claude-accounts" ]; then
+      # Reactive rotation (docs/configuration.md "Setup-token rotation"): with
+      # no --account, pin, list, or automatic choice, round-robin across
+      # config/claude-token-accounts.
+      ACCOUNT_ARG=$(fm_worker_account_rotation_pick "$CONFIG" "$STATE") || exit 1
+      WORKER_ACCOUNT_REQUEST=$ACCOUNT_ARG
     fi
   fi
 fi
