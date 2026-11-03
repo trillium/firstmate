@@ -1,0 +1,7 @@
+== case: primary-checkout-subdir (kind=ship) recorded worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.U8Gpy5/projects/proj/sub
+== pane state: dead=0 cmd=zsh
+$ FM_HOME=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.U8Gpy5 bin/fm-spawn.sh lv20024 --relaunch
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.U8Gpy5
+error: task lv20024's recorded worktree '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.U8Gpy5/projects/proj/sub' is the primary home or checkout (its repository's primary checkout), not an isolated task worktree; refusing to relaunch a worker there
+== exit code: 1
+== pane after: dead=0 cmd=zsh path=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.U8Gpy5/projects/proj/sub

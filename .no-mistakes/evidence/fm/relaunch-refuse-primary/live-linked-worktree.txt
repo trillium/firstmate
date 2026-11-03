@@ -1,0 +1,24 @@
+== case: linked-worktree (kind=ship) recorded worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/wt-lv29677
+== pane state: dead=0 cmd=zsh
+$ FM_HOME=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M bin/fm-spawn.sh lv29677 --relaunch
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/data/lv29677/launch-brief.md records no ship branch; defaulting to legacy branch fm/lv29677
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/data/lv29677/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned lv29677 harness=claude kind=ship mode=no-mistakes yolo=off window=fmses:fm-lv29677 worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/wt-lv29677
+== exit code: 0
+== pane after: dead=0 cmd=claude path=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/wt-lv29677
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/pre-rebase': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/pre-applypatch': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/pre-auto-gc': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/pre-merge-commit': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/post-commit': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/sendemail-validate': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/applypatch-msg': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/prepare-commit-msg': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/post-checkout': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/post-applypatch': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/post-rewrite': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/commit-msg': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/pre-push': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/post-merge': Permission denied
+rm: cannot remove '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TS9X7M/state/lv29677.git-hooks/pre-commit': Permission denied

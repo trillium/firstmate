@@ -1,0 +1,7 @@
+== case: secondmate-own-repo-home (kind=secondmate) recorded worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-smhome.Qnkdci
+== pane state: dead=0 cmd=zsh
+$ FM_HOME=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.oow8IS bin/fm-spawn.sh lv773 --relaunch
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.oow8IS
+error: firstmate home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-smhome.Qnkdci is not a seeded secondmate home
+== exit code: 1
+== pane after: dead=0 cmd=zsh path=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-smhome.Qnkdci

@@ -1,0 +1,14 @@
+== case: home (kind=ship) recorded worktree=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.kH0lHq
+== pane state: dead=0 cmd=zsh
+$ FM_HOME=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.kH0lHq bin/fm-spawn.sh lv26848 --relaunch
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.kH0lHq
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: task lv26848's recorded worktree '/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.kH0lHq' is the primary home or checkout (/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.kH0lHq), not an isolated task worktree; refusing to relaunch a worker there
+== exit code: 1
+== pane after: dead=0 cmd=zsh path=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.kH0lHq
