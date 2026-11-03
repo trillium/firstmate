@@ -2472,9 +2472,9 @@ SH
   pass "a board answer reaches the keyed-answer intake and wakes firstmate"
 }
 
-# The intake is channel-agnostic, so chat must reach it the same way a captured
-# review does - for a task-id key, and for a legacy composed identity.
-test_chat_channel_feeds_the_same_keyed_answer_intake() {
+# Chat is a steer, not the captain's answer: --resolve-key must refuse a key
+# that names a captain-held task, for a task-id key and a legacy composed one.
+test_chat_steer_never_closes_a_captain_hold() {
   local home id fb show list
   home=$(make_home chat-channel)
   id=sample-chat-review
@@ -2528,61 +2528,39 @@ exit 0
 SH
   chmod +x "$fb/tmux"
 
-  : > "$home/send.log"
-  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" \
-    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_SEND_LOG="$home/send.log" FM_SEND_SETTLE=0 \
-    "$ROOT/bin/fm-send.sh" "$id" --resolve-key chat-choice "go with option A" >/dev/null 2>&1 \
-    || fail "an answer to a transferred legacy decision was refused by the chat channel"
-  # The answer rides fm-send's durable inbox plane: the record carries the
-  # text while the typed channel carries only the doorbell.
-  grep -qF "go with option A" "$home/state/$id.inbox/001.msg" \
-    || fail "the answer text never reached the worker's durable inbox record"
+  # A steer is firstmate's voice, so chat never closes a captain hold: each key
+  # (legacy composed identity, task id, reconcile) refuses before sending and
+  # leaves its hold open; only the captain's own answer closes it.
+  local key err
+  for key in chat-choice sample-chat-followup sample-chat-reconcile; do
+    : > "$home/send.log"
+    if env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" \
+      FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+      FM_SEND_LOG="$home/send.log" FM_SEND_SETTLE=0 \
+      "$ROOT/bin/fm-send.sh" "$id" --resolve-key "$key" "go with option A" \
+      > "$home/chat-$key.out" 2> "$home/chat-$key.err"; then
+      fail "a chat steer closed the captain hold for key $key"
+    fi
+    err=$(cat "$home/chat-$key.err")
+    assert_contains "$err" "fm-captain-hold.sh answer" "the refusal for $key must name the captain-hold answer path"
+    [ ! -e "$home/state/$id.inbox/001.msg" ] || fail "a refused chat steer for $key still enqueued the message"
+  done
   show=$(tasks_in "$home" show "$id-decision-chat-choice" --full)
-  assert_contains "$show" "state: done" "a chat answer left the legacy row open"
-  assert_contains "$show" "Answer: go with option A" "the chat-answered row lost the captain answer"
-
-  : > "$home/send.log"
-  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" \
-    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_SEND_LOG="$home/send.log" FM_SEND_SETTLE=0 \
-    "$ROOT/bin/fm-send.sh" "$id" --resolve-key sample-chat-followup "take the second option" >/dev/null 2>&1 \
-    || fail "an answer keyed by a task id was refused by the chat channel"
+  assert_not_contains "$show" "state: done" "a chat steer closed the legacy row"
   show=$(tasks_in "$home" show sample-chat-followup --full)
-  assert_contains "$show" "state: done" "a chat answer left the task-id call open"
-  assert_contains "$show" "Resolution mode: answered" "the chat-answered call did not record its close path"
-  assert_contains "$show" "Answer: take the second option" "the chat-answered call lost the captain answer"
-  assert_contains "$show" "answer sent to $id" "the chat-answered call lost its channel provenance"
-
-  : > "$home/send.log"
-  set +e
-  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" \
-    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_SEND_LOG="$home/send.log" FM_SEND_SETTLE=0 \
-    "$ROOT/bin/fm-send.sh" "$id" --resolve-key sample-chat-reconcile reconcile >/dev/null 2>&1
-  set -e
+  assert_not_contains "$show" "state: done" "a chat steer closed the task-id call"
   show=$(tasks_in "$home" show sample-chat-reconcile --full)
-  assert_contains "$show" "state: queued" "a chat reconcile answer closed the call"
+  assert_contains "$show" "state: queued" "a chat reconcile steer closed the call"
   list=$(run_captain "$home" reconcile list)
-  assert_contains "$list" "reconcile-requests: 0" "a chat reconcile answer created a board request"
-  printf 'Chat cannot authorize this closure.\n' > "$home/chat-reconcile.txt"
-  if run_captain "$home" reconcile close sample-chat-reconcile \
-    --evidence-file "$home/chat-reconcile.txt" >/dev/null 2>&1; then
-    fail "a chat reconcile answer authorized evidence-backed closure"
-  fi
-  run_captain "$home" answer sample-chat-reconcile --decision-file "$home/chat-reconcile.txt" >/dev/null \
-    || fail "could not close the chat reconcile fixture normally"
+  assert_contains "$list" "reconcile-requests: 0" "a chat steer created a board request"
 
-  if env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" \
-    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_SEND_LOG="$home/send.log" FM_SEND_SETTLE=0 \
-    "$ROOT/bin/fm-send.sh" "$id" --resolve-key sample-chat-followup "again" \
-    > "$home/closed-key.out" 2> "$home/closed-key.err"; then
-    fail "a key already closed in both ledgers was accepted"
-  fi
-  run_captain "$home" verify "$id" >/dev/null \
-    || fail "chat-answered calls did not satisfy the completion gate"
-  pass "the chat channel feeds the same keyed-answer intake a captured review does"
+  printf 'go with option A\n' > "$home/chat-answer.txt"
+  for key in sample-chat-followup sample-chat-reconcile; do
+    run_captain "$home" answer "$key" --decision-file "$home/chat-answer.txt" >/dev/null \
+      || fail "could not close $key through the captain answer path"
+  done
+
+  pass "a chat steer never closes a captain hold; the captain answer path still does"
 }
 
 test_origin_slug_validation_precedes_path_construction() {
@@ -5173,7 +5151,7 @@ test_reconcile_outcomes_retry_partial_failures_once
 test_unbound_source_closes_no_hold
 test_legacy_identities_keep_working
 test_board_answer_reaches_the_keyed_answer_intake
-test_chat_channel_feeds_the_same_keyed_answer_intake
+test_chat_steer_never_closes_a_captain_hold
 test_origin_slug_validation_precedes_path_construction
 test_status_resolution_over_an_open_hold_is_signalled
 test_legitimate_holds_produce_no_divergence_signal
