@@ -1080,7 +1080,7 @@ warn_sibling_holds() {  # <task-id> <show-output> <verb>
     [ -n "$sib" ] && [ "$sib" != "$id" ] || continue
     task_show "$sib" 2>/dev/null || continue
     sshow=$TASK_SHOW_OUTPUT
-    [ "$(show_field "$sshow" state)" != done ] || continue
+    [ "$(show_field "$sshow" state)" != "done" ] || continue
     [ "$(show_field_value "$sshow" hold_kind)" = captain ] || continue
     stext=$(pr_urls_in "$sshow")
     [ -n "$(printf '%s\n%s\n' "$mine" "$stext" | LC_ALL=C sort | uniq -d)" ] || continue
