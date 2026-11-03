@@ -1,0 +1,22 @@
+== 1: 0600 check
+registered: state/a.check.sh
+rc=0
+700
+a.check-trust
+a.check.sh
+== 2: symlink
+error: custom check is unavailable
+rc=1
+== 3: hardlink
+error: custom check state/c.check.sh must be a single-link file on the state device; not registered, the watcher will refuse it
+rc=1
+600
+== 4: missing
+error: custom check is unavailable
+rc=1
+== 5: re-register idempotent / edit-after changes hash
+registered: state/a.check.sh
+rc=0
+== 6: bad id
+error: invalid custom check registration
+rc=2
