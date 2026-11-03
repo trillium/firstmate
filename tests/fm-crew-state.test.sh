@@ -3230,6 +3230,48 @@ test_no_run_idle_secondmate_resolved_event_not_state() {
   pass "a trailing resolved: event does not corrupt state render (idle stays idle)"
 }
 
+# A secondmate with meta but no status line yet is idle when its endpoint is
+# live, and keeps the unknown reading when the endpoint is gone or a status
+# line already exists.
+test_secondmate_without_status_reads_idle_when_endpoint_live() {
+  reset_fakes
+  local d out
+  d=$(new_case mate-no-status)
+  mkdir -p "$d/wt"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/mate.meta" "window=fm:fm-mate" "worktree=$d/wt" "kind=secondmate" "home=$d/wt"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: idle" "live endpoint with no status log reads idle"
+  assert_contains "$out" "no events yet" "the idle reading says no events were recorded"
+  : > "$d/state/mate.status"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: idle" "an empty status log is the same as none"
+  printf 'resolved [key=race]: went with subscribe-before-write\n' > "$d/state/mate.status"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: unknown" "an existing status log keeps today's reading"
+  printf 'working: reconciling routed items\n' > "$d/state/mate.status"
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: working" "a real status line still wins"
+  pass "live secondmate with no status reads idle; existing status unchanged"
+}
+
+test_secondmate_without_status_dead_endpoint_stays_unknown() {
+  reset_fakes
+  local d out
+  d=$(new_case mate-no-status-dead)
+  mkdir -p "$d/wt"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/mate.meta" "window=fm:fm-gone" "worktree=$d/wt" "kind=secondmate" "home=$d/wt"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_TMUX_MISSING=1
+  out=$(run_crew_state "$d" mate)
+  assert_contains "$out" "state: unknown" "dead endpoint with no status stays unknown"
+  assert_not_contains "$out" "state: idle" "a dead endpoint is never idle"
+  pass "dead secondmate endpoint with no status keeps the unknown reading"
+}
+
 test_dead_window_ignores_stale_status_log() {
   reset_fakes
   local d; d=$(new_case dead-window)
@@ -5930,6 +5972,8 @@ test_no_run_idle_pane_uses_keyed_log
 test_no_run_idle_pane_paused
 test_no_run_idle_pane_custom_paused_verb
 test_no_run_idle_secondmate_resolved_event_not_state
+test_secondmate_without_status_reads_idle_when_endpoint_live
+test_secondmate_without_status_dead_endpoint_stays_unknown
 test_dead_window_ignores_stale_status_log
 test_gone_window_in_live_session_ignores_stale_status_log
 test_no_run_tmux_unreadable_reads_unreachable_not_gone
