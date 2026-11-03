@@ -183,24 +183,24 @@ test_wrapper_refusals() {
   before=$(cat "$dir/home/data/backlog.md")
   out=$(wrapper_from_code "$dir" add r-1 "explicit" --file "$dir/home/data/backlog.md" 2>&1)
   rc=$?
-  expect_code 2 "$rc" "--file"
+  expect_code 2 "$rc" "--file" "$out"
   assert_contains "$out" "drop --file" "--file refusal did not explain itself"
   out=$(wrapper_from_code "$dir" list --file="$dir/home/data/backlog.md" 2>&1)
   rc=$?
-  expect_code 2 "$rc" "--file="
+  expect_code 2 "$rc" "--file=" "$out"
 
   mv "$dir/home/data/backlog.md" "$dir/home/real-backlog.md"
   ln -s "$dir/home/real-backlog.md" "$dir/home/data/backlog.md"
   out=$(wrapper_from_code "$dir" add r-2 "through a link" 2>&1)
   rc=$?
-  expect_code 2 "$rc" "symlinked home backlog"
+  expect_code 2 "$rc" "symlinked home backlog" "$out"
   assert_contains "$out" "is a symlink" "the symlinked home backlog refusal did not name the link"
   [ -L "$dir/home/data/backlog.md" ] || fail "a refused call still replaced the home link"
   assert_equals "$before" "$(cat "$dir/home/real-backlog.md")" "a refused call changed the backlog"
 
   out=$(cd "$dir/code" && FM_HOME="$dir/missing-home" "$WRAPPER" list 2>&1)
   rc=$?
-  expect_code 2 "$rc" "missing data directory"
+  expect_code 2 "$rc" "missing data directory" "$out"
   pass "fm-tasks-axi.sh refuses caller --file, a symlinked home backlog, and an unresolvable home"
 }
 
@@ -213,12 +213,12 @@ test_wrapper_refuses_add_start() {
   before=$(cat "$dir/home/data/backlog.md")
   out=$(wrapper_from_code "$dir" add hs-1 "hand-started" --start 2>&1)
   rc=$?
-  expect_code 2 "$rc" "add --start"
+  expect_code 2 "$rc" "add --start" "$out"
   assert_contains "$out" "bin/fm-spawn.sh" "the add --start refusal did not name the dispatch path"
   assert_equals "$before" "$(cat "$dir/home/data/backlog.md")" "a refused add --start still wrote a row"
   out=$(wrapper_from_code "$dir" create hs-c "hand-started via alias" --start 2>&1)
   rc=$?
-  expect_code 2 "$rc" "create --start"
+  expect_code 2 "$rc" "create --start" "$out"
   assert_contains "$out" "bin/fm-spawn.sh" "the create --start refusal did not name the dispatch path"
   assert_equals "$before" "$(cat "$dir/home/data/backlog.md")" "a refused create --start still wrote a row"
   wrapper_from_code "$dir" add hs-2 "queued" >/dev/null || fail "plain add was refused"

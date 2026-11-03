@@ -265,7 +265,7 @@ test_promote_requires_and_records_the_delivery_contract() {
 
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode direct-PR --yolo on 2>&1)
   status=$?
-  expect_code 0 "$status" "a promotion carrying both flags should succeed"
+  expect_code 0 "$status" "a promotion carrying both flags should succeed" "$out"
   assert_grep 'kind=ship' "$meta" "promotion did not restore ship teardown protection"
   assert_grep 'mode=direct-PR' "$meta" "promotion did not record the decided delivery mode"
   assert_grep 'yolo=on' "$meta" "promotion did not record the decided merge posture"
@@ -872,7 +872,7 @@ EOF
     "Ship the identity-check fix without adding a classifier."
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode no-mistakes --yolo off 2>&1)
   status=$?
-  expect_code 0 "$status" "promotion of a filled scout brief should succeed"
+  expect_code 0 "$status" "promotion of a filled scout brief should succeed" "$out"
   assert_grep 'kind=ship' "$meta" "filled promotion did not restore ship teardown protection"
   brief="$home/data/$id/ship-instructions.md"
   assert_grep "Investigate why the identity check is failing." "$brief" \
@@ -913,7 +913,7 @@ This scout-only setup must not become the spec.
 EOF
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo off 2>&1)
   status=$?
-  expect_code 0 "$status" "promotion with nested and fenced spec content should succeed"
+  expect_code 0 "$status" "promotion with nested and fenced spec content should succeed" "$out"
   brief="$home/data/$id/ship-instructions.md"
   assert_grep "Ship the parser without losing detailed requirements." "$brief" \
     "promotion discarded Captain's intent while replacing the scout spec"
@@ -945,7 +945,7 @@ This is a SCOUT task: the deliverable is a written report, not a PR.
 EOF
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo on 2>&1)
   status=$?
-  expect_code 0 "$status" "promotion of a pre-subsection scout brief should succeed"
+  expect_code 0 "$status" "promotion of a pre-subsection scout brief should succeed" "$out"
   brief="$home/data/$id/ship-instructions.md"
   intent_body=$(awk '$0 == "## Captain'\''s intent" { emit=1; next } emit && /^## / { exit } emit { print }' "$brief")
   spec_body=$(awk '$0 == "## Firstmate spec" { emit=1; next } emit && /^# / { exit } emit { print }' "$brief")

@@ -371,7 +371,7 @@ test_probe_version_match_is_recorded() {
 test_help_succeeds_and_names_the_registered_probes() {
   local out rc=0
   out=$("$SCRIPT" --help 2>&1) || rc=$?
-  expect_code 0 "$rc" "--help must succeed"
+  expect_code 0 "$rc" "--help must succeed" "$out"
   assert_contains "$out" "grok" "--help must name the registered probes"
   pass "--help succeeds and names the registered probes"
 }

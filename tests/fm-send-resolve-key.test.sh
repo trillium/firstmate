@@ -863,7 +863,7 @@ test_decision_answer_partition_relocates_under_the_record() {
   : > "$log"
   out=$(env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
     FM_SUPERVISION_ACTOR=branch "$SEND" t1 --resolve-key api-shape "go with REST" 2>&1); rc=$?
-  expect_code 6 "$rc" "an attended branch answering a decision must be refused at the partition"
+  expect_code 6 "$rc" "an attended branch answering a decision must be refused at the partition" "$out"
   assert_contains "$out" "decision answer (fm-send --resolve-key) refused" "the partition refusal lost its action label"
   [ ! -e "$home/state/t1.inbox" ] || fail "a refused decision answer still reached the worker's inbox"
   [ ! -s "$log" ] || fail "a refused decision answer still rang the doorbell"

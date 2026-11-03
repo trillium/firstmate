@@ -171,7 +171,7 @@ test_stale_pool_base_refreshes_before_branching() {
 
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
-  expect_code 0 "$status" "spawn should refresh a stale pooled worktree"
+  expect_code 0 "$status" "spawn should refresh a stale pooled worktree" "$out"
   assert_contains "$out" "spawned $id" "spawn did not report success"
   current=$(git -C "$POOL_DIR" rev-parse origin/main)
   branch_head=$(git -C "$POOL_DIR" rev-parse HEAD)
@@ -187,7 +187,7 @@ test_stale_pool_base_refreshes_before_branching() {
   fm_test_spawn_brief "$HOME_DIR" "$id"
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
-  expect_code 0 "$status" "repeating the base refresh should be idempotent"
+  expect_code 0 "$status" "repeating the base refresh should be idempotent" "$out"
   [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$current" ] \
     || fail "an idempotent repeat moved the pool away from current origin/main"
 
@@ -207,7 +207,7 @@ test_non_main_default_branch_refreshes_before_branching() {
 
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
-  expect_code 0 "$status" "spawn should refresh a stale pooled worktree on a non-main default branch"
+  expect_code 0 "$status" "spawn should refresh a stale pooled worktree on a non-main default branch" "$out"
   current=$(git -C "$POOL_DIR" rev-parse "origin/$DEFAULT_BRANCH")
   branch_head=$(git -C "$POOL_DIR" rev-parse HEAD)
   [ "$branch_head" = "$current" ] || fail "spawn did not refresh to current origin/$DEFAULT_BRANCH"
@@ -602,7 +602,7 @@ strand_submodule_pin_via_spawn() {  # <seed-id>
   fm_test_spawn_brief "$HOME_DIR" "$id"
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
-  expect_code 0 "$status" "the spawn that moves the submodule pin should succeed"
+  expect_code 0 "$status" "the spawn that moves the submodule pin should succeed" "$out"
   assert_contains "$out" "spawned $id" "the spawn that moves the submodule pin did not report success"
   [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$ADVANCED_SHA" ] \
     || fail "the first spawn did not move the pooled base across the moved submodule pin"

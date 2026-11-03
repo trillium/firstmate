@@ -167,7 +167,7 @@ test_fresh_worktree_is_accepted() {
   stage_brief "$HOME_DIR" "$id"
 
   out=$(run_ownership_spawn "$id" "$WT_DIR"); status=$?
-  expect_code 0 "$status" "spawn into a fresh worktree should succeed"
+  expect_code 0 "$status" "spawn into a fresh worktree should succeed" "$out"
   assert_contains "$out" "spawned $id" "spawn did not report success"
   assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" \
     "meta did not record the fresh worktree"
@@ -188,7 +188,7 @@ test_own_recorded_worktree_is_accepted() {
     "kind=ship" "harness=codex" "mode=no-mistakes" "yolo=off"
 
   out=$(run_ownership_spawn "$id" "$WT_DIR"); status=$?
-  expect_code 0 "$status" "spawn into the task's own recorded worktree should succeed"
+  expect_code 0 "$status" "spawn into the task's own recorded worktree should succeed" "$out"
   assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" \
     "meta did not keep the task's own worktree"
   pass "the task's own recorded worktree is accepted"

@@ -174,7 +174,7 @@ test_gate_lets_a_guard_drive_the_real_fleet_scripts_under_a_gate_marker() {
   out=$(clean_env NO_MISTAKES_GATE=1 PATH="$BIN:/usr/bin:/bin" "$path" 2>&1)
   rc=$?
   set -e
-  expect_code 0 "$rc" "a guard opened with the shared gate must not be refused"
+  expect_code 0 "$rc" "a guard opened with the shared gate must not be refused" "$out"
   assert_contains "$out" allowed \
     "the shared gate must carry the test-suite bypass so a live guard can drive the real fleet scripts"
 }
@@ -194,7 +194,7 @@ test_gate_exports_disable_autoupdater_for_a_proceeding_run() {
   out=$(clean_env PATH="$BIN:/usr/bin:/bin" "$path" 2>&1)
   rc=$?
   set -e
-  expect_code 0 "$rc" "a proceeding guard must exit cleanly"
+  expect_code 0 "$rc" "a proceeding guard must exit cleanly" "$out"
   assert_contains "$out" "autoupdater=1" \
     "a live run the gate lets proceed must export DISABLE_AUTOUPDATER=1 so Claude Code's auto-updater cannot run"
 }

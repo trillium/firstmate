@@ -34,7 +34,7 @@ test_matching_head_and_completed_steps_pass() {
 <!-- no-mistakes-pipeline-attestation:v1 {\"head_sha\":\"$NEW_SHA\",\"steps\":$COMPLETED_STEPS} -->"
   rc=0
   output=$(run_verifier "$body" "$NEW_SHA") || rc=$?
-  expect_code 0 "$rc" "shared action rejected an attestation bound to the current PR head"
+  expect_code 0 "$rc" "shared action rejected an attestation bound to the current PR head" "$output"
   assert_contains "$output" "Found structurally compliant pipeline step attestation." \
     "shared action did not report the matching attestation as compliant"
   pass "shared action accepts a matching head_sha with completed required steps"

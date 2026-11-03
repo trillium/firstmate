@@ -3392,7 +3392,7 @@ test_torn_down_worktree() {
   fm_write_meta "$d/state/gone-k.meta" "window=fm:fm-gone-k" "worktree=$d/no-such-worktree" "kind=ship"
   local out rc
   out=$(run_crew_state "$d" gone-k); rc=$?
-  expect_code 0 "$rc" "torn-down worktree exits 0"
+  expect_code 0 "$rc" "torn-down worktree exits 0" "$out"
   assert_contains "$out" "state: unknown" "torn-down -> unknown"
   assert_contains "$out" "source: none" "torn-down -> none source"
   pass "torn-down worktree is handled gracefully"
@@ -3448,7 +3448,7 @@ test_remote_alive_with_log_uses_status_log() {
   make_fakebin "$d" >/dev/null
   printf 'working: refactoring the quota adapter\n' > "$d/state/rsm.status"
   out=$(FM_FAKE_REMOTE_STATE_OUT=alive FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
-  expect_code 0 "$rc" "remote alive exits 0"
+  expect_code 0 "$rc" "remote alive exits 0" "$out"
   assert_contains "$out" "state: working" "alive remote mate with a working log reads working"
   assert_contains "$out" "source: status-log" "alive remote mate reads current activity from the routed log"
   assert_contains "$out" "remote endpoint alive on remote-mac" "the remote liveness read should be visible"
@@ -3462,7 +3462,7 @@ test_remote_alive_idle_is_healthy_not_gone() {
   d=$(setup_remote_case remote-alive-idle)
   make_fakebin "$d" >/dev/null
   out=$(FM_FAKE_REMOTE_STATE_OUT=alive FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
-  expect_code 0 "$rc" "remote alive-idle exits 0"
+  expect_code 0 "$rc" "remote alive-idle exits 0" "$out"
   assert_contains "$out" "source: remote-endpoint" "the remote endpoint is the reported source"
   assert_contains "$out" "alive on remote-mac" "an idle remote mate reads alive"
   assert_not_contains "$out" "worktree gone" "a healthy remote mate must never read as torn down"
@@ -3477,7 +3477,7 @@ test_remote_unreachable_is_unknown_remote_not_dead() {
   make_fakebin "$d" >/dev/null
   printf 'working: refactoring the quota adapter\n' > "$d/state/rsm.status"
   out=$(FM_FAKE_SSH_RC=255 run_remote_crew_state "$d" rsm); rc=$?
-  expect_code 0 "$rc" "unreachable remote exits 0"
+  expect_code 0 "$rc" "unreachable remote exits 0" "$out"
   assert_contains "$out" "unknown-remote" "an unreachable remote must be labeled unknown-remote"
   assert_contains "$out" "not proof of death" "an unreachable remote must not read as dead"
   assert_not_contains "$out" "worktree gone" "an unreachable remote must never read as torn down"
@@ -3491,7 +3491,7 @@ test_remote_dead_reports_remote_verdict() {
   d=$(setup_remote_case remote-dead)
   make_fakebin "$d" >/dev/null
   out=$(FM_FAKE_REMOTE_STATE_OUT=dead FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
-  expect_code 0 "$rc" "remote dead exits 0"
+  expect_code 0 "$rc" "remote dead exits 0" "$out"
   assert_contains "$out" "remote endpoint dead on remote-mac" \
     "a genuinely dead remote endpoint reports the remote host's own verdict"
   pass "fm-crew-state remote: the remote host's own dead verdict is reported truthfully"
@@ -3503,7 +3503,7 @@ test_missing_meta() {
   make_fakebin "$d" >/dev/null
   local out rc
   out=$(run_crew_state "$d" ghost-z); rc=$?
-  expect_code 0 "$rc" "missing meta exits 0"
+  expect_code 0 "$rc" "missing meta exits 0" "$out"
   assert_contains "$out" "state: unknown" "missing meta -> unknown"
   assert_contains "$out" "source: none" "missing meta -> none source"
   pass "missing meta is handled gracefully"
