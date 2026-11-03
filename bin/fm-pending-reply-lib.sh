@@ -990,9 +990,9 @@ fm_pending_reply_recovery_message() {  # <record-path>
 # failure fm-send did not mark unconfirmed is a genuine failure and is never
 # retried.
 fm_pending_reply_send_recovery_once() {  # <parent-home> <corr_id> <task_id> <message>
-  local parent_home=$1 corr=$2 task_id=$3 msg=$4 errf rc=0 attempt
+  local parent_home=$1 corr=$2 task_id=$3 msg=$4 errf rc=0
   errf=$(mktemp "${TMPDIR:-/tmp}/fm-recovery-send.XXXXXX") || return 1
-  for attempt in 1 2; do
+  for _ in 1 2; do
     rc=0
     env FM_HOME="$parent_home" FM_PENDING_REPLY_EXISTING_CORR="$corr" \
       "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg" 2>"$errf" || rc=$?
