@@ -33,7 +33,7 @@
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
-#   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
+#   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path> [--moot]
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
 #
 # `hold` places an existing task under an active captain hold, or creates the
@@ -115,7 +115,10 @@
 # under a `Reconciliation evidence:` label so it can never read as the
 # captain's words, and closes the task. `note` is the still-active outcome: it
 # appends one dated `Captain hold reconciled:` note and leaves the hold in
-# place. A normal answer also retires the request because the call is settled.
+# place. `close --moot` is the same evidence-backed close for a hold whose subject
+# went moot outside the board (e.g. its PR was merged upstream): it needs no
+# board request, still requires the evidence file, and records `reconciled`, never an answer.
+# A normal answer also retires the request because the call is settled.
 # `list` is the read-only enumeration.
 # docs/captain-hold-lifecycle.md owns the semantics.
 #
@@ -1821,12 +1824,13 @@ reconcile_list() {
 # The moot outcome. The evidence is what closes the call, and the `reconciled`
 # resolution mode is what keeps the record from claiming the captain answered.
 reconcile_close() {
-  local id=${1:-} evidence_file='' show state hold_kind body occurrence recorded_mode
+  local id=${1:-} evidence_file='' moot=0 show state hold_kind body occurrence recorded_mode
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --evidence-file) shift; evidence_file=${1:-} ;;
+      --moot) moot=1 ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -1835,8 +1839,8 @@ reconcile_close() {
   [ -n "$evidence_file" ] || fail "--evidence-file is required; a moot call closes on evidence, never on assertion"
   load_decision "$evidence_file"
   acquire_task_control_lock "$id"
-  reconcile_request_read "$id" \
-    || fail "task $id has no pending board-created reconcile request"
+  [ "$moot" = 1 ] || reconcile_request_read "$id" \
+    || fail "task $id has no pending board-created reconcile request (use --moot with evidence when the subject went moot outside the board)"
   require_tasks_axi
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   state=$(show_field "$show" state)

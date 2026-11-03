@@ -1950,6 +1950,29 @@ test_reconcile_closes_with_evidence_or_keeps_the_call_open() {
   pass "reconcile closes a moot call with evidence and keeps an active one open with a note"
 }
 
+# A hold that went moot outside the board closes with --moot evidence, no request.
+test_reconcile_moot_closes_without_board_request() {
+  local home show out rc
+  home=$(make_home reconcile-moot-flag)
+  tasks_in "$home" add sample-merged-pr "Captain call: PR ready for merge?" --repo sample >/dev/null
+  run_captain "$home" hold sample-merged-pr --reason "PR ready for captain merge call" >/dev/null
+  printf 'The PR was merged upstream by the maintainer; the merge call is moot.\n' > "$home/evidence.txt"
+  set +e
+  out=$(run_captain "$home" reconcile close sample-merged-pr --moot 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "--moot closed a call with no evidence"
+  run_captain "$home" reconcile close sample-merged-pr --moot --evidence-file "$home/evidence.txt" >/dev/null \
+    || fail "could not close the moot call without a board request"
+  show=$(tasks_in "$home" show sample-merged-pr --full)
+  assert_contains "$show" "state: done" "the moot call did not close"
+  assert_contains "$show" "Resolution mode: reconciled" "the moot close did not record reconciled mode"
+  assert_contains "$show" "merged upstream" "the moot evidence was lost"
+  case "$show" in
+    *"Captain decision:"*) fail "a moot close was recorded as the captain's own words" ;;
+  esac
+}
+
 test_reconcile_outcomes_retry_partial_failures_once() {
   local home out show list rc
   home=$(make_home reconcile-partial-retry)
@@ -4827,6 +4850,7 @@ test_bound_channel_answers_close_at_answer_time
 test_reconcile_never_closes_through_the_keyed_answer_intake
 test_normal_answers_retire_pending_reconcile_requests
 test_reconcile_closes_with_evidence_or_keeps_the_call_open
+test_reconcile_moot_closes_without_board_request
 test_reconcile_outcomes_retry_partial_failures_once
 test_unbound_source_closes_no_hold
 test_legacy_identities_keep_working

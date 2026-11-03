@@ -301,6 +301,7 @@ Each outcome requires both the pending board-created request and the operator in
 - `reconcile close <task-id> --evidence-file <path>` is the moot outcome.
   It writes a resolution record whose mode is `reconciled` and whose body is the supplied EVIDENCE under a `Reconciliation evidence:` label, then closes the task.
   The distinct mode and label are what keep the record honest: it says the call dissolved against verified evidence, and it never claims the captain answered.
+  Add `--moot` when the subject went moot outside the board (for example the held PR was merged or closed upstream): the evidence file is still required, the pending board request is not, and the record is the same `reconciled` mode, never a captain answer.
 - `reconcile note <task-id> --note-file <path>` is the still-active outcome.
   It appends one dated `Captain hold reconciled:` note to the task body, leaves the hold in place, and retires the request.
   The call stays the captain's, now carrying what the re-check found.
