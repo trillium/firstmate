@@ -1,0 +1,14 @@
+# bin/fm-claude-account-quota.sh --model claude-opus-5-5, real quota-axi 0.1.60
+## synthetic list
+claude-account-quota:
+  row: $LAB/accts/first  root=$LAB/accts/first  uncertainty: quota unknown (unavailable: Claude profile credentials missing)
+  row: $LAB/accts/first  root=$LAB/accts/first  uncertainty: no applicable quota scope
+  row: $LAB/accts/second  root=$LAB/accts/second  uncertainty: quota unknown (unavailable: Claude profile credentials missing)
+  row: $LAB/accts/second  root=$LAB/accts/second  uncertainty: no applicable quota scope
+## list with ordinary (machine login, read-only --profile-only) + a synthetic root
+claude-account-quota:
+  row: ordinary  root=~/.claude  uncertainty: quota unknown (error: Claude credential invalid)
+  row: ordinary  root=~/.claude  uncertainty: no applicable quota scope
+  row: $LAB/accts/first  root=$LAB/accts/first  uncertainty: quota unknown (unavailable: Claude profile credentials missing)
+  row: $LAB/accts/first  root=$LAB/accts/first  uncertainty: no applicable quota scope
+[exit 0]

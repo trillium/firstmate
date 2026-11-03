@@ -1,0 +1,59 @@
+# Live spawn / relaunch on a declared account (lab home, real claude worker in a tmux pane)
+### s4-spawn-second
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/second
+spawned acct-a harness=claude kind=ship mode=local-only yolo=off window=primary:fm-acct-a worktree=$LAB/treehouse/.treehouse/demo-738101/1/demo account=$LAB/accts/second
+[exit 0]
+### state/acct-a.meta account line after spawn: account=$LAB/accts/second
+### worker process env (ps -E of the claude process in the pane)
+claude worker process for acct-a:
+CLAUDE_CONFIG_DIR=$LAB/accts/second
+(no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the worker env, although the pane process above it carried an ambient CLAUDE_CODE_OAUTH_TOKEN and the spawning shell an ambient ANTHROPIC_API_KEY)
+
+### s5 relaunch with no --account (reuses recorded account)
+$ fm-spawn.sh acct-a --relaunch
+spawned acct-a harness=claude kind=ship mode=local-only yolo=off window=primary:fm-acct-a worktree=$LAB/treehouse/.treehouse/demo-738101/1/demo account=$LAB/accts/second
+[exit 0]
+claude pid 74223:
+CLAUDE_CONFIG_DIR=$LAB/accts/second
+
+### s5 relaunch --account first (explicit move)
+$ fm-spawn.sh acct-a --relaunch --account $LAB/accts/first
+spawned acct-a harness=claude kind=ship mode=local-only yolo=off window=primary:fm-acct-a worktree=$LAB/treehouse/.treehouse/demo-738101/1/demo account=$LAB/accts/first
+[exit 0]
+claude pid 80506:
+CLAUDE_CONFIG_DIR=$LAB/accts/first
+account=$LAB/accts/first
+
+### s7 scout with --account
+$ fm-spawn.sh acct-d $LAB/projects/demo --scout --account $LAB/accts/second
+spawned acct-d harness=claude kind=scout window=primary:fm-acct-d worktree=$LAB/treehouse/.treehouse/demo-738101/3/demo account=$LAB/accts/second
+[exit 0]
+kind=scout
+account=$LAB/accts/second
+
+### worker pane screen (claude started under the chosen root)
+                                             ░▓▓███▓▓░
+ *                                 ░░░░
+                                 ░░░░░░░░
+                               ░░░░░░░░░░░░░░░░
+       █████████                                        *
+      ██▄█████▄██                        *
+       █████████      *
+.......█ █   █ █..........................................
+ Let's get started.
+ Choose the text style that looks best with your terminal
+ To change this later, run /theme
+     Auto (match terminal)
+ ❯ ✔ Dark mode
+     Light mode
+     Dark mode (colorblind-friendly)
+     Light mode (colorblind-friendly)
+     Dark mode (ANSI colors only)
+     Light mode (ANSI colors only)
+ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  1  function greet() {
+  2 -  console.log("Hello, World!");
+  2 +  console.log("Hello, Claude!");
+  3  }
+ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  Syntax theme: Monokai Extended (ctrl+t to disable)

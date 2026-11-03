@@ -1,0 +1,67 @@
+# Live fm-spawn transcripts against a disposable lab home ($LAB), real claude 2.1.309 (Claude Code), real tmux + treehouse
+# config/claude-accounts declared: $LAB/accts/first, $LAB/accts/second (synthetic apiKeyHelper roots, signed in per real 'claude auth status'), $LAB/accts/signed-out (empty root)
+
+### s1-nolist-account
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/first
+error: --account '$LAB/accts/first' needs config/claude-accounts, which this home does not declare
+[exit 1]
+
+### s2-noflag
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off
+error: config/claude-accounts declares 3 Claude accounts, so a Claude ship or scout launch must name one with --account; bin/fm-claude-account-quota.sh measures each, and Firstmate never picks a default
+[exit 1]
+
+### s3-undeclared
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/third
+error: account '$LAB/accts/third' is not declared in config/claude-accounts; name a declared entry with --account
+[exit 1]
+
+### s3-newline
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $'$LAB/accts/third\n$LAB/accts/first'
+error: --account must name one config/claude-accounts entry exactly, with no control characters
+[exit 1]
+
+### s3-signedout
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/signed-out
+error: config/claude-accounts pins Claude workers to $LAB/accts/signed-out, which is not signed in (claude auth status); sign in with CLAUDE_CONFIG_DIR=$LAB/accts/signed-out claude, then /login, or change the pin
+[exit 1]
+
+### s3-malformed
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/first
+error: config/claude-accounts must hold one account per line, each 'ordinary' or an absolute path, with no blank lines or control characters: $LAB/config/claude-accounts
+[exit 1]
+
+### s3-duplicate
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/first
+error: config/claude-accounts declares the same account twice: $LAB/config/claude-accounts
+[exit 1]
+
+### s3-both
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/first
+error: config/claude-accounts and config/claude-account are both present; keep the account list or the single pin, not both
+[exit 1]
+
+### s3-secondmate
+$ fm-spawn.sh mate-x --secondmate --account $LAB/accts/first
+error: --account applies to ships and scouts; secondmate mate-x launches on its own config/secondmate-accounts/<id>/claude-account pin
+[exit 1]
+
+### s3-remote-secondmate
+$ fm-spawn.sh mate-r --secondmate --account $LAB/accts/first
+error: --account applies to ships and scouts; secondmate mate-r launches on its own config/secondmate-accounts/<id>/claude-account pin
+[exit 1]
+
+### ambient-credential proof: same signed-out root answers loggedIn with an ambient ANTHROPIC_API_KEY (decoy) in the pane
+  "loggedIn": true,
+  "apiKeySource": "ANTHROPIC_API_KEY"
+[exit 0]
+
+### s3-signedout with that ambient key still set
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/signed-out
+error: config/claude-accounts pins Claude workers to $LAB/accts/signed-out, which is not signed in (claude auth status); sign in with CLAUDE_CONFIG_DIR=$LAB/accts/signed-out claude, then /login, or change the pin
+[exit 1]
+
+### s10 a 'token:' (setup-token) entry is NOT accepted in this PR
+$ fm-spawn.sh acct-a $LAB/projects/demo --mode local-only --yolo off --account $LAB/accts/first
+error: config/claude-accounts must hold one account per line, each 'ordinary' or an absolute path, with no blank lines or control characters: $LAB/config/claude-accounts
+[exit 1]
