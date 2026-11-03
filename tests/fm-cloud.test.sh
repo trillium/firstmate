@@ -21,6 +21,8 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin HEAD:refs/heads/main
 git -C "$REPO" push -q origin HEAD:refs/heads/claude/old-run
 
+export FM_CLAUDE_JSON="$TMP_ROOT/claude.json"
+printf '{"projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$(cd "$REPO" && pwd -P)" > "$FM_CLAUDE_JSON"
 cat > "$FAKEBIN/claude" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -44,6 +46,7 @@ git init -q "$GREPO"; git -C "$GREPO" commit -q --allow-empty -m init
 git init -q --bare "$TMP_ROOT/gate.git"
 git -C "$GREPO" remote add no-mistakes "$TMP_ROOT/gate.git"
 git -C "$GREPO" remote add origin "$REMOTE"
+printf '{"projects":{"%s":{"hasTrustDialogAccepted":true},"%s":{"hasTrustDialogAccepted":true}}}\n' "$(cd "$REPO" && pwd -P)" "$(cd "$GREPO" && pwd -P)" > "$FM_CLAUDE_JSON"
 
 cloud() { PATH="$FAKEBIN:$PATH" FM_HOME="$TMP_ROOT/home" FM_STATE_OVERRIDE="$STATE_DIR" bash "$ROOT/bin/fm-cloud.sh" "$@"; }
 
@@ -112,3 +115,28 @@ assert_equals 1 "$rc" "cleanup of a missing run fails"
 cloud cleanup "../x" >/dev/null 2>&1; rc=$?
 assert_equals 2 "$rc" "cleanup rejects a path-like id"
 pass "cleanup"
+
+# Untrusted --repo is refused before claude runs; the config is never written.
+UREPO="$TMP_ROOT/untrusted"
+git init -q "$UREPO"; git -C "$UREPO" commit -q --allow-empty -m init
+git -C "$UREPO" remote add origin "$REMOTE"
+rm -f "$FM_STUB_ARGS"
+before_cj=$(cat "$FM_CLAUDE_JSON")
+out=$(cloud launch --repo "$UREPO" "x" 2>&1); rc=$?
+assert_equals 1 "$rc" "untrusted repo is refused"
+assert_contains "$out" "has not trusted" "refusal says the dir is untrusted"
+assert_contains "$out" "$(cd "$UREPO" && pwd -P)" "refusal names the dir"
+assert_absent "$FM_STUB_ARGS" "claude never ran for an untrusted repo"
+assert_equals "$before_cj" "$(cat "$FM_CLAUDE_JSON")" "trust file is not modified"
+pass "untrusted repo refused"
+
+# A hung claude (trust-dialog style wait) is stopped by the launch timeout.
+cat > "$FAKEBIN/claude" <<'SH'
+#!/usr/bin/env bash
+[ -t 1 ] || exit 1
+sleep 300
+SH
+out=$(FM_CLOUD_LAUNCH_TIMEOUT=2 cloud launch --repo "$REPO" "x" 2>&1); rc=$?
+assert_equals 1 "$rc" "a hung launch exits nonzero"
+assert_contains "$out" "no result within 2s" "timeout diagnostic"
+pass "launch timeout"

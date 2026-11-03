@@ -250,6 +250,14 @@ cmd_launch() {
   before=$(git -C "$repo" ls-remote --heads "$remote_name" 'refs/heads/claude/*' 2>/dev/null \
     | awk '{print $1":"$2}' | paste -sd, - || true)
 
+  # claude stops at a "Is this a project you trust?" dialog for an untrusted
+  # directory and waits forever; refuse up front instead (never edit the file).
+  local cj="${FM_CLAUDE_JSON:-$HOME/.claude.json}" repo_abs
+  repo_abs=$(cd "$repo" && pwd -P)
+  if ! command -v jq >/dev/null 2>&1 || [ "$(jq -r --arg d "$repo_abs" '.projects[$d].hasTrustDialogAccepted // false' "$cj" 2>/dev/null)" != true ]; then
+    die "claude has not trusted $repo_abs (no hasTrustDialogAccepted in $cj); run 'claude' once in that directory and accept the trust dialog, then relaunch"
+  fi
+
   local args=(--cloud "$prompt")
   [ -z "$env_id" ] || args+=(--environment "$env_id")
   # claude refuses --cloud without a terminal, so run it under a pseudo-terminal
@@ -257,13 +265,27 @@ cmd_launch() {
   local log out rc=0
   log=$(mktemp "${TMPDIR:-/tmp}/fm-cloud.XXXXXX") || die "cannot create a temporary log"
   chmod 600 "$log"
+  local cmdline
+  cmdline=$(printf '%q ' claude "${args[@]}")
   if [ "$(uname -s)" = Darwin ]; then
-    (cd "$repo" && script -q "$log" claude "${args[@]}" </dev/null >/dev/null 2>&1) || rc=$?
+    (cd "$repo" && exec script -q "$log" claude "${args[@]}" </dev/null >/dev/null 2>&1) &
   else
-    local cmdline
-    cmdline=$(printf '%q ' claude "${args[@]}")
-    (cd "$repo" && script -qec "$cmdline" "$log" </dev/null >/dev/null 2>&1) || rc=$?
+    (cd "$repo" && exec script -qec "$cmdline" "$log" </dev/null >/dev/null 2>&1) &
   fi
+  local lpid=$! limit="${FM_CLOUD_LAUNCH_TIMEOUT:-120}" waited=0
+  while kill -0 "$lpid" 2>/dev/null; do
+    if [ "$waited" -ge "$limit" ]; then
+      pkill -TERM -P "$lpid" 2>/dev/null || true
+      kill -TERM "$lpid" 2>/dev/null || true
+      sleep 1
+      pkill -KILL -P "$lpid" 2>/dev/null || true
+      kill -KILL "$lpid" 2>/dev/null || true
+      rm -f "$log"
+      die "claude --cloud produced no result within ${limit}s and was stopped (raise FM_CLOUD_LAUNCH_TIMEOUT if needed); check for a trust or login prompt by running claude in $repo_abs"
+    fi
+    sleep 1; waited=$((waited + 1))
+  done
+  wait "$lpid" || rc=$?
   out=$(LC_ALL=C sed -e $'s/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' -e 's/\r//g' "$log" 2>/dev/null || true)
   rm -f "$log"
   [ "$rc" -eq 0 ] || { printf '%s\n' "$out" | tail -n 5 >&2; die "claude --cloud failed (exit $rc)"; }

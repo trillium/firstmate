@@ -1,0 +1,4 @@
+ok - doctor
+ok - cleanup
+ok - untrusted repo refused
+ok - launch timeout
