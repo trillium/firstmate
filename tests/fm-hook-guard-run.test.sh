@@ -65,6 +65,7 @@ test_missing_guard_passes_through() {
 test_genuine_deny_still_denies() {
   local wt="$TMP_ROOT/deny" rc=0
   make_worktree "$wt"
+  # shellcheck disable=SC2016 # the guard body is a literal script, expanded when it runs
   printf '#!/usr/bin/env bash\nread -r payload\nprintf "denied:%%s:%%s\\n" "$1" "$payload" >&2\nexit 2\n' \
     > "$wt/bin/fm-subagent-pretool-check.sh"
   run_tracked "$wt" fm-subagent-pretool-check.sh 'PAYLOAD' || rc=$?
