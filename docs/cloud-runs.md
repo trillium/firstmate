@@ -10,7 +10,8 @@ Run `bin/fm-cloud.sh doctor` first; it checks that the installed `claude` CLI su
 - `cleanup <run-id>` retires the record and prints the remaining web-only steps without performing them; a run still bound to a task is retired with `teardown` instead.
 - `launch --task <id>` makes the run an ordinary dispatch, described below.
 - `check <id>`, `land <id>`, and `teardown <id>` finish a task-bound run.
-- `credit` reports the cloud credit's days remaining and the runs launched, and `doctor` prints the same line.
+- `continue <id> <text>` steers a task-bound run; `bin/fm-send.sh <id> <text>` routes a `backend=cloud` task to it.
+- `credit` reports the cloud credit's days remaining and the runs launched, plus runs per task, runs per day, and wall time per run, and `doctor` prints the credit line.
 
 ## Cloud runs as a dispatch route
 
@@ -32,6 +33,28 @@ Delivery is always a direct PR to the fork or repository named by the run's remo
 
 `teardown` refuses unless the recorded PR is merged, and `--force` discards a run whose work was not landed.
 It retires the finish check, the merge poll, the run record, and the task record, and closes the backlog item.
+
+## Talking to a cloud worker
+
+A cloud worker cannot write firstmate's status file, so the launch trailer has it append status lines to `.fm-cloud/status` on its `claude/<id>` branch and push after each one.
+The lines use the local grammar owned by `bin/fm-classify-lib.sh` (`working`, `blocked`, `needs-decision`, `paused`, `done`, `failed`, each `<state> [at=<epoch>]: <text>`); milestones stay sparse, and a question carries the exact text.
+Each `check` fetches the branch into a private bare repository under `state/cloud-runs` (the project clone is never written), emits every new line once as a wake line, and appends it to `state/<id>.status`, so a `needs-decision` opens a decision exactly as a local worker's does.
+Only those verbs are taken; other lines are ignored, and lines are stripped of control characters and capped.
+
+To keep the file out of the PR diff, the worker opens the PR, appends `done: PR <url>` and pushes, then makes its last commit `git rm .fm-cloud/status`.
+`check` reads the newest commit that still carried the file, so the deletion does not hide the final `done:` line.
+A silent run is measured from its last status line, branch move, or PR, not from launch.
+
+The installed `claude` CLI has no non-interactive message to an existing cloud session (`claude --cloud <session_id>` only attaches a terminal; `doctor` states this), so a steer is a follow-up run.
+`continue <id> <text>`, or `fm-send.sh <id> <text>` which routes there, launches a new cloud run on the same `claude/<id>` branch carrying the brief, the steer, and the worker's prior status lines, and rebinds the task to it.
+`fm-send.sh --resolve-key <key>` also closes that decision.
+The worker's reply arrives through the status file, not a pane; `--key` has no cloud endpoint and is refused.
+
+## Credit
+
+`credit` counts runs and time, never dollars.
+The remaining dollar balance has no CLI or API; read it on claude.ai.
+It prints runs per task, runs per UTC day, and wall time per run from launch to the last status line, branch move, or PR sighting, kept in append-only ledgers under `state/cloud-runs` that outlive teardown.
 
 ## What stays manual
 

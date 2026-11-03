@@ -810,6 +810,7 @@ tests/fm-classify-decision-key.test.sh 4362
 tests/fm-claude-stop-autoarm-live-e2e.test.sh 73
 tests/fm-claude-stop-autoarm.test.sh 61189
 tests/fm-claude-trust.test.sh 12010
+tests/fm-cloud-channel.test.sh 20000
 tests/fm-cloud-task.test.sh 20000
 tests/fm-cloud.test.sh 3000
 tests/fm-cmux-claude-composer-live-e2e.test.sh 77
