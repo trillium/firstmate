@@ -5923,6 +5923,167 @@ EOF
   pass "stale heartbeat replacement stops the turn-end guard from repeating"
 }
 
+# The turn-end guard and the Pi repair must call the same beat healthy or
+# stale at the same age. Drive both off one beat just inside and just past the
+# grace, with an explicit FM_GUARD_GRACE and with the default, so a drift in
+# either definition fails here instead of re-creating the owned-but-silent loop.
+test_pi_repair_and_turnend_guard_share_beat_staleness() {
+  local grace_env grace case_name repo home log stop out status guard wake_lib watch_path row pid
+  for case_name in override default; do
+    if [ "$case_name" = override ]; then
+      grace_env=30
+      grace=30
+    else
+      grace_env=
+      grace=300
+    fi
+    repo="$TMP_ROOT/pi-beat-parity-$case_name-root"
+    home="$TMP_ROOT/pi-beat-parity-$case_name-home"
+    log="$TMP_ROOT/pi-beat-parity-$case_name-arm.log"
+    stop="$TMP_ROOT/pi-beat-parity-$case_name.stop"
+    mkdir -p "$repo/bin" "$home/state" "$home/config"
+    install_pi_watch_extension_fixture "$repo"
+    git init -q "$repo"
+    : > "$repo/AGENTS.md"
+    : > "$home/state/task.meta"
+    watch_path=$(cd "$ROOT/bin" && pwd)/fm-watch.sh
+    guard="$ROOT/bin/fm-turnend-guard.sh"
+    wake_lib="$ROOT/bin/fm-wake-lib.sh"
+    repo=$(cd "$repo" && pwd)
+    home=$(cd "$home" && pwd)
+    cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'pid=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+trap 'exit 0' TERM INT
+while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.05; done
+SH
+    chmod +x "$repo/bin/fm-watch-arm.sh"
+    out=$(
+      PLUGIN="$repo/.pi/extensions/fm-primary-pi-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
+        FM_STATE_OVERRIDE="$home/state" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" \
+        PARITY_GRACE="$grace" PARITY_GRACE_ENV="$grace_env" \
+        GUARD="$guard" WATCH_PATH="$watch_path" WAKE_LIB="$wake_lib" \
+        node --input-type=module 2>&1 <<'EOF'
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+
+const state = process.env.FM_STATE_OVERRIDE;
+const home = process.env.FM_HOME;
+const log = process.env.FM_ARM_LOG;
+const grace = Number(process.env.PARITY_GRACE);
+if (process.env.PARITY_GRACE_ENV) process.env.FM_GUARD_GRACE = process.env.PARITY_GRACE_ENV;
+else delete process.env.FM_GUARD_GRACE;
+let tool = null;
+const pi = {
+  on() {},
+  registerCommand() {},
+  registerTool(candidate) {
+    if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+  },
+  sendUserMessage: async () => {},
+};
+writeFileSync(`${state}/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+if (!tool) throw new Error("Pi watch tool was not registered");
+
+function armPids() {
+  if (!existsSync(log)) return [];
+  return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => line.replace(/^pid=/, ""));
+}
+
+async function waitForPids(count) {
+  for (let i = 0; i < 100; i += 1) {
+    const pids = armPids();
+    if (pids.length >= count) return pids;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`expected ${count} arm rows, got ${armPids().join(",") || "(none)"}`);
+}
+
+function publishWatcher(pid) {
+  const lock = `${state}/.watch.lock`;
+  mkdirSync(lock, { recursive: true });
+  const identity = spawnSync(
+    "bash",
+    ["-c", '. "$1"; fm_pid_identity "$2"', "fm", process.env.WAKE_LIB, pid],
+    { encoding: "utf8" },
+  );
+  if (identity.status !== 0 || !identity.stdout.trim()) {
+    throw new Error(`could not identify watcher ${pid}: ${identity.stderr || identity.stdout}`);
+  }
+  writeFileSync(`${lock}/pid`, `${pid}\n`);
+  writeFileSync(`${lock}/fm-home`, `${home}\n`);
+  writeFileSync(`${lock}/watcher-path`, `${process.env.WATCH_PATH}\n`);
+  writeFileSync(`${lock}/pid-identity`, identity.stdout.endsWith("\n") ? identity.stdout : `${identity.stdout}\n`);
+}
+
+function setBeatAge(seconds) {
+  const beat = `${state}/.last-watcher-beat`;
+  writeFileSync(beat, "");
+  const at = Math.floor(Date.now() / 1000) - seconds;
+  utimesSync(beat, at, at);
+}
+
+function runGuard() {
+  const result = spawnSync("bash", [process.env.GUARD, "--pi"], {
+    input: '{"stop_hook_active":false}\n',
+    encoding: "utf8",
+    env: process.env,
+  });
+  return { status: result.status, stderr: result.stderr || "" };
+}
+
+const first = await tool.execute("parity-first", {}, undefined, undefined, {});
+if (!first.content[0]?.text.includes("started Pi extension arm child")) {
+  throw new Error(`initial call did not start the arm child: ${first.content[0]?.text}`);
+}
+const [firstPid] = await waitForPids(1);
+publishWatcher(firstPid);
+
+// Just inside the grace: the guard allows the stop and the repair is the ownership no-op.
+setBeatAge(grace - 2);
+const freshGuard = runGuard();
+if (freshGuard.status !== 0) {
+  throw new Error(`guard blocked a beat ${grace - 2}s old with grace ${grace}: ${freshGuard.stderr}`);
+}
+const freshRepair = await tool.execute("parity-fresh", {}, undefined, undefined, {});
+if (!freshRepair.content[0]?.text.includes("already owns an arm child")) {
+  throw new Error(`repair replaced a beat ${grace - 2}s old that the guard calls healthy: ${freshRepair.content[0]?.text}`);
+}
+if (armPids().length !== 1) throw new Error(`fresh beat spawned another arm: ${armPids().join(",")}`);
+
+// Past the grace: the guard blocks and the repair replaces the owned arm.
+setBeatAge(grace + 2);
+const staleGuard = runGuard();
+if (staleGuard.status !== 2 || !staleGuard.stderr.includes("TURN WOULD END BLIND")) {
+  throw new Error(`guard did not block a beat ${grace + 2}s old with grace ${grace} (status ${staleGuard.status}): ${staleGuard.stderr}`);
+}
+const staleRepair = await tool.execute("parity-stale", {}, undefined, undefined, {});
+if (!staleRepair.content[0]?.text.includes("started Pi extension arm child")) {
+  throw new Error(`repair kept a beat ${grace + 2}s old that the guard calls blind: ${staleRepair.content[0]?.text}`);
+}
+const pids = await waitForPids(2);
+if (pids.length !== 2) throw new Error(`stale beat spawned ${pids.length} arms: ${pids.join(",")}`);
+process.exit(0);
+EOF
+    )
+    status=$?
+    if [ -f "$log" ]; then
+      while IFS= read -r row; do
+        pid=${row#pid=}
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        kill -TERM "$pid" 2>/dev/null || true
+      done < "$log"
+    fi
+    expect_code 0 "$status" "the Pi repair and the turn-end guard must agree on beat staleness ($case_name grace): $out"
+    [ -z "$out" ] || fail "Pi beat-parity test printed output: $out"
+  done
+  pass "Pi repair and turn-end guard share one beat-staleness verdict"
+}
+
 test_pi_extension_reports_external_healthy_watcher
 test_pi_tool_returns_agent_tool_result
 test_pi_redundant_tool_call_is_owned_noop
@@ -5954,6 +6115,7 @@ test_pi_hung_successor_falls_back_to_typed_wake
 test_pi_unretired_successor_falls_back_without_retry
 test_pi_late_unretired_close_resumes_supervision
 test_pi_stale_beat_rearm_stops_turnend_guard_loop
+test_pi_repair_and_turnend_guard_share_beat_staleness
 test_pi_empty_close_retries_instead_of_disappearing
 test_pi_established_empty_close_honors_retry_limit
 test_pi_actionable_close_rechecks_session_lock
