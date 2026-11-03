@@ -1,0 +1,4 @@
+0: bash* (1 panes) [200x50] [layout ac9d,200x50,0,0,0] @0 (active)
+1: fm-pm-missing (1 panes) [200x50] [layout ac9e,200x50,0,0,1] @1
+2: fm-pm-norepo (1 panes) [200x50] [layout ac9f,200x50,0,0,2] @2
+3: fm-pm-match (1 panes) [200x50] [layout aca0,200x50,0,0,3] @3

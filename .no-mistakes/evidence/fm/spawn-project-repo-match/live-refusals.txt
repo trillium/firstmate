@@ -1,0 +1,31 @@
+FM_HOME=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR TMUX=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/tmux/tmux-501/fm-lab,46234,0
+$ bin/fm-spawn.sh pm-mismatch /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/projects/beta --mode local-only --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/data/pm-mismatch/launch-brief.md records no ship branch; defaulting to legacy branch fm/pm-mismatch
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/data/pm-mismatch/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: pm-mismatch ships mode=local-only while the standing posture for beta is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: project mismatch for pm-mismatch: its backlog item records repo alpha but the spawn targets project beta (/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/projects/beta); pass the alpha project directory, or correct the item's repo if the item is wrong
+[exit 1]
+
+$ bin/fm-spawn.sh pm-ackmis /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/projects/beta --mode local-only --yolo off --repo-unrecorded-ok
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/data/pm-ackmis/launch-brief.md records no ship branch; defaulting to legacy branch fm/pm-ackmis
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/data/pm-ackmis/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: pm-ackmis ships mode=local-only while the standing posture for beta is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: project mismatch for pm-ackmis: its backlog item records repo alpha but the spawn targets project beta (/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/projects/beta); pass the alpha project directory, or correct the item's repo if the item is wrong
+[exit 1]
+
+$ bin/fm-spawn.sh pm-norepo /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/projects/alpha --mode local-only --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/data/pm-norepo/launch-brief.md records no ship branch; defaulting to legacy branch fm/pm-norepo
+warning: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/data/pm-norepo/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode local-only - confirm its definition of done matches
+notice: pm-norepo ships mode=local-only while the standing posture for alpha is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: task pm-norepo's backlog item records no repo, so the project alpha cannot be confirmed as the one this work belongs to; record it (bin/fm-tasks-axi.sh update pm-norepo --repo <repo>) or pass --repo-unrecorded-ok to acknowledge the target
+[exit 1]
+
+$ bin/fm-spawn.sh pm-missing /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/projects/alpha --mode local-only --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR
+error: task pm-missing has no brief at inaccessible data path /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.qYEDHR/data/pm-missing/brief.md
+[exit 1]
+
+DRIVE-DONE

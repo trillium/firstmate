@@ -1,0 +1,2 @@
+ok - real tmux preserves absent/C locale values and reported raw bytes, rejects missing/phantom names and excludes the automatic SSH agent
+ok - an Orca spawn waits for a slow pane to consume its launch file before a later failure
