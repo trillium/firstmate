@@ -675,3 +675,29 @@ fm_handover_finishing_refuse() {  # <state> <action>
   echo "error: this session handed this home over and is only finishing the items named in its handover record: it may not $2. Complete those items, then run bin/fm-lock.sh handover finished <summary-file> and exit; the new owner holds the lock." >&2
   return 1
 }
+
+# --- mutator enforcement -------------------------------------------------------
+# Refuse (return 1, actionable message on stderr) when the caller is a firstmate
+# session that another live session's state/.lock excludes. Workers (FM_TASK_ID
+# set) and the supervision branch/host (FM_SUPERVISION_ACTOR set) are never
+# refused; neither are callers outside any harness session or under the lock
+# holder's own ancestry. Used by fm-spawn, fm-teardown, fm-pr-merge and
+# fm-merge-local; fm-send only warns (fm_session_lock_warn_mutator).
+fm_session_lock_refuse_mutator() {  # <state> <script-name>
+  local state=$1 name=$2
+  [ -z "${FM_TASK_ID:-}" ] || return 0
+  [ -z "${FM_SUPERVISION_ACTOR:-}" ] || return 0
+  fm_handover_finishing_refuse "$state" "run $name" || return 1
+  fm_session_lock_foreign_owner_live "$state" || return 0
+  echo "$name: refused - this session does not hold the firstmate session lock (live owner pid $FM_SESSION_LOCK_FOREIGN_OWNER_PID, $state/.lock); it is read-only and must not mutate the fleet. Ask the lock owner to act, or run 'bin/fm-lock.sh handover request'." >&2
+  return 1
+}
+
+fm_session_lock_warn_mutator() {  # <state> <script-name>
+  local state=$1 name=$2
+  [ -z "${FM_TASK_ID:-}" ] || return 0
+  [ -z "${FM_SUPERVISION_ACTOR:-}" ] || return 0
+  fm_session_lock_foreign_owner_live "$state" || return 0
+  echo "$name: warning - this session does not hold the firstmate session lock (live owner pid $FM_SESSION_LOCK_FOREIGN_OWNER_PID); sending anyway." >&2
+  return 0
+}
