@@ -894,6 +894,7 @@ test_tracked_claude_entries_inert_under_grok() {
   command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
   dir="$TMP_ROOT/claude-entries-grok-inert"
   mkdir -p "$dir/bin"
+  cp "$ROOT/bin/fm-hook-guard-run.sh" "$dir/bin/"
   for script in fm-turnend-guard.sh fm-claude-stop-autoarm.sh fm-sessionstart-run.sh \
     fm-arm-pretool-check.sh fm-cd-pretool-check.sh fm-subagent-pretool-check.sh \
     fm-question-tool-pretool-check.sh fm-host-mirror.sh; do
@@ -910,7 +911,8 @@ test_tracked_claude_entries_inert_under_grok() {
 
   while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
-    target=$(printf '%s\n' "$cmd" | sed -n 's|.*/bin/\([a-z0-9-]*\.sh\).*|\1|p')
+    target=$(printf '%s\n' "$cmd" | sed -n 's|.*/bin/fm-hook-guard-run\.sh \([a-z0-9-]*\.sh\).*|\1|p')
+    [ -n "$target" ] || target=$(printf '%s\n' "$cmd" | sed -n 's|.*/bin/\([a-z0-9-]*\.sh\).*|\1|p')
     [ -n "$target" ] || fail "could not identify the target script of tracked entry: $cmd"
 
     # Native Claude: EVERY tracked entry must still reach its script, or a guard
