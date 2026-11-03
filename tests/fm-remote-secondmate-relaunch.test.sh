@@ -71,6 +71,11 @@ IFS=$'\t' read -r cmd action id harness model effort <<EOF
 $command_fields
 EOF
 [ "$cmd" = fm-remote-secondmate-control.sh ] || exit 93
+if [ "$action" = tab-rename ]; then
+  # the label is the 4th argv element (id is the 3rd); log it byte-for-byte
+  printf 'tab-rename id=%s label=[%s]\n' "$id" "$harness" >> "$FM_FAKE_RENAME_LOG"
+  exit 0
+fi
 [ "$action" = relaunch ] || exit 94
 case "$FM_FAKE_RELAUNCH_MODE" in
   refuse)
@@ -97,7 +102,7 @@ chmod +x "$FAKEBIN/fake-ssh"
 
 run_relaunch() {  # <args...>
   env FM_HOME="$HOME_DIR" FM_SSH_BIN="$FAKEBIN/fake-ssh" \
-    FM_FAKE_RELAUNCH_MODE="${FM_FAKE_RELAUNCH_MODE:-}" \
+    FM_FAKE_RELAUNCH_MODE="${FM_FAKE_RELAUNCH_MODE:-}" FM_FAKE_RENAME_LOG="$TMP/rename.log" \
     "$ROOT/bin/fm-remote-secondmate-relaunch.sh" "$@" 2>&1
 }
 
@@ -188,5 +193,35 @@ expect_code 0 "$RC" "a confirmed remote relaunch should succeed with an armed PR
 fm_pr_poll_artifacts_valid "$HOME_DIR/state" ios "$ROOT/bin/fm-pr-poll.sh" \
   || fail "a remote relaunch broke PR poll authentication by writing harness/model/effort after pr="
 pass "a remote relaunch keeps an already-armed PR poll authenticating"
+
+# --- a configured tab label is applied to the confirmed remote tab ---------
+reset_meta
+: > "$TMP/rename.log"
+printf '# comment\nios 💎2️⃣ iOS  delivery\n' > "$HOME_DIR/config/tab-labels"
+OUT=$(run_relaunch ios claude claude-opus-5-5 medium); RC=$?
+expect_code 0 "$RC" "a relaunch with a tab label should succeed"$'\n'"$OUT"
+assert_grep 'tab-rename id=ios label=[💎2️⃣ iOS  delivery]' "$TMP/rename.log" \
+  "the remote tab was not renamed to the emoji/space label, delivered as one argv element"
+[ "$(wc -l < "$TMP/rename.log" | tr -d ' ')" = 1 ] || fail "exactly one rename should be issued"
+pass "a configured tab label is applied to the remote tab over SSH"
+
+# --- no label for the id -> no rename; a refused relaunch -> no rename ------
+reset_meta
+: > "$TMP/rename.log"
+printf 'other-id Some Label\n' > "$HOME_DIR/config/tab-labels"
+OUT=$(run_relaunch ios claude claude-opus-5-5 medium); RC=$?
+expect_code 0 "$RC" "a relaunch without a label should succeed"$'\n'"$OUT"
+[ ! -s "$TMP/rename.log" ] || fail "no rename should be issued for an unlisted id"
+rm -f "$HOME_DIR/config/tab-labels"
+OUT=$(run_relaunch ios claude claude-opus-5-5 medium); RC=$?
+expect_code 0 "$RC" "a relaunch with no tab-labels file should succeed"$'\n'"$OUT"
+[ ! -s "$TMP/rename.log" ] || fail "no rename should be issued without a tab-labels file"
+printf 'ios Label\n' > "$HOME_DIR/config/tab-labels"
+FM_FAKE_RELAUNCH_MODE=refuse
+OUT=$(run_relaunch ios notaharness - -); RC=$?
+unset FM_FAKE_RELAUNCH_MODE
+[ "$RC" -ne 0 ] || fail "refused relaunch must fail"
+[ ! -s "$TMP/rename.log" ] || fail "a refused relaunch must not rename the tab"
+pass "no label (or a refused relaunch) issues no rename"
 
 echo "ALL TESTS PASSED"

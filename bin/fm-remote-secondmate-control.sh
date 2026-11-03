@@ -10,6 +10,7 @@
 #   fm-remote-secondmate-control.sh key <id> <key>
 #   fm-remote-secondmate-control.sh capture <id> [lines]
 #   fm-remote-secondmate-control.sh observe <id>
+#   fm-remote-secondmate-control.sh tab-rename <id> <label>
 #   fm-remote-secondmate-control.sh sync <id> [<parent-commit>]
 #   fm-remote-secondmate-control.sh update <id>
 #   fm-remote-secondmate-control.sh retire <id> [--force]
@@ -363,6 +364,23 @@ cmd_capture() {
   fm_backend_capture "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "$lines" "fm-$id" | head -c 65536
 }
 
+# Rename the endpoint's herdr tab to the display label the PARENT resolved from
+# its own config/tab-labels (this host's home has no such file, so a host-local
+# launch always leaves the tab named fm-<id>). The label travels as one argv
+# element through fm-on's NUL-delimited stream, so it needs no shell quoting.
+cmd_tab_rename() {
+  local id=$1 label=$2 tab_id
+  validate_id "$id"
+  validate_home "$id"
+  [ -n "$label" ] || die "tab label must not be empty"
+  remote_endpoint_require "$id"
+  tab_id=$(fm_meta_get "$REMOTE_ENDPOINT_META" herdr_tab_id)
+  [ -n "$tab_id" ] || die "remote secondmate $id endpoint records no Herdr tab id"
+  fm_backend_source herdr
+  fm_backend_herdr_tab_rename "$REMOTE_HERDR_SESSION" "$tab_id" "$label" \
+    || die "could not rename the Herdr tab for remote secondmate $id"
+}
+
 cmd_observe() {
   local id=$1 harness
   validate_id "$id"
@@ -480,6 +498,7 @@ case "${1:-}" in
   key) shift; [ "$#" -eq 2 ] || usage; cmd_key "$@" ;;
   capture) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_capture "$@" ;;
   observe) shift; [ "$#" -eq 1 ] || usage; cmd_observe "$@" ;;
+  tab-rename) shift; [ "$#" -eq 2 ] || usage; cmd_tab_rename "$@" ;;
   sync) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_sync "$@" ;;
   update) shift; [ "$#" -eq 1 ] || usage; cmd_update "$@" ;;
   retire) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_retire "$@" ;;
