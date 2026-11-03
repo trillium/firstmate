@@ -1,0 +1,6 @@
+== persistent EIO (never clears)
+rc=1 elapsed=5s out=Bootstrap failed: 5: Input/output error
+bootstrap attempts: 10
+== non-EIO refusal (malformed/permission)
+rc=1 elapsed=0s out=Bootstrap failed: 122: Path had bad ownership/permissions
+bootstrap attempts: 1
