@@ -126,7 +126,10 @@
 # Callers: AGENTS.md section 8 runs `scan --act` on a heartbeat; bin/fm-watch.sh
 # fires a heartbeat when `scan --actionable` prints anything; bin/fm-spawn.sh's
 # spend-cap refusal prints the dry run as evidence. FM_REAP_STALENESS_BIN names
-# the staleness command (default: `staleness` on PATH).
+# the staleness command (default: `staleness` on PATH). Every staleness call
+# (the list and each row close) is bounded by FM_REAP_STALENESS_TIMEOUT_SECS
+# (default 30); a call that exceeds it is reported on stderr and the scan moves
+# on, so a hung tracker cannot stall the caller.
 set -u
 export LC_ALL=C
 
@@ -141,6 +144,10 @@ CONTROL_BIN="${FM_REAP_CONTROL_BIN:-$SCRIPT_DIR/fm-control.sh}"
 PR_MERGE_BIN="${FM_REAP_PR_MERGE_BIN:-$SCRIPT_DIR/fm-pr-merge.sh}"
 CAPTAIN_HOLD_BIN="${FM_REAP_CAPTAIN_HOLD_BIN:-$SCRIPT_DIR/fm-captain-hold.sh}"
 STALENESS_BIN="${FM_REAP_STALENESS_BIN:-staleness}"
+# Hard bound on every staleness-store call so a wedged store client cannot hold
+# the heartbeat (fm_run_timed, bin/fm-timeout-lib.sh, owns the bound).
+STALENESS_TIMEOUT="${FM_REAP_STALENESS_TIMEOUT_SECS:-30}"
+case "$STALENESS_TIMEOUT" in ''|*[!0-9]*|0) STALENESS_TIMEOUT=30 ;; esac
 
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
@@ -835,7 +842,8 @@ reaped_this_scan() {  # <id>
 
 close_row() {  # <row-id> <reason>
   local err rc=0
-  err=$("$STALENESS_BIN" close "$1" --reason "$2" 2>&1 >/dev/null) || rc=$?
+  err=$(fm_run_timed "$STALENESS_TIMEOUT" "$STALENESS_BIN" close "$1" --reason "$2" 2>&1 >/dev/null) || rc=$?
+  [ "$rc" -ne 124 ] || err="staleness close exceeded ${STALENESS_TIMEOUT}s"
   if [ "$rc" -eq 0 ]; then
     reap_wake "$1" staleness-close ok
     return 0
@@ -846,10 +854,18 @@ close_row() {  # <row-id> <reason>
 }
 
 scan_rows() {
-  local rows id title desc task wt branch proj pending
+  local rows rows_file rc id title desc task wt branch proj pending
   command -v "$STALENESS_BIN" >/dev/null 2>&1 || { printf 'fm-reap: staleness rows skipped (no %s command)\n' "$STALENESS_BIN" >&2; return 0; }
   command -v jq >/dev/null 2>&1 || { printf 'fm-reap: staleness rows skipped (no jq on PATH)\n' >&2; return 0; }
-  rows=$("$STALENESS_BIN" list --json -n 0 2>/dev/null) || { printf 'fm-reap: staleness rows skipped (list failed)\n' >&2; return 0; }
+  rows_file=$(mktemp "${TMPDIR:-/tmp}/fm-reap-rows.XXXXXX" 2>/dev/null) \
+    || { printf 'fm-reap: staleness rows skipped (no scratch file)\n' >&2; return 0; }
+  # A file, not a pipe: a descendant of a killed client must not hold the read.
+  fm_run_timed "$STALENESS_TIMEOUT" "$STALENESS_BIN" list --json -n 0 >"$rows_file" 2>/dev/null </dev/null || {
+    rc=$?
+    rm -f "$rows_file"
+    [ "$rc" -ne 124 ] || printf 'fm-reap: staleness list exceeded %ss\n' "$STALENESS_TIMEOUT" >&2
+    printf 'fm-reap: staleness rows skipped (list failed)\n' >&2; return 0; }
+  rows=$(cat "$rows_file"); rm -f "$rows_file"
   rows=$(printf '%s' "$rows" | jq -r '.[]? | select(.status != "closed") | [.id, .title, ((.description // "") | gsub("\n"; "\u001f"))] | @tsv' 2>/dev/null) \
     || { printf 'fm-reap: staleness rows skipped (unparseable list)\n' >&2; return 0; }
   [ -n "$rows" ] || return 0

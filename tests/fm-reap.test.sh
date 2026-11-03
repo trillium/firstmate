@@ -618,6 +618,21 @@ test_missing_staleness_command_skips_rows_loudly() {
 
 # --- report ---------------------------------------------------------------------------
 
+# A staleness client that never returns must not stall the scan: the list and
+# close calls are bounded and the scan still classifies records.
+test_hung_staleness_client_is_bounded() {
+  local dir out started elapsed
+  dir=$(make_home hung-staleness)
+  printf '#!/usr/bin/env bash\nsleep 60\n' > "$dir/fakebin/staleness"
+  started=$(date +%s)
+  out=$(FM_REAP_STALENESS_TIMEOUT_SECS=1 run_reap "$dir" scan)
+  elapsed=$(( $(date +%s) - started ))
+  [ "$elapsed" -lt 20 ] || fail "a hung staleness client held the scan for ${elapsed}s"
+  assert_contains "$out" "staleness list exceeded 1s" "the bounded list names the bound it hit"
+  assert_contains "$out" "staleness rows skipped" "a bounded list skips the rows like any failed list"
+  pass "fm-reap: a hung staleness client is bounded and the scan still completes"
+}
+
 test_report_prints_the_evidence_and_class() {
   local dir out
   dir=$(make_home report)
@@ -649,4 +664,5 @@ test_control_exit_marker_blocks_relaunch_and_escalation_without_blocking_reap
 test_refused_action_is_not_retried_until_the_evidence_changes
 test_staleness_rows_close_only_for_reaped_or_landed_orphans
 test_missing_staleness_command_skips_rows_loudly
+test_hung_staleness_client_is_bounded
 test_report_prints_the_evidence_and_class

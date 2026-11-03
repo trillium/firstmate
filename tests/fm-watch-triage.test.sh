@@ -4664,6 +4664,33 @@ test_heartbeat_reap_candidate_fires() {
   pass "a heartbeat fires when the reaper's dry run names a pending action, and the watcher never acts itself"
 }
 
+# A reaper dry run that never returns must not hold the heartbeat: the watcher
+# bounds it, treats it as "nothing actionable", and absorbs the heartbeat.
+test_heartbeat_hung_reaper_is_bounded() {
+  local dir state fakebin out pid i sig
+  dir=$(make_case heartbeat-reap-hung); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  printf 'working: routine heartbeat history\n' > "$state/routine.status"
+  sig=$(seen_sig "$state/routine.status"); printf '%s' "$sig" > "$state/.seen-routine_status"
+  printf '#!/usr/bin/env bash\nsleep 120\n' > "$fakebin/fm-reap.sh"
+  chmod +x "$fakebin/fm-reap.sh"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_WATCH_REAP_BIN="$fakebin/fm-reap.sh" \
+    FM_WATCH_REAP_TIMEOUT_SECS=1 FM_SIM_IDLE_HOURS=off FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 250 ]; do
+    [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] \
+    || { reap "$pid"; fail "a hung reaper dry run stalled the heartbeat past its bound"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "a hung reaper dry run fired a wake: $(cat "$out")"; }
+  reap "$pid"
+  pass "a hung reaper dry run is bounded and the heartbeat is absorbed instead of stalling"
+}
+
 test_heartbeat_backstop_surfaces_a_masked_status() {
   local dir state fakebin out sig pid
   dir=$(make_case heartbeat-masked); state="$dir/state"; fakebin="$dir/fakebin"
@@ -5125,6 +5152,7 @@ fm_test_run \
   test_unrelated_check_keys_are_not_surfaced_by_the_note_scan \
   test_heartbeat_no_change_absorbed \
   test_heartbeat_reap_candidate_fires \
+  test_heartbeat_hung_reaper_is_bounded \
   test_heartbeat_backstop_surfaces_unsurfaced_status \
   test_heartbeat_backstop_surfaces_a_masked_status \
   test_beacon_stays_fresh_while_absorbing \
