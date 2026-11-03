@@ -572,6 +572,7 @@ EOF
 }
 
 fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<pr>]
+  local target_check=''
   local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-} pr=${7:-auto}
   local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check adapter
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
@@ -583,6 +584,8 @@ fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<p
       return 1
     fi
     contract_consent=" upstream-consent=$consent"
+    target_check="Before every push, run \`$(printf '%q' "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-target-base.sh") check $consent --allow '<intended path glob>'\` (one \`--allow\` per intended file or directory); it measures this branch against $consent's own default branch, not the clone's fork, and refuses when the branch is built on another base or touches a file outside the intended set.
+Read the file list it prints before pushing, and push only after it exits clean."
   fi
   draft_check="(\`gh-axi pr view <number>\` must print \`draft: no\`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with \`gh-axi pr ready <number>\`."
   if [ "$forge" = forgejo ]; then
@@ -689,6 +692,7 @@ That \`done:\` is accepted only when this copy's HEAD - your latest commit - is 
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
+      [ -z "$target_check" ] || printf '%s\n' "$target_check"
       fm_visual_evidence_block pr "$id" "$branch"
       ;;
     local-only:*)

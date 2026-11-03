@@ -714,6 +714,9 @@ test_spawn_refuses_no_mistakes_upstream_from_fork() {
     "$BRIEF" brief-fork some-proj --mode direct-PR --upstream-consent github.com/kunchenguid/firstmate 2>&1) \
     || fail "direct-PR upstream brief must scaffold: $out"
   assert_grep "never run no-mistakes on it" "$home/data/brief-fork/brief.md" "brief must say to push directly"
+  assert_grep "fm-target-base.sh" "$home/data/brief-fork/brief.md" "brief must anchor the branch on the target's default branch"
+  assert_grep "anchor github.com/kunchenguid/firstmate" "$home/data/brief-fork/brief.md" "setup must anchor on the declared target"
+  assert_grep "check github.com/kunchenguid/firstmate --allow" "$home/data/brief-fork/brief.md" "the Definition of done must gate the push on the target diff"
   pass "fm-spawn.sh: no-mistakes refused for an upstream target from a fork clone"
 }
 
