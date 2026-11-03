@@ -3659,9 +3659,8 @@ test_rejection_names_predicate_and_defers_registration() {
   lock="$state/.pr-poll-publish-task-a.lock"
   # The holder is a registration in flight: it publishes the registration, then
   # releases the lock. Until then the sweep must skip the poll, not reject it.
-  ( . "$ROOT/bin/fm-wake-lib.sh"; fm_lock_acquire_wait "$lock" \
-      && sleep 3 && mv -f "$dir/registration.saved" "$state/task-a.pr-poll-registration" \
-      && fm_lock_release "$lock" ) &
+  bash -c '. "$1"; fm_lock_acquire_wait "$2" && sleep 3 && mv -f "$3" "$4" && fm_lock_release "$2"' \
+    bash "$ROOT/bin/fm-wake-lib.sh" "$lock" "$dir/registration.saved" "$state/task-a.pr-poll-registration" &
   local holder=$!
   sleep 1
   [ -e "$lock" ] || [ -L "$lock" ] || fail "fixture could not hold the publish lock"
