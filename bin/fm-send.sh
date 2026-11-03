@@ -180,9 +180,8 @@
 # refused key, and the keyed resend keeps every accepted key in the operator's
 # order with a placeholder in each refused key's position, so the corrected
 # resend closes all of them. It is printed even when the status log holds
-# nothing open, because a key transferred to a captain-held task is answerable
-# through that other ledger alone; the status log's own emptiness is stated as
-# the emptiness of that FILE, never as a claim about the task. The plain resend
+# nothing open, and the status log's own emptiness is stated as the emptiness
+# of that FILE, never as a claim about the task. The plain resend
 # delivers the message without closing any decision. After a delivered close it
 # also re-folds and fails loudly if the named key is still open. On the inbox plane
 # the close happens at ENQUEUE time, because enqueue is durable delivery to
@@ -195,26 +194,23 @@
 # only the answer message crosses the backend or remote transport.
 #
 # Answering a decision is the gate-answer path and is main-owned while
-# attended: when any named key is an open needs-decision or a captain-held task
+# attended: when any named key is an open needs-decision
 # (a blocked: key is ordinary steering and stays lease-guarded only), the Pi
 # supervision branch is refused outright, exactly as its prompt promises. While
 # the away-posture record exists main is parked and that one refusal relocates
 # to the branch (contract: bin/fm-lease-lib.sh); which findings firstmate may
 # decide at all remains ask-user-authority's judgment for either actor.
 #
-# Chat is also a channel that carries keyed captain answers, so the same flag
-# feeds bin/fm-captain-hold.sh's one keyed-answer intake for any key that names
-# a captain-held task in this home - the key as a task id itself, or through
-# the legacy `<task>-decision-<key>` identity for pre-collapse rows. fm-send
-# closes nothing itself; it hands the intake `<task-id>\t<answer>\t<label>`
-# exactly as every other channel does, and the intake owns what that means.
-# This is what lets an answer reach a decision that has already been
-# transferred from the live status log to its durable captain-held task, which
-# the status ledger alone can no longer close.
+# A captain-held task is never closed by this flag. A steer is firstmate's own
+# voice, and closing a hold from it would record "captain answered" for a call
+# the captain never answered. A key that names a still-open captain-held task
+# (the key as a task id itself, or the legacy `<task>-decision-<key>` identity)
+# therefore refuses before sending, names the task, and points at
+# `bin/fm-captain-hold.sh answer <task-id> --decision-file <path>`, the answer
+# path that records the captain's own answer; nothing is sent or closed.
 #
-# Each named key must therefore currently be open in ONE of the two ledgers: open
-# in this home's status log per status_open_decisions (bin/fm-classify-lib.sh), or
-# a still-open captain-held task resolved as above. A key in neither is refused
+# Each named key must therefore currently be open in this home's status log per
+# status_open_decisions (bin/fm-classify-lib.sh). A key that is not is refused
 # before sending, so a mistyped key cannot deliver an answer while silently
 # orphaning the decision. A failed or unconfirmed send never closes a key; a
 # delivered answer whose closing append fails exits nonzero with the exact
@@ -739,16 +735,24 @@ if [ -n "$RESOLVE_KEYS" ]; then
       ;;
     esac
     # Not open in the status log. A decision already transferred to its durable
-    # captain-held task is exactly this case, and it is answerable - just
-    # through the other ledger - so check there before refusing.
+    # captain-held task is exactly this case, and a steer must not close it.
     if resolved_hold_id=$(fm_send_hold_resolved_id "$RESOLVE_TASK_ID" "$k"); then
       RESOLVE_HOLD_KEYS="${RESOLVE_HOLD_KEYS}${RESOLVE_HOLD_KEYS:+ }$resolved_hold_id"
-      resolve_resend_args="$resolve_resend_args --resolve-key $k"
       continue
     fi
     resolve_refused_keys="${resolve_refused_keys}${resolve_refused_keys:+ }$k"
     resolve_resend_args="$resolve_resend_args --resolve-key '<key>'"
   done
+  # A captain-held task is answered only by the captain. A steer is firstmate's
+  # voice, so it must never close a hold and record it as the captain's answer.
+  if [ -n "$RESOLVE_HOLD_KEYS" ]; then
+    {
+      echo "error: --resolve-key names captain-held task(s) ${RESOLVE_HOLD_KEYS}: only the captain's own answer closes a captain hold, and a firstmate steer is not that answer; nothing was sent."
+      echo "  record the captain's answer with: $SCRIPT_DIR/fm-captain-hold.sh answer <task-id> --decision-file <path>"
+      echo "  or deliver this message without closing anything (drop --resolve-key)."
+    } >&2
+    exit 1
+  fi
   # Nothing owns a refused key, so refuse rather than deliver. Sending the
   # answer anyway would leave the decision open behind an answer the operator
   # believes settled it - the orphaned decision --resolve-key exists to
@@ -781,14 +785,12 @@ if [ -n "$RESOLVE_KEYS" ]; then
     exit 1
   fi
   # The decision-answer partition (the header's "Answering a decision"
-  # contract): a key that is an open needs-decision, or already a captain-held
-  # task, is a decision, and answering one is main-owned while attended. A
+  # contract): a key that is an open needs-decision is a decision, and answering one is main-owned while attended. A
   # blocked: key is ordinary steering and takes no partition guard. Under the
   # away-posture record the guard passes the branch instead (relocation:
   # bin/fm-lease-lib.sh); which findings firstmate may decide at all stays
   # ask-user-authority's judgment, for either actor.
   RESOLVE_IS_DECISION=0
-  [ -z "$RESOLVE_HOLD_KEYS" ] || RESOLVE_IS_DECISION=1
   for k in $RESOLVE_STATUS_KEYS; do
     [ "$(_fm_open_set_verb "$resolve_open_set" "$k")" = needs-decision ] && RESOLVE_IS_DECISION=1
   done
@@ -860,24 +862,6 @@ fm_send_close_resolved_keys() { # <answer-text>
     esac
     i=$((i + 1))
   done
-}
-
-# Feed the answered captain-held tasks to the ONE keyed-answer intake, as keyed
-# lines, exactly the way every other channel does. fm-send decides nothing here:
-# it does not build a decision record or choose a close path; the keys were
-# already resolved to task ids above, so the intake needs no legacy origin.
-fm_send_feed_resolved_holds() { # <answer-text>
-  local note=$1 k lines=''
-  [ -n "$RESOLVE_HOLD_KEYS" ] || return 0
-  note=$(printf '%s' "$note" | tr '\n\r\t' '   ' | LC_ALL=C tr -d '\000-\037\177')
-  for k in $RESOLVE_HOLD_KEYS; do
-    lines="${lines}${k}"$'\t'"${note}"$'\t'$'\n'
-  done
-  if ! printf '%s' "$lines" | "$SCRIPT_DIR/fm-captain-hold.sh" answers \
-    --source "a firstmate answer sent to $RESOLVE_TASK_ID" >/dev/null 2>&1; then
-    echo "error: the answer was delivered to $T, but this captain-held task could not be closed: ${RESOLVE_HOLD_KEYS}. Close it with fm-captain-hold.sh answer - do not resend the answer." >&2
-    return 1
-  fi
 }
 
 # Resolve the target's harness from its meta (recorded by fm-spawn), used to
@@ -1133,7 +1117,6 @@ else
     fi
     if [ -n "$RESOLVE_KEYS" ]; then
       fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
-      fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
     exit 0
   fi
@@ -1210,7 +1193,6 @@ else
     # (answerer-closes; see the header contract).
     if [ -n "$RESOLVE_KEYS" ]; then
       fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
-      fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
     # Ring the doorbell, best-effort: no ring outcome changes the exit status,
     # because the watcher owns loss detection from here, either through its
@@ -1352,7 +1334,6 @@ else
   # ledger (answerer-closes; see the header contract).
   if [ -n "$RESOLVE_KEYS" ]; then
     fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
-    fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
   fi
   # Submit landed with exact empty. Confirmation only proves the text was
   # accepted; the harness still needs a beat to spin up the
