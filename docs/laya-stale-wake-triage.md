@@ -116,3 +116,13 @@ Enabling graduation is a captain decision recorded in the backlog, never a defau
 The original plan named `bin/fm-attended-triage-lib.sh` as the Phase 0 home.
 That library exists only on the archived lineage, not on `main`, so Phase 0 is built where `main` decides stale wakes: the watcher's terminal stale branch.
 A home still running the archived lineage does not receive Phase 0 until it moves to `main`.
+
+## Stale-wake provenance and `explain-wake`
+
+Every stale wake queued through `fm_wake_append_locked` also appends a TSV row to
+`state/.wake-provenance.tsv` (epoch, seq, window, source `push|poll|other`, owner
+`yes|no`, task). `source` is `FM_WAKE_SOURCE`, which `bin/fm-watch.sh` sets to
+`poll` and flips to `push` only around `handle_push_transition`. `owner` is
+whether a `state/*.meta` record claimed the pane at queue time. Read it with the
+read-only `bin/fm-watch.sh explain-wake <seq|window>`; it also reports whether a
+task record owns the window now. Rows are capped at `FM_WAKE_PROVENANCE_MAX_LINES`.

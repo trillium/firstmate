@@ -2307,6 +2307,53 @@ test_terminal_stale_done_current_state_is_absorbed_but_working_still_surfaces() 
   pass "current done workers absorb plain stale wakes while current working workers still surface"
 }
 
+# --- stale provenance: a poll-loop stale records its source and owner, and
+# `fm-watch.sh explain-wake` reads it back by seq and by window (robots-q90ti) ---
+test_stale_wake_provenance_is_recorded_and_explained() {
+  local dir state fakebin out capture_file window key sig pid exp seq
+  dir=$(make_case stale-provenance); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-prov"
+  printf 'finished, awaiting review' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/prov.meta"
+  printf 'done: PR https://example.test/pr/4\n' > "$state/prov.status"
+  sig=$(seen_sig "$state/prov.status"); printf '%s' "$sig" > "$state/.seen-prov_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text "finished, awaiting review")" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not exit for the stale pane"
+  exp=$(FM_STATE_OVERRIDE="$state" "$WATCH" explain-wake "$window") || fail "explain-wake found nothing for the window"
+  printf '%s\n' "$exp" | grep -Fx 'source=poll' >/dev/null || fail "stale was not recorded as poll: $exp"
+  printf '%s\n' "$exp" | grep -Fx 'owning_task_record=yes' >/dev/null || fail "owner not recorded: $exp"
+  printf '%s\n' "$exp" | grep -Fx 'task=prov' >/dev/null || fail "task not recorded: $exp"
+  seq=$(printf '%s\n' "$exp" | sed -n 's/^seq=//p' | head -1)
+  exp=$(FM_STATE_OVERRIDE="$state" "$WATCH" explain-wake "$seq") || fail "explain-wake by seq failed"
+  printf '%s\n' "$exp" | grep -Fx "window=$window" >/dev/null || fail "seq lookup wrong: $exp"
+  FM_STATE_OVERRIDE="$state" "$WATCH" explain-wake nosuch:pane >/dev/null 2>&1 && fail "unknown pane should exit nonzero"
+  pass "a stale wake records poll source and owner; explain-wake reads it by seq and window"
+}
+
+# Push source and an unowned pane are recorded from the shared append owner.
+test_stale_wake_provenance_push_and_orphan() {
+  local dir state exp
+  dir=$(make_case stale-provenance-lib); state="$dir/state"
+  printf 'window=test:fm-own\n' > "$state/own.meta"
+  FM_WAKE_SOURCE=push append_wake "$state" stale test:fm-own "stale: test:fm-own"
+  FM_WAKE_SOURCE=poll append_wake "$state" stale test:orphan "stale: test:orphan"
+  exp=$(FM_STATE_OVERRIDE="$state" "$WATCH" explain-wake test:fm-own)
+  printf '%s\n' "$exp" | grep -Fx 'source=push' >/dev/null || fail "push source missing: $exp"
+  printf '%s\n' "$exp" | grep -Fx 'owning_task_record=yes' >/dev/null || fail "owned pane not marked: $exp"
+  exp=$(FM_STATE_OVERRIDE="$state" "$WATCH" explain-wake test:orphan)
+  printf '%s\n' "$exp" | grep -Fx 'source=poll' >/dev/null || fail "poll source missing: $exp"
+  printf '%s\n' "$exp" | grep -Fx 'owning_task_record=no' >/dev/null || fail "orphan not marked: $exp"
+  append_wake "$state" check k "check: x"
+  [ "$(wc -l < "$state/.wake-provenance.tsv" | tr -d ' ')" = 2 ] || fail "non-stale wake was recorded"
+  pass "push source and orphan panes are recorded; only stale wakes are"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -5602,6 +5649,8 @@ fm_test_run \
   test_permission_recovery_surfaces_preserved_status \
   test_terminal_stale_surfaced \
   test_terminal_stale_done_current_state_is_absorbed_but_working_still_surfaces \
+  test_stale_wake_provenance_is_recorded_and_explained \
+  test_stale_wake_provenance_push_and_orphan \
   test_stale_terminal_status_overridden_by_active_run \
   test_nonterminal_stale_provably_working_absorbed_then_escalated \
   test_wedge_escalation_marks_demand_deep_inspection_after_threshold \
