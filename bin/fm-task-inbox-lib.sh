@@ -398,6 +398,7 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
     return 0
   fi
   if [ "$cstate" = pending ]; then
+    # shellcheck disable=SC2034 # read by the sourcing callers (fm-send.sh, fm-watch.sh)
     FM_TASK_INBOX_RING_NOTE="the composer holds other pending text"
     return 1
   fi
