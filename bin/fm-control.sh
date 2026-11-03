@@ -456,6 +456,23 @@ refuse_blocking_prompt() {  # <dialog-name>
   die "task $ID is blocked on a prompt: $1. Refusing to type Enter into it."
 }
 
+# confirm_exit_picker: answer the Claude background-task picker that THIS exit
+# request opened. The picker is Claude's own confirmation of the /exit that
+# do_exit just typed, and its selected row is Exit and stop tasks, so one Enter
+# completes the requested exit. Only exit calls it, only after the pre-type
+# check proved no dialog was open, and only for that one picker on a claude
+# endpoint; fm_composer_blocking_dialog names it solely when the selected row
+# is Exit and stop tasks, so any other picker or row still refuses. Returns 1
+# without sending anything when the screen no longer shows that picker.
+confirm_exit_picker() {
+  [ "$HARNESS" = claude ] || return 1
+  : > "$FM_COMPOSER_DIALOG_SINK" || return 1
+  fm_backend_composer_state "$BACKEND" "$T" "$LABEL" >/dev/null 2>&1 || true
+  [ "$(cat "$FM_COMPOSER_DIALOG_SINK" 2>/dev/null)" = 'Claude background-task exit picker' ] || return 1
+  fm_backend_send_key "$BACKEND" "$T" Enter "$LABEL" \
+    || die "the exit confirmation could not be sent to task $ID on $BACKEND"
+}
+
 # rendered_matches <ere>: whether any row of the visible viewport matches.
 # An unreadable viewport is a no, so every caller treats it as missing proof.
 rendered_matches() {  # <ere>
@@ -714,7 +731,7 @@ retire_busy_incarnation() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
+  local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog picker_confirmed=0
   require_state_verified_backend exit
   fm_control_backend_exit_supported "$BACKEND" \
     || die "task $ID runs on the $BACKEND backend, whose T3 Orchestrator V2 tools have no session stop, so 'exit' cannot stop its agent; 'interrupt' ends the running turn and teardown archives the thread"
@@ -835,12 +852,15 @@ do_exit() {
       [ "$verdict" != send-failed ] \
         || die "the exit command could not be sent to task $ID on $BACKEND"
       # The submitting Enter can open the picker. The agent is still alive, and
-      # another Enter would confirm the selected row. A dead agent may leave the
-      # same text behind; that is not a prompt still waiting.
+      # another Enter would confirm the selected row: that is right for the
+      # background-task picker this very exit opened (confirm_exit_picker) and
+      # a refusal for anything else. A dead agent may leave the same text
+      # behind; that is not a prompt still waiting.
       if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
         dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
         if [ "$(agent_state)" != dead ]; then
-          refuse_blocking_prompt "$dialog"
+          confirm_exit_picker || refuse_blocking_prompt "$dialog"
+          picker_confirmed=1
         fi
       fi
       ;;
@@ -849,6 +869,14 @@ do_exit() {
     # A submit can return before any read sees the picker: a native busy
     # verdict needs no composer read, and a cleared composer can be read
     # before the picker renders. Read the screen once more here.
+    if [ "$picker_confirmed" = 0 ] && confirm_exit_picker; then
+      picker_confirmed=1
+      state=$(wait_agent_state "$EXIT_WAIT" dead) && {
+        retire_busy_incarnation
+        printf 'stopped'
+        return 0
+      }
+    fi
     : > "$FM_COMPOSER_DIALOG_SINK" || true
     fm_backend_composer_state "$BACKEND" "$T" "$LABEL" >/dev/null 2>&1 || true
     if [ -s "$FM_COMPOSER_DIALOG_SINK" ]; then

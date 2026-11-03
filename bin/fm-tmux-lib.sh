@@ -114,8 +114,11 @@ fm_tmux_composer_caps() {
 # identity-scoped ghost ceiling in bin/fm-composer-lib.sh. Hermes runs under
 # an interpreter, so it is matched by foreground argv through
 # bin/fm-hermes-process-lib.sh rather than by process name.
+# It answers agy the same way, from its anchored `agy` foreground process name
+# (verified live, agy 1.4.12): its composer is a `>` row between the same two
+# rules, and its busy footer is `esc to cancel`.
 # Prints "<owner><TAB>idle" or "<owner><TAB>working" for owner pi,
-# polytoken, commandcode, or hermes; exits 1 when the pane is not a live
+# polytoken, commandcode, agy, or hermes; exits 1 when the pane is not a live
 # shape owner.
 fm_tmux_composer_identity() {  # <target>
   local target=$1 tty pid pgid tpgid comm args owner='' status
@@ -129,6 +132,7 @@ fm_tmux_composer_identity() {  # <target>
           pi|pi-signed|pi-launcher|Pi) owner=pi ;;
           polytoken) owner=polytoken ;;
           command-code) owner=commandcode ;;
+          agy) owner=agy ;;
         esac
         if [ -z "$owner" ]; then
           args=$(LC_ALL=C ps -p "$pid" -o args= 2>/dev/null) || args=
@@ -145,6 +149,7 @@ EOF
     case "${comm##*/}" in
       pi|pi-signed|pi-launcher) owner=pi ;;
       polytoken) owner=polytoken ;;
+      agy) owner=agy ;;
     esac
   fi
   [ -n "$owner" ] || return 1

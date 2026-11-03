@@ -2453,13 +2453,25 @@ fm_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
   fi
 }
 
-_fm_composer_classify_pi_rows() {  # <screen> <styled>
-  local screen=$1 styled=$2 row raw content
+_fm_composer_classify_pi_rows() {  # <screen> <styled> [agent]
+  local screen=$1 styled=$2 agent=${3:-} row raw content
   row=$((FM_COMPOSER_SCAN_PI_OPEN + 1))
   while [ "$row" -lt "$FM_COMPOSER_SCAN_PI_CLOSE" ]; do
     raw=$(_fm_composer_screen_row "$row" "$screen")
     content=$(_fm_composer_row_content "$raw" "$styled")
     fm_composer_normalize_trim_var content
+    # agy draws its composer as a `>` prompt row between the separators (live,
+    # agy 1.4.12): the bare glyph is its empty prompt, and any text after the
+    # glyph is a draft. Pi and polytoken draw no glyph, so a lone glyph there
+    # stays a draft.
+    if [ "$agent" = agy ]; then
+      case "$content" in
+        '>'*)
+          content=${content#">"}
+          fm_composer_normalize_trim_var content
+          ;;
+      esac
+    fi
     if [ -n "$content" ]; then
       printf 'pending'
       return 0
@@ -2523,12 +2535,15 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   # polytoken keeps the strict unknown - its composer really is empty
   # mid-turn (Enter queues, verified live), but the unknown keeps the
   # busy-queue conversion honest through the submit cores.
-  if { [ "$agent" != pi ] && [ "$agent" != polytoken ]; } \
+  # agy (verified live, 1.4.12) is the third owner: a `>` prompt row between
+  # the same full-width separator pair, with its footer below. Its pane reports
+  # `done`/`idle` once a turn ends, so the same status conjunction applies.
+  if { [ "$agent" != pi ] && [ "$agent" != polytoken ] && [ "$agent" != agy ]; } \
     || [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" != 1 ]; then
     printf 'unknown'
     return 0
   fi
-  state=$(_fm_composer_classify_pi_rows "$screen" "$styled")
+  state=$(_fm_composer_classify_pi_rows "$screen" "$styled" "$agent")
   if [ "$state" = pending ]; then
     printf 'pending'
     return 0
