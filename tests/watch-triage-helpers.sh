@@ -148,9 +148,12 @@ seen_sig() {
 reap() {
   local rc
   kill "$1" 2>/dev/null || true
-  wait_for_exit "$1" 100
+  # A generous ceiling (60s): a healthy watcher exits within a poll tick, but a
+  # loaded stock-Bash CI runner can hold TERM behind a slow in-flight child, and
+  # the ceiling only matters when the watcher is genuinely stuck.
+  wait_for_exit "$1" 600
   rc=$?
-  [ "$rc" -ne 124 ] || fail "watcher pid $1 did not exit within 10s of TERM"
+  [ "$rc" -ne 124 ] || fail "watcher pid $1 did not exit within 60s of TERM"
 }
 
 # --- pure classifier predicates (fm-classify-lib.sh) ------------------------

@@ -1,0 +1,4 @@
+$ FM_TEST_STOCK_BASH=1 /bin/bash tests/fm-watch-triage.test.sh   (x25, /bin/bash 3.2.57)
+pass=25 fail=0
+Pre-fix under load (6 parallel loops x10 + 20 CPU burners): pass=60 fail=0 (flake not locally reproducible; fix is ceiling/startup based)
+Full suite: /bin/bash tests/fm-watch-triage.test.sh -> 71 ok, 0 not ok
