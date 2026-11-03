@@ -177,6 +177,65 @@ fm_backend_tmux_window_inventory() {  # <session-target>
   return 1
 }
 
+# fm_backend_tmux_socket_sweep: the proof a task record cannot carry itself. A
+# record names the endpoint's session:window but not the tmux server it lived
+# on, so absence is proven by asking EVERY server this user can reach: each
+# socket in the user's tmux directory (${TMUX_TMPDIR:-/tmp}/tmux-<uid>, where
+# the default and every -L socket live) plus the socket $TMUX points at.
+# Read-only: it only lists windows and never starts a server.
+#
+# Prints one verdict line:
+#   gone                   - every socket answered and none has the window (a
+#                            socket with no server behind it counts as an answer).
+#   present <detail>       - some socket still has the window.
+#   unproven <detail>      - a socket could not be queried, or the recorded
+#                            selector is not an exact window name; nothing proven.
+fm_backend_tmux_socket_sweep() {  # <session:window>
+  local target=${1:-} session window dir sock out
+  local -a socks=()
+  case "$target" in
+    *:*:*|'':*|*:'') printf 'unproven\tthe recorded target %s is not a session:window pair' "'$target'"; return 0 ;;
+    *:*) ;;
+    *) printf 'unproven\tthe recorded target %s is not a session:window pair' "'$target'"; return 0 ;;
+  esac
+  session=${target%%:*}
+  window=${target#*:}
+  # Only an exact window NAME can be matched across servers: an @id or an
+  # index means something different on each one.
+  case "$window" in
+    *[!0-9]*) ;;
+    *) printf 'unproven\tthe recorded window %s is an index, which differs per server' "'$window'"; return 0 ;;
+  esac
+  case "$window" in
+    @*|*[!A-Za-z0-9_-]*)
+      printf 'unproven\tthe recorded window %s is not a plain window name the sweep can match exactly' "'$window'"; return 0 ;;
+  esac
+  dir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"
+  if [ -d "$dir" ]; then
+    for sock in "$dir"/*; do
+      [ -S "$sock" ] && socks+=("$sock")
+    done
+  fi
+  if [ -n "${TMUX:-}" ]; then
+    sock=${TMUX%%,*}
+    [ -S "$sock" ] && socks+=("$sock")
+  fi
+  for sock in ${socks[@]+"${socks[@]}"}; do
+    if out=$(LC_ALL=C tmux -S "$sock" list-windows -a -F '#{session_name}:#{window_name}' 2>&1); then
+      if printf '%s\n' "$out" | grep -Fqx -- "$session:$window"; then
+        printf 'present\t%s' "$sock"
+        return 0
+      fi
+      continue
+    fi
+    case "$out" in
+      *"no server running on "*|*"error connecting to "*" (No such file or directory)"|*"error connecting to "*" (Connection refused)") ;;
+      *) printf 'unproven\ttmux socket %s could not be queried' "'$sock'"; return 0 ;;
+    esac
+  done
+  printf 'gone\t'
+}
+
 # Resolve one exact window selector in one exact session to its stable id.
 # The shared dispatcher header owns the accepted target grammar.
 fm_backend_tmux_window_id() {  # <session-name> <window-name|index|@id>

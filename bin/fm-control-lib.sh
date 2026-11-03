@@ -442,23 +442,27 @@ fm_control_absence_recheck_applies() {  # <backend> <raw-state>
 #     on the verified server, while an unreachable server reads `unreadable`.
 #     The proof re-reads the thread, but exit and relaunch refuse before it:
 #     V2 has no session stop and a thread cannot host a replacement.
-#   tmux CANNOT. `list-windows -a` describes only the server the CURRENT
-#     process addresses (its TMUX_TMPDIR/socket), and a task's record does not
-#     carry the endpoint's socket identity - so a different but running server
-#     would answer "not anywhere" about a window it was never able to see.
-#     There is no read available here that closes that gap, so tmux always
-#     returns `unproven` and both verbs refuse. tmux is left exactly as
-#     deadlocked as it was before this change - no worse - but deliberately.
+#   tmux sweeps. A record does not carry the endpoint's socket identity, so
+#     fm_backend_tmux_socket_sweep asks every socket of the user's tmux
+#     directory: the window absent from all of them is `gone`; present on one,
+#     or any socket that cannot be queried, is `unproven` and refuses.
 #
 # Both control-plane callers share this one implementation so the proof cannot
 # drift into two answers for the same endpoint.
 fm_control_endpoint_absence_verdict() {  # <backend> <target> [meta]
-  local backend=${1-} target=${2-} meta=${3-}
+  local backend=${1-} target=${2-} meta=${3-} raw
   fm_backend_source "$backend" \
     || { printf 'unproven\tbackend %s could not be loaded to prove anything about that endpoint' "'$backend'"; return 0; }
   case "$backend" in
     tmux)
-      printf 'unproven\ttmux absence cannot be proven from a task record: the record does not carry the endpoint'"'"'s socket identity, and a server-wide window inventory only describes the tmux server this process addresses, so a window absent from it may still be alive on another'
+      # The record carries no socket identity, so ask every socket of the
+      # user's tmux directory; only a window found on none is gone.
+      raw=$(fm_backend_tmux_socket_sweep "$target")
+      case "${raw%%$'\t'*}" in
+        gone) printf 'gone\t' ;;
+        present) printf 'unproven\tthe window still exists on tmux socket %s, so it may hold a live agent' "'${raw#*$'\t'}'" ;;
+        *) printf 'unproven\ttmux absence could not be proven: %s' "${raw#*$'\t'}" ;;
+      esac
       ;;
     herdr)
       # Start the RECORDED session's server (only the server - nothing is

@@ -197,6 +197,11 @@ case "${1:-}" in
     fi
     if [ -f "$D/devin" ]; then devin_screen "$(cat "$D/devin")"; elif [ -f "$D/pane" ]; then cat "$D/pane"; else printf '╭────╮\n│    │\n╰────╯\n'; fi
     exit 0 ;;
+  -S)
+    # The all-sockets absence sweep: $D/sockets/<basename> is that server's
+    # session:window inventory.
+    [ "${3:-}" = list-windows ] || exit 0
+    cat "$D/sockets/${2##*/}"; exit 0 ;;
   list-windows)
     if [ -f "$D/windows" ]; then cat "$D/windows"; fi
     exit 0 ;;
@@ -262,7 +267,8 @@ add_task() {
 # the stubbed provider on PATH. Echoes combined output; returns its exit code.
 run_control() {
   local dir=$1; shift
-  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+  env -u TMUX TMUX_TMPDIR="$dir/tmuxtmp" \
+    PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     FM_CONTROL_POLL=0.01 FM_CONTROL_SETTLE_WAIT=0.05 \
     FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_FAKE_MUSE_LOG="${FM_FAKE_MUSE_LOG:-}" \
@@ -924,14 +930,15 @@ test_missing_tmux_endpoint_refuses_rather_than_claiming_a_stop() {
   dir=$(new_case gone)
   add_task "$dir" t1 claude
   : > "$dir/fake/windows"
-  out=$(run_control "$dir" t1 exit); rc=$?
-  # `missing` on tmux is not a finding about the endpoint. A task record carries
-  # no socket identity for it, and any inventory describes only the tmux server
-  # this process addresses, so a window that is merely on a server this seat
-  # cannot reach is indistinguishable from one that was destroyed. exit refuses
-  # rather than claim a stop it cannot see, and sends nothing to an address it
-  # cannot trust. Reclaim of a destroyed endpoint is Herdr-only
+  # The window reads missing here but still exists on another tmux server of
+  # this user, so absence is not proven and exit refuses rather than claim a
+  # stop it cannot see, sending nothing to an address it cannot trust
   # (docs/agent-control.md "Reclaiming a task whose endpoint is gone").
+  mkdir -p "$dir/tmuxtmp/tmux-$(id -u)" "$dir/fake/sockets"
+  ( cd "$dir/tmuxtmp/tmux-$(id -u)" && perl -MSocket -e 'socket(S, PF_UNIX, SOCK_STREAM, 0) or die; bind(S, sockaddr_un($ARGV[0])) or die' other ) \
+    || fail "could not create the fake tmux socket"
+  printf '%s\n' "fmses:fm-t1" > "$dir/fake/sockets/other"
+  out=$(run_control "$dir" t1 exit); rc=$?
   expect_code 1 "$rc" "a tmux endpoint whose absence cannot be proven must refuse"
   assert_not_contains "$out" "endpoint-gone" "exit must not report a stop it could not prove"
   [ -z "$(literals "$dir")" ] || fail "nothing may be sent into an endpoint exit cannot trust"
