@@ -706,6 +706,31 @@ test_matrix_pi_separated_needs_identity() {
   pass "matrix: pi's separated composer needs identity + structure; the blank row alone never proves it"
 }
 
+test_matrix_agy_prompt_row_between_separators() {
+  # Real agy 1.4.12 (captured live, tmux and herdr): a bare `>` prompt row
+  # between two full-width rules, footer below. The lone `>` is agy's empty
+  # prompt; fm-control exit refused it as "composer state is unknown".
+  local rule empty typed agy_done agy_idle agy_working pi_idle none
+  rule='────────────────────────────────────────────────────────────────────────'
+  empty=$'transcript line\n'"$rule"$'\n>\n'"$rule"$'\n? for shortcuts      Gemini 4 Argon · medium'
+  typed=$'transcript line\n'"$rule"$'\n> hello\n'"$rule"$'\n? for shortcuts      Gemini 4 Argon · medium'
+  agy_done=$(printf 'agy\tdone'); agy_idle=$(printf 'agy\tidle'); agy_working=$(printf 'agy\tworking')
+  pi_idle=$(printf 'pi\tidle'); none=$(printf 'zsh\t')
+  assert_screen "agy empty prompt, done" empty "$CAPS_STYLED" "$empty" '' "$agy_done"
+  assert_screen "agy empty prompt, idle" empty "$CAPS_STYLED" "$empty" '' "$agy_idle"
+  assert_screen "agy empty prompt on tmux (cursor on the prompt row)" empty "$CAPS_TMUX" "$empty" 2 "$agy_idle"
+  assert_screen "agy typed text on tmux" pending "$CAPS_TMUX" "$typed" 2 "$agy_idle"
+  assert_screen "agy typed text" pending "$CAPS_STYLED" "$typed" '' "$agy_done"
+  assert_screen "agy typed text while working" pending "$CAPS_STYLED" "$typed" '' "$agy_working"
+  # Identity gates the verdict: a working agy, another agent, a shell, or no
+  # identity capability never proves the empty prompt.
+  assert_screen "working agy defers" unknown "$CAPS_STYLED" "$empty" '' "$agy_working"
+  assert_screen "pi identity on agy screen does not strip the glyph" pending "$CAPS_STYLED" "$empty" '' "$pi_idle"
+  assert_screen "shell identity defers" unknown "$CAPS_STYLED" "$empty" '' "$none"
+  assert_screen "agy screen without identity capability" unknown "$CAPS_PLAIN" "$empty"
+  pass "matrix: agy's lone > prompt reads empty only with an idle agy identity; typed text stays pending"
+}
+
 test_matrix_pi_dollar_status_footer_is_empty() {
   # Pi's status row `$0.000 (sub) 5.4%/272k (auto)` at column 0 used to read
   # as a dead-shell prompt, so an idle separated composer classified unknown.
@@ -1600,6 +1625,7 @@ test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
+test_matrix_agy_prompt_row_between_separators
 test_matrix_pi_dollar_status_footer_is_empty
 test_matrix_opencode_leftbar_signals
 test_matrix_opencode_leftbar_cwd_furniture

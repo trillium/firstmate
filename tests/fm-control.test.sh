@@ -146,6 +146,12 @@ case "${1:-}" in
           picker) [ -n "${FM_FAKE_DEVIN_PICKER_STUCK:-}" ] || printf idle > "$D/devin" ;;
         esac
       fi
+      # enter-exits-at holds the number of the Enter that answers a picker
+      # and lets the agent exit, like the second Enter after `/exit`.
+      if [ "$payload" = Enter ] && [ -f "$D/enter-exits-at" ] \
+         && [ "$(grep -cx Enter "$D/keys")" -ge "$(cat "$D/enter-exits-at")" ]; then
+        printf 'zsh' > "$D/command"
+      fi
       if [ -n "${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" ] \
          && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
         printf 'zsh' > "$D/command"
@@ -1035,48 +1041,111 @@ test_exit_refuses_an_open_background_picker() {
   pass "fm-control exit: an already-open background-task picker is not typed into"
 }
 
-test_exit_refuses_the_confirming_enter() {
-  local dir out rc enters
+run_control_never_dies() {  # <case-dir> <args...>
+  local dir=$1
+  shift
+  env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
+    FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
+    "$CONTROL" "$@" 2>&1
+}
+
+enter_count() {  # <case-dir>
+  grep -c '^Enter$' "$1/fake/keys" || true
+}
+
+# The picker is Claude's confirmation of the /exit this verb typed, so exit
+# answers it with one Enter on the selected "Exit and stop tasks" row.
+test_exit_answers_the_picker_its_own_command_opened() {
+  local dir out rc
   dir=$(new_case confirm-picker)
   add_task "$dir" t1 claude
   alive_as "$dir" claude
   exit_picker_screen > "$dir/fake/after-enter"
+  printf '2' > "$dir/fake/enter-exits-at"
   out=$(env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
-    FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
+    FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.5 \
     "$CONTROL" t1 exit 2>&1); rc=$?
-  expect_code 1 "$rc" "the confirming Enter should refuse"$'\n'"$out"
-  assert_contains "$out" "blocked on a prompt: Claude background-task exit picker" \
-    "the refusal should name the dialog"
-  assert_not_contains "$out" "Esc" "the refusal must not name a dismissal key"
-  [ "$(literals "$dir")" = /exit ] || fail "the exit command should still be typed, got '$(literals "$dir")'"
-  enters=$(grep -c '^Enter$' "$dir/fake/keys" || true)
-  [ "$enters" -eq 1 ] || fail "only the submitting Enter should be sent, got $enters"
-  pass "fm-control exit: the Enter that opens the background-task picker is not followed by a confirming Enter"
+  expect_code 0 "$rc" "the picker this exit opened should be answered"$'\n'"$out"
+  assert_contains "$out" stopped "the exit should report the agent stopped"
+  [ "$(literals "$dir")" = /exit ] || fail "only the exit command may be typed, got '$(literals "$dir")'"
+  [ "$(enter_count "$dir")" -eq 2 ] \
+    || fail "expected the submitting Enter plus one confirming Enter, got $(enter_count "$dir")"
+  pass "fm-control exit: the background-task picker its own /exit opened is answered with one Enter"
 }
 
 # The submit reads a cleared composer before the picker renders, so it reports
 # delivery and no read inside it sees the picker. Exit's own read after the
-# stop wait times out must still name the dialog.
-test_exit_names_a_picker_that_renders_after_the_submit() {
-  local dir out rc enters
+# stop wait times out must still find and answer it.
+test_exit_answers_a_picker_that_renders_after_the_submit() {
+  local dir out rc
   dir=$(new_case late-picker)
   add_task "$dir" t1 claude
   alive_as "$dir" claude
   exit_picker_screen > "$dir/fake/after-enter"
   printf '1' > "$dir/fake/after-enter-late"
+  printf '2' > "$dir/fake/enter-exits-at"
   out=$(env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
-    FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
+    FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.2 \
     "$CONTROL" t1 exit 2>&1); rc=$?
-  expect_code 1 "$rc" "a picker that renders after the submit should refuse"$'\n'"$out"
+  expect_code 0 "$rc" "a picker that renders after the submit should be answered"$'\n'"$out"
   [ "$(cat "$dir/fake/after-enter-late")" = 0 ] \
     || fail "the submit should have read the ordinary pane once after Enter"
+  [ "$(enter_count "$dir")" -eq 2 ] \
+    || fail "expected the submitting Enter plus one confirming Enter, got $(enter_count "$dir")"
+  pass "fm-control exit: a picker that renders after the submit returned is answered once"
+}
+
+test_exit_picker_is_answered_once() {
+  local dir out rc
+  dir=$(new_case picker-once)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  exit_picker_screen > "$dir/fake/after-enter"
+  out=$(run_control_never_dies "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a picker that survives its answer should refuse"$'\n'"$out"
   assert_contains "$out" "blocked on a prompt: Claude background-task exit picker" \
-    "the refusal should name the dialog"
-  assert_not_contains "$out" "did not stop within" \
-    "a recognised picker must not fall back to the generic timeout message"
-  enters=$(grep -c '^Enter$' "$dir/fake/keys" || true)
-  [ "$enters" -eq 1 ] || fail "only the submitting Enter should be sent, got $enters"
-  pass "fm-control exit: a picker that renders after the submit returned is named when the stop wait times out"
+    "the surviving picker should be named"
+  [ "$(enter_count "$dir")" -eq 2 ] \
+    || fail "the picker must be answered exactly once, got $(enter_count "$dir") Enters"
+  pass "fm-control exit: a picker that stays open after its one answer is refused, not answered again"
+}
+
+# Only the one recorded picker with Exit and stop tasks selected is answered.
+test_exit_does_not_answer_a_different_picker_or_harness() {
+  local dir out rc
+  dir=$(new_case other-picker-row)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  exit_picker_screen | sed 's/^❯ 1\./  1./; s/^  2\./❯ 2./' > "$dir/fake/after-enter"
+  out=$(run_control_never_dies "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a picker with another row selected must not be answered"$'\n'"$out"
+  [ "$(enter_count "$dir")" -eq 1 ] \
+    || fail "only the submitting Enter may be sent, got $(enter_count "$dir")"
+  dir=$(new_case other-harness-picker)
+  add_task "$dir" t1 codex
+  alive_as "$dir" codex
+  exit_picker_screen > "$dir/fake/after-enter"
+  out=$(run_control_never_dies "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a non-claude picker must not be answered"$'\n'"$out"
+  assert_contains "$out" "blocked on a prompt" "the picker should still be named"
+  [ "$(enter_count "$dir")" -eq 1 ] \
+    || fail "only the submitting Enter may be sent, got $(enter_count "$dir")"
+  pass "fm-control exit: only the claude picker with Exit and stop tasks selected is answered"
+}
+
+test_send_never_answers_the_exit_picker() {
+  local dir out rc
+  dir=$(new_case send-picker)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  exit_picker_screen > "$dir/fake/pane"
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+    "$SEND" t1 "hello" 2>&1); rc=$?
+  expect_code 0 "$rc" "fm-send records the steer durably and skips the doorbell"$'\n'"$out"
+  assert_contains "$out" "doorbell skipped" "the doorbell must not be rung into the picker"
+  [ ! -s "$dir/fake/keys" ] || fail "fm-send must send no key to the picker, got: $(keys_sent "$dir")"
+  [ ! -s "$dir/fake/literal" ] || fail "fm-send must type nothing into the picker, got: $(literals "$dir")"
+  pass "fm-send: an open exit picker is never answered"
 }
 
 test_idle_agent_is_not_interrupted() {
@@ -1452,8 +1521,11 @@ test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
 test_exit_drops_meta_busy_gen_with_the_sidecar
 test_exit_refuses_an_open_background_picker
-test_exit_refuses_the_confirming_enter
-test_exit_names_a_picker_that_renders_after_the_submit
+test_exit_answers_the_picker_its_own_command_opened
+test_exit_answers_a_picker_that_renders_after_the_submit
+test_exit_picker_is_answered_once
+test_exit_does_not_answer_a_different_picker_or_harness
+test_send_never_answers_the_exit_picker
 test_interrupt_without_acknowledgement_preserves_busy_state
 test_muse_interrupt_confirms_adapter_acknowledgement
 test_interrupt_revalidates_agent_after_acknowledgement_wait

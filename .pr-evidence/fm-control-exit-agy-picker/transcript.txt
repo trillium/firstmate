@@ -1,0 +1,13 @@
+$ fm-control exit tests (fake provider)
+ok - fm-control Devin exit: a busy record whose turn already ended never opens the revert picker
+ok - fm-control Devin interrupt: a revert picker a press opened is closed with Escape, never Enter
+ok - fm-control Devin: an open revert picker refuses every typed command
+ok - fm-control exit: an already-open background-task picker is not typed into
+ok - fm-control exit: the background-task picker its own /exit opened is answered with one Enter
+ok - fm-control exit: a picker that renders after the submit returned is answered once
+ok - fm-control exit: a picker that stays open after its one answer is refused, not answered again
+ok - fm-control exit: only the claude picker with Exit and stop tasks selected is answered
+ok - fm-send: an open exit picker is never answered
+$ composer classifier on live agy screens (identity agy/done)
+agy-empty2.txt [agy	done]: empty
+agy-typed.txt [agy	done]: pending

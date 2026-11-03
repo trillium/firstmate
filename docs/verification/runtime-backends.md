@@ -1558,8 +1558,9 @@ The picker is recognised by its recorded structure only: the heading on its own 
 The same strings quoted above a normal composer, as a diff, this note, or a test fixture shows them, are not a picker.
 Submit retries now stop after the Enter that opened the picker and report unknown.
 A typed submit to a pane that already shows the picker types nothing and sends no Enter.
-Exit reports that the worker is blocked on the Claude background-task exit picker and does not type another Enter.
-A submit can return before any read sees the picker, so exit reads the screen once more when its wait for the agent to stop times out, and names the picker there too.
+Exit reports that the worker is blocked on the Claude background-task exit picker and does not type another Enter when that picker was already open before the exit command was typed.
+When the exit command's own Enter opened the picker on a Claude worker, the picker is the confirmation of the exit already requested, so exit sends one Enter on the selected "Exit and stop tasks" row; a picker still open after that one answer, a picker with another row selected, and a picker on any other harness are refused by name.
+A submit can return before any read sees the picker, so exit reads the screen once more when its wait for the agent to stop times out, and answers or names the picker there too.
 Exit does not report a stopped agent whose pane still shows the picker text as blocked on a prompt.
 The watcher reads the picker with the same matcher on the stale-path capture it already takes for a worker.
 A worker pane parked on it keeps the ordinary stale triage and schedule, and its plain stale reason and its final wedge escalation reason name the picker after `blocked-on-prompt:`; the deferral, dead-record, and declared-wait recheck reasons do not.
@@ -1567,6 +1568,17 @@ A second mate stays off that path, and a finished worker in away mode is handled
 That watcher and away-daemon reporting is covered by fakes in `tests/fm-watch-triage.test.sh` and `tests/fm-daemon.test.sh`, not by a live measurement.
 No recorded screen was available for a model-downgrade confirmation, an MCP approval, or a Claude exit confirmation other than this picker, so those dialogs are not covered.
 Refusing an Enter that would confirm a dialog restores an existing safety path, so it is not gated behind a flag.
+The exit-opened-picker answer is covered by the fake provider in `tests/fm-control.test.sh`, not by a live measurement.
+
+### agy composer prompt row
+
+Measured 2026-11-03 against agy 1.4.12 (Antigravity CLI) in tmux, and its Herdr agent identity read from live Herdr panes.
+An empty agy composer is a bare `>` row between two full-width `─` rules with a footer row below; typed text follows the `>` on the same row.
+Herdr reports the pane as agent `agy` with status `done`, `idle`, or `working`.
+The shared classifier reads the `>` row inside the separator pair as empty only with an `agy` identity whose status is `idle` or `done`, and as pending when text follows the glyph.
+A working agy, any other identity, and a backend without an identity probe keep the unknown verdict.
+tmux derives the same identity from the pane's foreground process (`agy`) and its `esc to cancel` busy footer, and read the live pane as empty, then pending after text was typed.
+Covered by `test_matrix_agy_prompt_row_between_separators` in `tests/fm-composer-lib.test.sh`.
 
 ### Prune and respawn
 
