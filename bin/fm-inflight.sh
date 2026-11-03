@@ -29,7 +29,10 @@
 #
 # Sections:
 #   LIVE WORKERS   one row per state/*.meta task: crew-state verdict plus
-#                  kind and project from the metadata record.
+#                  kind and project from the metadata record. A task with a
+#                  pr= record also lists each failing CI job with its
+#                  conclusion (bin/fm-pr-jobs.sh), marking jobs that never
+#                  got a runner as never scheduled.
 #   OPEN BEADS     open/in-progress/blocked beads per store. The task store
 #                  is scoped to the fleet label; the other stores are shared
 #                  queues and read whole. Each store is asked for LIMIT+1
@@ -159,6 +162,11 @@ for meta in "$STATE"/*.meta; do
   verdict=$(printf '%s' "$verdict" | cut -c1-200)
   printf '  %s [%s] %s on %s\n' "$id" "$verdict" \
     "$(meta_value "$meta" kind)" "$(meta_value "$meta" project)"
+  pr_url=$(meta_value "$meta" pr)
+  if [ -n "$pr_url" ]; then
+    fm_run_timed "$FM_INFLIGHT_TIMEOUT" "$SCRIPT_DIR/fm-pr-jobs.sh" "$pr_url" 2>/dev/null \
+      | sed 's/^/      failing job: /'
+  fi
   WORKERS=$((WORKERS + 1))
 done
 [ "$WORKERS" -gt 0 ] || printf '  (none)\n'

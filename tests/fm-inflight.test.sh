@@ -146,4 +146,21 @@ FM_HOME="$SHOME" "$BRIEF" rule-scout /tmp --scout >/dev/null 2>&1 \
 SCOUT_BRIEF=$(cat "$SHOME/data/rule-scout/brief.md")
 assert_contains "$SCOUT_BRIEF" "# Notable-item beads" "scout brief rule section"
 
+# 8. Failing CI jobs: real failure vs never scheduled (fixture gh output).
+JB=$(fm_fakebin "$TMP_ROOT/jobs")
+cat > "$JB/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+pr) printf '%s\n' '[{"name":"lint","bucket":"fail","link":"https://github.com/o/r/actions/runs/1/job/11"},{"name":"macos bash snapshot","bucket":"cancel","link":"https://github.com/o/r/actions/runs/1/job/22"},{"name":"ok","bucket":"pass","link":"https://github.com/o/r/actions/runs/1/job/33"}]' ;;
+api) case "$2" in
+  */jobs/11) printf '%s\n' '{"conclusion":"failure","runner_name":"r1","steps":[{"name":"x"}]}' ;;
+  */jobs/22) printf '%s\n' '{"conclusion":"cancelled","runner_name":null,"steps":[]}' ;;
+  esac ;;
+esac
+SH
+chmod +x "$JB/gh"
+JOBS_OUT=$(PATH="$JB:$PATH" "$ROOT/bin/fm-pr-jobs.sh" https://github.com/o/r/pull/5) || fail "fm-pr-jobs failed"
+assert_contains "$JOBS_OUT" "lint: failure - real failure" "real failure labelled"
+assert_contains "$JOBS_OUT" "macos bash snapshot: cancelled - never scheduled (no runner, no steps)" "never-scheduled labelled"
+
 pass "fm-inflight"
