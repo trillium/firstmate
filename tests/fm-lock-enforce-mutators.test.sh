@@ -19,7 +19,9 @@ echo "$OWNER" > "$HOME_DIR/state/.lock"
 
 run() {  # <script> [env...] -- runs with no args, prints stderr
   local s=$1; shift
-  env FM_HOME="$HOME_DIR" "$@" "$ROOT/bin/$s" 2>&1 </dev/null
+  # Run under a second fake harness process so the caller has a verified
+  # harness ancestry that differs from the lock owner (CI has no real harness).
+  env FM_HOME="$HOME_DIR" "$@" "$TMP_ROOT/claude" -c '"$0"; :' "$ROOT/bin/$s" 2>&1 </dev/null
 }
 
 test_refused_for_foreign_lock() {
