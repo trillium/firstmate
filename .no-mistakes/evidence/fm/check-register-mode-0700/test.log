@@ -1,0 +1,2 @@
+ok - mode 0600 check is normalized to 0700 and registered
+ok - unsafe check is refused loudly and names the check
