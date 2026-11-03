@@ -930,6 +930,27 @@ github_checks_not_green() {
   ' 2>/dev/null || return 1
 }
 
+# The check runs in the given live pull-request JSON whose current non-green
+# run concluded CANCELLED, one "name<TAB>detailsUrl" per line (the URL is empty
+# when the rollup carries none). The current non-green run of a name is its
+# newest by startedAt, so a name whose latest red run failed is not listed. This
+# only words the refusal: github_checks_not_green stays the sole judge of what is
+# red, and a cancelled check is never treated as green.
+github_cancelled_checks() {
+  local json=$1
+  printf '%s' "$json" | jq -r '
+    [ (.statusCheckRollup // [])[]
+      | select(.__typename == "CheckRun" and .status == "COMPLETED"
+               and (.conclusion != "SUCCESS" and .conclusion != "NEUTRAL" and .conclusion != "SKIPPED"))
+    ]
+    | group_by(.name // "")[]
+    | sort_by(.startedAt // "")
+    | last
+    | select(.conclusion == "CANCELLED")
+    | "\(if (.name // "") == "" then "(unnamed check)" else .name end)\t\(.detailsUrl // "")"
+  ' 2>/dev/null || true
+}
+
 FM_PR_GITHUB_REQUIRED=
 FM_PR_GITHUB_REQUIRED_ERROR=
 github_read_required_contexts() {
@@ -1153,6 +1174,7 @@ EOF
     printf 'error: refusing to merge %s\n' "$URL" >&2
     printf '%s' "$refusals" >&2
     [ -z "$uncovered" ] || printf 'error: these checks are not green: %s\n' "$uncovered" >&2
+    github_report_cancelled_checks "$json" "$uncovered"
     [ -z "$unreported" ] || printf 'error: these required checks have not reported: %s\n' "$unreported" >&2
     return 1
   fi
@@ -1160,6 +1182,27 @@ EOF
     "$URL" "$live_head" >&2
   FM_PR_MERGE_HEAD=$live_head
   FM_PR_GITHUB_BASE=$base
+}
+
+# Name each uncovered check that was cancelled rather than failed and say it
+# needs a rerun, so the reader reruns the jobs instead of looking for a code bug.
+# $2 is the comma-separated uncovered list from the refusal above.
+github_report_cancelled_checks() {
+  local json=$1 uncovered=$2 name url run_id listed=''
+  while IFS=$'\t' read -r name url; do
+    [ -n "$name" ] || continue
+    case ", $uncovered, " in *", $name, "*) ;; *) continue ;; esac
+    run_id=$(printf '%s' "$url" | sed -n 's#.*/actions/runs/\([0-9][0-9]*\).*#\1#p')
+    if [ -n "$run_id" ]; then
+      printf "error: check '%s' was cancelled, not failed, and needs a rerun: gh run rerun %s --failed\n" "$name" "$run_id" >&2
+    else
+      printf "error: check '%s' was cancelled, not failed, and needs a rerun\n" "$name" >&2
+    fi
+    listed=1
+  done <<EOC
+$(github_cancelled_checks "$json")
+EOC
+  [ -z "$listed" ] || printf 'error: a cancelled check is never merged over; rerun the cancelled jobs and retry once they pass\n' >&2
 }
 
 # Read one live GitHub pull request view after gh returns. The selected
