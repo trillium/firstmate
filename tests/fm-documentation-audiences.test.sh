@@ -128,6 +128,12 @@ MD
   "$CHECK" --root "$repo" >/dev/null \
     || fail "structural checker rejected legitimate maintainer evidence prose"
 
+  mkdir -p "$repo/.pr-evidence/task"
+  printf '%s\n' 'evidence' > "$repo/.pr-evidence/task/notes.md"
+  git -C "$repo" add .pr-evidence
+  "$CHECK" --root "$repo" >/dev/null \
+    || fail "checker rejected .pr-evidence file"
+
   printf '%s\n' '[Setup](docs/setup.md) [Policy](docs/policy.md) [Broken](docs/missing.bin)' \
     > "$repo/README.md"
   git -C "$repo" add README.md
