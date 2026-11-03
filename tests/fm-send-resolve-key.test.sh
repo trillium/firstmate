@@ -1054,6 +1054,54 @@ test_empty_status_open_set_still_offers_the_keyed_resend() {
   pass "fm-send --resolve-key: an empty status open set stays scoped to that ledger and keeps the keyed resend"
 }
 
+# A steer is firstmate's voice, so --resolve-key must never close a captain-held
+# task: that would record a captain answer the captain never gave. A stub
+# tasks-axi reports the key as a still-open captain-held task; the send refuses
+# before anything is delivered, the hold stays open, and the refusal names the
+# captain-hold answer path. An ordinary worker decision key on the same task
+# still closes exactly as before.
+test_steer_never_closes_a_captain_hold() {
+  local dir fb log home err rc calls
+  dir="$TMP_ROOT/captain-hold"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"; calls="$dir/axi.calls"
+  cat > "$fb/tasks-axi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$calls"
+case "\${1:-}" in
+  show) printf '  state: in-flight\n  hold_kind: captain\n' ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/tasks-axi"
+  home=$(setup_home captain-hold)
+  mkdir -p "$home/data"; fm_test_tasks_toml "$home/.tasks.toml"; : > "$home/data/backlog.md"
+  fm_write_meta "$home/state/t15.meta" "window=sess:fm-t15" "kind=ship"
+  printf 'needs-decision [key=ordinary]: pick REST or RPC\n' > "$home/state/t15.status"
+  : > "$log"
+
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t15 --resolve-key held-call "approved, go ahead" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "a steer closed a captain-held task as if the captain answered"
+  assert_contains "$(cat "$err")" "captain-held task" "the refusal must name the captain hold"
+  assert_contains "$(cat "$err")" "fm-captain-hold.sh answer" "the refusal must name the captain-hold answer path"
+  [ ! -d "$home/state/t15.inbox" ] || fail "a refused captain-hold answer still enqueued an inbox record"
+  if grep -Eq '^(answer|close|update|complete)' "$calls"; then
+    fail "the refused steer still wrote to the backlog: $(cat "$calls")"
+  fi
+  assert_not_contains "$(cat "$home/state/t15.status")" "resolved" \
+    "the refused steer wrote a resolved record"
+
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" t15 --resolve-key ordinary "REST" >/dev/null 2>"$err" \
+    || fail "an ordinary worker decision key stopped closing: $(cat "$err")"
+  if drain_out "$home" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "the ordinary decision stayed open: $(drain_out "$home")"
+  fi
+  pass "fm-send --resolve-key: a steer never closes a captain hold, ordinary keys still close"
+}
+
 # Preserving the message is only half of not losing it - the printed resend has
 # to actually reach the same home and the same script. Neither survives the
 # command line on its own: a one-shot "FM_HOME=<home> bin/fm-send.sh ..." exports
@@ -1176,6 +1224,7 @@ test_listed_key_closes_a_trailing_token_blocker
 test_unresolvable_key_refusal_preserves_the_message
 test_refusal_resend_carries_its_own_routing_context
 test_empty_status_open_set_still_offers_the_keyed_resend
+test_steer_never_closes_a_captain_hold
 test_refusal_keyed_resend_keeps_the_accepted_keys
 test_colon_first_key_position_is_answerable
 test_answer_starts_work_never_orphans

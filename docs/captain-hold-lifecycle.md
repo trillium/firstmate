@@ -239,13 +239,13 @@ An unbound source feeds nothing, so the path is opt-in per source.
 
 ### Channels that feed the intake
 
-Two channels feed that one intake today, and both are ordinary callers rather than special cases.
+One channel feeds that intake today, as an ordinary caller rather than a special case.
 
-`bin/fm-send.sh --resolve-key` is the chat channel:
+`bin/fm-send.sh --resolve-key` is not a channel into it:
 
 - For a key the status log still owns, that script's header owns the status-log close.
-- A key the status log no longer owns is resolved to a still-open captain-held task and fed as one keyed line.
-  The script tries the key as a task id first, then the legacy derived identity.
+- A key that names a still-open captain-held task is refused before anything is sent, because a firstmate steer is not the captain's answer.
+  The refusal points at `bin/fm-captain-hold.sh answer`, which records the captain's own answer.
 
 `bin/fm-procevent.sh` is the captured-result channel:
 
@@ -552,7 +552,7 @@ The suite does not test the accepted merge-to-cleanup re-hold window or asynchro
 
 - Answer-time resolution works through a bound channel with task-id keys.
   This includes the `release` mode, mode-matched replay idempotence, and the refusal of drifted, mode-mismatched, absent, unheld, and already-closed keys.
-- The chat channel reaches the same intake.
+- `fm-send --resolve-key` refuses a key that names a captain-held task, so a firstmate steer never records a captain answer.
 - `test_release_is_attended_only` exercises the attended-only release: the away posture record and the away daemon flag each refuse `answer --release` and a `release` intake line without writing, while no record and a quiet record release, and a closing answer is not gated.
 - Hold-set stamping precedes visible hold state, preserves an active lifecycle's timestamp, and resets after release.
 - Interrupted answer closure retains the stamp until close and restores resolution-first ordering on retry.
