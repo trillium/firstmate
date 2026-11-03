@@ -796,6 +796,10 @@ case "$MODE" in
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
     ;;
 esac
+if [ "$MODE" = direct-PR ] && [ -n "$UPSTREAM_CONSENT" ]; then
+  SETUP2="
+2. This task targets $UPSTREAM_CONSENT. If it re-raises an existing branch or PR there, push that existing branch directly to that repository; never run no-mistakes on it, because the pipeline would rebase onto the clone's fork default branch and open a PR against the fork."
+fi
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT") || exit 1
 

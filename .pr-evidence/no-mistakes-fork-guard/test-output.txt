@@ -1,0 +1,4 @@
+ok - fm-role.sh check: repository lineage, not remotes, identifies firstmate across forks
+ok - fm-role.sh check: gh-resolved base selects the exact fork target, otherwise legacy precedence holds
+ok - fm-spawn.sh: no-mistakes refused for an upstream target from a fork clone
+# all fm-self-repo-role tests passed

@@ -4236,6 +4236,18 @@ if [ "$KIND" = ship ]; then
       ;;
     esac
   fi
+  # An upstream re-raise from a fork clone must not run the no-mistakes pipeline:
+  # it rebases the branch onto the clone's origin (fork) default branch and opens
+  # the PR against the fork. When the recorded upstream target differs from the
+  # clone's origin, the existing branch is pushed directly (direct-PR) instead.
+  if [ "$MODE" = no-mistakes ] && [ -n "$UPSTREAM_CONSENT" ]; then
+    origin_url=$(git -C "$PROJ_ABS" remote get-url origin 2>/dev/null || true)
+    origin_id=$(fm_role_remote_identity "$origin_url" "$PROJ_ABS" 2>/dev/null || true)
+    if [ -n "$origin_id" ] && [ "$origin_id" != "$UPSTREAM_CONSENT" ]; then
+      echo "error: no-mistakes ship refused for $ID: the task targets $UPSTREAM_CONSENT but this clone's origin is $origin_id; the pipeline would rebase the branch onto the fork's default branch and open the PR against the fork. Ship it direct-PR (push the existing branch directly to the upstream) instead" >&2
+      exit 1
+    fi
+  fi
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An
   # unregistered project resolves to the same no-mistakes standing default, which

@@ -696,6 +696,27 @@ test_spawn_consent_agreement() {
   pass "fm-spawn.sh: consent must agree between flag and brief, and is refused on local-only"
 }
 
+test_spawn_refuses_no_mistakes_upstream_from_fork() {
+  local home out rc proj="$TMP_ROOT/fork-clone"
+  home=$(make_role_home spawn-fork)
+  git init -q "$proj" || fail "could not initialize fork fixture"
+  git_commit "$proj" init
+  git -C "$proj" remote add origin https://github.com/trillium/firstmate.git
+  write_ship_brief "$home" spawn-fork-c1 " upstream-consent=github.com/kunchenguid/firstmate"
+  rc=0
+  out=$(run_spawn "$home" spawn-fork-c1 "$proj" claude --mode no-mistakes --yolo off \
+    --upstream-consent github.com/kunchenguid/firstmate) || rc=$?
+  [ "$rc" -ne 0 ] || fail "no-mistakes must refuse an upstream target from a fork clone"
+  assert_contains "$out" "no-mistakes ship refused for spawn-fork-c1" "refusal must name the task"
+  assert_contains "$out" "direct-PR" "refusal must point at direct-PR"
+  assert_absent "$home/state/spawn-fork-c1.meta" "a refused spawn must write no metadata"
+  out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$home/config" FM_DATA_OVERRIDE="$home/data" \
+    "$BRIEF" brief-fork some-proj --mode direct-PR --upstream-consent github.com/kunchenguid/firstmate 2>&1) \
+    || fail "direct-PR upstream brief must scaffold: $out"
+  assert_grep "never run no-mistakes on it" "$home/data/brief-fork/brief.md" "brief must say to push directly"
+  pass "fm-spawn.sh: no-mistakes refused for an upstream target from a fork clone"
+}
+
 # --- fm-promote.sh ----------------------------------------------------------
 
 test_promote_gate_on_self_repo() {
@@ -763,6 +784,7 @@ test_brief_self_repo_pre_gate
 test_brief_self_repo_gate_without_project_flag
 test_spawn_gate_on_self_repo
 test_spawn_consent_agreement
+test_spawn_refuses_no_mistakes_upstream_from_fork
 test_promote_gate_on_self_repo
 test_secondmate_spawn_refuses_consent_flag
 
