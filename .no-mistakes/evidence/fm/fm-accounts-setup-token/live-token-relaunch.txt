@@ -1,0 +1,27 @@
+# Live lab: relaunch of a scout spawned on a declared setup-token entry reuses the recorded account; an undeclared --account is refused
+$ bin/fm-spawn.sh loosescout $LAB/projects/demo --scout --harness claude --account token:$LAB/tokens/second.token
+spawned loosescout harness=claude kind=scout window=primary:fm-loosescout worktree=~/.treehouse/demo-c0d74f/1/demo account=token:$LAB/tokens/second.token
+rc=0
+$ bin/fm-control.sh loosescout relaunch    (no --account)
+error: relaunch of a scout task requires --note (or --note-file): the replacement worker inherits the local copy but none of the conversation, so it must be told what happened
+rc=1
+$ grep account= $LAB/state/loosescout.meta
+account=token:$LAB/tokens/second.token
+$ bin/fm-control.sh loosescout relaunch --account ordinary-undeclared-path /nope
+error: account '/nope' is not declared in config/claude-accounts; name a declared entry with --account
+rc=1
+account=token:$LAB/tokens/second.token
+$ bin/fm-control.sh loosescout relaunch --note "lab relaunch check"    (no --account)
+relaunched loosescout harness=claude from=claude model=default effort=default backend=tmux endpoint=primary:fm-loosescout worktree=~/.treehouse/demo-c0d74f/1/demo
+rc=0
+$ grep account= $LAB/state/loosescout.meta
+account=token:$LAB/tokens/second.token
+# relaunched worker claude pid 62656:
+argv contains token value: 0
+env CLAUDE_CODE_OAUTH_TOKEN equals token-file value: 1
+env has ANTHROPIC_API_KEY or CLAUDE_CONFIG_DIR: 0
+# pane:
+ ▐▛███▛█   Claude Code v2.1.309
+⚠ Remote managed settings failed to load (authentication rejected (401)) · no
+⏺ Please run /login · API Error: 401 OAuth access token is invalid.
+# token value occurrences in lab home (excluding tokens/) after relaunches: 0

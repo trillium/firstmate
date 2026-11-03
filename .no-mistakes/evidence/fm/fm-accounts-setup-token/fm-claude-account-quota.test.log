@@ -1,0 +1,10 @@
+ok - each declared account prints its own quota row, read under its own root
+ok - a model-specific scope is printed only for that model
+ok - exhausted, 0%, and unreadable accounts print facts and uncertainty without a verdict
+ok - a projected exhaustion prints each account's own runway seconds and confidence without a verdict
+ok - a rate-limited account names the vendor's reason
+ok - ordinary is measured from the default ~/.claude root
+ok - an absent or malformed list refuses before any quota read
+ok - a setup-token account is reported unmeasured without running quota-axi or reading its token
+# all fm-claude-account-quota tests passed
+rc=0

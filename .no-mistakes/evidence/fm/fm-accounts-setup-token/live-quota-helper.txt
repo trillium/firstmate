@@ -1,0 +1,12 @@
+$ cat $LAB/config/claude-accounts
+ordinary
+token:$LAB/tokens/second.token
+$ FM_HOME=$LAB bin/fm-claude-account-quota.sh   (PATH shim logs each real quota-axi call)
+claude-account-quota:
+  row: ordinary  root=~/.claude  uncertainty: quota unknown (error: Claude credential invalid)
+  row: ordinary  root=~/.claude  uncertainty: no applicable quota scope
+  row: token:$LAB/tokens/second.token  root=-  uncertainty: setup-token account has no config root for quota-axi to read
+rc=0
+--- real quota-axi invocations:
+quota-axi called: CLAUDE_CONFIG_DIR=~/.claude args=--provider claude --profile-only --json
+# token value in output: 0

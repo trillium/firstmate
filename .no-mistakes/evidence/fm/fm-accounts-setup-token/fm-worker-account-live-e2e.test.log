@@ -1,0 +1,6 @@
+ok - claude 2.1.309 (Claude Code): the pin check accepts a signed-in root and refuses an empty one despite an ambient API key
+ok - claude 2.1.309 (Claude Code): the setup-token check accepts a token claude reports as oauth_token, a method an API key does not report
+ok - pi 1.0.0: the pin check reads auth check and the model listing, and refuses what only an ambient credential signs in
+skip-runner: pi-signed is not installed, so its pin check was not exercised
+# worker account live guard checked: claude pi
+rc=0

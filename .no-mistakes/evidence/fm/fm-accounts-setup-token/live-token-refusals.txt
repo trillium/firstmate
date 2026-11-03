@@ -1,0 +1,44 @@
+# Live lab: real bin/fm-spawn.sh refusals for setup-token entries (each refuses before launch; no task record published; token value never printed)
+$ token file mode 644 (group/world readable)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+error: config/claude-accounts declares a setup-token account, but the token file $LAB/tokens/second.token is readable by group or other; run chmod 600 on it
+rc=1  meta-published=no
+
+$ token file holding two tokens
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: config/claude-accounts declares a setup-token account, but the token file $LAB/tokens/second.token must hold one token with no spaces or line breaks
+rc=1  meta-published=no
+
+$ undeclared setup-token entry
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: account 'token:$LAB/tokens/other.token' is not declared in config/claude-accounts; name a declared entry with --account
+rc=1  meta-published=no
+
+$ newline-smuggled --account (declared entry + second line)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: --account must name one config/claude-accounts entry exactly, with no control characters
+rc=1  meta-published=no
+
+$ malformed list entry token:relative/t.token
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: config/claude-accounts must hold one account per line, each 'ordinary', an absolute path, or token:<absolute path of a setup-token file>, with no blank lines or control characters: $LAB/config/claude-accounts
+rc=1  meta-published=no
+
+$ no list; single pin config/claude-account = token:<file>
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: config/claude-account must hold 'ordinary' or one absolute path on a single line with no control characters: $LAB/config/claude-account
+rc=1  meta-published=no
+
+$ no list; --account token:<file>
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: --account 'token:$LAB/tokens/second.token' needs config/claude-accounts, which this home does not declare
+rc=1  meta-published=no
+
+DONE
+# token value occurrences in this output: 0

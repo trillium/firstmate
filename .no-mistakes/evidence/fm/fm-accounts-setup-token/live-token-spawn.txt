@@ -1,0 +1,33 @@
+# Live lab: real bin/fm-spawn.sh scout on a declared setup-token entry (synthetic token, lab home, private tmux socket fm-lab)
+$ cat $LAB/config/claude-accounts
+ordinary
+token:$LAB/tokens/second.token
+$ stat -f '%Lp' $LAB/tokens/second.token  -> 600
+$ bin/fm-spawn.sh tokscout $LAB/projects/demo --scout --harness claude --account token:$LAB/tokens/second.token
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+spawned tokscout harness=claude kind=scout window=primary:fm-tokscout worktree=~/.treehouse/demo-c0d74f/1/demo account=token:$LAB/tokens/second.token
+rc=0
+
+$ grep account= $LAB/state/tokscout.meta
+account=token:$LAB/tokens/second.token
+
+# Pane (real Claude Code 2.1.309): the worker authenticated with the synthetic token from the file, not the ambient key/login:
+ ▐▛███▛█   Claude Code v2.1.309
+▝▜██████▀  Opus 5.5 · Claude API
+ ▝▝   ▝▝   ~/.treehouse/demo-c0d74f/1/demo
+⚠ Remote managed settings failed to load (authentication rejected (401)) · no
+  remote policy applied · /status for details
+❯ : Firstmate operational input waiting: read
+  '$LAB/state
+  /operational-inbox/1793697293-b7a6f6cecbbec496.msg' and handle its contents
+  as Firstmate operational input.
+⏺ Please run /login · API Error: 401 OAuth access token is invalid.
+✻ Cogitated for 3s · done 1:14 AM
+                               Update available! Run: brew upgrade claude-code
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+
+# Worker claude process (pid 58492): argv contains token: 0
+# Worker env credential vars (ambient pane had ANTHROPIC_API_KEY=ambient-lab-key and the login shell exports a different CLAUDE_CODE_OAUTH_TOKEN):
+CLAUDE_CODE_OAUTH_TOKEN=<equals the token file's synthetic value>
+# Files under $LAB (excluding tokens/), /tmp/fm-tokscout, and full pane scrollback containing the token value: 0
