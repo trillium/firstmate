@@ -1,0 +1,6 @@
+# new test, mutation: execution deadline counted from enqueue
+17:not ok - queue time consumed the second job's execution timeout
+# old test (1.8s/1.8s), same mutation
+17:not ok - queue time consumed the second job's execution timeout
+# new test, unmutated, 20 runs (11 + 9)
+20/20 ALL TESTS PASSED
