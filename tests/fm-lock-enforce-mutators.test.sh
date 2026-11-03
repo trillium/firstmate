@@ -21,6 +21,7 @@ run() {  # <script> [env...] -- runs with no args, prints stderr
   local s=$1; shift
   # Run under a second fake harness process so the caller has a verified
   # harness ancestry that differs from the lock owner (CI has no real harness).
+  # shellcheck disable=SC2016 # $0 must expand in the inner fake-harness shell
   env FM_HOME="$HOME_DIR" "$@" "$TMP_ROOT/claude" -c '"$0"; :' "$ROOT/bin/$s" 2>&1 </dev/null
 }
 
