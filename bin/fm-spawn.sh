@@ -5906,7 +5906,18 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
       /bin/sleep "$wt_poll_interval"
     done
     if [ -z "$WT" ]; then
-      echo "error: treehouse get did not enter an isolated worktree within ${wt_polls} polls of ${wt_poll_interval}s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS'); $(spawn_endpoint_hint)" >&2
+      # treehouse prints its own refusal into the pane; a pool whose free slots
+      # belong to another clone of the same origin (pool identity is repo name
+      # plus origin hash, so clones share it) counts them toward max_trees
+      # without reusing them. Name that cause instead of leaving a bare timeout.
+      pool_cause=""
+      pane_text=$(fm_backend_capture "$BACKEND" "$WT_TARGET" 120 "$W" 2>/dev/null || true)
+      case "$pane_text" in
+      *"belong to another clone"*|*"not provably this clone"*)
+        pool_cause="; treehouse refused because the pool is full of worktrees that are in use, dirty, or belong to another clone of the same origin (clones share one pool and only the owning clone reuses a slot): raise max_trees in the project's treehouse.toml or free slots with 'treehouse status' / 'treehouse prune' from the owning clone"
+        ;;
+      esac
+      echo "error: treehouse get did not enter an isolated worktree within ${wt_polls} polls of ${wt_poll_interval}s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS')${pool_cause}; $(spawn_endpoint_hint)" >&2
       exit 1
     fi
 
