@@ -2745,26 +2745,24 @@ fm_wake_window_owner() {  # <window> [<state>]
   for meta in "$state"/*.meta; do
     [ -f "$meta" ] || continue
     while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in
-        window="$win"|terminal="$win"|thread="$win")
-          meta=${meta##*/}; printf '%s' "${meta%.meta}"; return 0 ;;
-      esac
+      if [ "$line" = "window=$win" ] || [ "$line" = "terminal=$win" ] || [ "$line" = "thread=$win" ]; then
+        meta=${meta##*/}; printf '%s' "${meta%.meta}"; return 0
+      fi
     done < "$meta"
   done
   return 1
 }
 
 _fm_wake_provenance_record() {  # <epoch> <seq> <window> 
-  local log="$STATE/.wake-provenance.tsv" task owner=no n tmp
-  if task=$(fm_wake_window_owner "$3"); then owner=yes; else task=-; fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${FM_WAKE_SOURCE:-other}" "$owner" "$task" >> "$log" 2>/dev/null || return 0
-  n=$(wc -l < "$log" 2>/dev/null | tr -d '[:space:]')
+  local prov_file="$STATE/.wake-provenance.tsv" task owner=no n tmp
+  if task=$(fm_wake_window_owner "$3"); then owner=yes; else task=none; fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${FM_WAKE_SOURCE:-other}" "$owner" "$task" >> "$prov_file" 2>/dev/null || return 0
+  n=$(wc -l < "$prov_file" 2>/dev/null | tr -d '[:space:]')
   case "$n" in ''|*[!0-9]*) return 0 ;; esac
-  if [ "$n" -gt $((FM_WAKE_PROVENANCE_MAX_LINES + 500)) ]; then
-    tmp="$log.tmp.$$"
-    tail -n "$FM_WAKE_PROVENANCE_MAX_LINES" "$log" > "$tmp" 2>/dev/null && mv -f "$tmp" "$log" 2>/dev/null
-    rm -f "$tmp" 2>/dev/null || true
-  fi
+  [ "$n" -gt "$FM_WAKE_PROVENANCE_MAX_LINES" ] || return 0
+  tmp="$prov_file.tmp.$$"
+  tail -n "$FM_WAKE_PROVENANCE_MAX_LINES" "$prov_file" > "$tmp" 2>/dev/null && mv -f "$tmp" "$prov_file" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null || true
   return 0
 }
 
@@ -2774,13 +2772,13 @@ _fm_wake_provenance_record() {  # <epoch> <seq> <window>
 # it also states whether a task record owns it right now. Returns 1 when
 # nothing was recorded.
 fm_wake_explain() {
-  local arg=${1-} log="$STATE/.wake-provenance.tsv" rows queued task found=1
+  local arg=${1-} prov_file="$STATE/.wake-provenance.tsv" rows queued task found=1
   if [ -z "$arg" ]; then echo "usage: fm-watch.sh explain-wake <seq|window|pane>" >&2; return 2; fi
-  if [ -s "$log" ]; then
+  if [ -s "$prov_file" ]; then
     case "$arg" in
-      *[!0-9]*) rows=$(awk -F'\t' -v w="$arg" '$3 == w' "$log")
-        [ -n "$rows" ] || rows=$(awk -F'\t' -v w="$arg" 'index($3, w)' "$log") ;;
-      *) rows=$(awk -F'\t' -v s="$arg" '$2 == s' "$log") ;;
+      *[!0-9]*) rows=$(awk -F'\t' -v w="$arg" '$3 == w' "$prov_file")
+        [ -n "$rows" ] || rows=$(awk -F'\t' -v w="$arg" 'index($3, w)' "$prov_file") ;;
+      *) rows=$(awk -F'\t' -v s="$arg" '$2 == s' "$prov_file") ;;
     esac
     if [ -n "$rows" ]; then
       found=0
