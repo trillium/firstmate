@@ -456,7 +456,9 @@ test_failed_spawn_releases_its_lease() {
 test_control_exit_releases() {
   local body
   body=$(awk '/^  exit\)/{f=1} f&&/^  relaunch\)/{exit} f' "$ROOT/bin/fm-control.sh")
+  # shellcheck disable=SC2016  # literal source text to find, not an expansion
   assert_contains "$body" 'result=$(do_exit)' "the exit verb no longer runs do_exit"
+  # shellcheck disable=SC2016  # literal source text to find, not an expansion
   assert_contains "$body" 'fm_pool_lease_release "$STATE" "$ID"' "fm-control exit does not release the pool lease"
   [ "${body%%do_exit*}" != "$body" ] && [ "${body%%fm_pool_lease_release*}" != "$body" ] || fail "missing calls"
   case "$body" in
