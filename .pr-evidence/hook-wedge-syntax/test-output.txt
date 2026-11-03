@@ -1,0 +1,3 @@
+ok - tracked guards with conflict markers pass through with a one-line warning
+ok - a missing guard passes through
+ok - a guard that runs and denies still denies, with args and stdin intact
