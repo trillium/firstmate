@@ -1,0 +1,4 @@
+$ fm-ensure-agents-md.sh packages/server   # inside a repo whose root has AGENTS.md
+unchanged: <repo>/AGENTS.md already covers <repo>/packages/server; no AGENTS.md created
+$ ls packages/server
+0 files
