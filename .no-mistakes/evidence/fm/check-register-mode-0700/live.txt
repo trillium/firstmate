@@ -1,0 +1,12 @@
+== 0600 register
+registered: state/t1.check.sh
+rc=0
+total 16
+-rw-------@ 1 staff  84 Nov  3 20:19 t1.check-trust
+-rwx------@ 1 staff  17 Nov  3 20:19 t1.check.sh
+== hardlink
+error: custom check state/t1.check.sh must be a single-link file on the state device; not registered, the watcher will refuse it
+rc=1
+== symlink
+error: custom check is unavailable
+rc=1
