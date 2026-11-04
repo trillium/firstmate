@@ -179,6 +179,26 @@ fm_quota_single_provider_for_harness() {
   printf '%s\n' "$found"
 }
 
+# fm_quota_missing_provider_detail <rules file>: the one check that a profile
+# whose harness has no single authoritative provider family declares a
+# provider. Prints the refusal detail and returns 1 when one lacks it; prints
+# nothing and returns 0 otherwise. Shared by bin/fm-dispatch-resolve.sh and
+# bin/fm-bootstrap.sh so session start reports what a dispatch would refuse.
+fm_quota_missing_provider_detail() {
+  local location harness missing detail=''
+  missing=$(jq -r '
+    def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+    ((.rules // [])[] | profiles(.use)[] | select(has("provider") | not) | "use\t\(.harness)"),
+    (profiles(.default // null)[] | select(has("provider") | not) | "default\t\(.harness)")
+  ' "$1" 2>/dev/null) || return 0
+  while IFS=$'\t' read -r location harness; do
+    [ -n "$location" ] || continue
+    fm_quota_single_provider_for_harness "$harness" >/dev/null && continue
+    detail="${detail:+$detail; }$location profiles whose harness lacks one authoritative provider family require provider: $harness"
+  done <<< "$missing"
+  [ -z "$detail" ] || { printf '%s\n' "$detail"; return 1; }
+}
+
 fm_quota_provider_for_harness() {
   case "$1" in
     omp)
