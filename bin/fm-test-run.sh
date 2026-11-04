@@ -992,6 +992,7 @@ tests/fm-supervision-host-park.test.sh 329326
 tests/fm-supervision-host.test.sh 435581
 tests/fm-tab-label.test.sh 4600
 tests/fm-tangle-guard.test.sh 8501
+tests/fm-target-base.test.sh 8000
 tests/fm-task-delivery.test.sh 32789
 tests/fm-task-inbox.test.sh 31965
 tests/fm-tasks-axi.test.sh 2293
