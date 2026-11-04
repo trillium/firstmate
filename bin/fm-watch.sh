@@ -718,7 +718,14 @@ inbox_steer_check() {  # <window> <task>
           wake "$reason"
         fi
       fi
-      triage_log "steer-inbox delivery attempt: $task ${rec##*/} result=$ring_rc"
+      triage_log "steer-inbox delivery attempt: $task ${rec##*/} result=$ring_rc${FM_TASK_INBOX_RING_NOTE:+ ($FM_TASK_INBOX_RING_NOTE)}"
+      # Remember why the latest ring was skipped so a later escalation can name
+      # the cause instead of only "still unhandled with an idle pane".
+      if [ "$ring_rc" -eq 1 ] && [ -n "${FM_TASK_INBOX_RING_NOTE:-}" ]; then
+        printf '%s\n' "$FM_TASK_INBOX_RING_NOTE" > "${rec%/*}/.ring-skip" 2>/dev/null || true
+      else
+        rm -f "${rec%/*}/.ring-skip" 2>/dev/null || true
+      fi
       ;;
     retry)
       ring_rc=0
@@ -733,6 +740,9 @@ inbox_steer_check() {  # <window> <task>
       ;;
     escalate)
       reason=${reason:-"stale: $w (unread firstmate instruction: $rec still unhandled after $count doorbell delivery attempts with an idle pane; inspect the worker)"}
+      if [ -s "${rec%/*}/.ring-skip" ]; then
+        reason="$reason [last doorbell skipped: $(head -n 1 "${rec%/*}/.ring-skip")]"
+      fi
       if [ ! -d "${rec%/*}" ] || [ ! -f "$rec" ]; then
         fm_task_inbox_due_action "$STATE" "$task" >/dev/null || true
         return 0

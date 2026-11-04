@@ -382,10 +382,11 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # CONSTANT line the worker recovers semantically, while skipping on ambiguous
 # verdicts would starve a harness whose idle screen the classifier cannot
 # positively identify (that classifier is advisory here by design).
-# A pending composer holding exactly our own doorbell line is a previous ring
-# whose Enter never landed, so on an agent not reported busy it is submitted
-# rather than skipped; skipping it would block every later ring. On both paths
-# a lost first Enter gets one confirmed retry.
+# A composer holding only our own doorbell line, once or stacked, is a previous
+# ring whose Enter never landed, so on an agent not reported busy it is
+# submitted with Enter alone (never retyped) whatever verdict the classifier
+# gave; skipping it would block every later ring. A lost first Enter gets one
+# confirmed retry. A skip sets FM_TASK_INBOX_RING_NOTE to the reason.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
@@ -395,18 +396,27 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
     return 2
   fi
   cstate=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
-  case "$cstate" in
-    pending)
-      fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" \
-        && [ "$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)" != busy ] \
-        || return 1
-      fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-      sleep 0.3
-      fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
-      fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-      return 0
-      ;;
-  esac
+  FM_TASK_INBOX_RING_NOTE=
+  # Own-doorbell detection reads the captured composer text rather than the
+  # classifier verdict alone: the verdict can be `empty`, `unknown`, or
+  # `pending-unproven` over a composer that visibly holds our unsubmitted
+  # doorbell (claude under herdr), and retyping there only stacks more lines.
+  if fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label"; then
+    if [ "$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)" = busy ]; then
+      FM_TASK_INBOX_RING_NOTE="the composer holds this steer's own doorbell and the agent is busy"
+      return 1
+    fi
+    fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+    sleep 0.3
+    fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
+    fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+    return 0
+  fi
+  if [ "$cstate" = pending ]; then
+    # shellcheck disable=SC2034 # read by the sourcing callers (fm-send.sh, fm-watch.sh)
+    FM_TASK_INBOX_RING_NOTE="the composer holds other pending text"
+    return 1
+  fi
   # Accepted residual race: terminal input and Enter are separate delivery
   # steps, so an agent exiting after the liveness check could leave a bare
   # shell only a suffix; the `: ` prefix protects complete lines only. Do not
@@ -420,13 +430,18 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   return 0
 }
 
-# Whether the composer's content, ignoring line wrapping, is exactly <line>.
+# Whether the composer's content, ignoring line wrapping, is exactly one or
+# more back-to-back copies of <line> (every earlier ring whose Enter never
+# landed stacks another copy with no separator). Any other text, including a
+# copy mixed with typed words, is not ours.
 fm_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
-  local cap held
+  local cap held want
   fm_backend_source "$1" || return 1
   cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) || return 1
   held=$(fm_composer_extract_selected_content styled=0 "$cap") || return 1
-  [ -n "$held" ] && [ "$(printf '%s' "$held" | tr -d '[:space:]')" = "$(printf '%s' "$3" | tr -d '[:space:]')" ]
+  held=$(printf '%s' "$held" | tr -d '[:space:]')
+  want=$(printf '%s' "$3" | tr -d '[:space:]')
+  [ -n "$held" ] && [ -n "$want" ] && [ -z "${held//"$want"/}" ]
 }
 
 fm_task_inbox_is_fire_and_forget() {  # <record-path>
