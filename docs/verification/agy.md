@@ -143,6 +143,9 @@ Steering still confirms delivery: the Herdr submit core leads with the native `i
 agy renders the busy footer late for that confirm loop - about 1.5 s after Enter for a short steer and 4-5 s for a realistic longer brief, measured live on `agy 1.2.1` (2026-09-12) against the shared budget's 3 x 0.4 s - so `bin/fm-send.sh` gives agy typed targets a longer default submit-confirm budget (20 retries, about 8 s at the default cadence); an explicit `FM_SEND_RETRIES` still wins and every other harness keeps the shared 3-retry default.
 `tests/fm-send-agy-confirm.test.sh` pins the raised default and `tests/fm-agy-harness.test.sh` pins the Herdr transition path.
 This is the cursor precedent, not a gap to patch in shared code.
+`bin/fm-control.sh` exit and relaunch cannot accept `unknown`, so on Herdr they ask `fm_control_composer_structurally_empty` for a structural proof instead.
+That proof requires Herdr to report the agent `idle` and the visible pane to end in an empty bare `>` row, the full-width rule, and the idle `? for shortcuts` status row.
+A draft after the `>` or the busy `esc to cancel` status row is refused, and `tests/fm-control.test.sh` pins both against the captured frames above.
 
 ## Supervised task: spawn, steer, relaunch, and exit through the new path
 

@@ -674,6 +674,12 @@ fm_control_harness_turnend_auth_path() {  # <harness> <token>
 # sidebar cwd text, set off by a wide gap). A row with text
 # after the bar (typed input or ghost placeholder) is NOT empty, and no footer
 # or border row means the shape is unproven.
+#
+# agy renders a borderless bare `>` row that the shared classifier reads as
+# `unknown` by design (the dead-shell rule), and grok's plain `agent read`
+# cannot tell its dim placeholder from typed text; both are proven here from
+# the plain screen shape instead (fm_control_agy_composer_empty and
+# fm_control_grok_composer_empty), so exit and relaunch can reach them.
 fm_control_composer_structurally_empty() {  # <backend> <target>
   local backend=$1 target=$2
   # The caller reads the visual composer state inside a subshell, so the
@@ -690,6 +696,8 @@ fm_control_composer_structurally_empty() {  # <backend> <target>
       screen=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" agent read "$FM_BACKEND_HERDR_PANE" --source visible 2>/dev/null) || return 1
       case "$agent" in
         opencode) fm_control_opencode_prompt_block_empty "$screen" ;;
+        agy) fm_control_agy_composer_empty "$screen" ;;
+        grok) fm_control_grok_composer_empty "$screen" ;;
         *) return 1 ;;
       esac
       ;;
@@ -722,5 +730,57 @@ fm_control_opencode_prompt_block_empty() {  # <screen-text>
         rows++
       }
       exit (rows > 0 ? 0 : 1)
+    }'
+}
+
+# fm_control_agy_composer_empty: 0 only when a plain-text agy screen ends in
+# the idle composer: a bare `>` row with nothing after it, then the full-width
+# rule, then the status row that carries `? for shortcuts` (the busy status
+# row says `esc to cancel` instead, so a working turn never matches). Text
+# after the `>` is a draft, and any other trailing shape is unproven.
+fm_control_agy_composer_empty() {  # <screen-text>
+  printf '%s\n' "$1" | awk '
+    { line[NR] = $0 }
+    END {
+      n = NR
+      while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--
+      if (n < 3) exit 1
+      if (line[n] !~ /for shortcuts/ || line[n] ~ /esc to cancel/) exit 1
+      if (line[n - 1] !~ /^[[:space:]]*(─)+[[:space:]]*$/ || length(line[n - 1]) < 30) exit 1
+      exit (line[n - 2] ~ /^[[:space:]]*>[[:space:]]*$/ ? 0 : 1)
+    }'
+}
+
+# fm_control_grok_composer_empty: 0 only when the last box on a plain-text grok
+# screen is the composer (`╭─╮`, `│ ❯ │` rows, `╰─ <model> ─╯`) with no text in
+# any content row and nothing but footer text after its bottom border. The
+# placeholder `Type a message...` counts as empty, matching the shared
+# classifier on backends that cannot see styling. A typed draft, a box with no
+# prompt glyph, or a second box after it is unproven.
+fm_control_grok_composer_empty() {  # <screen-text>
+  printf '%s\n' "$1" | awk '
+    { line[NR] = $0 }
+    END {
+      b = 0
+      for (i = NR; i >= 1 && i >= NR - 6; i--) {
+        if (line[i] ~ /^[[:space:]]*╰─/ && line[i] ~ /╯[[:space:]]*$/) { b = i; break }
+        if (line[i] ~ /^[[:space:]]*[╭│╰]/) exit 1
+      }
+      if (!b) exit 1
+      t = 0
+      for (i = b - 1; i >= 1 && i >= b - 12; i--) {
+        if (line[i] ~ /^[[:space:]]*╭─/ && line[i] ~ /╮[[:space:]]*$/) { t = i; break }
+        if (line[i] !~ /^[[:space:]]*│.*│[[:space:]]*$/) exit 1
+      }
+      if (!t || t == b - 1) exit 1
+      glyph = 0
+      for (i = t + 1; i < b; i++) {
+        row = line[i]
+        sub(/^[[:space:]]*│/, "", row)
+        sub(/│[[:space:]]*$/, "", row)
+        if (row ~ /^[[:space:]]*❯/) { glyph = 1; sub(/^[[:space:]]*❯/, "", row) }
+        if (row !~ /^[[:space:]]*(Type a message\.\.\.)?[[:space:]]*$/) exit 1
+      }
+      exit (glyph ? 0 : 1)
     }'
 }
