@@ -27,6 +27,12 @@ set -u
 
 TMP_ROOT=$(fm_test_tmproot fm-watch-triage-tests)
 
+# The watcher's idle-simulator scan shells out to the host's `xcrun simctl`,
+# which blocks without bound on a host whose CoreSimulator service is wedged
+# (a self-hosted macOS runner), leaving every watcher here stuck before its
+# first poll. No case here exercises that scan, so keep the host out of it.
+export FM_SIM_IDLE_HOURS=off
+
 # Wait up to <limit> 0.1s ticks while <pid> stays alive; 0 if still alive, 1 if it died.
 wait_live() {
   local pid=$1 limit=${2:-30} i=0
