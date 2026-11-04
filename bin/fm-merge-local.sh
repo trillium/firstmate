@@ -68,10 +68,21 @@ if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   exit 1
 fi
 MERGE_EXPECTED_SPAWN_GEN=$FM_BACKLOG_META_SPAWN_GEN
-MERGE_EXPECTED_HEAD=$(fm_dod_local_done_head "$META") || {
-  echo "error: missing or malformed local done head for task $ID; report readiness before approval" >&2
-  exit 1
-}
+# A worker's `done:` line only latches local_done_head= once something observes
+# it; observe it now through the same pin path fm-crew-state.sh uses, so landing
+# needs no prior manual crew-state call. No valid done line leaves the head
+# unset and the refusal below stands.
+if ! MERGE_EXPECTED_HEAD=$(fm_dod_local_done_head "$META"); then
+  # shellcheck source=bin/fm-classify-lib.sh
+  . "$SCRIPT_DIR/fm-classify-lib.sh"
+  fm_dod_accept_ship_done ship local-only "$(fm_dod_meta_value "$META" worktree)" \
+    "$(fm_dod_meta_value "$META" project)" "$(status_current_line "$STATE/$ID.status" ship)" \
+    "$STATE" "$ID" "$META" >/dev/null 2>&1 || true
+  MERGE_EXPECTED_HEAD=$(fm_dod_local_done_head "$META") || {
+    echo "error: missing or malformed local done head for task $ID; report readiness before approval" >&2
+    exit 1
+  }
+fi
 
 MERGE_CONTROL_LOCK=
 MERGE_META_LOCK=
