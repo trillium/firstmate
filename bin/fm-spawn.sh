@@ -82,13 +82,14 @@
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
 #   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
-#   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. It refuses unless the recorded endpoint is positively
-#   agent-free on a backend with both a recovery-grade agent-state classifier
-#   and replacement-agent support (tmux or herdr), and clears the previous
-#   harness's per-task wiring before arming the new incarnation. T3 Code has
-#   the classifier but refuses relaunch because a thread keeps its conversation
-#   across turns and provider changes. Two verdicts are agent-free: a `dead`
+#   model, effort, and a declared Claude account may change, which is what
+#   makes a harness switch one ordinary relaunch. It refuses unless the
+#   recorded endpoint is positively agent-free on a backend with both a
+#   recovery-grade agent-state classifier and replacement-agent support
+#   (tmux or herdr), and clears the previous harness's per-task wiring
+#   before arming the new incarnation. T3 Code has the classifier but refuses
+#   relaunch because a thread keeps its conversation across turns and provider
+#   changes. Two verdicts are agent-free: a `dead`
 #   endpoint is ADOPTED as-is, while an endpoint PROVEN gone is RE-CREATED in the recorded
 #   worktree and the republished record rebinds the task to it. That proof is
 #   its own step, because a backend's `missing` also covers an endpoint that is
@@ -530,6 +531,13 @@
 #   it unless that relaunch passes its own --account.
 #   T3 Code refuses a pin because its provider instance owns the account.
 #   bin/fm-worker-account-lib.sh owns parsing, the check, and the shed list.
+# Claude account list (config/claude-accounts, --account <entry>):
+#   Opt-in and Claude-only. When the list is present, a Claude ship or scout
+#   spawn must name one declared entry with --account, chosen at intake, and
+#   that entry is checked, launched, and recorded exactly like a pin; a
+#   relaunch reuses the recorded entry unless --account moves it. Without the
+#   list, --account refuses and nothing else changes. docs/configuration.md
+#   "Several Claude accounts" owns the contract.
 # Per-secondmate omp profile (config/secondmate-accounts/<id>/omp-profile):
 #   Opt-in, and read only for a local secondmate's own omp agent;
 #   bin/fm-omp-profile-lib.sh owns the file and its refusals. A pinned launch
@@ -3529,7 +3537,15 @@ WORKER_ACCOUNT_MATE=
 if [ "$RELAUNCH" -eq 1 ] && [ "$ACCOUNT_SET" -eq 0 ] && [ "$HARNESS" != claude ]; then
   ACCOUNT_ARG=
 fi
-WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-$HARNESS}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE" "$ACCOUNT_ARG") || exit 1
+# A declared Claude account list (config/claude-accounts) needs the entry this
+# launch spends: --account on a fresh spawn, and on a relaunch that flag (or the
+# recorded per-launch account) or else the account the task already records.
+WORKER_ACCOUNT_REQUEST=$ACCOUNT_ARG
+if [ "$RELAUNCH" -eq 1 ]; then
+  WORKER_ACCOUNT_REQUEST=$(fm_worker_account_relaunch_request "$HARNESS" "$CONFIG" "$RELAUNCH_PRIOR_HARNESS" \
+    "$(fm_meta_get "$RELAUNCH_META" account)" "$ACCOUNT_ARG" "$WORKER_ACCOUNT_MATE") || exit 1
+fi
+WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-$HARNESS}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE" "$WORKER_ACCOUNT_REQUEST") || exit 1
 WORKER_ACCOUNT_DECLARED=${WORKER_ACCOUNT%%$'\t'*}
 WORKER_ACCOUNT_ROOT=${WORKER_ACCOUNT#*$'\t'}
 WORKER_ACCOUNT_PROVIDER=${WORKER_ACCOUNT_ROOT#*$'\t'}

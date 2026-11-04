@@ -738,6 +738,7 @@ if [ -n "$RESOLVE_KEYS" ]; then
     # captain-held task is exactly this case, and a steer must not close it.
     if resolved_hold_id=$(fm_send_hold_resolved_id "$RESOLVE_TASK_ID" "$k"); then
       RESOLVE_HOLD_KEYS="${RESOLVE_HOLD_KEYS}${RESOLVE_HOLD_KEYS:+ }$resolved_hold_id"
+      resolve_resend_args="$resolve_resend_args --resolve-key $k"
       continue
     fi
     resolve_refused_keys="${resolve_refused_keys}${resolve_refused_keys:+ }$k"
