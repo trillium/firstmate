@@ -1,0 +1,15 @@
+bin/fm-lint.sh: clean (ShellCheck 0.11.0, actionlint 1.7.12)
+
+fm-worker-account.test.sh          ok=31 not_ok=0
+fm-claude-account-quota.test.sh    ok=7 not_ok=0
+fm-control.test.sh                 ok=54 not_ok=0
+fm-control-relaunch.test.sh        ok=100 not_ok=0
+fm-test-run.test.sh                ok=44 not_ok=0
+fm-documentation-audiences.test.sh ok=4 not_ok=0
+fm-spawn-dispatch-profile.test.sh  ok=101 not_ok=0
+fm-spawn-batch.test.sh             ok=5 not_ok=0
+fm-branch-supervision.test.sh      ok=38 not_ok=0
+fm-claude-stop-autoarm.test.sh     ok=70 not_ok=0
+fm-gate-refuse.test.sh             ok=10 not_ok=0
+fm-turnend-guard.test.sh           ok=94 not_ok=0
+fm-lint.test.sh                    ok=49 not_ok=0
