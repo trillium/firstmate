@@ -1773,7 +1773,7 @@ EOF
 # same branch name. Merge commits, empty diffs, a missing id, or any miss return
 # non-zero. Plain git cherry is not used: its patch id ignores whitespace.
 unpushed_patches_are_on_pushed_branch() {
-  local branch=$1 remote ref current base commit patch_id unpushed remote_ids= ids remotes
+  local branch=$1 remote ref current base commit patch_id unpushed remote_ids='' ids remotes
   [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   remotes=$(git -C "$WT" remote 2>/dev/null) || return 1
