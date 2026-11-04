@@ -80,8 +80,9 @@
 # opt-in in the same way: absent, nothing here changes. Present, it replaces the
 # home-wide pin, which must then be absent, and every Claude ship or scout
 # launch names one declared entry with --account; Firstmate chooses it at
-# intake (bin/fm-claude-account-quota.sh measures each entry) and never
-# defaults to the first entry, another entry, or the ambient account. The named
+# intake (bin/fm-claude-account-quota.sh measures each entry), or a spawn that
+# names none lets fm_worker_account_autopick choose the entry with the most
+# headroom. Nothing defaults to the first entry or the ambient account. The named
 # entry passes the same root, raw-command, and sign-in refusals as a pin and is
 # recorded as account=, which a ship or scout relaunch reuses unless an
 # explicit --account moves it. A local secondmate's agent never draws from the
@@ -333,6 +334,82 @@ fm_worker_account_list() {
     return 1
     ;;
   esac
+}
+
+# fm_worker_account_low_threshold <config-dir>
+# Prints the remaining-quota percentage below which an account is no longer
+# chosen automatically: FM_CLAUDE_ACCOUNT_LOW_THRESHOLD, else the first line of
+# config/claude-account-low-threshold, else 20. Returns 1 with one error when
+# the value is not a number from 0 to 100.
+fm_worker_account_low_threshold() {
+  local value=${FM_CLAUDE_ACCOUNT_LOW_THRESHOLD:-} file="$1/claude-account-low-threshold"
+  if [ -z "$value" ] && [ -f "$file" ] && [ -r "$file" ]; then
+    IFS= read -r value < "$file" || true
+  fi
+  [ -n "$value" ] || value=20
+  case "$value" in
+  '' | *[!0-9.]* | *.*.* | . | *.)
+    echo "error: the Claude account low-headroom threshold must be a percentage from 0 to 100 (FM_CLAUDE_ACCOUNT_LOW_THRESHOLD or config/claude-account-low-threshold): $value" >&2
+    return 1
+    ;;
+  esac
+  awk -v v="$value" 'BEGIN { exit !(v + 0 <= 100) }' || {
+    echo "error: the Claude account low-headroom threshold must be a percentage from 0 to 100 (FM_CLAUDE_ACCOUNT_LOW_THRESHOLD or config/claude-account-low-threshold): $value" >&2
+    return 1
+  }
+  printf '%s\n' "$value"
+}
+
+# fm_worker_account_autopick <config-dir> <model>
+# Chooses the declared config/claude-accounts entry a Claude ship or scout
+# spawn that names no --account launches on. Each entry's headroom is the
+# lowest remaining percentage across the scopes bin/fm-claude-account-quota.sh
+# reports for <model>. The highest headroom at or above the low threshold wins,
+# ties going to the earlier entry. An entry with no usable reading stays
+# eligible, behind every measured one, so a failed read never strands a launch.
+# An entry below the threshold is never chosen. Prints
+# "entry<TAB>reason" on success. Returns 1 with one error when every entry is
+# measured and low, or when the list or threshold is unusable; the spawn then
+# needs an explicit --account. Reads quota facts only: no login, token, or
+# account file is read or changed.
+fm_worker_account_autopick() {
+  local config=$1 model=${2:-} threshold readings pick
+  threshold=$(fm_worker_account_low_threshold "$config") || return 1
+  readings=$(FM_CONFIG_OVERRIDE=$config "$FM_WORKER_ACCOUNT_LIB_DIR/fm-claude-account-quota.sh" ${model:+--model "$model"} 2>/dev/null) || {
+    echo "error: bin/fm-claude-account-quota.sh could not measure config/claude-accounts, so no account can be chosen automatically; name one with --account" >&2
+    return 1
+  }
+  pick=$(printf '%s\n' "$readings" | awk -v thr="$threshold" '
+    function entry(line,   s, i) {
+      s = substr(line, index(line, "row: ") + 5)
+      i = index(s, "  root=")
+      return i ? substr(s, 1, i - 1) : s
+    }
+    /^  row: / {
+      e = entry($0)
+      if (!(e in seen)) { seen[e] = 1; order[++n] = e }
+      if (match($0, /  remaining=[0-9.]+%/)) {
+        r = substr($0, RSTART + 12, RLENGTH - 13) + 0
+        if (!(e in low) || r < low[e]) low[e] = r
+      }
+    }
+    END {
+      best = ""; bestv = -1; lowlist = ""; unknown = ""
+      for (i = 1; i <= n; i++) {
+        e = order[i]
+        if (!(e in low)) { if (unknown == "") unknown = e; continue }
+        if (low[e] < thr) { lowlist = lowlist ((lowlist == "" ? "" : ", ")) e "=" low[e] "%"; continue }
+        if (low[e] > bestv) { best = e; bestv = low[e] }
+      }
+      if (best != "") printf "%s\tauto-selected %s (%s%% headroom >= %s%% threshold%s)\n", best, best, bestv, thr, (lowlist == "" ? "" : "; skipped low: " lowlist)
+      else if (unknown != "") printf "%s\tauto-selected %s (no usable quota reading, kept eligible%s)\n", unknown, unknown, (lowlist == "" ? "" : "; skipped low: " lowlist)
+      else printf "\tevery declared Claude account is below the %s%% low-headroom threshold (%s)\n", thr, lowlist
+    }')
+  if [ -z "${pick%%$'\t'*}" ]; then
+    echo "error: ${pick#*$'\t'}; name an account with --account to launch anyway" >&2
+    return 1
+  fi
+  printf '%s\n' "$pick"
 }
 
 # fm_worker_account_relaunch_request <harness> <config-dir> <prior-harness> <recorded-account> <explicit-account> [<secondmate-id>]

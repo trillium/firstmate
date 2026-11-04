@@ -3573,10 +3573,21 @@ fi
 # A declared Claude account list (config/claude-accounts) needs the entry this
 # launch spends: --account on a fresh spawn, and on a relaunch that flag or
 # else the account the task already records.
+ACCOUNT_REASON=
+if [ "$RELAUNCH" -eq 0 ] && [ -z "$ACCOUNT_ARG" ] && [ "$HARNESS" = claude ] && [ "$KIND" != secondmate ] \
+  && [ -n "$(fm_worker_account_list claude "$CONFIG" 2>/dev/null)" ]; then
+  # A declared list and no --account: take the entry with the most headroom.
+  ACCOUNT_PICK=$(fm_worker_account_autopick "$CONFIG" "$MODEL") || exit 1
+  ACCOUNT_ARG=${ACCOUNT_PICK%%$'\t'*}
+  ACCOUNT_REASON=${ACCOUNT_PICK#*$'\t'}
+  echo "account: $ACCOUNT_REASON" >&2
+fi
 WORKER_ACCOUNT_REQUEST=$ACCOUNT_ARG
 if [ "$RELAUNCH" -eq 1 ]; then
   WORKER_ACCOUNT_REQUEST=$(fm_worker_account_relaunch_request "$HARNESS" "$CONFIG" "$RELAUNCH_PRIOR_HARNESS" \
     "$(fm_meta_get "$RELAUNCH_META" account)" "$ACCOUNT_ARG" "$WORKER_ACCOUNT_MATE") || exit 1
+  # An automatic choice keeps its reason until an explicit --account moves it.
+  [ -n "$ACCOUNT_ARG" ] || ACCOUNT_REASON=$(fm_meta_get "$RELAUNCH_META" account_reason)
 fi
 WORKER_ACCOUNT=$(fm_worker_account_select "$HARNESS" "$CONFIG" "$MODEL" "${PI_BIN:-$HARNESS}" "$RAW_COMMAND" "$WORKER_ACCOUNT_MATE" "$WORKER_ACCOUNT_REQUEST") || exit 1
 WORKER_ACCOUNT_DECLARED=${WORKER_ACCOUNT%%$'\t'*}
@@ -7590,6 +7601,7 @@ preserve_relaunch_meta() {
   # directory), so a relaunch re-resolves the same account. Absent when the
   # home-wide pin or no pin applied.
   [ -z "$WORKER_ACCOUNT" ] || [ -z "$ACCOUNT_ARG" ] || echo "account_request=$ACCOUNT_ARG"
+  [ -z "$WORKER_ACCOUNT" ] || [ -z "$ACCOUNT_REASON" ] || echo "account_reason=$ACCOUNT_REASON"
   # The per-secondmate omp profile pin, only when one applies, so every other
   # task record stays byte-identical.
   [ -z "$OMP_PROFILE_PIN" ] || echo "omp_profile=$OMP_PROFILE_PIN"

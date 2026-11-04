@@ -44,7 +44,7 @@ It never removes this skill's authority, and its `ambiguous`, `escalate`, and `e
 
 ## Claude account list
 
-When the home declares `config/claude-accounts`, each Claude candidate is one candidate per declared account, and the spawn needs the chosen account as `--account <entry>`.
+When the home declares `config/claude-accounts`, each Claude candidate is one candidate per declared account, and pass the chosen account as `--account <entry>`; a spawn that names none picks the declared entry with the most headroom itself.
 Measure them with `bin/fm-claude-account-quota.sh [--model <model>]` instead of the default TOON's single `claude` row, which reads only the ambient account; its header owns the per-account read and output.
 It prints data only, never a choice: each account's applicable scopes and any uncertainty it could not measure.
 Apply the three gates below to each account's rows, taking a projected runway's time from the row's own `usableRunwaySeconds`, rank the eligible ones by their limiting scope's `spendPriority` exactly as for profiles, and pass the chosen entry as `--account <entry>`.
