@@ -1191,9 +1191,6 @@ fm_backend_source() {  # <name>
     hc)
       set -- fm-backend-hometag-lib.sh fm-composer-lib.sh fm-agent-process-lib.sh fm-session-lock-lib.sh fm-gemini-lib.sh fm-hermes-process-lib.sh fm-cursor-lib.sh
       ;;
-    hc)
-      set -- fm-backend-hometag-lib.sh fm-composer-lib.sh fm-agent-process-lib.sh fm-session-lock-lib.sh fm-gemini-lib.sh fm-hermes-process-lib.sh fm-cursor-lib.sh
-      ;;
     *)
       return 1
       ;;
