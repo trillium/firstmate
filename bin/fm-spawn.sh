@@ -3589,7 +3589,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
     "$(fm_meta_get "$RELAUNCH_META" account)" "$ACCOUNT_ARG" "$WORKER_ACCOUNT_MATE") || exit 1
   if [ "$ACCOUNT_SET" -eq 0 ]; then
     case "${ACCOUNT_REASON:-}" in
-      *'; fallback to config/claude-account') ACCOUNT_OVERRIDE_SETTING='config/claude-account' ;;
+      'fallback-pinned:'*) ACCOUNT_OVERRIDE_SETTING='config/claude-account' ;;
     esac
   fi
 elif [ "$HARNESS" = claude ] && [ -z "$WORKER_ACCOUNT_MATE" ] && [ -z "$ACCOUNT_ARG" ]; then

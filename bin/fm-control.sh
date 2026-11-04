@@ -1157,7 +1157,7 @@ resolve_relaunch_profile() {
   elif [ "$TARGET_HARNESS" = claude ]; then
     account_request=$(fm_meta_get "$META" account_request)
     case "$(fm_meta_get "$META" account_reason)" in
-      *'; fallback to config/claude-account') account_override_setting='config/claude-account' ;;
+      'fallback-pinned:'*) account_override_setting='config/claude-account' ;;
     esac
   fi
   TARGET_ACCOUNT=$(fm_worker_account_relaunch_request "$TARGET_HARNESS" "$account_cfg" \
