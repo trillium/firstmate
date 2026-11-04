@@ -220,6 +220,8 @@ fm_session_lock_refuse_mutator "$STATE" fm-pr-merge || exit 1
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-pr-github-ready-lib.sh
+. "$SCRIPT_DIR/fm-pr-github-ready-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
