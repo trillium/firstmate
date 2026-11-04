@@ -1,0 +1,7 @@
+ok - malformed and ahead-of-store cursor state fail closed before any outcome can be skipped
+ok - middle sequence conflicts fail closed for every store read and append
+ok - a claim naming the other actor fails loudly instead of silently impersonating it
+ok - the away-posture record relocates the PR merge and a spawn under the spend cap to the branch, never local landing, and only while confirmed, valid, and away
+ok - the away spend cap counts only genuinely working workers and its refusal names the true live count
+ok - the away spend cap is rechecked under the task-set lock so concurrent spawns cannot both publish
+exit=0
