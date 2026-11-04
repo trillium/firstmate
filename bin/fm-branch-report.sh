@@ -117,6 +117,20 @@ fi
 
 [ "$WAKE_SET" -eq 1 ] || WAKE=$(turn_field wake)
 
+# A summary may not claim passing checks the forge has not confirmed: the
+# worker's ready line carries no CI result, so the claim is checked here against
+# the same readiness judgment the merge enforces (bin/fm-pr-ready-check.sh).
+# The PR is the task's recorded pr= or the first PR URL the summary names.
+if printf '%s' "$SUMMARY" | grep -Eiq '\bgreen\b|\bci\b[^.]{0,24}\b(pass|passed|passing|succe)|checks?\b[^.]{0,24}\b(pass|passed|passing|succe)|(pass|passed|passing)[^.]{0,24}\bchecks?\b'; then
+  CLAIM_PR=$(sed -n 's/^pr=//p' "$STATE/$TASK.meta" 2>/dev/null | tail -n 1)
+  [ -n "$CLAIM_PR" ] || CLAIM_PR=$(printf '%s' "$SUMMARY" | grep -Eo 'https://[^[:space:])>]+/pull/[0-9]+' | head -n 1)
+  [ -n "$CLAIM_PR" ] \
+    || refuse "the summary claims passing checks but names no pull request to verify them against; say what you verified, such as that the pull request is open, instead"
+  if ! CLAIM_OUT=$("$SCRIPT_DIR/fm-pr-ready-check.sh" "$CLAIM_PR" 2>&1); then
+    refuse "the summary claims passing checks, but the forge does not confirm them for $CLAIM_PR: $(printf '%s' "$CLAIM_OUT" | tr '\n' ' '); report what was actually verified, such as that the pull request is open and its checks are still pending or unreported"
+  fi
+fi
+
 set -- append --task "$TASK" --verdict "$VERDICT" --summary "$SUMMARY" --silent "$SILENT"
 [ -z "$WAKE" ] || set -- "$@" --wake "$WAKE"
 if ! SEQ=$("$SCRIPT_DIR/fm-branch-outcome.sh" "$@"); then

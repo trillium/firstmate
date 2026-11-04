@@ -17,6 +17,47 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/supervision-host-helpers.sh"
 
 
+# A summary that says the checks pass must be backed by the forge: a PR whose
+# required check has not reported is refused, and nothing reaches the store.
+test_report_refuses_a_green_claim_the_forge_does_not_confirm() {
+  local home state fake out rc pr_url=https://github.com/acme/widgets/pull/287
+  home="$TMP_ROOT/report-green"
+  state="$home/state"
+  fake="$TMP_ROOT/report-green-bin"
+  mkdir -p "$state" "$fake"
+  printf 'turn=t1\nrows=1\ntasks=alpha\nunscoped=0\nwake=signal: alpha.status\n' > "$state/.supervision-host-turn"
+  printf 'pr=%s\n' "$pr_url" > "$state/alpha.meta"
+  cat > "$fake/gh" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  "pr view"*statusCheckRollup*)
+    printf '{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED","headRefOid":"ff0929d8ff0929d8ff0929d8ff0929d8ff0929d8","baseRefName":"main","statusCheckRollup":[{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"}%s]}\n' "${FM_TEST_CI_ENTRY:-}" ;;
+  api\ *"/rules/branches/"*) printf '[]\n' ;;
+  api\ *"/branches/main")
+    printf '{"name":"main","protected":true,"protection":{"enabled":true,"required_status_checks":{"contexts":["lint","ci"],"checks":[{"context":"lint","app_id":null},{"context":"ci","app_id":null}]}}}\n' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$fake/gh"
+
+  out=$(PATH="$fake:$PATH" FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+    --task alpha --verdict captain --summary "PR ready, all checks passing at head ff0929d8: $pr_url" 2>&1); rc=$?
+  expect_code 3 "$rc" "a green claim with an unreported required check must be refused" "$out"
+  assert_contains "$out" "required check 'ci' has not reported" "the refusal must name the unreported required check"
+  [ ! -e "$state/branch-outcomes.jsonl" ] || fail "a refused green claim reached the outcome store"
+
+  out=$(PATH="$fake:$PATH" FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+    --task alpha --verdict captain --summary "PR ready for review, checks still pending: $pr_url" 2>&1); rc=$?
+  expect_code 0 "$rc" "a ready report that claims nothing about checks is recorded" "$out"
+
+  out=$(PATH="$fake:$PATH" FM_TEST_CI_ENTRY=',{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}' \
+    FM_HOME="$home" FM_SUPERVISION_ACTOR=branch FM_BRANCH_REPORT_TURN=t1 "$REPORT" \
+    --task alpha --verdict captain --summary "PR ready, all checks passing: $pr_url" 2>&1); rc=$?
+  expect_code 0 "$rc" "a green claim the forge confirms is recorded" "$out"
+  pass "report surface: a passing-checks claim is recorded only when the forge confirms the required checks"
+}
+
+
 # --- report surface -----------------------------------------------------------
 
 test_report_surface_enforces_actor_turn_and_scope() {
@@ -589,6 +630,7 @@ fm_test_run \
   test_report_surface_enforces_actor_turn_and_scope \
   test_report_after_the_return_is_queued_for_main \
   test_dispatch_entry_scopes_rows_and_renders_the_away_tail \
+  test_report_refuses_a_green_claim_the_forge_does_not_confirm \
   test_branch_outcomes_only_on_a_host_home_off_pi \
   test_branch_outcomes_put_captain_first_and_collapse_routine_overflow \
   test_branch_outcomes_collapse_repeated_captain_outcomes_per_task \
