@@ -32,11 +32,14 @@ fm_lab_home_error() {
 }
 
 fm_lab_home_tmux_record() { printf '%s/state/.fm-lab-tmux-dir' "$1"; }
+# Probe the stat binary's own dialect, not the kernel: GNU coreutils can sit
+# ahead of /usr/bin on Darwin. GNU first, because BSD rejects -c cleanly with
+# empty stdout while GNU answers -f with a filesystem dump instead of failing.
 fm_lab_home_mode() {
-  case "$(uname -s)" in Darwin) stat -f '%Lp' "$1" ;; *) stat -c '%a' "$1" ;; esac
+  stat -c '%a' "$1" 2>/dev/null || /usr/bin/stat -f '%Lp' "$1" 2>/dev/null
 }
 fm_lab_home_owner() {
-  case "$(uname -s)" in Darwin) stat -f '%u' "$1" ;; *) stat -c '%u' "$1" ;; esac
+  stat -c '%u' "$1" 2>/dev/null || /usr/bin/stat -f '%u' "$1" 2>/dev/null
 }
 
 case "${1:-}" in
