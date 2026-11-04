@@ -2358,10 +2358,11 @@ conclude_task_no_mistakes_run() {  # <worktree>
 # documents as slow). Never $$ (this script's own pid). Empty output when
 # nothing matches; failure means the scan could not establish a safe result.
 pids_with_cwd_under() {  # <dir>
-  local dir=$1 out pid path line
+  local dir=$1 out pid path line lsof_bin
   [ -n "$dir" ] && [ -d "$dir" ] || return 0
   dir=$(cd "$dir" && pwd -P) || return 1
-  out=$(lsof -a -d cwd -Fpn 2>/dev/null) || return 1
+  lsof_bin=$(fm_lsof_bin) || return 1
+  out=$("$lsof_bin" -a -d cwd -Fpn 2>/dev/null) || return 1
   [ -n "$out" ] || return 0
   pid=
   while IFS= read -r line; do
@@ -2488,7 +2489,7 @@ reap_task_worktree_processes() {  # <label> <dir>...
   local label=$1 pids pid identity current_pids i pass=1 max_passes=3
   local -a tracked_pids tracked_identities remaining_pids remaining_identities
   shift
-  if ! command -v lsof >/dev/null 2>&1; then
+  if ! fm_lsof_bin >/dev/null; then
     reap_task_backend_process_group "$label"
     return 0
   fi
