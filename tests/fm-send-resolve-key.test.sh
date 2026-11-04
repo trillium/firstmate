@@ -604,6 +604,32 @@ test_remote_transport_failure_does_not_close() {
   pass "fm-send --resolve-key: a failed remote transport never closes the decision"
 }
 
+# Closing a missed-reply wait must not mint a fresh expectation: with
+# --fire-and-forget the answer closes the key and creates no pending-reply record.
+test_fire_and_forget_resolve_key_mints_no_new_expectation() {
+  local dir fb log home rc corr key before after
+  dir="$TMP_ROOT/faf-resolve"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home faf-resolve)
+  fm_write_secondmate_meta "$home/state/domain.meta" "$home" "sess:fm-domain"
+  corr=abcdef0123456789
+  key="pending-reply-$corr"
+  printf 'blocked [key=%s]: pending-reply-missed: task=domain pending-reply-id=%s request=ship it\n' \
+    "$key" "$corr" > "$home/state/domain.status"
+  before=$(find "$home/state" -name '*pending-reply*' | wc -l)
+
+  run_send "$fb" "$home" "$log" domain --resolve-key "$key" --fire-and-forget 0123456789abcdef "no reply needed"; rc=$?
+  expect_code 0 "$rc" "a fire-and-forget answer send should succeed"
+  grep -F "pending-reply-resolved: task=domain pending-reply-id=$corr" "$home/state/domain.status" >/dev/null \
+    || fail "the wait was not closed: $(cat "$home/state/domain.status")"
+  after=$(find "$home/state" -name '*pending-reply*' | wc -l)
+  [ "$before" = "$after" ] || fail "the answer minted a new pending-reply expectation"
+  if drain_out "$home" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "a wait is still open after the answer"
+  fi
+  pass "fm-send --resolve-key --fire-and-forget: closes the wait and mints no new expectation"
+}
+
 test_flag_misuse_refuses() {
   local dir fb log home err rc
   dir="$TMP_ROOT/misuse"; mkdir -p "$dir"
@@ -1239,6 +1265,7 @@ test_remote_secondmate_answer_closes_locally
 test_remote_reply_corr_tag_does_not_block_resolve_key
 test_remote_transport_failure_does_not_close
 test_flag_misuse_refuses
+test_fire_and_forget_resolve_key_mints_no_new_expectation
 test_reserved_pending_reply_key_closes_through_resolve_key
 test_unrelated_writer_cannot_close_or_hijack_reserved_key
 test_unclosable_reserved_key_refuses_before_send
