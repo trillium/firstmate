@@ -1855,6 +1855,40 @@ A malformed or unreadable file refuses every fresh ship or scout spawn until it 
 Firstmate cannot see which part of a worker's life uses the resource, so the number bounds whole workers from launch to handoff, and the tightest resource every worker needs should decide it.
 [`bin/fm-project-capacity-lib.sh`](../bin/fm-project-capacity-lib.sh) owns the file format, what holds a place, and why concurrent spawns cannot both take the last one.
 
+## Pool leases (config/pool-lease)
+
+The optional local, gitignored `config/pool-lease` keeps several workers from draining one small quota pool at the same time.
+Without it nothing changes.
+It names a [lease-axi](https://github.com/trillium/lease-axi) authority and a cap per provider:
+
+```text
+authority http://my-authority:7117
+ttl 5m
+cap codex 1
+cap agy 1
+```
+
+The authority is one HTTP service every home and machine asks, so the cap counts every holder.
+`ttl` is optional and defaults to five minutes.
+Only `codex` and `agy` can be capped, and a provider with no `cap` line is uncapped; Claude has no usage limit and is never leased.
+A malformed or unreadable file refuses every fresh spawn until it is fixed, rather than guessing the intended limit.
+Secondmate homes receive the file through the inherited-config path.
+
+The pool is `<provider>/<accountKey>/<scope>`, the same provider, account, and scope join `quota-axi` rows use, so each Codex account is its own pool and each Antigravity scope (`gemini`, `argon`, `claude_gpt`) is its own pool.
+Before launching a worker for a capped pool, `bin/fm-spawn.sh` takes a lease from the authority.
+When the pool is held, it launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line, and exits 75, like project capacity.
+When the authority cannot be reached, it refuses the spawn rather than launching unleased.
+A relaunch in the same pool keeps its lease.
+
+A lease comes back automatically:
+
+- Cleanup (`bin/fm-teardown.sh`, including a secondmate retirement) and `bin/fm-control.sh <id> exit` release it at once.
+- The watcher renews it only while the worker shows activity (status, busy, turn-end, or progress records), and releases it after 30 minutes of inactivity (`FM_POOL_LEASE_IDLE_SECS`); a declared `paused:` wait counts as inactive.
+  A worker that becomes active again takes a new lease, and waits for it while the pool is held.
+- A crashed worker stops being renewed and the authority expires the lease after the `ttl`.
+
+[`bin/fm-pool-lease-lib.sh`](../bin/fm-pool-lease-lib.sh) owns the file format, the pool id, and the lease calls, and [`bin/fm-pool-lease-tick.sh`](../bin/fm-pool-lease-tick.sh) owns the watcher pass.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.

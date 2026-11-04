@@ -71,6 +71,10 @@ SH
   ln -s "$ROOT/bin/fm-lease-lib.sh" "$fake/bin/fm-lease-lib.sh"
   # fm-sim-lib.sh: teardown sources it to shut down the simulators the task booted.
   ln -s "$ROOT/bin/fm-sim-lib.sh" "$fake/bin/fm-sim-lib.sh"
+  # fm-pool-lease-lib.sh (and the fm-quota-axi-lib.sh it sources): teardown sources it to
+  # give back a quota pool lease; inert here, no config/pool-lease.
+  ln -s "$ROOT/bin/fm-pool-lease-lib.sh" "$fake/bin/fm-pool-lease-lib.sh"
+  ln -s "$ROOT/bin/fm-quota-axi-lib.sh" "$fake/bin/fm-quota-axi-lib.sh"
   # Lifecycle serialization, status presentation retirement, and shared adapter
   # ownership are sourced by teardown.
   ln -s "$ROOT/bin/fm-control-lib.sh" "$fake/bin/fm-control-lib.sh"
@@ -181,6 +185,8 @@ SH
   ln -s "$ROOT/bin/fm-lease-lib.sh" "$fake/bin/fm-lease-lib.sh"
   # fm-sim-lib.sh: teardown sources it to shut down the simulators the task booted.
   ln -s "$ROOT/bin/fm-sim-lib.sh" "$fake/bin/fm-sim-lib.sh"
+  ln -s "$ROOT/bin/fm-pool-lease-lib.sh" "$fake/bin/fm-pool-lease-lib.sh"
+  ln -s "$ROOT/bin/fm-quota-axi-lib.sh" "$fake/bin/fm-quota-axi-lib.sh"
   ln -s "$ROOT/bin/fm-control-lib.sh" "$fake/bin/fm-control-lib.sh"
   ln -s "$ROOT/bin/fm-classify-lib.sh" "$fake/bin/fm-classify-lib.sh"
   # fm-timeout-lib.sh: the shared hard bound fm-classify-lib.sh sources for the
