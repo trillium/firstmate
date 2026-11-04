@@ -1114,10 +1114,6 @@ for a in "$@"; do
       TRACEPARENT_ARG=$a
       TRACEPARENT_SET=1
       ;;
-    account)
-      ACCOUNT_ARG=$a
-      ACCOUNT_SET=1
-      ;;
     *)
       echo "error: internal parser state for --$want_value" >&2
       exit 1
@@ -1194,11 +1190,6 @@ for a in "$@"; do
   --traceparent=*)
     TRACEPARENT_ARG=${a#--traceparent=}
     TRACEPARENT_SET=1
-    ;;
-  --account) want_value=account ;;
-  --account=*)
-    ACCOUNT_ARG=${a#--account=}
-    ACCOUNT_SET=1
     ;;
   *) POS+=("$a") ;;
   esac
