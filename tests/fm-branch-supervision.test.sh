@@ -66,6 +66,10 @@ test_branch_prompt_is_byte_stable_and_above_cache_floor() {
     *) fail "branch prompt lost the landed-work cleanup rule" ;;
   esac
   case "$out_a" in
+    *"says landed or merged only when this turn read state MERGED"*"require MERGED"*"are never evidence of merge"*"If the state is OPEN, do not run the cleanup and do not say landed or merged"*) ;;
+    *) fail "branch prompt lost the forge-MERGED-before-landed rule" ;;
+  esac
+  case "$out_a" in
     *"A second mate's status log is a relay channel for its child work"*"retiring a second mate is MAIN's alone"*"Report a second mate's signal wake from the status lines that wake newly presents"*"A second mate's stale wake is a liveness event: report it even when it presents no new status lines."*) ;;
     *) fail "branch prompt lost the second-mate relay, signal-span, or stale-liveness rule" ;;
   esac
