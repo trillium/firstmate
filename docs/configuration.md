@@ -1142,6 +1142,13 @@ Until then local files are the only memory owners.
 [`AGENTS.md`](../AGENTS.md) section 6 owns what a declaration changes about knowledge routing, and the internal [`stow` skill](../.agents/skills/stow/SKILL.md) owns how curation reads the declaration and protects tier-owned entries from pruning.
 The section counts toward the startup memory budget like the rest of its file, so keep it to the mapping rather than restating these rules.
 
+## Glossary store
+
+A home may declare a glossary store for quick name lookup in a `Glossary` heading inside `data/captain.md`, or inside the primary home's `data/captain-shared.md` when every secondmate home should inherit it; a local declaration wins for that home.
+The declaration names the search and add commands and any required entry label.
+No declaration means no glossary lookup rule applies.
+[`AGENTS.md`](../AGENTS.md) section 6 owns when to search and add.
+
 ## Startup memory budget (config/startup-memory-budget)
 
 `config/startup-memory-budget` is the primary-authoritative per-home allowance for the startup prompt-memory surface: `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` together.
