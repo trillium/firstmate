@@ -731,6 +731,23 @@ test_matrix_agy_prompt_row_between_separators() {
   pass "matrix: agy's lone > prompt reads empty only with an idle agy identity; typed text stays pending"
 }
 
+test_matrix_agy_background_tool_row_inside_composer() {
+  # robots-bbm1y: a running background-tool row between agy's rules made an
+  # empty prompt read pending, so relaunch and the doorbell refused it.
+  local rule tool below above typed agy_idle
+  rule='────────────────────────────────────────────────────────────────────────'
+  tool='● [11:51:09] gh run watch 123 running'
+  agy_idle=$(printf 'agy\tidle')
+  below=$'paused [at=1]: waiting\n'"$rule"$'\n>\n'"$tool"$'\n'"$rule"$'\n? for shortcuts      Gemini 3.8 Flash'
+  above=$'paused [at=1]: waiting\n'"$rule"$'\n'"$tool"$'\n>\n'"$rule"$'\n? for shortcuts      Gemini 3.8 Flash'
+  typed=$'paused [at=1]: waiting\n'"$rule"$'\n> hello\n'"$tool"$'\n'"$rule"$'\n? for shortcuts      Gemini 3.8 Flash'
+  assert_screen "agy empty prompt, tool row below, tmux" empty "$CAPS_TMUX" "$below" 2 "$agy_idle"
+  assert_screen "agy empty prompt, tool row above, tmux" empty "$CAPS_TMUX" "$above" 3 "$agy_idle"
+  assert_screen "agy empty prompt, tool row below, herdr" empty "$CAPS_STYLED" "$below" '' "$agy_idle"
+  assert_screen "agy typed text beside tool row" pending "$CAPS_TMUX" "$typed" 2 "$agy_idle"
+  pass "matrix: a running background-tool row inside agy's rules does not make an empty prompt pending"
+}
+
 test_matrix_pi_dollar_status_footer_is_empty() {
   # Pi's status row `$0.000 (sub) 5.4%/272k (auto)` at column 0 used to read
   # as a dead-shell prompt, so an idle separated composer classified unknown.
@@ -1626,6 +1643,7 @@ test_matrix_omp_status_row_bounds_bare_composer
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
 test_matrix_agy_prompt_row_between_separators
+test_matrix_agy_background_tool_row_inside_composer
 test_matrix_pi_dollar_status_footer_is_empty
 test_matrix_opencode_leftbar_signals
 test_matrix_opencode_leftbar_cwd_furniture

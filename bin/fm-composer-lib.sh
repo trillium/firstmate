@@ -2464,8 +2464,15 @@ _fm_composer_classify_pi_rows() {  # <screen> <styled> [agent]
     # agy 1.4.12): the bare glyph is its empty prompt, and any text after the
     # glyph is a draft. Pi and polytoken draw no glyph, so a lone glyph there
     # stays a draft.
+    # A running background-tool row (`● [HH:MM:SS] <command> running`) can sit
+    # inside the pair, above or below the prompt; it is agy status furniture,
+    # never a draft, so it must not turn an empty prompt pending.
     if [ "$agent" = agy ]; then
       case "$content" in
+        '●'' ['[0-9][0-9]:[0-9][0-9]:[0-9][0-9]']'*)
+          row=$((row + 1))
+          continue
+          ;;
         '>'*)
           content=${content#">"}
           fm_composer_normalize_trim_var content
