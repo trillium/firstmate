@@ -435,9 +435,21 @@ if [ "$command_name" = fm-remote-inherit.sh ] && [ -n "${FM_FAKE_OLDER_RECEIVER_
   while IFS= read -r -d '' part; do argv+=("$part"); done \
     < <(python3 -c 'import sys, base64; sys.stdout.buffer.write(base64.b64decode(sys.argv[1]))' "$argv_b64")
   rc=0
-  env -i PATH="$PATH" HOME="$remote_home" FM_HOME="$remote_home" \
-    FM_INHERITABLE_CONFIG="$FM_FAKE_OLDER_RECEIVER_CONFIG" \
-    "${FM_FAKE_RECEIVER_BIN:?}/${argv[0]}" "${argv[@]:1}" || rc=$?
+  if [ -n "${FM_FAKE_OLDER_RECEIVER_STDERR_PREFIX:-}" ]; then
+    err_tmp=$(mktemp)
+    env -i PATH="$PATH" HOME="$remote_home" FM_HOME="$remote_home" \
+      FM_INHERITABLE_CONFIG="$FM_FAKE_OLDER_RECEIVER_CONFIG" \
+      "${FM_FAKE_RECEIVER_BIN:?}/${argv[0]}" "${argv[@]:1}" 2> "$err_tmp" || rc=$?
+    sed "s/^/${FM_FAKE_OLDER_RECEIVER_STDERR_PREFIX}/" "$err_tmp" >&2
+    rm -f -- "$err_tmp"
+  else
+    env -i PATH="$PATH" HOME="$remote_home" FM_HOME="$remote_home" \
+      FM_INHERITABLE_CONFIG="$FM_FAKE_OLDER_RECEIVER_CONFIG" \
+      "${FM_FAKE_RECEIVER_BIN:?}/${argv[0]}" "${argv[@]:1}" || rc=$?
+  fi
+  if [ "${FM_FAKE_OLDER_RECEIVER_EXIT0:-0}" = 1 ]; then
+    rc=0
+  fi
   printf 'END %s %s %s %s\n' "$host" "$command_name" "$subcommand" "$item_rel" >> "$log"
   exit "$rc"
 fi
@@ -597,9 +609,23 @@ test_inherit_push_older_receiver_absent_item_is_unchanged() {
     || fail "an item after the undeclared one did not land in the remote home"
   assert_absent "$remote_home/config/item-c" "the older receiver must not gain the undeclared item"
 
+  # Transport quirks: Tailscale SSH / macOS login exits 0 even on failure.
+  : > "$CF_LOG"
+  out=$(FM_FAKE_OLDER_RECEIVER_EXIT0=1 run_inherit_push_to_older_receiver sm 2); rc=$?
+  expect_code 0 "$rc" "an absent-item refusal over a transport that exits 0 must still succeed: $out"
+  assert_contains "$out" "unchanged: config/item-c" "exit-0 transport maps the absent refusal to unchanged"
+  assert_not_contains "$out" "error:" "exit-0 transport does not leak the refusal as an error"
+
+  # Transport quirks: remote wrapper or transport adds a prefix to stderr.
+  : > "$CF_LOG"
+  out=$(FM_FAKE_OLDER_RECEIVER_STDERR_PREFIX="remote: " run_inherit_push_to_older_receiver sm 3); rc=$?
+  expect_code 0 "$rc" "an absent-item refusal with prefixed stderr must still succeed: $out"
+  assert_contains "$out" "unchanged: config/item-c" "prefixed stderr maps the absent refusal to unchanged"
+  assert_not_contains "$out" "error:" "prefixed stderr does not leak the refusal as an error"
+
   : > "$CF_LOG"
   printf 'present\n' > "$CF_HOME/config/item-c"
-  out=$(run_inherit_push_to_older_receiver sm 2); rc=$?
+  out=$(run_inherit_push_to_older_receiver sm 4); rc=$?
   expect_code 1 "$rc" "an older receiver's refusal of a present item must still fail the push: $out"
   assert_contains "$out" "error: path is not inherited material: config/item-c" "the refusal of a present item is reported"
   if grep -q 'START .* config/item-d' "$CF_LOG"; then
