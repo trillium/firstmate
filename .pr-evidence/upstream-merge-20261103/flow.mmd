@@ -1,0 +1,10 @@
+flowchart LR
+  subgraph Before
+    A[fork main] -. earlier squash, no ancestry .-> B[upstream 69023626]
+    B --> C[6 newer upstream commits]
+    A -->|"merge: 28 conflicts against old base"| X[unreviewable]
+  end
+  subgraph After
+    D[fork main] -->|"merge -s ours 69023626 records ancestry"| E1[fork main + ancestry]
+    E1 -->|"merge upstream main"| F[6 conflicts, resolved]
+  end

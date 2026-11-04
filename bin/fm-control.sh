@@ -90,6 +90,10 @@
 #              agent stops. A per-launch Claude account recorded at spawn
 #              (account_request=) keeps governing the relaunch unless it passes
 #              its own --account <value> (same grammar as config/claude-account).
+#              Under a declared config/claude-accounts list, a Claude ship or
+#              scout keeps the account its record names, and only an explicit
+#              --account <entry> moves it to another declared one, checked here
+#              the same way.
 #              A replacement omp secondmate likewise passes its per-secondmate
 #              omp profile pin (bin/fm-omp-profile-lib.sh) before the old agent
 #              stops.
@@ -275,6 +279,7 @@ ACCOUNT_SET=0
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+ACCOUNT_SET=0
 NOTE=
 NOTE_SET=0
 control_want_value=
@@ -327,6 +332,7 @@ if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
     || die "--harness, --model, --effort, --account, and --note apply to 'relaunch' only"
 fi
+[ "$ACCOUNT_SET" = 0 ] || [ -n "$NEW_ACCOUNT" ] || die "--account requires a non-empty value"
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
@@ -940,6 +946,7 @@ PRIOR_EFFORT=
 TARGET_HARNESS=$HARNESS
 TARGET_MODEL=
 TARGET_EFFORT=
+TARGET_ACCOUNT=
 
 journal_write() {  # <phase> [extra-line]...
   local phase=$1
@@ -1139,7 +1146,9 @@ resolve_relaunch_profile() {
   # the old agent has been stopped, so a pin that no longer resolves or is
   # signed out must refuse here, while nothing has changed yet.
   # A per-launch account recorded at spawn keeps governing the relaunch unless
-  # this one names its own; it does not transfer to a non-Claude runner.
+  # this one names its own; it does not transfer to a non-Claude runner. Under a
+  # declared Claude account list, the replacement stays on the account the task
+  # records unless --account explicitly moves it.
   local account_model=$TARGET_MODEL account_mate='' account_request=''
   [ "$account_model" != default ] || account_model=
   [ "$KIND" != secondmate ] || account_mate=$ID
@@ -1148,8 +1157,10 @@ resolve_relaunch_profile() {
   elif [ "$TARGET_HARNESS" = claude ]; then
     account_request=$(fm_meta_get "$META" account_request)
   fi
+  TARGET_ACCOUNT=$(fm_worker_account_relaunch_request "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+    "$PRIOR_HARNESS" "$(fm_meta_get "$META" account)" "$account_request" "$account_mate") || return 1
   fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
-    "$account_model" "$TARGET_HARNESS" "" "$account_mate" "$account_request" >/dev/null || return 1
+    "$account_model" "$TARGET_HARNESS" "" "$account_mate" "$TARGET_ACCOUNT" >/dev/null || return 1
   fm_omp_profile_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
     "$account_mate" >/dev/null || return 1
   # Likewise polytoken's launch profile and wiring refusals
@@ -1339,7 +1350,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
-  [ "$ACCOUNT_SET" = 0 ] || spawn_args+=(--account "$NEW_ACCOUNT")
+  [ -z "$TARGET_ACCOUNT" ] || spawn_args+=(--account "$TARGET_ACCOUNT")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1
