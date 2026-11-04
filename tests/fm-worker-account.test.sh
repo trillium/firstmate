@@ -51,6 +51,10 @@ fi
   printf 'ARGS=%s\n' "\$*"
 } > '$dir/claude-worker'
 SH
+  # No account can be measured here, so an unnamed account never reads the
+  # developer's real quota.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/quota-axi"
+  chmod +x "$fakebin/quota-axi"
   cat > "$fakebin/pi" <<SH
 #!/usr/bin/env bash
 root=\${PI_CODING_AGENT_DIR:-\$HOME/.pi/agent}
@@ -837,8 +841,9 @@ test_account_list_refusals() {
   mkdir -p "$CASE/signed-out"
   declare_accounts "$CASE/first" "$CASE/second" "$CASE/signed-out" ordinary
   out=$(spawn_ship "$id-none"); rc=$?
-  expect_code 1 "$rc" "a Claude spawn without --account must refuse under a list"
-  assert_refused_before_launch "$id-none" "$out" "config/claude-accounts declares 4 Claude accounts, so a Claude ship or scout launch must name one with --account"
+  expect_code 0 "$rc" "a Claude spawn without --account chooses an account under a list: $out"
+  assert_contains "$out" "account=$CASE/first" "an unmeasurable list keeps the first entry eligible"
+  assert_grep "account_reason=auto-selected $CASE/first (no usable quota reading" "$HOME_DIR/state/$id-none.meta" "the record should carry why the account was chosen"
   out=$(spawn_ship "$id-other" --account "$CASE/elsewhere"); rc=$?
   expect_code 1 "$rc" "an undeclared account must refuse"
   assert_refused_before_launch "$id-other" "$out" "account '$CASE/elsewhere' is not declared in config/claude-accounts"

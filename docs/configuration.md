@@ -1660,9 +1660,15 @@ A final newline is optional; a blank line, a relative path, a repeated entry, or
 The list is opt-in: without it, every launch, including the single pin above, behaves exactly as before, and `--account` takes the [per-launch account](#per-launch-account---account) grammar above instead of naming a declared entry.
 A home keeps either the list or `config/claude-account`, never both; with both present, every Claude launch refuses.
 
-While the list is present, every Claude ship or scout spawn must name one declared entry with `--account <entry>`.
-Firstmate chooses that entry at dispatch intake under the [`quota-array-dispatch`](../.agents/skills/quota-array-dispatch/SKILL.md) procedure, and [`bin/fm-claude-account-quota.sh`](../bin/fm-claude-account-quota.sh) measures each entry for it by running `quota-axi --provider claude --profile-only` under that entry's own config directory (`~/.claude` for `ordinary`).
-Firstmate never picks an entry by default, by file order, or from the ambient account, and never discovers, adds, or copies a login.
+While the list is present, a Claude ship or scout spawn either names one declared entry with `--account <entry>` or lets Firstmate choose it.
+With no `--account`, the spawn measures every entry through [`bin/fm-claude-account-quota.sh`](../bin/fm-claude-account-quota.sh), which runs `quota-axi --provider claude --profile-only` under that entry's own config directory (`~/.claude` for `ordinary`), and launches on the entry with the most headroom.
+An entry's headroom is its lowest remaining percentage across the scopes that bound the launch model, and ties go to the earlier entry.
+An entry below the low threshold is never chosen: 20 percent by default, or the first line of `config/claude-account-low-threshold`, or `FM_CLAUDE_ACCOUNT_LOW_THRESHOLD`, which wins over the file; the value is a number from 0 to 100.
+An entry with no usable reading stays eligible behind every measured healthy one, so a failed read never strands a launch.
+When every entry is measured and below the threshold, the spawn refuses and says to name an account with `--account`.
+The choice, with the numbers behind it, is printed on stderr and recorded as `account_reason=`; an explicit `--account` always wins and skips the measurement.
+The dispatch-intake choice under [`quota-array-dispatch`](../.agents/skills/quota-array-dispatch/SKILL.md) still decides which profile and account a task is routed to; the automatic choice applies only where no account was named.
+Firstmate never picks an entry from the ambient account, and never discovers, adds, or copies a login.
 
 The named entry passes the same refusals as a pin before anything launches: its directory must exist, a raw Claude command must not override it, and `claude auth status` must say it is signed in, with the stripped environment and credential unsetting described above.
 An undeclared, missing, or signed-out entry refuses rather than falling back to another entry or the ambient account.
@@ -1670,6 +1676,7 @@ The spawn line and the task record carry the entry as `account=`.
 
 A relaunch or recovery of that task keeps its recorded account, re-checking that it is still declared and signed in before the running worker stops.
 To move a task to another declared account, for example when its own account is exhausted, relaunch it explicitly with `bin/fm-control.sh <id> relaunch --account <entry> --note <text>`; nothing moves a running task automatically.
+A relaunch never re-measures: it keeps the recorded account and its `account_reason=` until `--account` moves it.
 A task with no recorded account, or one whose account is no longer declared, refuses a plain relaunch and needs that explicit `--account`.
 
 The list covers Claude ships and scouts only.
