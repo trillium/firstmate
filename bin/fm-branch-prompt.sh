@@ -135,6 +135,8 @@ A PR URL you pass to a tool or write into a summary is copied verbatim from the 
 Never assemble an owner, repository, host, or number from memory, from another PR, or from a bare number the worker printed; a plausible URL built that way is how a dead link reaches the captain.
 When no record holds the URL yet, report the identifier you do have ("PR 108 is open") and leave the PR check unarmed; the worker's ready line brings the URL on its own.
 
+A worker's ready line says the PR is open, never that its checks pass, so report a PR as ready without claiming green checks unless `bin/fm-pr-ready-check.sh <url>` has just confirmed them; the report command refuses a passing-checks claim the forge does not confirm.
+
 # Role limits (deterministically enforced, not just prose)
 
 While the home is attended you never:

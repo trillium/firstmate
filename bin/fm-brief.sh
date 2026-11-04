@@ -812,7 +812,7 @@ case "$MODE" in
 esac
 if [ "$MODE" = direct-PR ] && [ -n "$UPSTREAM_CONSENT" ]; then
   SETUP2="
-2. This task targets $UPSTREAM_CONSENT. If it re-raises an existing branch or PR there, push that existing branch directly to that repository; never run no-mistakes on it, because the pipeline would rebase onto the clone's fork default branch and open a PR against the fork."
+2. This task targets $UPSTREAM_CONSENT, whose default branch differs from this clone's fork default branch. Before editing, run \`$(shell_quote "$FM_ROOT/bin/fm-target-base.sh") anchor $UPSTREAM_CONSENT\` so your fresh branch starts from that repository's default branch, not the fork's. If it re-raises an existing branch or PR there, push that existing branch directly to that repository; never run no-mistakes on it, because the pipeline would rebase onto the clone's fork default branch and open a PR against the fork."
 fi
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT") || exit 1
