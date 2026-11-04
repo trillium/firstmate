@@ -1,0 +1,5 @@
+ok - disposable watcher refuses inherited state outside its marked lab
+ok - stale plain-file lock path is reclaimed and acquired
+ok - fresh plain-file lock path is respected during its grace
+ok - live symlink lock is never deleted by the plain-file reclaim
+ok - concurrent stale plain-file reclaim yields exactly one winner
