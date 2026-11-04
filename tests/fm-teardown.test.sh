@@ -5,7 +5,8 @@
 # treehouse return hard-resets the worktree. "Landed" means reachable from a remote
 # OR - for a normal ship task whose commits are not so reachable - its PR is merged
 # and GitHub reports a PR head that contains the current local work, or its content
-# is already in the up-to-date default branch.
+# is already in the up-to-date default branch, or every unpushed commit has a
+# whitespace-exact patch-id match on the worker's own pushed branch.
 #
 # Covers three fixes:
 #   - local-only fork-remote: a fork IS a remote, so fork-pushed upstream-
@@ -1117,6 +1118,60 @@ SH
     fi
   done
   pass "merged PR patch matching preserves indentation, allows exact replays, and refuses unsupported Git"
+}
+
+# A remote rebase leaves the local task branch diverged from its pushed copy even
+# though every local commit is on it under a new hash. modes: exact (all local
+# commits have exact patch matches -> ALLOW), whitespace (one local commit differs
+# only in whitespace -> REFUSE), extra (one more unique local commit -> REFUSE).
+test_diverged_after_remote_rebase_requires_exact_patch_match() {
+  local case_dir mode rc local_head expected tmp
+  for mode in exact whitespace extra; do
+    case_dir=$(make_case "remote-rebased-$mode")
+    write_meta "$case_dir" no-mistakes ship
+    add_gh_axi_error "$case_dir"
+    wt_commit_file "$case_dir" one.txt $'a:\n  b: 1' "add one"
+    if [ "$mode" = whitespace ]; then
+      wt_commit_file "$case_dir" two.txt $'c:\nd: 2' "add two"
+    else
+      wt_commit_file "$case_dir" two.txt $'c:\n  d: 2' "add two"
+    fi
+    [ "$mode" != extra ] || wt_commit_file "$case_dir" extra.txt local-only "unique local work"
+    local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+    # The remote branch holds the same patches rebased onto a newer main.
+    tmp="$case_dir/_remote_rebase"
+    git clone -q "$case_dir/origin.git" "$tmp"
+    printf '%s\n' moved > "$tmp/moved.txt"
+    git -C "$tmp" add -- moved.txt
+    git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "main moves"
+    git -C "$tmp" push -q origin main
+    printf '%s\n' $'a:\n  b: 1' > "$tmp/one.txt"
+    git -C "$tmp" add -- one.txt
+    git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "add one"
+    printf '%s\n' $'c:\n  d: 2' > "$tmp/two.txt"
+    git -C "$tmp" add -- two.txt
+    git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "add two"
+    git -C "$tmp" push -q origin HEAD:refs/heads/fm/task-x1
+    rm -rf "$tmp"
+    git -C "$case_dir/project" fetch -q origin
+    git -C "$case_dir/wt" merge-base --is-ancestor HEAD origin/fm/task-x1 2>/dev/null \
+      && fail "$mode: fixture did not diverge"
+
+    set +e
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+
+    expected=1
+    [ "$mode" != exact ] || expected=0
+    expect_code "$expected" "$rc" "remote-rebased-$mode: teardown exit"$'\n'"$(cat "$case_dir/stderr")"
+    if [ "$expected" = 1 ]; then
+      assert_grep REFUSED "$case_dir/stderr" "$mode: no refusal diagnostic"
+      assert_refusal_retained_task_state "$case_dir" "$mode" "$local_head"
+    fi
+  done
+  pass "diverged-after-remote-rebase branch is landed only when every local patch matches exactly"
 }
 
 test_merged_pr_with_later_local_commit_refuses() {
@@ -6352,6 +6407,7 @@ test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_merged_pr_patch_matching_preserves_indentation
+test_diverged_after_remote_rebase_requires_exact_patch_match
 test_merged_pr_with_later_local_commit_refuses
 test_squash_merged_rebased_branch_allows
 test_squash_merged_forgejo_pr_allows_when_main_moved_on

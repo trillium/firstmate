@@ -59,7 +59,12 @@
 # cherry, and merge-tree containment each fail to prove content landed without also
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
 # whose head contains the current local work (ancestor or whitespace-exact patch ids),
-# or a clean content-in-default tree match. Anything else refuses.
+# or a clean content-in-default tree match. Teardown also accepts a clean
+# worktree whose every unpushed commit is a single-parent, non-empty commit with a
+# whitespace-exact patch id (git patch-id --verbatim) on the worker's own pushed
+# remote-tracking branch of the same name, which covers a remote rebase that left
+# the local branch diverged; merge commits, empty diffs, and any commit without an
+# exact match still refuse. Anything else refuses.
 # The PR itself is resolved from the task's recorded pr= when present, or - when
 # no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
 # where the usual "checks green" fm-pr-check.sh trigger never fires) - by looking
@@ -1759,6 +1764,49 @@ $unpushed
 EOF
 }
 
+# Are all of the worktree's unpushed commits already on the worker's own pushed
+# branch? A remote rebase can leave the local branch diverged from it (ahead and
+# behind) although every local commit exists there under a new hash. Each local
+# commit not reachable from a remote-tracking branch (other than the
+# no-mistakes mirror) must be a single-parent commit with a non-empty diff whose
+# whitespace-exact patch id matches a commit on a remote-tracking branch of this
+# same branch name. Merge commits, empty diffs, a missing id, or any miss return
+# non-zero. Plain git cherry is not used: its patch id ignores whitespace.
+unpushed_patches_are_on_pushed_branch() {
+  local branch=$1 remote ref current base commit patch_id unpushed remote_ids= ids remotes
+  [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
+  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  remotes=$(git -C "$WT" remote 2>/dev/null) || return 1
+  while IFS= read -r remote; do
+    [ -n "$remote" ] && [ "$remote" != no-mistakes ] || continue
+    ref="refs/remotes/$remote/$branch"
+    git -C "$WT" rev-parse --quiet --verify "$ref^{commit}" >/dev/null 2>&1 || continue
+    base=$(git -C "$WT" merge-base "$current" "$ref" 2>/dev/null) || continue
+    ids=$(
+      git -C "$WT" rev-list --no-merges "$base..$ref" -- 2>/dev/null \
+        | while IFS= read -r commit; do
+            patch_id_for_commit "$commit"
+          done \
+        | sed '/^$/d'
+    ) || return 1
+    [ -z "$ids" ] || remote_ids=$(printf '%s\n%s\n' "$remote_ids" "$ids")
+  done <<EOF
+$remotes
+EOF
+  [ -n "$remote_ids" ] || return 1
+  unpushed=$(git -C "$WT" log --format=%H HEAD --not --exclude='no-mistakes/*' --remotes -- 2>/dev/null) || return 1
+  [ -n "$unpushed" ] || return 1
+  while IFS= read -r commit; do
+    [ -n "$commit" ] || continue
+    [ "$(git -C "$WT" rev-list --parents -n 1 "$commit" 2>/dev/null | wc -w | tr -d ' ')" = 2 ] || return 1
+    patch_id=$(patch_id_for_commit "$commit") || return 1
+    [ -n "$patch_id" ] || return 1
+    printf '%s\n' "$remote_ids" | grep -qxF "$patch_id" || return 1
+  done <<EOF
+$unpushed
+EOF
+}
+
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
 # PR from the recorded pr= URL first, then from the branch name, and asks the
 # forge for both the PR state and head: a recorded Forgejo URL is read through
@@ -1852,6 +1900,7 @@ content_in_default() {
 # when neither proof establishes that the work landed.
 work_is_landed() {
   local branch=$1
+  unpushed_patches_are_on_pushed_branch "$branch" && return 0
   pr_is_merged "$branch" && return 0
   content_in_default
 }
