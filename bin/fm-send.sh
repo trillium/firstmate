@@ -121,6 +121,9 @@
 # sent with --fire-and-forget <16-hex-delivery-id> uses the same inbox transport
 # without creating a reply expectation; its delivery id makes uncertain retries
 # idempotent while allowing a later identical instruction to be distinct.
+# --fire-and-forget may accompany --resolve-key: the answer then closes the
+# keyed wait without minting a new reply expectation, so closing a
+# missed-reply wait does not start another one.
 #
 # Remote secondmate delivery: the send crosses fm-on.sh to a host-local leg
 # (bin/fm-remote-secondmate-control.sh cmd_send_stdin) that writes the message as a
@@ -699,11 +702,6 @@ if [ -n "$FIRE_AND_FORGET_ID" ]; then
   [ "$MARK_FROM_FIRSTMATE" = 1 ] ||
     {
       echo "error: --fire-and-forget requires a recorded secondmate task selector" >&2
-      exit 1
-    }
-  [ -z "$RESOLVE_KEYS" ] ||
-    {
-      echo "error: --fire-and-forget cannot accompany --resolve-key" >&2
       exit 1
     }
 fi
