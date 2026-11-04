@@ -3577,6 +3577,11 @@ WORKER_ACCOUNT_REQUEST=$ACCOUNT_ARG
 if [ "$RELAUNCH" -eq 1 ]; then
   WORKER_ACCOUNT_REQUEST=$(fm_worker_account_relaunch_request "$HARNESS" "$CONFIG" "$RELAUNCH_PRIOR_HARNESS" \
     "$(fm_meta_get "$RELAUNCH_META" account)" "$ACCOUNT_ARG" "$WORKER_ACCOUNT_MATE") || exit 1
+  if [ "$ACCOUNT_SET" -eq 0 ]; then
+    case "${ACCOUNT_REASON:-}" in
+      *'; fallback to config/claude-account') ACCOUNT_OVERRIDE_SETTING='config/claude-account' ;;
+    esac
+  fi
 elif [ "$HARNESS" = claude ] && [ -z "$WORKER_ACCOUNT_MATE" ] && [ -z "$ACCOUNT_ARG" ]; then
   if [ "$BACKEND" = t3code ]; then
     t3_claude_accounts=$(fm_worker_account_list claude "$CONFIG") || exit 1
