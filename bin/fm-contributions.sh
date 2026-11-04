@@ -169,6 +169,10 @@
 # forge's review threads. Issue records and the author's own comments are never
 # tracked.
 # Source bodies are data, never commands.
+# Each successful open-PR observation also runs the push-integrity check owned
+# by fm-contribution-integrity-lib.sh (header there): conflicting head, commit
+# growth, wrong-base rebase and workflow-file rules, a check wake plus one
+# robots item per PR and head.
 # All mutations serialize on this home's .contributions.lock. Writes refuse
 # symlinks and publish by rename. No forge writes are performed.
 #
@@ -191,6 +195,8 @@ export FM_HOME FM_STATE_OVERRIDE="$STATE"
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-path-lib.sh
 . "$SCRIPT_DIR/fm-path-lib.sh"
+# shellcheck source=bin/fm-contribution-integrity-lib.sh
+. "$SCRIPT_DIR/fm-contribution-integrity-lib.sh"
 
 fail() { printf 'fm-contributions: %s\n' "$*" >&2; exit 1; }
 usage() { sed -n '2,/^set -eu$/s/^# \{0,1\}//p' "$0"; }
@@ -686,6 +692,9 @@ poll() {
     observed=0
     observe "$url" || observed=$?
     [ "$BUDGET_EXHAUSTED" -eq 0 ] || continue
+    if [ "$observed" -eq 0 ]; then
+      case "$url" in */pull/*) contribution_integrity_check "$url" || true ;; esac
+    fi
     why='no failing step recorded'
     [ ! -s "$TMP/why" ] || IFS= read -r why < "$TMP/why"
     # Wake once per failure episode: only when no owner has a prior error.
