@@ -1,0 +1,17 @@
+ok - exact suite coverage: --all lists every tests/*.test.sh once
+ok - family selection returns a proper subset of the suite
+ok - single-script selection lists exactly that path
+ok - changed-file selection stays conservative (never silent full suite)
+ok - a task marker refuses execution in the primary checkout and leaves worktrees and inspection alone
+ok - runner and its documentation surfaces select their curated family, not just their contract owners
+ok - shell line-ending policy selects runner coverage
+fm-test-run: no tests selected for changes vs HEAD (map is conservative; use --all for the complete suite)
+ok - changed selection covers dependents, fails closed for live unmapped source, and accepts retired unconsumed source
+ok - a bin reference selects the referencing scripts, and consumers still select their curated families
+ok - changed defaults to bounded automatic scheduling with serial override
+ok - --stop kills one run, emits FM_TEST_ABORTED with exit 143, spares siblings
+ok - --stop refuses a run registry that is not private to the caller
+ok - a TERM sent to the runner aborts a hung script promptly with exit 143
+ok - --stop kills children that ignore TERM before the run exits
+ok - --stop does not KILL a pid whose start identity changed
+ok - native Windows Bash runs without a registry and --stop refuses
