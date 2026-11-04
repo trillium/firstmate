@@ -1,0 +1,9 @@
+== eio2
+rc=0 out=
+attempts=3
+== eio
+rc=1 out=Bootstrap failed: 5: Input/output error
+attempts=4
+== perm
+rc=1 out=Bootstrap failed: 125: Domain does not support specified action
+attempts=1
