@@ -1677,6 +1677,7 @@ test_ship_brief_pins_the_pr_base_repository() {
     FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" "$ROOT/bin/fm-brief.sh" "pin-$mode" fork-proj --mode "$mode" >/dev/null 2>&1 \
       || fail "$mode: a fork clone with an upstream remote should scaffold"
     brief="$home/data/pin-$mode/brief.md"
+    # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
     assert_grep '`--repo trillium/herdr-web`' "$brief" "$mode: the brief must name the origin repository as the PR base"
     assert_grep 'gh-axi pr view <number> --repo trillium/herdr-web' "$brief" "$mode: the draft read-back must pass the same repository"
     assert_no_grep 'kcosr' "$brief" "$mode: the brief must never name the upstream parent"
@@ -1692,6 +1693,7 @@ test_ship_brief_pins_the_pr_base_repository() {
     --upstream-consent github.com/kcosr/herdr-web >/dev/null 2>&1 \
     || fail "an upstream-consent ship should scaffold"
   brief="$home/data/pin-consent/brief.md"
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
   assert_grep '`--repo kcosr/herdr-web`' "$brief" "a recorded upstream consent must win as the PR base repository"
   assert_no_grep 'trillium/herdr-web' "$brief" "a consent brief must not name the fork"
 

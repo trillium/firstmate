@@ -33,6 +33,7 @@ make_case() {
   git -C "$PROJECT_DIR" add README.md
   git -C "$PROJECT_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm initial
   git -C "$PROJECT_DIR" worktree add --quiet --detach "$POOL_DIR" "$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+  fm_test_seed_origin_clone "$HOME_DIR/projects" project
   FM_HOME="$HOME_DIR" "$BRIEF" "$id" project --mode no-mistakes "$@" >/dev/null \
     || fail "the brief for $id should scaffold"
   content=$(cat "$HOME_DIR/data/$id/brief.md")

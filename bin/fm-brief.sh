@@ -32,6 +32,10 @@
 #   omitting both still fails loudly so an accidental omission is never silent.
 #   Set FM_SECONDMATE_CHARTER='<charter>' to fill the charter text.
 #   Set FM_SECONDMATE_SCOPE='<scope>' to write a routing scope distinct from the charter text.
+#   A ship brief that opens a GitHub PR names its PR base repository: the
+#   upstream consent target when one is recorded, otherwise the clone's origin
+#   (bin/fm-dod-lib.sh owns the rule). The scaffold refuses when neither can be
+#   derived, because a bare gh call in a fork clone resolves to its upstream.
 #   --herdr-lab is mandatory when the task will issue Herdr lifecycle commands.
 #   It adds the hard isolation contract backed by bin/fm-herdr-lab.sh.
 #   The flag must be explicit because {TASK} and {FIRSTMATE_SPEC} are filled

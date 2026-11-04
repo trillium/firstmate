@@ -136,7 +136,8 @@ expect_code 0 "$?" "fm-note --help"
 # the scaffolding executable, not source-byte matching).
 SHOME=$TMP_ROOT/briefhome
 mkdir -p "$SHOME/data" "$SHOME/state" "$SHOME/config" "$SHOME/projects"
-FM_HOME="$SHOME" "$BRIEF" rule-ship /tmp --mode direct-PR >/dev/null 2>&1 \
+fm_test_seed_origin_clone "$SHOME/projects" shipproj
+FM_HOME="$SHOME" "$BRIEF" rule-ship shipproj --mode direct-PR >/dev/null 2>&1 \
   || fail "ship scaffold failed"
 SHIP_BRIEF=$(cat "$SHOME/data/rule-ship/brief.md")
 assert_contains "$SHIP_BRIEF" "# Notable-item beads" "ship brief rule section"

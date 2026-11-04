@@ -59,6 +59,7 @@ test_fm_home_parameterization() {
   out=$(FM_HOME="$home_two" "$ROOT/bin/fm-project-mode.sh" app 2>/dev/null)
   [ "$out" = "no-mistakes off" ] || fail "fm-project-mode did not isolate missing registry by home"
 
+  fm_test_seed_origin_clone "$home_one/projects" app
   FM_HOME="$home_one" "$ROOT/bin/fm-brief.sh" task-a app --mode no-mistakes >/dev/null || fail "brief scaffold failed under FM_HOME"
   brief="$home_one/data/task-a/brief.md"
   [ -f "$brief" ] || fail "brief was not written under FM_HOME/data"

@@ -12,6 +12,7 @@ test_primary_and_secondmate_instruction_generation() {
   local home ship charter
   home="$TMP_ROOT/home"
   mkdir -p "$home/data"
+  fm_test_seed_origin_clone "$home/projects" sample
 
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     "$BRIEF" authority-worker sample --mode no-mistakes >/dev/null 2>&1
