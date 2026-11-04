@@ -22,6 +22,13 @@ TMP_ROOT=$(fm_test_tmproot fm-brief)
 BRIEF_HOME="$TMP_ROOT/home"
 mkdir -p "$BRIEF_HOME/data"
 
+# A ship brief pins its PR base repository from the project clone's origin, so
+# every project name the ship scaffolds below use needs a clone.
+export FM_PROJECTS_OVERRIDE="$TMP_ROOT/projects"
+for seeded in some-proj direct-proj alpha arbitrary-project-name firstmate; do
+  fm_test_seed_origin_clone "$FM_PROJECTS_OVERRIDE" "$seeded" || fail "could not seed clone $seeded"
+done
+
 # The script itself must always parse under the ambient bash. That is Bash 5 in
 # CI and locally, where the issue #958/#1069 parser bug does not fire, so this
 # is a weak guard on its own; test_no_heredoc_in_command_substitution and the
@@ -506,10 +513,10 @@ test_pr_based_dod_requires_non_draft() {
       continue
     fi
     # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-    assert_grep 'confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`' "$brief" \
+    assert_grep 'confirm it is not a draft (`gh-axi pr view <number> --repo fm-test/some-proj` must print `draft: no`' "$brief" \
       "$mode: done must require reading the PR back from the forge as non-draft"
     # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-    assert_grep 'mark it ready with `gh-axi pr ready <number>`' "$brief" \
+    assert_grep 'mark it ready with `gh-axi pr ready <number> --repo fm-test/some-proj`' "$brief" \
       "$mode: a draft must be marked ready before done"
     assert_grep "If you deliberately keep the PR a draft, append \`paused" "$brief" \
       "$mode: a deliberate draft must declare a wait instead of done"
@@ -1654,6 +1661,56 @@ test_worker_role_scope
 # Rule 2 governs file edits rather than pool administration, so every crewmate
 # scaffold must prohibit the administrative act itself. The rule is emitted from
 # one shared string so the ship and scout copies cannot drift apart.
+# A fork clone carries an `upstream` remote that gh ranks above `origin`, so a bare
+# gh call there targets a third party's repository. A ship brief on a gh forge
+# therefore names its PR base repository - the clone's origin, or the recorded
+# upstream-consent target, which wins - and refuses when it cannot derive one.
+test_ship_brief_pins_the_pr_base_repository() {
+  local home projects brief out rc
+  home="$TMP_ROOT/pr-base-home"
+  projects="$home/projects"
+  mkdir -p "$home/data"
+  fm_test_seed_origin_clone "$projects" fork-proj git@github.com:Trillium/Herdr-Web.git
+  git -C "$projects/fork-proj" remote add upstream https://github.com/kcosr/herdr-web.git
+
+  for mode in direct-PR no-mistakes; do
+    FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" "$ROOT/bin/fm-brief.sh" "pin-$mode" fork-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "$mode: a fork clone with an upstream remote should scaffold"
+    brief="$home/data/pin-$mode/brief.md"
+    assert_grep '`--repo trillium/herdr-web`' "$brief" "$mode: the brief must name the origin repository as the PR base"
+    assert_grep 'gh-axi pr view <number> --repo trillium/herdr-web' "$brief" "$mode: the draft read-back must pass the same repository"
+    assert_no_grep 'kcosr' "$brief" "$mode: the brief must never name the upstream parent"
+  done
+
+  FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" "$ROOT/bin/fm-brief.sh" pin-manual fork-proj --mode no-mistakes --pr manual >/dev/null 2>&1 \
+    || fail "a pr=manual ship should scaffold"
+  brief="$home/data/pin-manual/brief.md"
+  assert_grep 'gh-axi pr create --repo trillium/herdr-web' "$brief" "pr=manual: the worker-opened PR must pass the repository"
+  assert_grep 'gh-axi pr checks <number> --repo trillium/herdr-web --watch' "$brief" "pr=manual: the check watch must pass the repository"
+
+  FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" "$ROOT/bin/fm-brief.sh" pin-consent fork-proj --mode direct-PR \
+    --upstream-consent github.com/kcosr/herdr-web >/dev/null 2>&1 \
+    || fail "an upstream-consent ship should scaffold"
+  brief="$home/data/pin-consent/brief.md"
+  assert_grep '`--repo kcosr/herdr-web`' "$brief" "a recorded upstream consent must win as the PR base repository"
+  assert_no_grep 'trillium/herdr-web' "$brief" "a consent brief must not name the fork"
+
+  # Nothing derivable from the clone: refuse and write no brief.
+  fm_test_seed_origin_clone "$projects" local-origin-proj "$home/bare.git"
+  git init -q --bare "$home/bare.git"
+  for name in local-origin-proj no-such-clone; do
+    out=$(FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" "$ROOT/bin/fm-brief.sh" "pin-bad-$name" "$name" --mode direct-PR 2>&1); rc=$?
+    expect_code 1 "$rc" "$name: a brief that cannot derive its PR base repository must refuse"
+    assert_contains "$out" "cannot pin the PR base repository" "$name: the refusal must say why"
+    assert_absent "$home/data/pin-bad-$name/brief.md" "$name: a refused brief must not be written"
+  done
+
+  # A branch-only delivery opens no PR, so it needs no repository.
+  FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" "$ROOT/bin/fm-brief.sh" pin-local no-such-clone --mode local-only >/dev/null 2>&1 \
+    || fail "local-only publishes nothing and must not need a PR base repository"
+  pass "fm-brief.sh: ship briefs pin the PR base repository to origin, or the consent target, and refuse otherwise"
+}
+
 test_crewmate_scaffolds_forbid_pool_administration() {
   local home id brief mode ship_rule scout_rule
   home="$TMP_ROOT/pool-admin-home"
@@ -1771,3 +1828,4 @@ test_branch_prefix_value_is_validated
 test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
 test_visual_evidence_contract
+test_ship_brief_pins_the_pr_base_repository

@@ -814,8 +814,12 @@ if [ "$MODE" = direct-PR ] && [ -n "$UPSTREAM_CONSENT" ]; then
   SETUP2="
 2. This task targets $UPSTREAM_CONSENT, whose default branch differs from this clone's fork default branch. Before editing, run \`$(shell_quote "$FM_ROOT/bin/fm-target-base.sh") anchor $UPSTREAM_CONSENT\` so your fresh branch starts from that repository's default branch, not the fork's. If it re-raises an existing branch or PR there, push that existing branch directly to that repository; never run no-mistakes on it, because the pipeline would rebase onto the clone's fork default branch and open a PR against the fork."
 fi
+ORIGIN_REPO=
+if fm_dod_needs_origin_repo "$MODE" "$FORGE" "$UPSTREAM_CONSENT"; then
+  ORIGIN_REPO=$(fm_dod_origin_repo "$GATE_PROJECT") || exit 1
+fi
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
-DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT") || exit 1
+DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT" "$ORIGIN_REPO") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.

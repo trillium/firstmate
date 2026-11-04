@@ -397,10 +397,10 @@ test_pr_based_dod_draft_check_uses_gh_axi() {
   local mode out
   for mode in direct-PR no-mistakes; do
     out="$TMP_ROOT/dod-$mode.md"
-    fm_dod_block "$mode" dod-draft-task > "$out"
+    fm_dod_block "$mode" dod-draft-task fm/dod-draft-task none '' '' auto fm-test/dod > "$out"
     assert_no_grep 'gh pr view' "$out" "$mode: DoD must not document a raw gh draft check"
     # shellcheck disable=SC2016  # single quotes are deliberate: the backticks must stay literal
-    assert_grep 'confirm it is not a draft (`gh-axi pr view <number>` must print `draft: no`' "$out" \
+    assert_grep 'confirm it is not a draft (`gh-axi pr view <number> --repo fm-test/dod` must print `draft: no`' "$out" \
       "$mode: DoD must read the draft state through gh-axi"
   done
   pass "PR-based DoD draft check uses gh-axi"
@@ -415,7 +415,8 @@ test_promotion_keeps_the_recorded_base_branch() {
     id="promote-base-$mode"
     meta="$home/state/$id.meta"
     mkdir -p "$home/state" "$home/data/$id"
-    printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nbase_branch=feature/hub\n' "$id" > "$meta"
+    fm_test_seed_origin_clone "$home/projects" proj
+    printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nbase_branch=feature/hub\nproject=%s\n' "$id" "$home/projects/proj" > "$meta"
     cat > "$home/data/$id/brief.md" <<'EOF'
 # Task
 ## Captain's intent
