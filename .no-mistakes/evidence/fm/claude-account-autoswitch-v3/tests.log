@@ -1,0 +1,40 @@
+== fm-claude-account-quota
+ok - exhausted, 0%, missing, and unreadable accounts print facts and uncertainty without a verdict
+ok - projected exhaustion prints usableRunwaySeconds and confidence
+ok - a rate-limited account reports the vendor's own state and error
+ok - ordinary and token:<file> accounts are measured in isolation, cached safely, and never leak the token
+ok - an unusable token file is disclosed uncertainty and never read
+ok - Keychain-kept roots are measured without the file-only flag and without an ambient token
+ok - absent or malformed lists refuse before any read, and missing quota-axi reports in-band uncertainty
+# all fm-claude-account-quota tests passed
+exit=
+== fm-worker-account
+ok - a per-secondmate token pin applies to that mate alone
+ok - the relaunch check and the exec helper handle a token pin without exposing the token
+ok - without config/claude-accounts the launch, the single pin, and the record are unchanged, and --account is a per-launch account
+ok - a declared account named with --account is checked, launched, and recorded like a pin
+ok - a list refuses a missing, undeclared, signed-out, wrong-runner, raw-override, malformed-fallback, or malformed choice
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+ok - a list never chooses a secondmate's account: it needs its own pin and refuses --account
+exit=
+== fm-dispatch-resolve
+ok - account: a claude profile passes its account to the profile line; bad or non-claude accounts do not
+ok - shared-quota opt-out: no quota snapshot, deterministic declared-order pick, opt-out stated on every candidate
+ok - shared-quota bypasses an unmet rule-level floor: the rule's own profile wins with no quota call
+ok - shared-quota bypasses an unmet profile-level floor: the first declared profile wins with no quota call
+ok - shared-quota keeps preferred_provider narrowing: the preferred family wins in declared order with no quota call
+ok - shared_quota false keeps the unchanged quota-ranked behavior
+ok - config/claude-accounts: per-account headroom feeds candidate and rule-floor evaluation, skips low accounts, and keeps unmeasured accounts eligible
+# all fm-dispatch-resolve tests passed
+exit=
+== fm-control-relaunch
+ok - fm-control relaunch: refuses to relaunch onto an adapter with no verified mechanics
+ok - fm-control relaunch: the retired incarnation's global turn-end token is revoked
+ok - fm-control relaunch: wiring cleanup failure refuses replacement arming
+ok - fm-control-lib: one owner resolves each harness's turn-end registry entry, and refuses a malformed token
+ok - fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin
+ok - fm-control relaunch: a claude secondmate keeps settings.local.json and retires the state settings file and the Stop pointer
+ok - fm-control relaunch: a mate with a per-mate override line lands on that override, not the default pin
+ok - fm-control relaunch: a mate with no override line still resolves the default pin
+exit=
