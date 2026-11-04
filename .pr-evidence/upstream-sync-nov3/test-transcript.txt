@@ -1,0 +1,25 @@
+$ git rev-list --count HEAD..upstream/main
+0
+$ git diff --stat origin/main HEAD | tail -1
+ 16 files changed, 418 insertions(+), 36 deletions(-)
+$ bin/fm-lint.sh && bin/fm-doc-audience-check.sh
+fm-lint: ok (ShellCheck 0.11.0, actionlint 1.7.12)
+fm-doc-audience-check: ok surfaces=150 local_links=1207
+$ bash tests/<file>.test.sh   # local, macOS, bash
+fm-worker-account                          31 ok  0 not ok
+fm-control-relaunch                       101 ok  0 not ok
+fm-turnend-guard                           95 ok  0 not ok
+fm-send-resolve-key                        30 ok  0 not ok
+fm-captain-hold-lifecycle                  69 ok  0 not ok
+fm-remote-secondmate-lifecycle-e2e         42 ok  0 not ok
+fm-spawn-batch                              5 ok  0 not ok
+fm-spawn-dispatch-profile                 101 ok  0 not ok
+fm-pool-lease                              13 ok  0 not ok
+fm-project-capacity                        16 ok  0 not ok
+fm-hook-guard-run                           3 ok  0 not ok
+fm-pr-merge                               125 ok  0 not ok
+fm-teardown                               155 ok  0 not ok
+fm-dispatch-resolve                        76 ok  0 not ok
+fm-test-run                                44 ok  0 not ok
+fm-watcher-lock                            31 ok  1 not ok  (stops at a case that fails the same way on both parents on macOS)
+fm-codex-hook-layer-live-e2e             local codex-cli 0.144.1 lacks --approve-for-me (host tool drift)
