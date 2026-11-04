@@ -440,7 +440,7 @@ fm_worker_account_check() {
 fm_worker_account_request_valid() {
   case "$1" in
   *[[:cntrl:]]*)
-    echo "error: --account must name one account exactly, with no control characters" >&2
+    echo "error: --account must name one config/claude-accounts entry exactly, with no control characters" >&2
     return 1
     ;;
   esac
@@ -448,37 +448,68 @@ fm_worker_account_request_valid() {
 
 # fm_worker_account_select <harness> <config-dir> <model> <executable> [<raw-command>] [<secondmate-id>] [<account>]
 # The whole launch-time decision. Prints nothing for an unpinned runner, so
-# the caller keeps today's launch unchanged. For a pinned one, a Claude ship
-# or scout launching on a declared config/claude-accounts entry named by
-# <account>, or a launch whose home declares no list and whose <account> is a
-# per-launch value (same grammar as config/claude-account, replacing the
-# home-wide and per-secondmate pin for this launch), prints
+# the caller keeps today's launch unchanged. For a pinned one, or a Claude
+# ship or scout launching on a per-launch account, prints
 # "declared<TAB>root<TAB>provider", where provider is the Pi launch model's
-# own (empty for Claude), after the model guard and the sign-in check pass. A
-# non-empty <account> is refused for any runner but Claude. On refusal prints
-# one error and returns 1. bin/fm-spawn.sh runs it before any endpoint exists,
-# and bin/fm-control.sh before a relaunch stops the live agent.
+# own (empty for Claude), after the model guard and the sign-in check pass.
+# <account> is the per-launch --account value. Under a declared
+# config/claude-accounts list it must name one declared entry exactly; without
+# that list it takes the config/claude-account grammar (ordinary, an absolute
+# config directory, or token:<absolute path>) and replaces the home-wide pin
+# for this launch. It is refused for any runner but Claude and for a
+# secondmate. On refusal prints one error and returns 1. bin/fm-spawn.sh runs
+# it before any endpoint exists, and bin/fm-control.sh before a relaunch stops
+# the live agent.
 fm_worker_account_select() {
   local harness=$1 config=$2 model=$3 executable=$4 raw=${5:-} mate=${6:-} account=${7:-}
   local selection declared root providers word provider='' selected_config setting listed count
   fm_worker_account_request_valid "$account" || return 1
   if [ -n "$account" ] && [ "$harness" != claude ]; then
-    echo "error: --account selects a Claude account, but this launch runs $harness; remove --account, or launch with --harness claude" >&2
+    echo "error: --account selects a Claude account and applies to Claude workers only, not $harness; remove --account, or launch with --harness claude" >&2
     return 1
   fi
-  listed=$(fm_worker_account_list "$harness" "$config") || return 1
-  if [ -n "$listed" ] && [ -n "$account" ] && [ -n "$mate" ]; then
+  if [ -n "$account" ] && [ -n "$mate" ]; then
     echo "error: --account applies to ships and scouts; secondmate $mate launches on its own config/secondmate-accounts/$mate/claude-account pin" >&2
     return 1
   fi
+  listed=$(fm_worker_account_list "$harness" "$config") || return 1
   if [ -n "$listed" ] && { [ -e "$config/claude-account" ] || [ -L "$config/claude-account" ]; }; then
     echo "error: config/claude-accounts and config/claude-account are both present; keep the account list or the single pin, not both" >&2
     return 1
   fi
-  if [ -z "$listed" ] && [ -n "$account" ]; then
-    # With no declared list, a per-launch account replaces the home-wide and
-    # per-secondmate pin for this one launch; everything after the selection
-    # is shared.
+  selected_config=$(fm_worker_account_config "$harness" "$config" "$mate") || return 1
+  setting="config/$(fm_worker_account_file "$harness")"
+  [ "$selected_config" = "$config" ] || setting="$selected_config/$(fm_worker_account_file "$harness")"
+  if [ -n "$listed" ] && [ -n "$mate" ] && [ "$selected_config" = "$config" ]; then
+    echo "error: config/claude-accounts chooses accounts for ships and scouts only; secondmate $mate needs its own pin in config/secondmate-accounts/$mate/claude-account" >&2
+    return 1
+  elif [ -n "$listed" ] && [ -z "$mate" ]; then
+    setting=config/claude-accounts
+    if [ -z "$account" ]; then
+      count=$(printf '%s\n' "$listed" | wc -l | tr -d ' ')
+      echo "error: config/claude-accounts declares $count Claude accounts, so a Claude ship or scout launch must name one with --account; bin/fm-claude-account-quota.sh measures each, and Firstmate never picks a default" >&2
+      return 1
+    fi
+    declared=
+    while IFS= read -r word; do
+      [ "$word" != "$account" ] || { declared=$account; break; }
+    done <<< "$listed"
+    [ -n "$declared" ] || {
+      echo "error: account '$account' is not declared in config/claude-accounts; name a declared entry with --account" >&2
+      return 1
+    }
+    declared=$account
+    root=$account
+    [ "$declared" != ordinary ] || root=
+    if [ -n "$root" ] && { [ ! -d "$root" ] || [ ! -r "$root" ] || [ ! -x "$root" ]; }; then
+      # shellcheck disable=SC2088  # Literal text for the refusal.
+      echo "error: $setting must name readable, searchable existing directories (ordinary means ~/.claude with CLAUDE_CONFIG_DIR unset): $root" >&2
+      return 1
+    fi
+    providers=
+  elif [ -n "$account" ]; then
+    # No declared list: a per-launch account replaces the home-wide pin for
+    # this one launch; everything after the selection is shared.
     fm_worker_account_value_valid "$account" || {
       echo "error: --account must be 'ordinary', one absolute path, or token:<absolute path of a setup-token file> with no control characters: $account" >&2
       return 1
@@ -490,48 +521,16 @@ fm_worker_account_select() {
     providers=${root#*$'\t'}
     root=${root%%$'\t'*}
   else
-    selected_config=$(fm_worker_account_config "$harness" "$config" "$mate") || return 1
-    setting="config/$(fm_worker_account_file "$harness")"
-    [ "$selected_config" = "$config" ] || setting="$selected_config/$(fm_worker_account_file "$harness")"
-    if [ -n "$listed" ] && [ -n "$mate" ] && [ "$selected_config" = "$config" ]; then
-      echo "error: config/claude-accounts chooses accounts for ships and scouts only; secondmate $mate needs its own pin in config/secondmate-accounts/$mate/claude-account" >&2
+    selection=$(fm_worker_account_resolve "$harness" "$selected_config" "$setting") || return 1
+    if [ -z "$selection" ]; then
+      [ "$selected_config" = "$config" ] && return 0
+      echo "error: secondmate account pin disappeared during selection: $setting" >&2
       return 1
-    elif [ -n "$listed" ] && [ -z "$mate" ]; then
-      setting=config/claude-accounts
-      if [ -z "$account" ]; then
-        count=$(printf '%s\n' "$listed" | wc -l | tr -d ' ')
-        echo "error: config/claude-accounts declares $count Claude accounts, so a Claude ship or scout launch must name one with --account; bin/fm-claude-account-quota.sh measures each, and Firstmate never picks a default" >&2
-        return 1
-      fi
-      declared=
-      while IFS= read -r word; do
-        [ "$word" != "$account" ] || { declared=$account; break; }
-      done <<< "$listed"
-      [ -n "$declared" ] || {
-        echo "error: account '$account' is not declared in config/claude-accounts; name a declared entry with --account" >&2
-        return 1
-      }
-      declared=$account
-      root=$account
-      [ "$declared" != ordinary ] || root=
-      if [ -n "$root" ] && { [ ! -d "$root" ] || [ ! -r "$root" ] || [ ! -x "$root" ]; }; then
-        # shellcheck disable=SC2088  # Literal text for the refusal.
-        echo "error: $setting must name readable, searchable existing directories (ordinary means ~/.claude with CLAUDE_CONFIG_DIR unset): $root" >&2
-        return 1
-      fi
-      providers=
-    else
-      selection=$(fm_worker_account_resolve "$harness" "$selected_config" "$setting") || return 1
-      if [ -z "$selection" ]; then
-        [ "$selected_config" = "$config" ] && return 0
-        echo "error: secondmate account pin disappeared during selection: $setting" >&2
-        return 1
-      fi
-      declared=${selection%%$'\t'*}
-      root=${selection#*$'\t'}
-      providers=${root#*$'\t'}
-      root=${root%%$'\t'*}
     fi
+    declared=${selection%%$'\t'*}
+    root=${selection#*$'\t'}
+    providers=${root#*$'\t'}
+    root=${root%%$'\t'*}
   fi
   if [ "$harness" = claude ]; then
     for word in $raw; do

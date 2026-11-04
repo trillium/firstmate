@@ -279,6 +279,7 @@ ACCOUNT_SET=0
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+ACCOUNT_SET=0
 NOTE=
 NOTE_SET=0
 control_want_value=
@@ -354,6 +355,10 @@ ID=$RAW_ID
 # live lease (contract: bin/fm-lease-lib.sh; no-op in homes without leases).
 # shellcheck source=bin/fm-lease-lib.sh
 . "$SCRIPT_DIR/fm-lease-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-pool-lease-lib.sh
+. "$SCRIPT_DIR/fm-pool-lease-lib.sh"
 fm_lease_guard "$ID" "lifecycle control (fm-control)"
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 trap control_cleanup EXIT
@@ -1403,6 +1408,8 @@ case "$VERB" in
   exit)
     result=$(do_exit)
     record_exit_marker "$result"
+    # The worker has exited, so its quota pool lease goes back at once.
+    fm_pool_lease_release "$STATE" "$ID" || true
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)

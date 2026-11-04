@@ -1075,7 +1075,7 @@ test_account_list_relaunch_refusals_happen_before_stop() {
         needle="account '$dir/elsewhere' is not declared in config/claude-accounts" ;;
       newline)
         flag=(--account "$dir/elsewhere"$'\n'"$dir/second")
-        needle="--account must name one account exactly, with no control characters" ;;
+        needle="--account must name one config/claude-accounts entry exactly, with no control characters" ;;
       signed-out)
         flag=(--account "$dir/signed-out")
         needle="config/claude-accounts pins Claude workers to $dir/signed-out, which is not signed in" ;;
@@ -1087,7 +1087,7 @@ test_account_list_relaunch_refusals_happen_before_stop() {
         needle="account '$dir/retired' is not declared in config/claude-accounts" ;;
       wrong-harness)
         flag=(--harness codex --account "$dir/second")
-        needle="--account selects a Claude account, but this launch runs codex" ;;
+        needle="applies to Claude workers only, not codex" ;;
     esac
     add_listed_task "$dir" "$id" "$recorded"
     cp "$dir/home/state/$id.meta" "$dir/meta-before"

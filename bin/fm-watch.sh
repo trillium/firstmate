@@ -3980,6 +3980,23 @@ home_summary_refresh_detached() {
   HOME_SUMMARY_PID=$!
 }
 
+# Quota pool lease renewal (docs/configuration.md "Pool leases"): one detached
+# pass per cycle while any task holds a lease record, so a slow authority never
+# stalls the beacon. bin/fm-pool-lease-tick.sh owns what the pass does.
+POOL_LEASE_TICK_PID=
+pool_lease_tick_detached() {
+  if [ -n "$POOL_LEASE_TICK_PID" ]; then
+    if kill -0 "$POOL_LEASE_TICK_PID" 2>/dev/null; then
+      return 0
+    fi
+    wait "$POOL_LEASE_TICK_PID" 2>/dev/null || true
+    POOL_LEASE_TICK_PID=
+  fi
+  FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE \
+    "$SCRIPT_DIR/fm-pool-lease-tick.sh" </dev/null >/dev/null 2>&1 &
+  POOL_LEASE_TICK_PID=$!
+}
+
 # Opt-in lane capacity facts (docs/configuration.md "Lane capacity"): publish
 # state/lane-capacity.json detached for the same beacon-freshness reason as the
 # home summary above. bin/fm-capacity.sh's header owns the document.
@@ -4191,6 +4208,10 @@ while :; do
 
   if [ "$(age_of "$STATE/home-summary.json")" -ge "$HOME_SUMMARY_INTERVAL" ]; then
     home_summary_refresh_detached
+  fi
+  # Quota pool leases: absent records cost one glob.
+  if compgen -G "$STATE/*.pool-lease" >/dev/null; then
+    pool_lease_tick_detached
   fi
   # Opt-in lane capacity facts: off costs one file test.
   if [ -e "$CONFIG/lane-capacity" ] && [ "$(age_of "$STATE/lane-capacity.json")" -ge 30 ]; then

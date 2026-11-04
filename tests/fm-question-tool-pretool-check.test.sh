@@ -141,6 +141,7 @@ test_registered_hooks_deny_in_a_primary_fixture() {
   printf '# fixture\n' > "$fix/AGENTS.md"
   cp "$ROOT/bin/fm-question-tool-pretool-check.sh" "$fix/bin/fm-question-tool-pretool-check.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$fix/bin/fm-primary-scope-lib.sh"
+  cp "$ROOT/bin/fm-hook-guard-run.sh" "$fix/bin/fm-hook-guard-run.sh"
   chmod +x "$fix/bin/fm-question-tool-pretool-check.sh"
   cp "$ROOT/.codex/hooks.json" "$fix/.codex/hooks.json"
   cp "$ROOT/.grok/hooks/fm-primary-question-tool.json" "$fix/.grok/hooks/fm-primary-question-tool.json"

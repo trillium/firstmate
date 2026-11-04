@@ -772,7 +772,7 @@ test_remote_secondmate_refuses_account() {
     "$id" > "$HOME_DIR/data/secondmates.md"
   out=$(fm_test_run_spawn "$HOME_DIR" "$WT" "$FAKEBIN" "$id" --secondmate --account "$CASE/first"); rc=$?
   expect_code 1 "$rc" "--account on a remote secondmate must refuse"
-  assert_refused_before_launch "$id" "$out" "--account cannot select an account for remote secondmate $id from this host"
+  assert_refused_before_launch "$id" "$out" "--account applies to ships and scouts"
   assert_absent "$CASE/claude-checks" "a refused remote launch must not inspect a local login"
   pass "a remote secondmate refuses --account instead of launching on the remote home's account"
 }
@@ -798,7 +798,7 @@ test_no_account_list_keeps_today_and_takes_a_per_launch_account() {
     "a home without a list must leave the pane's environment credentials alone"
   out=$(spawn_ship "$id-flag" --account "$CASE/work"); rc=$?
   expect_code 0 "$rc" "--account without a list is a per-launch account: $out"
-  assert_contains "$out" "account=$CASE/work" "a per-launch account without a list must report its account"
+  assert_contains "$out" "account=$CASE/work" "a per-launch account without a list must be reported"
   printf '%s\n' "$CASE/work" > "$HOME_DIR/config/claude-account"
   : > "$CASE/claude-checks"
   out=$(spawn_ship "$id-pin"); rc=$?
@@ -845,7 +845,7 @@ test_account_list_refusals() {
   signed_in_claude_root "$CASE/elsewhere"$'\n'"$CASE/first"
   out=$(spawn_ship "$id-newline" --account "$CASE/elsewhere"$'\n'"$CASE/first"); rc=$?
   expect_code 1 "$rc" "an account holding a newline must refuse even when one of its lines is declared"
-  assert_refused_before_launch "$id-newline" "$out" "--account must name one account exactly, with no control characters"
+  assert_refused_before_launch "$id-newline" "$out" "--account must name one config/claude-accounts entry exactly, with no control characters"
   [ ! -e "$CASE/claude-checks" ] || assert_no_grep "$CASE/elsewhere" "$CASE/claude-checks" "a newline account must be refused before its sign-in check"
   out=$(spawn_ship "$id-out" --account "$CASE/signed-out"); rc=$?
   expect_code 1 "$rc" "a signed-out declared account must refuse even with an ambient login and key"
@@ -855,7 +855,7 @@ test_account_list_refusals() {
   assert_refused_before_launch "$id-ordinary" "$out" "pins Claude workers to the ordinary account, which is not signed in"
   out=$(spawn_ship "$id-codex" --harness codex --account "$CASE/first"); rc=$?
   expect_code 1 "$rc" "--account on another runner must refuse"
-  assert_refused_before_launch "$id-codex" "$out" "--account selects a Claude account, but this launch runs codex"
+  assert_refused_before_launch "$id-codex" "$out" "applies to Claude workers only, not codex"
   out=$(spawn_ship "$id-raw" --account "$CASE/first" --harness "CLAUDE_CONFIG_DIR=$CASE/second claude --print raw"); rc=$?
   expect_code 1 "$rc" "a raw command overriding the chosen account must refuse"
   assert_refused_before_launch "$id-raw" "$out" "the raw launch command sets CLAUDE_CONFIG_DIR"

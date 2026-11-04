@@ -123,13 +123,14 @@ JSON
 # of "-" is emitted as JSON null. Args: name status conclusion [startedAt]
 # [completedAt]
 check_run() {
-  local name=$1 status=$2 conclusion=$3 started=${4:--} completed=${5:-${4:--}}
-  local conclusion_json='null' started_json='null' completed_json='null'
+  local name=$1 status=$2 conclusion=$3 started=${4:--} completed=${5:-${4:--}} details=${6:-}
+  local conclusion_json='null' started_json='null' completed_json='null' details_json=''
+  [ -z "$details" ] || details_json=",\"detailsUrl\":\"$details\""
   [ "$conclusion" = - ] || conclusion_json="\"$conclusion\""
   [ "$started" = - ] || started_json="\"$started\""
   [ "$completed" = - ] || completed_json="\"$completed\""
-  printf '{"__typename":"CheckRun","name":"%s","status":"%s","conclusion":%s,"startedAt":%s,"completedAt":%s}' \
-    "$name" "$status" "$conclusion_json" "$started_json" "$completed_json"
+  printf '{"__typename":"CheckRun","name":"%s","status":"%s","conclusion":%s,"startedAt":%s,"completedAt":%s%s}' \
+    "$name" "$status" "$conclusion_json" "$started_json" "$completed_json" "$details_json"
 }
 
 status_context() {
@@ -4249,6 +4250,30 @@ test_red_and_unreported_checks_are_reported_together() {
   pass "fm-pr-merge reports a red check and an unreported required check together with every other failure"
 }
 
+test_cancelled_check_refusal_names_the_check_and_the_rerun() {
+  local case_dir head
+  head=a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5
+  case_dir=$(make_case github-cancelled-check)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" \
+    "$(check_run build COMPLETED CANCELLED 2026-01-01T00:00:01Z 2026-01-01T00:00:05Z https://github.com/example/repo/actions/runs/424242/job/77)" \
+    "$(check_run lint COMPLETED FAILURE 2026-01-01T00:00:01Z)"
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/93 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" && fail "github-cancelled-check: a cancelled check must refuse"
+  assert_grep "check 'build' is not green" "$case_dir/stderr" \
+    "cancelled-check: the not-green refusal was dropped"
+  assert_grep "check 'build' was cancelled, not failed, and needs a rerun: gh run rerun 424242 --failed" "$case_dir/stderr" \
+    "cancelled-check: the cancelled check was not named with its rerun command"
+  assert_no_grep "check 'lint' was cancelled" "$case_dir/stderr" \
+    "cancelled-check: a failed check was described as cancelled"
+  assert_grep "check 'lint' is not green" "$case_dir/stderr" \
+    "cancelled-check: the failure wording changed"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "cancelled-check: gh pr merge ran"
+  pass "fm-pr-merge names a cancelled check and says it needs a rerun"
+}
+
 test_unreadable_required_set_refuses() {
   local case_dir head label
   head=a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4
@@ -4631,6 +4656,7 @@ test_allow_red_refused_on_gitlab
 test_required_check_that_never_reported_refuses
 test_required_checks_reported_and_green_merge
 test_red_and_unreported_checks_are_reported_together
+test_cancelled_check_refusal_names_the_check_and_the_rerun
 test_unreadable_required_set_refuses
 test_allow_missing_waives_only_the_named_unreported_check
 test_allow_missing_follows_the_allow_red_rules

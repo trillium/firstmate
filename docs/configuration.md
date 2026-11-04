@@ -1629,7 +1629,6 @@ Ranking it separately needs `quota-axi` to emit a distinct accountKey for a toke
 The value uses the same grammar as the file: `ordinary`, an absolute Claude config directory, or `token:<absolute path of a setup-token file>`.
 It replaces the home-wide and per-secondmate pin for that launch only, and gets the same validation, `claude auth status` sign-in check, and credential shedding; a bad value or a signed-out account refuses before any endpoint or record exists.
 With no `--account`, the file is the default and an absent file keeps today's unpinned behavior.
-When [`config/claude-accounts`](#several-claude-accounts-configclaude-accounts) is present, `--account` instead names one declared entry under that section's rules.
 `--account` applies to Claude launches only (ships, scouts, local secondmates, raw Claude commands) and refuses for any other runner or a remote secondmate.
 
 The task record keeps `account=` (the declared name, `token:<basename>` for a token) and adds `account_request=` with the value passed, so a relaunch can re-resolve it.
@@ -1657,7 +1656,7 @@ ordinary
 ```
 
 A final newline is optional; a blank line, a relative path, a repeated entry, or a control character refuses.
-The list is opt-in: without it, every launch, including the single pin above, behaves exactly as before, and `--account` takes the [per-launch account](#per-launch-account---account) grammar.
+The list is opt-in: without it, every launch, including the single pin above, behaves exactly as before, and `--account` takes the [per-launch account](#per-launch-account---account) grammar above instead of naming a declared entry.
 A home keeps either the list or `config/claude-account`, never both; with both present, every Claude launch refuses.
 
 While the list is present, every Claude ship or scout spawn must name one declared entry with `--account <entry>`.
@@ -1673,7 +1672,7 @@ To move a task to another declared account, for example when its own account is 
 A task with no recorded account, or one whose account is no longer declared, refuses a plain relaunch and needs that explicit `--account`.
 
 The list covers Claude ships and scouts only.
-A local secondmate's own agent never draws from it: under a list it needs its own [per-secondmate account pin](#per-secondmate-account-pins), and `--account` refuses for every secondmate.
+A local secondmate's own agent never draws from it: under a list it needs its own [per-secondmate account pin](#per-secondmate-account-pins), and `--account` refuses for every secondmate, local or remote.
 Other runners ignore the list, and `--account` refuses for them.
 Like the single pin, the list is not inherited into secondmate homes.
 
@@ -1897,6 +1896,40 @@ When every place is held, `bin/fm-spawn.sh` launches nothing, creates no record,
 A malformed or unreadable file refuses every fresh ship or scout spawn until it is fixed, rather than guessing the intended limit, and so does a local home's state directory or task record that cannot be read while counting a capped project's holders.
 Firstmate cannot see which part of a worker's life uses the resource, so the number bounds whole workers from launch to handoff, and the tightest resource every worker needs should decide it.
 [`bin/fm-project-capacity-lib.sh`](../bin/fm-project-capacity-lib.sh) owns the file format, what holds a place, and why concurrent spawns cannot both take the last one.
+
+## Pool leases (config/pool-lease)
+
+The optional local, gitignored `config/pool-lease` keeps several workers from draining one small quota pool at the same time.
+Without it nothing changes.
+It names a [lease-axi](https://github.com/trillium/lease-axi) authority and a cap per provider:
+
+```text
+authority http://my-authority:7117
+ttl 5m
+cap codex 1
+cap agy 1
+```
+
+The authority is one HTTP service every home and machine asks, so the cap counts every holder.
+`ttl` is optional and defaults to five minutes.
+Only `codex` and `agy` can be capped, and a provider with no `cap` line is uncapped; Claude has no usage limit and is never leased.
+A malformed or unreadable file refuses every fresh spawn until it is fixed, rather than guessing the intended limit.
+Secondmate homes receive the file through the inherited-config path.
+
+The pool is `<provider>/<accountKey>/<scope>`, the same provider, account, and scope join `quota-axi` rows use, so each Codex account is its own pool and each Antigravity scope (`gemini`, `argon`, `claude_gpt`) is its own pool.
+Before launching a worker for a capped pool, `bin/fm-spawn.sh` takes a lease from the authority.
+When the pool is held, it launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line, and exits 75, like project capacity.
+When the authority cannot be reached, it refuses the spawn rather than launching unleased.
+A relaunch in the same pool keeps its lease.
+
+A lease comes back automatically:
+
+- Cleanup (`bin/fm-teardown.sh`, including a secondmate retirement) and `bin/fm-control.sh <id> exit` release it at once.
+- The watcher renews it only while the worker shows activity (status, busy, turn-end, or progress records), and releases it after 30 minutes of inactivity (`FM_POOL_LEASE_IDLE_SECS`); a declared `paused:` wait counts as inactive.
+  A worker that becomes active again takes a new lease, and waits for it while the pool is held.
+- A crashed worker stops being renewed and the authority expires the lease after the `ttl`.
+
+[`bin/fm-pool-lease-lib.sh`](../bin/fm-pool-lease-lib.sh) owns the file format, the pool id, and the lease calls, and [`bin/fm-pool-lease-tick.sh`](../bin/fm-pool-lease-tick.sh) owns the watcher pass.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 

@@ -264,26 +264,6 @@ case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
     printf 'harness=codex\n'
     exit 0
     ;;
-  launch-rex-bad-server-route:fm-remote-secondmate-control.sh:*)
-    [ "$_command_action" = launch ] || exit 93
-    printf 'schema=fm-remote-secondmate-control.v1\n'
-    printf 'backend=rex\n'
-    printf 'target=00000001-0000-7000-8000-000000000002:00000002-0000-7000-8000-000000000003\n'
-    printf 'rex_session_id=session:00000001-0000-7000-8000-000000000002\n'
-    printf 'rex_server=tcp://127.0.0.1:7299\n'
-    printf 'harness=codex\n'
-    exit 0
-    ;;
-  launch-rex-mismatched-route:fm-remote-secondmate-control.sh:*)
-    [ "$_command_action" = launch ] || exit 93
-    printf 'schema=fm-remote-secondmate-control.v1\n'
-    printf 'backend=rex\n'
-    printf 'target=99999999-0000-7000-8000-000000000009:00000002-0000-7000-8000-000000000003\n'
-    printf 'rex_session_id=session:00000001-0000-7000-8000-000000000002\n'
-    printf 'rex_server=unix:///tmp/fake-rex.sock\n'
-    printf 'harness=codex\n'
-    exit 0
-    ;;
   provision-block-fail:fm-remote-home-provision.sh:*)
     touch "$FM_FAKE_SEED_ENTERED"
     while [ ! -f "$FM_FAKE_SEED_RELEASE" ]; do sleep 0.02; done
