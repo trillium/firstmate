@@ -56,6 +56,8 @@
 # the composer visibly holds pending text the ring is skipped with a notice and
 # the watcher re-rings an ordinary record later; no composer verdict is
 # delivery proof on this plane, and a failed ring never fails the send.
+# The skip notice names a saved copy of the classified screen under
+# data/<id>/composer-refusals/ (newest few kept) for later diagnosis.
 #
 # TYPED - the LOCAL text submitted directly instead of through the inbox. On a
 # pane backend, a harness-native invocation (a leading "/", or a leading "$" to
@@ -1199,7 +1201,17 @@ else
     # because the watcher owns loss detection from here, either through its
     # bounded re-ring ladder or direct unavailable-endpoint recovery.
     ring_rc=0
+    # The ring's composer read runs in a subshell, so the screen it classified
+    # is read back from a file; a skip names the saved copy for diagnosis.
+    FM_COMPOSER_SCREEN_SINK=$(mktemp "${TMPDIR:-/tmp}/fm-send-screen.XXXXXX") || FM_COMPOSER_SCREEN_SINK=
     fm_task_inbox_ring "$TARGET_BACKEND" "$T" "$INBOX_RECORD" "$EXPECTED_LABEL" || ring_rc=$?
+    skip_capture=
+    if [ "$ring_rc" = 1 ]; then
+      skip_capture=$(fm_composer_refusal_capture "${FM_DATA_OVERRIDE:-$FM_HOME/data}" "$INBOX_TASK_ID" doorbell-skip) \
+        && skip_capture="; the classified screen is saved at $skip_capture" || skip_capture=
+    fi
+    [ -z "$FM_COMPOSER_SCREEN_SINK" ] || rm -f "$FM_COMPOSER_SCREEN_SINK"
+    FM_COMPOSER_SCREEN_SINK=
     ring_retry="the watcher will re-ring"
     if [ -n "$FIRE_AND_FORGET_ID" ] \
       && [ -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/wait-no-turns" ]; then
@@ -1214,7 +1226,7 @@ else
       esac
     fi
     case "$ring_rc" in
-    1) echo "fm-send: doorbell skipped (${FM_TASK_INBOX_RING_NOTE:-composer visibly holds pending text}); the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
+    1) echo "fm-send: doorbell skipped (${FM_TASK_INBOX_RING_NOTE:-composer visibly holds pending text}); the steer is durably recorded at $INBOX_RECORD and $ring_retry$skip_capture" >&2 ;;
     2) echo "fm-send: doorbell did not reach $T; the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
     3) echo "fm-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane" >&2 ;;
     esac

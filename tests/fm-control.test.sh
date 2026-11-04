@@ -1534,7 +1534,31 @@ SH
   pass "fm-control exit: records generation-scoped control-exit only after a verified exit"
 }
 
+# A composer refusal keeps the screen the classifier read, so a false positive
+# can be diagnosed afterwards, and its message names the saved file.
+test_exit_refusal_saves_the_classified_screen() {
+  local dir out rc saved
+  dir=$(new_case refusal-capture)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  printf '╭──────────────╮\n│ leftover txt │\n╰──────────────╯\n' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a pending composer should refuse the exit"$'\n'"$out"
+  assert_contains "$out" "composer visibly holds pending text" "the refusal should be the pending one"
+  saved=$(printf '%s\n' "$out" | sed -n 's/.*classified screen saved at \([^)]*\)).*/\1/p')
+  [ -n "$saved" ] || fail "the refusal should name the saved screen: $out"
+  case "$saved" in
+  "$dir/home/data/t1/composer-refusals/"*) ;;
+  *) fail "the saved screen should live in the task data dir, got: $saved" ;;
+  esac
+  [ "$(cat "$saved")" = "$(printf '╭──────────────╮\n│ leftover txt │\n╰──────────────╯')" ] \
+    || fail "the saved screen differs from the one classified: $(cat "$saved")"
+  [ ! -e "$dir/home/state/t1.composer-screen" ] || fail "the working sink should be removed on exit"
+  pass "fm-control exit: a composer refusal saves the classified screen and prints its path"
+}
+
 test_exit_types_each_harness_verified_command
+test_exit_refusal_saves_the_classified_screen
 test_opencode_exit_matches_recorded_major
 test_opencode2_exit_retries_ctrl_c_once
 test_interrupt_sends_each_harness_verified_key
