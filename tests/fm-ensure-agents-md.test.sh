@@ -415,6 +415,19 @@ test_lowercase_agents_md_refuses_case_fragile_pointer() {
   pass "fm-ensure-agents-md.sh: refuses a case-variant lowercase agents.md (issue #389)"
 }
 
+test_ancestor_agents_md_suppresses_subdirectory_stub() {
+  local repo out
+  repo="$TMP_ROOT/ancestor-repo"
+  mkdir -p "$repo/packages/server"
+  git -C "$repo" init -q
+  printf '# Root\n\n## Maintaining this file\n' > "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo/packages/server" 2>&1) || fail "subdirectory run failed: $out"
+  assert_contains "$out" "unchanged" "subdirectory run did not report unchanged"
+  assert_absent "$repo/packages/server/AGENTS.md" "stub AGENTS.md created under an ancestor AGENTS.md"
+  assert_absent "$repo/packages/server/CLAUDE.md" "stub CLAUDE.md created under an ancestor AGENTS.md"
+  pass "fm-ensure-agents-md.sh: no stub in a subdirectory whose ancestor repo root has AGENTS.md"
+}
+
 test_created_agents_md_includes_self_governance
 test_fresh_setup_writes_real_claude_pointer
 test_promoted_claude_md_includes_self_governance
@@ -433,3 +446,4 @@ test_agents_md_symlink_is_refused
 test_wrong_target_symlink_is_refused
 test_non_regular_claude_md_is_refused
 test_lowercase_agents_md_refuses_case_fragile_pointer
+test_ancestor_agents_md_suppresses_subdirectory_stub

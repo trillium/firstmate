@@ -27,6 +27,8 @@
 # so it does not call fm-guard.sh. No brief calls it: the sections it inserts
 # and the pointer it creates are additions, and AGENTS.md section 6 bounds
 # crewmate edits of project memory files to correcting the wrong text only.
+# Creates nothing when an ancestor directory inside the same git repo already
+# has an AGENTS.md; it reports unchanged instead.
 # Usage: fm-ensure-agents-md.sh [repo-or-worktree-dir]
 set -eu
 
@@ -234,6 +236,23 @@ if [ -e "$AGENTS" ]; then
   fi
   echo "conflict: CLAUDE.md exists in $DIR but is not a regular file or symlink" >&2
   exit 1
+fi
+
+# A subdirectory of a repo whose ancestor already carries AGENTS.md is covered by
+# that file; creating a second stub here would establish a per-directory
+# convention nobody chose. Stop at the git top level so files outside the repo
+# never count.
+if TOP=$(git rev-parse --show-toplevel 2>/dev/null) && [ "$TOP" != "$DIR" ]; then
+  TOP=$(cd "$TOP" && pwd -P)
+  ANC=$(dirname "$DIR")
+  while :; do
+    if [ -f "$ANC/$AGENTS" ] && [ ! -L "$ANC/$AGENTS" ]; then
+      echo "unchanged: $ANC/$AGENTS already covers $DIR; no AGENTS.md created"
+      exit 0
+    fi
+    [ "$ANC" != "$TOP" ] && [ "$ANC" != "/" ] || break
+    ANC=$(dirname "$ANC")
+  done
 fi
 
 if [ -L "$CLAUDE" ]; then
