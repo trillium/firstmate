@@ -912,10 +912,45 @@ function blessedProgram(analysis, context) {
   return true;
 }
 
+const READ_ONLY_TOOLS = new Set(["awk", "grep", "egrep", "fgrep", "cat", "head", "tail", "wc", "echo", "printf", "ls", "shellcheck", "diff", "cmp", "stat"]);
+const READ_ONLY_GIT = new Set(["add", "diff", "show", "log", "status", "blame", "grep"]);
+const LOOP_KEYWORDS = new Set(["do", "then", "else"]);
+
+// A node that only reads or parse-checks files, so naming a protected script as
+// an argument is not a launch: `bash -n` never executes the script, and the
+// tools above take it as data. Wrappers, assignments, substitutions, and
+// redirections keep the node out of this class.
+function readOnlyInspectionNode(info) {
+  if (info.position.prefixAssignments > 0 || info.position.wrappers.length > 0 || info.redirection || info.substitution || !info.tokens.every((token) => token.type === "word")) return false;
+  const values = info.position.words.map((word) => word.value);
+  while (values.length > 0 && LOOP_KEYWORDS.has(values[0])) values.shift();
+  if (values.length === 0) return true;
+  if (["done", "fi"].includes(values[0])) return values.length === 1;
+  if (values[0] === "for") return values[2] === "in" && values.length >= 3;
+  const name = basename(values[0]);
+  if (READ_ONLY_TOOLS.has(name)) return true;
+  if (name === "git") return READ_ONLY_GIT.has(values[1]);
+  if (name === "sed") return !values.slice(1).some((value) => /^(?:-[A-Za-z]*i|--in-place)/.test(value));
+  if (["sh", "bash", "zsh"].includes(name)) {
+    for (const value of values.slice(1)) {
+      if (!value.startsWith("-")) return false;
+      if (/^-[A-Za-z]*n[A-Za-z]*$/.test(value)) return true;
+    }
+  }
+  return false;
+}
+
+function readOnlyInspection(analysis) {
+  const separators = analysis.program?.separators || [];
+  if (!analysis.nodeInfos?.length || separators.includes("&")) return false;
+  return analysis.nodeInfos.every(readOnlyInspectionNode);
+}
+
 function decision(command, root, home) {
   const context = { root: path.normalize(root), home: path.normalize(home), protectedVariables: new Set(), watcherPatterns: new Set(), watcherPids: new Set() };
   const analysis = analyzeProgram(command, context);
   if (analysis.broadKill) return deny("broad-watcher-kill");
+  if (analysis.protectedFound && readOnlyInspection(analysis)) return { decision: "allow" };
   if (analysis.error && analysis.protectedFound) return deny("unclassifiable-protected-command");
   if (!analysis.protectedFound) return { decision: "allow" };
   if (analysis.nodeInfos?.some((info) => info.protectedKind === "watch")) return deny("watcher-direct");

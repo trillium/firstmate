@@ -279,6 +279,31 @@ test_lab_home_private_tmux_socket_survives_deep_paths() {
   pass "fm-lab-home: a primary starts on a private short tmux socket from a long lab path and teardown removes it"
 }
 
+test_lab_home_tmux_dir_survives_gnu_stat_ahead_of_bsd() {
+  # A GNU-dialect stat ahead of /usr/bin must not break the private-directory check:
+  # it answers -f with a filesystem dump on stdout and fails.
+  local lab bin out rc
+  lab=$("$LABHOME" create "$TMP/lab-gnu-stat") || fail "lab-home: create failed"
+  bin="$TMP/gnu-stat-bin"; mkdir -p "$bin"
+  cat > "$bin/stat" <<'FAKE'
+#!/bin/sh
+case "$1" in
+  -f) echo "  File: \"$2\""; echo "    ID: 0 Namelen: 255 Type: apfs"; exit 1 ;;
+  -c) fmt=$2; shift 2
+      if [ "$(uname -s)" = Darwin ]; then
+        case "$fmt" in %a) exec /usr/bin/stat -f %Lp "$@" ;; *) exec /usr/bin/stat -f "$fmt" "$@" ;; esac
+      fi
+      exec /usr/bin/stat -c "$fmt" "$@" ;;
+esac
+exit 1
+FAKE
+  chmod +x "$bin/stat"
+  out=$(PATH="$bin:$PATH" "$LABHOME" tmux-dir "$lab" 2>&1); rc=$?
+  expect_code 0 "$rc" "lab-home: tmux-dir must work with a GNU-dialect stat ahead on PATH ($out)"
+  PATH="$bin:$PATH" "$LABHOME" teardown "$lab" >/dev/null 2>&1 || fail "lab-home: teardown failed under GNU-dialect stat"
+  pass "fm-lab-home: private tmux directory checks survive a GNU-dialect stat ahead of BSD stat"
+}
+
 test_lab_home_helper() {
   local lab populated unlistable newline out rc
   # create on an absent path mints the marker and the stock layout.
@@ -566,6 +591,7 @@ test_helper_path_backstop_refuses
 test_helper_normal_is_noop
 test_helper_lab_home_admits
 test_lab_home_helper
+test_lab_home_tmux_dir_survives_gnu_stat_ahead_of_bsd
 test_lab_home_private_tmux_socket_survives_deep_paths
 test_spawn_refuses_and_admits
 test_send_refuses_and_admits

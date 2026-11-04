@@ -5183,7 +5183,7 @@ EOF
   chmod +x "$case_dir/fakebin/tmux"
 
   rc=0
-  FM_TEARDOWN_TEST_PATH="$path_without_lsof" \
+  FM_TEARDOWN_TEST_PATH="$path_without_lsof" FM_LSOF_FALLBACK_DIRS="" \
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
 
   expect_code 0 "$rc" "lsof-absent-process-group-reap: teardown should succeed"
@@ -5194,6 +5194,36 @@ EOF
   assert_grep "reaping leaked worktree process group" "$case_dir/stderr" \
     "lsof-absent-process-group-reap: teardown did not use the process-group fallback"
   pass "missing lsof falls back to reaping the tmux pane process group"
+}
+
+test_lsof_off_path_still_reaps_leaked_process() {
+  local case_dir rc pid path_without_lsof lsof_dir
+  case_dir=$(make_case lsof-off-path-reap)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+  path_without_lsof=$(make_path_without_lsof "$case_dir")
+  lsof_dir="$case_dir/system-sbin"
+  mkdir -p "$lsof_dir"
+  ln -sf "$REAL_LSOF_FOR_TEST" "$lsof_dir/lsof"
+
+  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "lsof-off-path-reap: setup sleeper did not start"
+
+  rc=0
+  FM_TEARDOWN_TEST_PATH="$path_without_lsof" FM_LSOF_FALLBACK_DIRS="$lsof_dir" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+
+  expect_code 0 "$rc" "lsof-off-path-reap: teardown should succeed"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    fail "lsof-off-path-reap: leaked worktree process survived teardown with lsof off PATH"
+  fi
+  assert_grep "reaping leaked worktree process" "$case_dir/stderr" \
+    "lsof-off-path-reap: teardown did not reap through the fallback lsof"
+  pass "teardown reaps a leaked worktree process when lsof is only in a system directory off PATH"
 }
 
 test_lsof_error_refuses_before_removal() {
@@ -6397,6 +6427,7 @@ test_own_autonomous_run_is_left_alone
 test_leaked_worktree_process_is_reaped
 test_leaked_tasktmp_process_is_reaped
 test_lsof_absent_reaps_tmux_process_group
+test_lsof_off_path_still_reaps_leaked_process
 test_lsof_error_refuses_before_removal
 test_reused_pid_identity_is_not_force_killed
 test_exec_changed_process_is_still_reaped

@@ -132,6 +132,19 @@ matrix_case D63 deny "sh -s sentinel <<< 'bin/fm-watch.sh'"
 matrix_case D64 deny 'bash -s bin/fm-watch.sh'
 matrix_case D65 deny "bash -s -- -c harmless <<< 'bin/fm-watch.sh'"
 
+matrix_case I01 allow 'bash -n bin/fm-watch.sh'
+matrix_case I02 allow 'bash -n bin/fm-watch.sh && bash -n bin/fm-wake-lib.sh'
+matrix_case I03 allow 'for f in bin/fm-wake-lib.sh bin/fm-watch.sh; do bash -n "$f"; done'
+matrix_case I04 allow 'for f in bin/fm-wake-lib.sh bin/fm-watch.sh; do awk 1 "$f"; done'
+matrix_case I05 allow 'for f in x; do echo "bin/fm-watch.sh"; done'
+matrix_case I06 allow 'shellcheck bin/fm-watch.sh'
+matrix_case I07 deny 'bash bin/fm-watch.sh'
+matrix_case I08 deny 'bash -n bin/fm-watch.sh; bin/fm-watch.sh'
+matrix_case I09 deny 'for f in x; do bin/fm-watch.sh; done'
+matrix_case I10 deny 'for f in bin/fm-watch.sh; do bash "$f"; done'
+matrix_case I11 deny 'for f in bin/fm-watch.sh; do awk 1 "$f"; done | bash'
+matrix_case I12 deny 'bash -n bin/fm-watch.sh & bin/fm-watch.sh'
+
 matrix_case E01 allow "bin/fm-watch-checkpoint.sh --seconds '180;still-one-arg'"
 matrix_case E02 allow "bin/fm-watch-checkpoint.sh --label 'fm-watch-arm.sh; literal argument'"
 matrix_case E03 allow 'bin/fm-watch-arm.sh # output > file &'
