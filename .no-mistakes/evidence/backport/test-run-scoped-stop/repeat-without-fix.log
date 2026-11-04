@@ -1,0 +1,1 @@
+not ok - repeatedly stopped run did not report FM_TEST_ABORTED: FM_TEST_BEGIN 2026-11-04T14:11:53Z tests/fm-sleep-fixture.test.sh family=unclassified expected_gate_skip=none
