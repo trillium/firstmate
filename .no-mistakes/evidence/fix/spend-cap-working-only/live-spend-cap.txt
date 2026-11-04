@@ -1,0 +1,16 @@
+== A: 1 working + 1 paused, cap 2
+paused: waiting on review
+state: working · source: pane · harness busy (claude-hook)
+state: paused · source: status-log · waiting on review
+live-workers: 1
+-- fresh spawn:
+(no spend-cap refusal; spawn proceeded past the cap check)
+== B: 2 working
+live-workers: 2
+error: spawn refused - the away-posture record caps concurrent workers at 2 and 2 ordinary task(s) are live in this home; task task-new stays queued for the captain's return or for a worker to finish (spend cap: bin/fm-afk-contract.sh)
+== C: gone vs unreachable
+state: unknown · source: none · backend target gone: lab:w3
+live-workers: 1
+-- unreachable endpoint (malformed target):
+state: unknown · source: none · backend unreachable (tmux endpoint state: unreadable)
+live-workers (t-working working + t-unsure unreachable; t-second gone, t-paused paused): 2
