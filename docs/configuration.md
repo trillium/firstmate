@@ -1144,8 +1144,7 @@ The section counts toward the startup memory budget like the rest of its file, s
 
 ## Glossary store
 
-A home may declare a glossary store for quick name lookup in a `Glossary` heading inside `data/captain.md`, or inside the primary home's `data/captain-shared.md` when every secondmate home should inherit it; a local declaration wins for that home.
-The declaration names the search and add commands and any required entry label.
+A home declares a glossary store for quick name lookup with any passage in `data/captain.md`, or in the primary home's `data/captain-shared.md` when every secondmate home should inherit it, that names the store and its search and add commands, plus any required entry label; a dedicated `Glossary` heading is one acceptable form, not a requirement, and a local declaration wins for that home.
 No declaration means no glossary lookup rule applies.
 [`AGENTS.md`](../AGENTS.md) section 6 owns when to search and add.
 
