@@ -3441,3 +3441,28 @@ test_autoswitched_claude_account_persists_across_relaunch() {
 }
 
 test_autoswitched_claude_account_persists_across_relaunch
+
+test_fallback_pinned_claude_account_relaunches_outside_declared_list() {
+  local dir out rc id=rl-fallback-pin
+  dir=$(new_case fallback-pin "$id")
+  add_ship_task "$dir" "$id" claude
+  make_claude_auth_stub "$dir"
+  mkdir -p "$dir/home/config" "$dir/work" "$dir/other" "$dir/pin"
+  : > "$dir/work/.credentials.json"
+  : > "$dir/other/.credentials.json"
+  : > "$dir/pin/.credentials.json"
+  printf '%s\n%s\n' "$dir/work" "$dir/other" > "$dir/home/config/claude-accounts"
+  printf '%s\n' "$dir/pin" > "$dir/home/config/claude-account"
+  {
+    printf 'account=%s\n' "$dir/pin"
+    printf 'account_request=%s\n' "$dir/pin"
+    printf 'account_reason=fallback-pinned: all declared accounts below 20%% (%s 5%%, %s 8%%); using pinned %s\n' "$dir/work" "$dir/other" "$dir/pin"
+  } >> "$dir/home/state/$id.meta"
+
+  out=$(run_control "$dir" "$id" relaunch --note "keep fallback pin"); rc=$?
+  expect_code 0 "$rc" "relaunch of a fallback-pinned account outside the declared list should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" "$id" account)" = "$dir/pin" ] || fail "relaunch should keep the pinned fallback account"
+  pass "fm-control relaunch: a fallback-pinned Claude account outside the declared list relaunches on the pin"
+}
+
+test_fallback_pinned_claude_account_relaunches_outside_declared_list

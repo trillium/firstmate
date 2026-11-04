@@ -1038,23 +1038,6 @@ test_autoswitch_skips_low_account_and_honors_configurable_threshold() {
   pass "one low: skips an account below the low-headroom threshold (default 20% or configured) and chooses the healthy account"
 }
 
-test_relaunch_of_fallback_pinned_account_skips_declared_list_check() {
-  local out rc
-  new_case relaunch-fallback-pinned claude
-  make_token_file "$CASE/tokens/c.token"
-  signed_in_claude_root "$HOME_DIR/user-home/.claude"
-  printf 'ordinary\n' > "$HOME_DIR/config/claude-accounts"
-  printf 'token:%s\n' "$CASE/tokens/c.token" > "$HOME_DIR/config/claude-account"
-  out=$( (
-    # shellcheck source=bin/fm-worker-account-lib.sh
-    . "$REPO_ROOT/bin/fm-worker-account-lib.sh"
-    export HOME="$HOME_DIR/user-home"
-    PATH="$FAKEBIN:$PATH" fm_worker_account_select claude "$HOME_DIR/config" "" claude "" "" "token:$CASE/tokens/c.token" config/claude-account
-  ) 2>&1); rc=$?
-  expect_code 0 "$rc" "a fallback-pinned account outside the declared list should relaunch: $out"
-  pass "relaunching a fallback-pinned account skips the declared-list check"
-}
-
 test_autoswitch_both_low_warns_and_keeps_pinned_account() {
   local out rc
   new_case auto-both-low claude
@@ -1161,7 +1144,6 @@ test_per_launch_account_token_overrides_an_ordinary_pin
 test_per_launch_account_works_with_no_home_pin_and_refuses_bad_values
 test_per_launch_account_refuses_non_claude_runners
 test_relaunch_reuses_the_recorded_per_launch_account
-test_relaunch_of_fallback_pinned_account_skips_declared_list_check
 test_remote_secondmate_account_override_refuses_locally
 test_remote_secondmate_refuses_account
 test_absent_pin_keeps_the_launch_unchanged
