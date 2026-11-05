@@ -57,7 +57,7 @@ test_anchor_moves_a_fresh_branch_onto_the_target() {
   git_in "$clone" checkout -q -b fm/task || fail "could not branch"
   rc=0
   out=$(run_tb "$clone" anchor "$SCOPE" --url "$d/upstream") || rc=$?
-  expect_code 0 "$rc" "anchor on a fresh branch" "$out"
+  expect_code 0 "$rc" "anchor on a fresh branch"
   assert_equals "$(git -C "$d/upstream" rev-parse main)" "$(git -C "$clone" rev-parse HEAD)" \
     "anchor must leave the branch at the target's tip, not the fork's"
   assert_absent "$clone/fork-only-1.txt" "fork-only history must be gone from the anchored branch"
@@ -73,7 +73,7 @@ test_anchor_refuses_to_discard_branch_work() {
   before=$(git -C "$clone" rev-parse HEAD)
   rc=0
   out=$(run_tb "$clone" anchor "$SCOPE" --url "$d/upstream") || rc=$?
-  expect_code 1 "$rc" "anchor over unlanded work" "$out"
+  expect_code 1 "$rc" "anchor over unlanded work"
   assert_contains "$out" "unpublished commits" "refusal must say the branch carries unpublished work"
   assert_equals "$before" "$(git -C "$clone" rev-parse HEAD)" "a refused anchor must not move the branch"
   pass "fm-target-base.sh: anchor refuses to discard commits"
@@ -88,7 +88,7 @@ test_check_passes_a_clean_branch_and_lists_files() {
   commit_file "$clone" bin-fix.sh fix
   rc=0
   out=$(run_tb "$clone" check "$SCOPE" --url "$d/upstream" --allow 'bin-*.sh') || rc=$?
-  expect_code 0 "$rc" "check on an anchored branch" "$out"
+  expect_code 0 "$rc" "check on an anchored branch"
   assert_contains "$out" "files changed beyond target: 1" "check must count only the task's file"
   assert_contains "$out" "bin-fix.sh" "check must list the changed file"
   pass "fm-target-base.sh: check accepts an anchored branch touching only intended files"
@@ -102,7 +102,7 @@ test_check_refuses_a_branch_built_on_the_fork() {
   commit_file "$clone" bin-fix.sh fix
   rc=0
   out=$(run_tb "$clone" check "$SCOPE" --url "$d/upstream") || rc=$?
-  expect_code 1 "$rc" "check on a fork-based branch" "$out"
+  expect_code 1 "$rc" "check on a fork-based branch"
   assert_contains "$out" "does not contain" "refusal must say the target tip is missing from the branch"
   pass "fm-target-base.sh: check refuses a branch built on the fork's history"
 }
@@ -117,7 +117,7 @@ test_check_refuses_a_fork_history_that_swallowed_the_target() {
   commit_file "$clone" bin-fix.sh fix
   rc=0
   out=$(run_tb "$clone" check "$SCOPE" --url "$d/upstream" --allow 'bin-*.sh') || rc=$?
-  expect_code 1 "$rc" "check when the fork's extra files ride along" "$out"
+  expect_code 1 "$rc" "check when the fork's extra files ride along"
   assert_contains "$out" "fork-only-1.txt" "the allow list must name the fork-only file that rode along"
   assert_contains "$out" "outside the intended set" "refusal must say which files are unintended"
   pass "fm-target-base.sh: check names fork-only files even when the target tip is an ancestor"
@@ -129,7 +129,7 @@ test_unreachable_target_is_refused() {
   clone=$d/clone
   rc=0
   out=$(run_tb "$clone" check "$SCOPE" --url "$d/no-such-repo") || rc=$?
-  expect_code 1 "$rc" "check against an unreachable target" "$out"
+  expect_code 1 "$rc" "check against an unreachable target"
   assert_contains "$out" "cannot read the default branch" "refusal must name the unreadable target"
   pass "fm-target-base.sh: an unreachable target is refused rather than skipped"
 }

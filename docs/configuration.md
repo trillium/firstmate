@@ -1924,40 +1924,6 @@ A malformed or unreadable file refuses every fresh ship or scout spawn until it 
 Firstmate cannot see which part of a worker's life uses the resource, so the number bounds whole workers from launch to handoff, and the tightest resource every worker needs should decide it.
 [`bin/fm-project-capacity-lib.sh`](../bin/fm-project-capacity-lib.sh) owns the file format, what holds a place, and why concurrent spawns cannot both take the last one.
 
-## Pool leases (config/pool-lease)
-
-The optional local, gitignored `config/pool-lease` keeps several workers from draining one small quota pool at the same time.
-Without it nothing changes.
-It names a [lease-axi](https://github.com/trillium/lease-axi) authority and a cap per provider:
-
-```text
-authority http://my-authority:7117
-ttl 5m
-cap codex 1
-cap agy 1
-```
-
-The authority is one HTTP service every home and machine asks, so the cap counts every holder.
-`ttl` is optional and defaults to five minutes.
-Only `codex` and `agy` can be capped, and a provider with no `cap` line is uncapped; Claude has no usage limit and is never leased.
-A malformed or unreadable file refuses every fresh spawn until it is fixed, rather than guessing the intended limit.
-Secondmate homes receive the file through the inherited-config path.
-
-The pool is `<provider>/<accountKey>/<scope>`, the same provider, account, and scope join `quota-axi` rows use, so each Codex account is its own pool and each Antigravity scope (`gemini`, `argon`, `claude_gpt`) is its own pool.
-Before launching a worker for a capped pool, `bin/fm-spawn.sh` takes a lease from the authority.
-When the pool is held, it launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line, and exits 75, like project capacity.
-When the authority cannot be reached, it refuses the spawn rather than launching unleased.
-A relaunch in the same pool keeps its lease.
-
-A lease comes back automatically:
-
-- Cleanup (`bin/fm-teardown.sh`, including a secondmate retirement) and `bin/fm-control.sh <id> exit` release it at once.
-- The watcher renews it only while the worker shows activity (status, busy, turn-end, or progress records), and releases it after 30 minutes of inactivity (`FM_POOL_LEASE_IDLE_SECS`); a declared `paused:` wait counts as inactive.
-  A worker that becomes active again takes a new lease, and waits for it while the pool is held.
-- A crashed worker stops being renewed and the authority expires the lease after the `ttl`.
-
-[`bin/fm-pool-lease-lib.sh`](../bin/fm-pool-lease-lib.sh) owns the file format, the pool id, and the lease calls, and [`bin/fm-pool-lease-tick.sh`](../bin/fm-pool-lease-tick.sh) owns the watcher pass.
-
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
@@ -2215,48 +2181,6 @@ Every result above exits 0.
 - Only a usage or configuration error exits 2: an unreadable brief, an existing but unreadable or malformed canonical rules file, an unreadable or invalid credential source declaration, a missing `jq`, an unknown provider, a non-typesafe provider without a model, or `systemone` without a valid base URL, each reported and never selected around.
 - Missing `curl` is a normal structured `error` outcome with exit 0 so firstmate uses today's routing.
 
-**Opt-in question and answer log (FM_DISPATCH_RESOLVE_LOG)**
-
-The resolver logs nothing by default; `FM_DISPATCH_RESOLVE_LOG` is the opt-in that changes that, and it names a directory.
-A relative value is anchored under `$FM_HOME`, and the resolved directory must sit under `$FM_HOME/state` or `$FM_HOME/data`, which are the home's two gitignored durable-state paths.
-A setting that resolves outside the home, that reaches a git work tree below it, or that names the home itself is refused with one `dispatch-resolve: log off (...)` line on stderr, and that run behaves exactly as it does without the setting.
-A refusal creates nothing, because the directory is created only after every check has passed.
-This is the fm-hooks state-location rule applied to a different writer, and it is deliberate: the earlier fm-hooks defect wrote observer state into a product checkout, so telemetry arrived as a product diff and every consumer requiring a clean tree refused to work there.
-
-When the directory is accepted, every run that actually asks the model a question writes exactly one record there.
-A run that stops before the request - absent key, no rules, a never-send match, a usage error - writes none.
-Each record is one JSON file named `dispatch-<UTC stamp>-<pid>-<random>.json`, created mode 0600 in a directory created mode 0700.
-
-| Field | Meaning |
-| --- | --- |
-| `loggedAt`, `startedAt` | UTC RFC 3339 seconds: when the record was written, and when the request began |
-| `correlationId` | the run's own id, also carried by the fm-hooks pointer line below |
-| `brief`, `briefAbsolute`, `cwd` | the brief path as passed, its resolved form, and the directory the run started in |
-| `project`, `model`, `rulesFile` | the intake's project, the fixed model, and the rules file that was applied |
-| `httpStatus`, `elapsedMs` | the response status (`null` when none arrived) and the request's own duration |
-| `request` | the exact body that was sent: `state` with the project and the task text, and the one `rule` Choice question |
-| `response` | the answer's `choice`, `confidence`, and `probabilities`, plus its `model` and `usage`, or `null` |
-| `result.status` | the resolved status: `clear`, `ambiguous`, `escalate`, or `error` |
-| `result.toon` | the rendered block this run published, byte for byte |
-| `exitStatus` | the process's real exit status |
-
-Concurrent intakes are safe: each record is written to a private temporary file beside its destination and renamed into place, so overlapping runs cannot interleave or overwrite each other and no partial record is ever visible.
-
-**The record never carries the key.**
-It is assembled from the request body, the response document, and the rendered output, and the key reaches no part of that assembly; it still leaves the process only as a header read from a file descriptor.
-The writer additionally redacts any literal occurrence of the key from the bytes it is about to write, so the guarantee holds even for a brief whose own text contains the key.
-
-**Privacy.**
-A record holds the brief text that was sent, so treat the log directory as private: keep it under the home and never commit it.
-`config/dispatch-never-send` remains the list that stops a value leaving the machine at all.
-The resolver never rotates or prunes records; remove old ones yourself.
-
-**One fm-hooks pointer.**
-When fm-hooks has already created its queue for this home (`FM_HOOK_QUEUE`, then `FM_HOOK_STATE_DIR/queue`, then `$FM_HOME/state/fm-hooks/queue`), the resolver appends one line to that queue's `events.jsonl` naming the record: an `artifact` event carrying the `operation`, the record's `correlationId`, and the record path.
-That is the entire integration, and it is deliberately one pointer, because fm-hooks' choice to drop Pi result payloads is untouched and the record stays the only copy of the question and the answer.
-The line is best-effort: it never creates a queue, a missing queue or an unwritable log costs the log only, and no logging failure changes the resolver's decision, output, or exit status.
-Because fm-hooks rotates `events.jsonl`, a pointer written during a rotation can land in a rolled file; the record is unaffected.
-
 **Firstmate retains the dispatch decision**
 
 The tool never replaces firstmate's judgment, `quota-array-dispatch`, the captain-approval gate, or `fm-spawn.sh` validation; `AGENTS.md` section 4 owns what firstmate does with each outcome.
@@ -2317,11 +2241,10 @@ An installer should treat any status other than 0 as a refusal, because a resolv
 
 - The resolver copies every environment-provided key into a non-exported private variable and unsets `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, and `FM_DISPATCH_API_KEY` before launching child processes; bootstrap also protects the typesafe key.
 - A key read from a declared source is captured into the same private variable, so it is never exported either.
-- The resolver sends only the selected key to `curl` as a header read from a file descriptor, never on argv, and never prints, logs, or writes any key; the opt-in log (`FM_DISPATCH_RESOLVE_LOG`, read from the environment only) is assembled without the key and redacts it as well.
+- The resolver sends only the selected key to `curl` as a header read from a file descriptor, never on argv, and never prints, logs, or writes any key.
 - The typesafe.ai endpoint is `https://api.typesafe.ai/v1/systemone`, the OpenRouter endpoint is `https://openrouter.ai/api/alpha/decisions`, the OpenAI endpoint is `https://api.openai.com/v1/decisions`, and the `systemone` endpoint is `<FM_DISPATCH_BASE_URL>/v1/systemone`.
 - The default confidence floor remains 0.6; request timeouts are 5 seconds for typesafe.ai and 10 seconds for OpenRouter, `systemone`, and OpenAI.
 - A CPU-only local `systemone` host may not answer within its 10-second timeout; that is an ordinary `error` outcome, and firstmate keeps its existing intake.
-- `FM_DISPATCH_RESOLVE_LOG` is the optional log directory.
 
 The recommended OpenRouter model is `typesafe/jev-1.13` because it is built for fast typed choices and supplies native per-option probabilities without generated text.
 The dated model catalog observation is recorded in [dispatch verification](verification/dispatch-resolve.md#the-api-the-tool-depends-on).
@@ -3629,7 +3552,6 @@ FM_DISPATCH_API_KEY=    # optional systemone key; absent sends no Authorization 
 TYPESAFE_API_KEY=       # typesafe dispatch key, from the environment, .env, or the declared credential source ("Typed dispatch resolution")
 OPENROUTER_API_KEY=     # OpenRouter dispatch key, from the environment, .env, or the declared credential source
 OPENAI_API_KEY=         # OpenAI dispatch key, from the environment or .env
-FM_DISPATCH_RESOLVE_LOG=   # optional directory under $FM_HOME/state or $FM_HOME/data where bin/fm-dispatch-resolve.sh writes one question/answer record per run; read from the environment only, never from .env (docs/configuration.md "Typed dispatch resolution")
 FM_CLAUDE_ACCOUNT_LOW_THRESHOLD=20   # integer 0..100 percentage below which automatic Claude account switching skips a declared account, overriding config/claude-account-low-threshold (docs/configuration.md "Several Claude accounts")
 FM_CLAUDE_ACCOUNT_QUOTA_CACHE_SECONDS=300   # seconds bin/fm-claude-account-quota.sh reuses a cached setup-token inference-probe snapshot under state/ before probing again; 0 disables caching
 FMX_DISCORD_REPLY_MAX_CHARS=1900   # Discord reply per-message split budget; values below 50 clamp to 50, values above 2000 reset to 1900

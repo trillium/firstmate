@@ -64,7 +64,7 @@ test_genuine_primary_nudges() {
   local root="$TMP_ROOT/primary" out prefix_hex status=0
   make_primary "$root"
   out=$(run_nudge "$root") || status=$?
-  expect_code 0 "$status" "genuine primary nudge" "$out"
+  expect_code 0 "$status" "genuine primary nudge"
   [ "$out" = "$NUDGE_LINE" ] || fail "genuine primary printed unexpected output: $out"
   prefix_hex=$(printf '%s' "$out" | head -c 3 | od -An -tx1 | tr -d ' \n')
   [ "$prefix_hex" = e281a3 ] || fail "genuine primary nudge lost its U+2063 operational marker: $prefix_hex"
@@ -110,7 +110,7 @@ test_linked_secondmate_primary_nudges() {
   : > "$root/AGENTS.md"
   printf 'sessionstart-sm\n' > "$root/.fm-secondmate-home"
   out=$(run_nudge "$root") || status=$?
-  expect_code 0 "$status" "linked secondmate nudge" "$out"
+  expect_code 0 "$status" "linked secondmate nudge"
   [ "$out" = "$NUDGE_LINE" ] || fail "linked secondmate printed unexpected output: $out"
   pass "fm-sessionstart-nudge: a marked linked secondmate home is a primary"
 }
@@ -151,7 +151,7 @@ test_namespace_pid1_lock_holder_is_silent() {
   # still produce its nudge, so silence below means the owner was recognized.
   out=$(unshare -rpf --mount-proc bash -c \
     "FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE='$root' FM_HOME='$root' '$NUDGE'; exit \$?") || status=$?
-  expect_code 0 "$status" "namespace nudge without a lock" "$out"
+  expect_code 0 "$status" "namespace nudge without a lock"
   [ "$out" = "$NUDGE_LINE" ] \
     || fail "the namespace fixture did not nudge without a lock, so its silence proves nothing: $out"
 
@@ -159,7 +159,7 @@ test_namespace_pid1_lock_holder_is_silent() {
   status=0
   out=$(unshare -rpf --mount-proc bash -c \
     "FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE='$root' FM_HOME='$root' '$NUDGE'; exit \$?") || status=$?
-  expect_code 0 "$status" "namespace pid 1 lock nudge" "$out"
+  expect_code 0 "$status" "namespace pid 1 lock nudge"
   [ -z "$out" ] \
     || fail "a lock held by the harness at namespace pid 1 was not recognized, got: $out"
   pass "fm-sessionstart-nudge: a lock holder that is pid 1 of its own namespace is already run"
@@ -245,7 +245,7 @@ test_run_startup_runs_the_full_digest() {
   local root="$TMP_ROOT/run-startup" out status=0
   make_run_primary "$root"
   out=$(run_hook "$root" --source startup </dev/null) || status=$?
-  expect_code 0 "$status" "run wrapper startup" "$out"
+  expect_code 0 "$status" "run wrapper startup"
   assert_contains "$out" "$FULL_BANNER$root" "startup did not run the full digest"
   assert_contains "$out" "lock acquired: harness pid" \
     "the portable startup fixture did not supply a real harness process"
@@ -306,7 +306,7 @@ test_run_compact_without_completion_refreshes_before_finishing_startup() {
   printf '%s\n' 'INCOMPLETE_START_AGENTS=current' > "$root/AGENTS.md"
 
   out=$(run_hook_pi "$root" --source compact </dev/null) || status=$?
-  expect_code 0 "$status" "run wrapper compact without completion proof" "$out"
+  expect_code 0 "$status" "run wrapper compact without completion proof"
   assert_contains "$out" "$FULL_BANNER$root" \
     "compact skipped full startup when no completed startup could be proven"
   assert_contains "$out" "INCOMPLETE_START_AGENTS=current" \
@@ -325,7 +325,7 @@ test_run_clear_without_completion_finishes_startup() {
   local root="$TMP_ROOT/run-clear-incomplete" out status=0
   make_run_primary "$root"
   out=$(run_hook "$root" --source clear </dev/null) || status=$?
-  expect_code 0 "$status" "run wrapper clear without completion proof" "$out"
+  expect_code 0 "$status" "run wrapper clear without completion proof"
   assert_contains "$out" "$FULL_BANNER$root" \
     "clear skipped full startup when no completed startup could be proven"
   assert_not_contains "$out" "$REEMIT_BANNER" \
@@ -345,7 +345,7 @@ test_run_clear_rejects_previous_owner_completion() {
   printf '%s\n' "$previous_pid" > "$root/state/.session-start-complete"
 
   out=$(run_hook "$root" --source clear </dev/null) || status=$?
-  expect_code 0 "$status" "run wrapper clear with previous owner completion" "$out"
+  expect_code 0 "$status" "run wrapper clear with previous owner completion"
   assert_contains "$out" "$FULL_BANNER$root" \
     "clear treated a previous session's completion as current"
   assert_not_contains "$out" "$REEMIT_BANNER" \
@@ -971,7 +971,7 @@ test_run_resume_delegates_to_the_nudge() {
   local root="$TMP_ROOT/run-resume" out status=0
   make_run_primary "$root"
   out=$(run_hook "$root" --source resume </dev/null) || status=$?
-  expect_code 0 "$status" "run wrapper resume" "$out"
+  expect_code 0 "$status" "run wrapper resume"
   [ "$out" = "$NUDGE_LINE" ] || fail "resume did not delegate to the exact nudge line, got: $out"
   assert_absent "$root/state/.lock" "resume acquired the fleet lock instead of delegating"
   pass "run wrapper: resume delegates to the nudge instead of re-running the digest"
@@ -983,7 +983,7 @@ test_run_reads_source_from_the_hook_payload() {
   run_hook "$root" --source startup </dev/null >/dev/null
   out=$(printf '{"session_id":"s1","hook_event_name":"SessionStart","source":"compact"}' |
     run_hook "$root") || status=$?
-  expect_code 0 "$status" "run wrapper payload compact" "$out"
+  expect_code 0 "$status" "run wrapper payload compact"
   assert_contains "$out" "$REEMIT_BANNER$root" "a compact hook payload was not routed to a re-emit"
 
   # A fresh root, because the compact case above legitimately took the lock and
@@ -992,7 +992,7 @@ test_run_reads_source_from_the_hook_payload() {
   make_run_primary "$root"
   status=0
   out=$(printf '{"source":"resume","cwd":"/nowhere"}' | run_hook "$root") || status=$?
-  expect_code 0 "$status" "run wrapper payload resume" "$out"
+  expect_code 0 "$status" "run wrapper payload resume"
   assert_contains "$out" "FIRSTMATE_OP" "a resume hook payload did not delegate to the nudge"
   assert_not_contains "$out" "SESSION START" "a resume hook payload still ran the digest"
   pass "run wrapper: the hook payload's source field drives routing with no explicit argument"
@@ -1002,12 +1002,12 @@ test_run_unknown_source_takes_the_helm() {
   local root="$TMP_ROOT/run-unknown" out status=0
   make_run_primary "$root"
   out=$(run_hook "$root" --source somethingnew </dev/null) || status=$?
-  expect_code 0 "$status" "run wrapper unknown source" "$out"
+  expect_code 0 "$status" "run wrapper unknown source"
   assert_contains "$out" "$FULL_BANNER$root" "an unrecognized source did not fall through to the full digest"
 
   status=0
   out=$(printf '{"hook_event_name":"SessionStart"}' | run_hook "$root") || status=$?
-  expect_code 0 "$status" "run wrapper sourceless payload" "$out"
+  expect_code 0 "$status" "run wrapper sourceless payload"
   assert_contains "$out" "$FULL_BANNER$root" "a payload with no source did not fall through to the full digest"
   pass "run wrapper: an unrecognized or absent source takes the helm rather than skipping it"
 }
@@ -1022,7 +1022,7 @@ test_run_gate_and_scope_are_silent() {
   out=$(env NO_MISTAKES_GATE=1 FM_GATE_REFUSE_BYPASS=0 \
     FM_ROOT_OVERRIDE="$root" FM_HOME="$root" PATH="$RUN_PATH" \
     "$RUN" --source startup --pi-prerequisite 2>&1) || status=$?
-  expect_code 3 "$status" "gate env Pi prerequisite stand-down" "$out"
+  expect_code 3 "$status" "gate env Pi prerequisite stand-down"
   [ -z "$out" ] || fail "gate env Pi prerequisite stand-down must be silent, got: $out"
 
   fm_git_worktree "$base" "$linked" fm/run-linked
@@ -1031,7 +1031,7 @@ test_run_gate_and_scope_are_silent() {
   expect_silent_zero "linked worktree run" run_hook "$linked" --source startup
   status=0
   out=$(run_hook "$linked" --source startup --pi-prerequisite 2>&1) || status=$?
-  expect_code 3 "$status" "linked worktree Pi prerequisite stand-down" "$out"
+  expect_code 3 "$status" "linked worktree Pi prerequisite stand-down"
   [ -z "$out" ] || fail "linked worktree Pi prerequisite stand-down must be silent, got: $out"
   assert_absent "$linked/state/.lock" "an unmarked task worktree still took the fleet lock"
   pass "run wrapper: ordinary ineligible opens stay silent-zero and Pi preflight gets an explicit silent stand-down"
@@ -1045,7 +1045,7 @@ test_run_creates_missing_state_on_a_fresh_primary() {
   assert_absent "$root/state" "the fixture still had a state dir before the assertion began"
 
   out=$(run_hook "$root" --source startup </dev/null) || status=$?
-  expect_code 0 "$status" "run wrapper startup on a fresh primary with no state dir" "$out"
+  expect_code 0 "$status" "run wrapper startup on a fresh primary with no state dir"
   assert_present "$root/state" "a fresh primary root did not get its state dir created"
   assert_contains "$out" "$FULL_BANNER$root" \
     "creating the state dir did not let a fresh primary's session start run"
@@ -1073,7 +1073,7 @@ test_run_reports_a_state_dir_it_cannot_create() {
   chmod 0500 "$root"
   out=$(run_hook "$root" --source startup </dev/null 2>"$err_file") || status=$?
   chmod 0700 "$root"
-  expect_code 0 "$status" "run wrapper on a fresh primary whose state dir cannot be created" "$out"
+  expect_code 0 "$status" "run wrapper on a fresh primary whose state dir cannot be created"
   [ -z "$out" ] || fail "a failed state dir creation must still stand down without a digest, got: $out"
   assert_absent "$root/state" "a read-only fresh primary somehow got a state dir"
   [ "$(wc -l <"$err_file")" -eq 1 ] || fail "expected exactly one stderr line, got: $(cat "$err_file")"
@@ -1089,7 +1089,7 @@ test_run_reports_a_failed_session_start_as_digest_text() {
   chmod 0500 "$root/state"
   out=$(run_hook "$root" --source startup </dev/null) || status=$?
   chmod 0700 "$root/state"
-  expect_code 0 "$status" "run wrapper with an unwritable state directory" "$out"
+  expect_code 0 "$status" "run wrapper with an unwritable state directory"
   assert_contains "$out" "READ-ONLY SESSION" "a failed lock did not reach the agent as digest text"
   pass "run wrapper: a session start that cannot take the lock still opens the session and says so"
 }

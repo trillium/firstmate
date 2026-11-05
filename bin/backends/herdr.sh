@@ -824,14 +824,23 @@ fm_backend_herdr_presentation_lock_namespace_valid() {
 # -> /private/tmp cannot yield two lock identities for the same socket.
 # fm_backend_herdr_canonical_socket_path: normalize one absolute Unix-socket
 # path so two spellings of the same socket compare equal. Refuses a relative
-# or empty path. An unresolvable directory is left as-is rather than treated as
-# a failure, so a socket whose directory was removed still compares by its own
-# literal path. Single owner for every socket-identity comparison in this
-# adapter (the presentation session lock and the launcher-identity same-session
-# proof both use it).
+# or empty path. On native Windows the herdr server injects and reports
+# drive-letter paths (C:\...\herdr.sock); those are converted to their POSIX
+# spelling first so the launcher's claimed socket and the session list's
+# socket_path land in the same form before comparison. An unresolvable
+# directory is left as-is rather than treated as a failure, so a socket whose
+# directory was removed still compares by its own literal path. Single owner
+# for every socket-identity comparison in this adapter (the presentation
+# session lock and the launcher-identity same-session proof both use it).
 fm_backend_herdr_canonical_socket_path() {  # <socket-path>
   local socket=$1 sock_dir sock_base
   [ -n "$socket" ] || return 1
+  case "$socket" in
+    [A-Za-z]:[\\/]*)
+      socket=$(cygpath -u "$socket" 2>/dev/null) || return 1
+      [ -n "$socket" ] || return 1
+      ;;
+  esac
   case "$socket" in
     /*) ;;
     *) return 1 ;;
@@ -3323,9 +3332,9 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unprove
   # cortex=ask: a titled rounded composer box is the one shape a Cortex agent
   # identity changes, so the classifier answers need-identity for it and the
   # lazy probe below runs; no other verdict pays for it.
-  if cap=$(fm_backend_herdr_visible_capture_ansi "$target" 2>/dev/null); then
+  if cap=$(fm_backend_herdr_visible_capture_ansi "$target" 2>/dev/null) && [ -n "$cap" ]; then
     caps=$(printf 'styled=1\ncursor=0\nidentity=1\ncortex=ask')
-  elif cap=$(fm_backend_herdr_visible_capture "$target"); then
+  elif cap=$(fm_backend_herdr_visible_capture "$target") && [ -n "$cap" ]; then
     caps=$(printf 'styled=0\ncursor=0\nidentity=1\ncortex=ask')
   else
     printf 'unknown'
@@ -3620,6 +3629,15 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       # Claude turn that never flipped agent_status). Proven pending retries.
       # A picker that classifies pending must not receive that retry.
       verdict=$(fm_backend_herdr_composer_state "$target")
+      if [ "$proof" = 1 ] && [ "$verdict" = unknown ]; then
+        if content=$(fm_backend_herdr_composer_content "$target"); then
+          if [ -z "${content//[$' \t\r\n\v\f']/}" ]; then
+            verdict=empty
+          elif fm_backend_herdr_composer_payload_shown "$text" "$content"; then
+            verdict=pending
+          fi
+        fi
+      fi
       if fm_composer_blocking_dialog_noted >/dev/null; then
         printf 'unknown'
         return 0

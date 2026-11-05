@@ -195,7 +195,7 @@ test_every_registered_home_is_enumerated_exactly_once() {
   out=$(run_cascade "$dup" 2>&1)
   rc=$?
   set -e
-  expect_code 1 "$rc" "a registry that double-counts a home should refuse the cascade" "$out"
+  expect_code 1 "$rc" "a registry that double-counts a home should refuse the cascade"
   assert_contains "$out" 'duplicate secondmate home assignment' \
     "the double-counted home was not named"
   pass "the cascade emits one stanza per registered home and refuses a double-counted registry"
@@ -346,7 +346,7 @@ test_no_cascade_without_secondmates_or_from_a_secondmate_home() {
   out=$(run_cascade "$primary")
   rc=$?
   set -e
-  expect_code 0 "$rc" "a home with no registered secondmates should be a clean no-op" "$out"
+  expect_code 0 "$rc" "a home with no registered secondmates should be a clean no-op"
   assert_contains "$out" 'secondmates=0' "an empty cascade did not say so"
   assert_not_contains "$out" 'secondmate=' "an empty cascade invented a home"
 
@@ -356,7 +356,7 @@ test_no_cascade_without_secondmates_or_from_a_secondmate_home() {
   out=$(run_cascade "$secondmate")
   rc=$?
   set -e
-  expect_code 0 "$rc" "a secondmate home should not fail its own stow" "$out"
+  expect_code 0 "$rc" "a secondmate home should not fail its own stow"
   assert_contains "$out" 'role=secondmate' "a secondmate home was not recognized"
   assert_contains "$out" 'secondmates=0' "a secondmate home cascaded to its own registry"
   pass "the cascade stays silent with no secondmates and never runs from a secondmate home"

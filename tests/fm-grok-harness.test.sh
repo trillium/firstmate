@@ -39,7 +39,7 @@ $rec
 EOF
   out=$(run_grok_spawn "$home" "$proj" "$wt" "$fakebin" "$grok_home" "$id")
   status=$?
-  expect_code 0 "$status" "grok spawn should succeed" "$out"
+  expect_code 0 "$status" "grok spawn should succeed"
   assert_contains "$out" "spawned $id harness=grok" "grok spawn did not report success"
 
   hook="$grok_home/hooks/fm-turn-end.sh"
@@ -78,7 +78,7 @@ $rec
 EOF
   out=$(run_grok_spawn "$home" "$proj" "$wt" "$fakebin" "$grok_home" "$id")
   status=$?
-  expect_code 0 "$status" "grok spawn should succeed before teardown" "$out"
+  expect_code 0 "$status" "grok spawn should succeed before teardown"
   token=$(sed -n 's/^token=//p' "$wt/.fm-grok-turnend")
 
   FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \

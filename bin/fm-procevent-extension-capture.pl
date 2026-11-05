@@ -1,10 +1,25 @@
 use strict;
 use warnings;
 use Cwd qw(getcwd);
-use Fcntl qw(O_CREAT O_EXCL O_NOFOLLOW O_NONBLOCK O_RDONLY O_RDWR O_WRONLY);
+use Fcntl qw(O_CREAT O_EXCL O_NOFOLLOW O_NONBLOCK O_RDONLY O_RDWR O_WRONLY F_DUPFD);
 use JSON::PP qw(decode_json encode_json);
 use Digest::SHA qw(sha256_hex);
 use POSIX qw(dup2);
+
+# Descriptors 6-9 are the host's installed handoff slots. Park sources above
+# them first: dup2 onto a slot that already holds a source replaces that
+# source, and the later install copies the replacement.
+sub park_capture_descriptor {
+  my ($fh) = @_;
+  my $fd = fileno($fh);
+  die "cannot park capture descriptor\n" unless defined $fd;
+  return $fh if $fd >= 10;
+  my $parked_fd = fcntl($fh, F_DUPFD, 10);
+  die "cannot park capture descriptor\n" unless defined $parked_fd && $parked_fd >= 10;
+  open(my $parked, "<&=$parked_fd") or die "cannot retain parked capture descriptor\n";
+  close($fh) or die "cannot release parked capture descriptor\n";
+  return $parked;
+}
 
 if (@ARGV && $ARGV[0] eq 'handoff') {
   shift @ARGV;
@@ -61,7 +76,6 @@ if (@ARGV && $ARGV[0] eq 'handoff') {
   chdir($reservation) or die "cannot enter reservation root\n";
   my @reservation_stat = lstat('.');
   die "unsafe reservation root\n" unless @reservation_stat && -d _ && !-l _ && $reservation_stat[4] == $< && ($reservation_stat[2] & 07777) == 0700;
-  dup2(fileno($reservation), 7) >= 0 or die "cannot reserve capability descriptor\n";
   my $capability_name = ".extension-capture-capability-$claim_token.$reservation_token";
   sysopen(my $capability, $capability_name, O_CREAT | O_EXCL | O_NOFOLLOW | O_RDWR, 0600) or die "cannot create capability\n";
   my $record = encode_json({
@@ -80,6 +94,10 @@ if (@ARGV && $ARGV[0] eq 'handoff') {
   }
   seek($capability, 0, 0) or die "cannot rewind capability\n";
   unlink($capability_name) or die "cannot unlink capability\n";
+  $inbox = park_capture_descriptor($inbox);
+  $result = park_capture_descriptor($result);
+  $claim = park_capture_descriptor($claim);
+  $capability = park_capture_descriptor($capability);
   dup2(fileno($claim), 6) >= 0 or die "cannot install claim descriptor\n";
   dup2(fileno($capability), 7) >= 0 or die "cannot install capability descriptor\n";
   dup2(fileno($inbox), 8) >= 0 or die "cannot install inbox descriptor\n";

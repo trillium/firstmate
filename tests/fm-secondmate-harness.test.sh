@@ -987,7 +987,7 @@ test_spawn_bare_harness_no_model_effort_flag() {
   make_seeded_home "$sm" sm
 
   out=$(spawn_secondmate_capture "$w" sm "$sm" "$launchlog" 2>&1); status=$?
-  expect_code 0 "$status" "bare-harness secondmate spawn should succeed" "$out"
+  expect_code 0 "$status" "bare-harness secondmate spawn should succeed"
 
   meta="$w/home/state/sm.meta"
   [ "$(meta_field "$meta" model)" = default ] || fail "bare-tokens: meta model not default (got '$(meta_field "$meta" model)')"
@@ -1707,7 +1707,7 @@ test_spawn_secondmate_claude_permission_mode_auto() {
   make_seeded_home "$sm" sm
 
   out=$(spawn_secondmate_capture "$w" sm "$sm" "$launchlog" 2>&1); status=$?
-  expect_code 0 "$status" "claude secondmate spawn under claude-permission-mode=auto should succeed" "$out"
+  expect_code 0 "$status" "claude secondmate spawn under claude-permission-mode=auto should succeed"
 
   meta="$w/home/state/sm.meta"
   [ "$(meta_field "$meta" harness)" = claude ] || fail "permmode: meta harness not claude"
@@ -1801,7 +1801,7 @@ test_backend_inheritance_present_and_absent() {
   printf 'tmux\n' > "$w/home/config/backend"
   err="$w/backend-inherit.err"
   out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "backend present push should succeed" "$out"
+  expect_code 0 "$status" "backend present push should succeed"
   assert_contains "$out" "backend: pushed" "backend present value should report pushed"
   [ "$(cat "$w/sm/config/backend")" = tmux ] || fail "backend present value not pushed"
   instruction=$(reread_instruction_path "$w/sm") || fail "backend present reread instruction missing"
@@ -1811,14 +1811,14 @@ test_backend_inheritance_present_and_absent() {
   printf 'herdr\n' > "$w/sm/config/backend"
   printf 'zellij\n' > "$w/home/config/backend"
   out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "backend changed push should succeed" "$out"
+  expect_code 0 "$status" "backend changed push should succeed"
   assert_contains "$out" "backend: pushed" "backend changed value should report pushed"
   [ "$(cat "$w/sm/config/backend")" = zellij ] \
     || fail "primary backend did not overwrite the divergent destination"
 
   rm -f "$w/home/config/backend"
   out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "backend absence push should succeed" "$out"
+  expect_code 0 "$status" "backend absence push should succeed"
   assert_contains "$out" "backend: pushed - mirrored primary absence" "backend should mirror primary absence"
   [ -e "$w/sm/config/backend" ] && fail "backend not removed on primary absence"
   instruction=$(reread_instruction_path "$w/sm") || fail "backend absence reread instruction missing"
@@ -1852,7 +1852,7 @@ test_presentation_inheritance_default_on_and_opt_out() {
   err="$w/presentation-inherit.err"
 
   out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "presentation default push should succeed" "$out"
+  expect_code 0 "$status" "presentation default push should succeed"
   [ -e "$w/sm/config/herdr-presentation-spaces" ] \
     && fail "primary default must not write an opt-out downstream"
   verdict=$(sm_presentation_verdict "$w/sm/config")
@@ -1861,7 +1861,7 @@ test_presentation_inheritance_default_on_and_opt_out() {
   mkdir -p "$w/sm/config"
   printf 'off\n' > "$w/sm/config/herdr-presentation-spaces"
   out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "presentation reconverge push should succeed" "$out"
+  expect_code 0 "$status" "presentation reconverge push should succeed"
   assert_contains "$out" "herdr-presentation-spaces: pushed - mirrored primary absence" \
     "a local secondmate opt-out should reconverge on the primary default"
   verdict=$(sm_presentation_verdict "$w/sm/config")
@@ -1869,14 +1869,14 @@ test_presentation_inheritance_default_on_and_opt_out() {
 
   printf 'off\n' > "$w/home/config/herdr-presentation-spaces"
   out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "presentation opt-out push should succeed" "$out"
+  expect_code 0 "$status" "presentation opt-out push should succeed"
   assert_contains "$out" "herdr-presentation-spaces: pushed" "explicit opt-out should report pushed"
   verdict=$(sm_presentation_verdict "$w/sm/config")
   [ "$verdict" = off ] || fail "explicit primary opt-out left the secondmate projection $verdict"
 
   : > "$w/home/config/herdr-presentation-spaces"
   out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "presentation legacy opt-in push should succeed" "$out"
+  expect_code 0 "$status" "presentation legacy opt-in push should succeed"
   verdict=$(sm_presentation_verdict "$w/sm/config")
   [ "$verdict" = on ] || fail "a legacy primary opt-in file left the secondmate projection $verdict"
   pass "B12c presentation inheritance: the primary default converges on, and only an explicit opt-out propagates off"
@@ -1945,7 +1945,7 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
   log="$w/config-push-basic.tmux.log"
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
 
-  expect_code 0 "$status" "config push should succeed" "$out"
+  expect_code 0 "$status" "config push should succeed"
   assert_contains "$out" "config-push: $w/home -> live secondmate homes" \
     "config push lacked the header"
   assert_contains "$out" "secondmate sm ($sm_real):" \
@@ -2023,7 +2023,7 @@ test_config_push_reports_skips_dirty_and_invalid_home() {
   err="$w/config-push-warnings.err"
   out=$(run_config_push "$w" 2>"$err"); status=$?
 
-  expect_code 0 "$status" "warnings-only config push should exit zero" "$out"
+  expect_code 0 "$status" "warnings-only config push should exit zero"
   assert_contains "$out" "secondmate dirty ($dirty_real):" \
     "config push did not report dirty home"
   assert_contains "$out" "home: dirty working tree - local-material push continuing" \
@@ -2052,7 +2052,7 @@ test_config_push_exits_nonzero_on_copy_error() {
   err="$w/config-push-error.err"
   out=$(run_config_push "$w" 2>"$err"); status=$?
 
-  expect_code 1 "$status" "copy-error config push should exit non-zero" "$out"
+  expect_code 1 "$status" "copy-error config push should exit non-zero"
   assert_contains "$out" "secondmate sm ($sm_real):" \
     "config push error output missed the home"
   assert_contains "$out" "crew-harness: error - failed to copy" \
@@ -2074,7 +2074,7 @@ test_config_push_rereads_after_partial_propagation() {
   err="$w/config-push-partial.err"
 
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
-  expect_code 1 "$status" "partial propagation should remain non-zero" "$out"
+  expect_code 1 "$status" "partial propagation should remain non-zero"
   assert_contains "$out" "crew-dispatch.json: pushed" \
     "partial propagation did not report the completed config item"
   assert_contains "$out" "data/captain-shared.md: error" \
@@ -2135,7 +2135,7 @@ test_config_reread_per_home_changed_sets_and_exact_bytes() {
   log="$w/config-reread-per-home.tmux.log"
   err="$w/config-reread-per-home.err"
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
-  expect_code 0 "$status" "per-home reread config push should succeed" "$out"
+  expect_code 0 "$status" "per-home reread config push should succeed"
   [ ! -s "$err" ] || fail "unexpected stderr: $(cat "$err")"
 
   # Destination bytes converged per home.
@@ -2237,7 +2237,7 @@ test_config_reread_isolation_and_absent_and_send_failure() {
   log="$w/config-reread-absent.tmux.log"
   err="$w/config-reread-absent.err"
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
-  expect_code 0 "$status" "absent-mirror reread push should succeed" "$out"
+  expect_code 0 "$status" "absent-mirror reread push should succeed"
 
   instr_a=$(reread_instruction_path "$w/alpha") || fail "alpha instruction missing after config push"
   instr_b=$(reread_instruction_path "$w/beta") || fail "beta instruction missing after config push"
@@ -2293,7 +2293,7 @@ test_config_reread_isolation_and_absent_and_send_failure() {
   out=$(PATH="$(make_fake_toolchain "$w"):$BASE_PATH" \
     FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" FM_SEND_SETTLE=0 \
     "$ROOT/bin/fm-config-push.sh" 2>"$err"); status=$?
-  expect_code 1 "$status" "send failure should make config-push exit non-zero" "$out"
+  expect_code 1 "$status" "send failure should make config-push exit non-zero"
   assert_contains "$out" "CONFIG_REREAD: secondmate" "send failure diagnostic missing"
   assert_contains "$out" "send failed" "send failure must say send failed"
   assert_not_contains "$out" "config-reread: sent" \
@@ -2365,7 +2365,7 @@ SH
   chmod +x "$fakebin/mv"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_SEND_SETTLE=0 "$ROOT/bin/fm-config-push.sh" 2>&1); status=$?
-  expect_code 1 "$status" "publication failure should remain diagnostic" "$out"
+  expect_code 1 "$status" "publication failure should remain diagnostic"
   assert_contains "$out" "CONFIG_REREAD: secondmate" "publication failure diagnostic missing"
   assert_not_contains "$out" "config-reread: sent" \
     "publication failure must not claim reread delivery"
@@ -2422,7 +2422,7 @@ SH
   chmod +x "$fakebin/mv"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_SEND_SETTLE=0 "$ROOT/bin/fm-config-push.sh" 2>&1); status=$?
-  expect_code 1 "$status" "instruction-write failure should remain diagnostic" "$out"
+  expect_code 1 "$status" "instruction-write failure should remain diagnostic"
   assert_contains "$out" "retained exact retry generation" \
     "instruction-write failure did not retain exact retry bytes"
   stage_path=$(reread_retry_stage_path "$w/home" sm) \
@@ -2487,7 +2487,7 @@ SH
   chmod +x "$fakebin/cp"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_SEND_SETTLE=0 "$ROOT/bin/fm-config-push.sh" 2>&1); status=$?
-  expect_code 1 "$status" "exact temporary fallback failure should remain diagnostic" "$out"
+  expect_code 1 "$status" "exact temporary fallback failure should remain diagnostic"
   assert_contains "$out" "retained exact retry temporary" \
     "exact temporary fallback failure did not retain the immutable bytes"
   stage_path=$(reread_retry_stage_path "$w/home" sm) \
@@ -2607,7 +2607,7 @@ test_config_reread_full_retry_queue_drains_before_new_push() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
     "$ROOT/bin/fm-config-push.sh" 2>&1); status=$?
-  expect_code 0 "$status" "a full retry queue should drain before a new push" "$out"
+  expect_code 0 "$status" "a full retry queue should drain before a new push"
   assert_contains "$out" "config-reread: sent" \
     "a new config generation was not delivered after retry draining"
   [ "$(cat "$w/sm/config/crew-harness")" = new ] \
@@ -2656,7 +2656,7 @@ SH
   : > "$report"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_SEND_SETTLE=0 fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
-  expect_code 1 "$status" "mixed delivery failure should remain diagnostic" "$out"
+  expect_code 1 "$status" "mixed delivery failure should remain diagnostic"
   assert_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
     "mixed delivery failure diagnostic missing"
   count=0
@@ -2703,7 +2703,7 @@ SH
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
     fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
-  expect_code 1 "$status" "an older failed generation should remain diagnostic" "$out"
+  expect_code 1 "$status" "an older failed generation should remain diagnostic"
   assert_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
     "older generation failure diagnostic missing"
   assert_not_contains "$(cat "$log" 2>/dev/null || true)" ".0001-new" \
@@ -2721,7 +2721,7 @@ test_bootstrap_detect_only_does_not_create_state() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_STATE_OVERRIDE="$detect_state" FM_BOOTSTRAP_DETECT_ONLY=1 \
     "$ROOT/bin/fm-bootstrap.sh" 2>&1); status=$?
-  expect_code 0 "$status" "detect-only bootstrap should succeed" "$out"
+  expect_code 0 "$status" "detect-only bootstrap should succeed"
   [ ! -e "$detect_state" ] || fail "detect-only bootstrap created its state directory"
   pass "B24 bootstrap detect-only mode remains filesystem read-only"
 }
@@ -2737,7 +2737,7 @@ test_config_reread_skips_when_unchanged_and_reads_after_push() {
   printf 'codex\n' > "$w/sm/config/crew-harness"
   log="$w/config-reread-unchanged.tmux.log"
   out=$(run_config_push "$w" "$log" 2>/dev/null); status=$?
-  expect_code 0 "$status" "unchanged push should succeed" "$out"
+  expect_code 0 "$status" "unchanged push should succeed"
   assert_not_contains "$out" "config-reread: sent" "no reread when nothing changed"
   [ ! -s "$log" ] || fail "unchanged push still sent text: $(cat "$log")"
   assert_no_reread_instructions "$w/sm"

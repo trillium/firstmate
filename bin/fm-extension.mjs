@@ -55,7 +55,7 @@
 // mutation, or stronger-operation capability.
 
 import { execFile, spawn } from "node:child_process";
-import { constants as fsConstants, fstat, read } from "node:fs";
+import { chmodSync, constants as fsConstants, fstat, read, renameSync } from "node:fs";
 import {
   access,
   chmod,
@@ -686,16 +686,27 @@ async function installPackage(home, sourceInfo) {
         || sourceAfterCopy.manifestDigest !== sourceInfo.manifestDigest) {
       fail("integrity-mismatch", "package changed while it was copied into the managed store");
     }
+    // Darwin returns EACCES for rename of a directory the caller cannot write,
+    // even when the parent is writable. The tree was just validated at 0555;
+    // restore owner write only across the rename, then publish 0555 before
+    // any later await so the stored package stays read-only.
+    await chmod(temporary, 0o700);
+    let renamed = false;
     try {
-      await rename(temporary, destination);
-      return { packageInfo: await validatePackage(destination, { installed: true }) };
+      renameSync(temporary, destination);
+      renamed = true;
+      chmodSync(destination, 0o555);
     } catch (error) {
-      if (!error || !["EEXIST", "ENOTEMPTY"].includes(error.code)) throw error;
-      await removeManagedTree(temporary);
-      const winner = await validatePackage(destination, { installed: true });
-      if (winner.tree.digest !== sourceInfo.tree.digest) fail("integrity-mismatch", "concurrent package install produced a different tree");
-      return { packageInfo: winner };
+      if (!renamed && error && ["EEXIST", "ENOTEMPTY"].includes(error.code)) {
+        await removeManagedTree(temporary);
+        const winner = await validatePackage(destination, { installed: true });
+        if (winner.tree.digest !== sourceInfo.tree.digest) fail("integrity-mismatch", "concurrent package install produced a different tree");
+        return { packageInfo: winner };
+      }
+      if (renamed) await removeManagedTree(destination).catch(() => {});
+      throw error;
     }
+    return { packageInfo: await validatePackage(destination, { installed: true }) };
   } catch (error) {
     await removeManagedTree(temporary).catch(() => {});
     throw error;

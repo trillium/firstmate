@@ -68,7 +68,7 @@ test_no_target_prints_counts_only() {
   home=$(make_home no-target 3 1)
   fakebin=$(make_probes "$TMP_ROOT/p-no-target" 0.50 60 8 20971520)
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 0 "$rc" "absent target" "$out"
+  expect_code 0 "$rc" "absent target"
   assert_contains "$(printf '%s\n' "$out" | head -1)" \
     'capacity: free_lanes=unknown reason=no-target lanes=3 target=none secondmates=1 load1=0.50 cores=8 mem_free_pct=60 disk_free_mb=20480' \
     "absent target must report counts without inventing one"
@@ -80,7 +80,7 @@ test_no_target_never_prints_constrained_line() {
   home=$(make_home no-target-constrained 1 0)
   fakebin=$(make_probes "$TMP_ROOT/p-no-target-constrained" 9.50 9 8 1048576)
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 0 "$rc" "absent target on a constrained host" "$out"
+  expect_code 0 "$rc" "absent target on a constrained host"
   assert_contains "$out" 'free_lanes=unknown reason=no-target '     "constrained host without a target must still report no-target"
   assert_not_contains "$out" 'Constrained:'     "the hold-dispatch line is opt-in on config/lane-capacity"
   printf '6\n' > "$home/config/lane-capacity"
@@ -129,7 +129,7 @@ test_unavailable_probes_degrade() {
   printf '4\n' > "$home/config/lane-capacity"
   fakebin=$(make_probes "$TMP_ROOT/p-none" "" "" "" "")
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 0 "$rc" "unavailable probes" "$out"
+  expect_code 0 "$rc" "unavailable probes"
   assert_contains "$out" 'capacity: free_lanes=3 reason=ok lanes=1 target=4 secondmates=0 load1=unknown cores=unknown mem_free_pct=unknown disk_free_mb=unknown' \
     "unavailable probes must print unknown and not constrain"
   pass "unavailable probes print unknown and do not constrain"
@@ -141,7 +141,7 @@ test_invalid_target_is_reported() {
   fakebin=$(make_probes "$TMP_ROOT/p-invalid" 0.50 60 8 20971520)
   printf 'lots\n' > "$home/config/lane-capacity"
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 1 "$rc" "invalid target" "$out"
+  expect_code 1 "$rc" "invalid target"
   assert_contains "$out" 'free_lanes=unknown reason=invalid-target lanes=1 target=invalid' \
     "invalid target must not be guessed"
   assert_contains "$out" 'fm-capacity: config/lane-capacity: line 1: the first line must be the lane cap, one non-negative integer' \
@@ -163,7 +163,7 @@ test_real_host_smoke() {
   local home out rc
   home=$(make_home real 0 0)
   out=$(FM_HOME="$home" "$CAPACITY" 2>&1); rc=$?
-  expect_code 0 "$rc" "real host" "$out"
+  expect_code 0 "$rc" "real host"
   case "$(printf '%s\n' "$out" | head -1)" in
     'capacity: free_lanes=unknown reason=no-target lanes=0 target=none secondmates=0 load1='*' cores='*' mem_free_pct='*' disk_free_mb='*) : ;;
     *) fail "real host line malformed: $out" ;;
@@ -214,28 +214,28 @@ captain-idle 300
 max-load1 20
 CFG
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 0 "$rc" "valid keyed config" "$out"
+  expect_code 0 "$rc" "valid keyed config"
   assert_contains "$out" 'capacity: free_lanes=3 reason=ok lanes=1 target=4 ' "keyed config must keep the cap on its first line"
   printf '4\nmin-avail-gb 2\nenforce\n' > "$home/config/lane-capacity"
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 1 "$rc" "unknown key" "$out"
+  expect_code 1 "$rc" "unknown key"
   assert_contains "$out" "fm-capacity: config/lane-capacity: line 3: unknown key 'enforce'" "unknown key must be named with its line"
   assert_contains "$out" 'free_lanes=unknown reason=invalid-target lanes=1 target=invalid' "unknown key must invalidate the cap"
   printf '4\nmax-load1 20\nmax-load1 30\n' > "$home/config/lane-capacity"
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 1 "$rc" "repeated key" "$out"
+  expect_code 1 "$rc" "repeated key"
   assert_contains "$out" 'line 3: max-load1 appears more than once' "a repeated single key must be refused"
   printf '4\nmin-disk-gb lots\n' > "$home/config/lane-capacity"
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 1 "$rc" "malformed value" "$out"
+  expect_code 1 "$rc" "malformed value"
   assert_contains "$out" 'line 2: min-disk-gb needs a non-negative number' "a malformed value must be refused"
   printf 'min-avail-gb 2\n' > "$home/config/lane-capacity"
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 1 "$rc" "missing cap" "$out"
+  expect_code 1 "$rc" "missing cap"
   assert_contains "$out" 'line 1: the first line must be the lane cap' "a file without the cap first must be refused"
   printf '4\npressure-file relative/beat.json\n' > "$home/config/lane-capacity"
   out=$(run_capacity "$home" "$fakebin"); rc=$?
-  expect_code 1 "$rc" "relative pressure file" "$out"
+  expect_code 1 "$rc" "relative pressure file"
   assert_contains "$out" 'line 2: pressure-file takes one absolute path' "a relative pressure file must be refused"
   pass "keyed config lines parse, and unknown, repeated, or malformed lines are refused"
 }
@@ -368,7 +368,7 @@ test_limits_and_admit() {
   home=$(make_home limits 1 0)
   fakebin=$(make_probes "$TMP_ROOT/p-limits" 0.50 60 8 20971520)
   out=$(run_capacity_jq "$home" "$fakebin" --admit); rc=$?
-  expect_code 0 "$rc" "admit without config" "$out"
+  expect_code 0 "$rc" "admit without config"
   assert_equals '' "$out" "admit without config must change nothing"
   write_beat "$home/beat.json" ok 5.5 25.2 0.29 24.7 true "" 50
   cat > "$home/config/lane-capacity" <<CFG
@@ -383,21 +383,21 @@ CFG
   out=$(run_capacity_jq "$home" "$fakebin")
   assert_contains "$out" 'capacity: free_lanes=0 reason=memory,disk,load,reserve,battery ' "every limit must be named in order"
   out=$(run_capacity_jq "$home" "$fakebin" --admit); rc=$?
-  expect_code 75 "$rc" "admit under limits" "$out"
+  expect_code 75 "$rc" "admit under limits"
   assert_contains "$out" 'deferred: lane capacity of this home' "a deferral must print one deferred line"
   assert_contains "$out" 'memory: no room for a 1 GB lane: 5.5 GB available, 5 GB kept; disk: disk 50 GB free, under 60 GB; load: 24.7 over its max-load1 20; captain reserve: host reserved by the captain; on battery' \
     "the deferral must give every reason in words"
   write_beat "$home/beat.json" ok 13.5 25.2 0.29 2.0 false "" 500
   rm -f "$home/reserved.flag"
   out=$(run_capacity_jq "$home" "$fakebin" --admit); rc=$?
-  expect_code 0 "$rc" "admit when clear" "$out"
+  expect_code 0 "$rc" "admit when clear"
   printf '1\n' > "$home/config/lane-capacity"
   out=$(run_capacity_jq "$home" "$fakebin" --admit); rc=$?
-  expect_code 75 "$rc" "admit when full" "$out"
+  expect_code 75 "$rc" "admit when full"
   assert_contains "$out" 'full: 1 of 1 lanes' "a full home must say so"
   printf '1\nbogus 1\n' > "$home/config/lane-capacity"
   out=$(run_capacity_jq "$home" "$fakebin" --admit); rc=$?
-  expect_code 1 "$rc" "admit with invalid config" "$out"
+  expect_code 1 "$rc" "admit with invalid config"
   pass "limits close lanes with named reasons, and --admit exits 0, 75, or 1"
 }
 

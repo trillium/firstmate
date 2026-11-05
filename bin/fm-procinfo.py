@@ -145,16 +145,14 @@ def _procargs(pid):
 
 
 def _ps_visible(raw):
-    result = []
+    """Return KERN_PROCARGS2 bytes in macOS ps(1)'s command-column form."""
+    result = bytearray()
     for byte in raw:
-        if byte >= 128:
-            result.append("M-")
-            byte -= 128
         if byte < 32 or byte == 127:
-            result.append("^" + chr(byte ^ 64))
+            result.extend(("\\%03o" % byte).encode("ascii"))
         else:
-            result.append(chr(byte))
-    return "".join(result)
+            result.append(byte)
+    return bytes(result)
 
 
 def main():
@@ -174,10 +172,8 @@ def main():
         # hand the two routes different facts about one process.
         return 1
     comm = _ps_visible(argv[0])
-    while argv and not argv[-1]:
-        argv.pop()
     args = _ps_visible(b" ".join(argv))
-    sys.stdout.write("%d\t%s\t%s\n" % (ppid, comm, args))
+    sys.stdout.buffer.write(str(ppid).encode("ascii") + b"\t" + comm + b"\t" + args + b"\n")
     return 0
 
 

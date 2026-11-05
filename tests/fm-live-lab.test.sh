@@ -338,7 +338,7 @@ pass "extensions fail when the Pi lab lacks the branch extension or loads a stal
 NOT_LAB="$TMP_ROOT/not-a-lab"
 mkdir -p "$NOT_LAB/keep"
 out=$("$LIVE_LAB" down "$NOT_LAB" 2>&1)
-expect_code 1 "$?" "down refuses a path without a lab record" "$out"
+expect_code 1 "$?" "down refuses a path without a lab record"
 assert_contains "$out" "carries no lab record" "the refusal names the missing record"
 assert_present "$NOT_LAB/keep" "a refused down removes nothing"
 pass "down refuses anything up did not build"
@@ -581,7 +581,7 @@ assert_contains "$CHECK_OUT" "fail trust: the Pi trust store changed since up be
 pass "trust fails on Pi when the lab wrote the persistent Pi trust store"
 
 out=$("$LIVE_LAB" down "$P" 2>&1)
-expect_code 1 "$?" "down reports a changed Pi trust store" "$out"
+expect_code 1 "$?" "down reports a changed Pi trust store"
 assert_contains "$out" "the Pi trust store changed since up began; left as is" "the Pi trust change is named"
 assert_absent "$P" "the lab is still removed"
 assert_equals '{"trusted":["/somewhere"]}' "$(cat "$HOME/.pi/agent/trust.json")" "down never rewrites the Pi trust store"
@@ -592,11 +592,11 @@ pass "down removes the lab but reports, without reverting, a written Pi trust st
 EXISTING="$TMP_ROOT/existing"
 mkdir -p "$EXISTING/keep"
 out=$("$LIVE_LAB" up --harness claude "$EXISTING" 2>&1)
-expect_code 1 "$?" "up refuses an existing lab root" "$out"
+expect_code 1 "$?" "up refuses an existing lab root"
 assert_contains "$out" "a lab root must not exist yet" "the refusal names the existing root"
 assert_present "$EXISTING/keep" "a refused up touches nothing"
 out=$("$LIVE_LAB" up --harness codex "$TMP_ROOT/new" 2>&1)
-expect_code 1 "$?" "up refuses an unsupported harness" "$out"
+expect_code 1 "$?" "up refuses an unsupported harness"
 assert_absent "$TMP_ROOT/new" "a refused harness creates nothing"
 pass "up refuses an existing root and an unsupported harness"
 
@@ -611,7 +611,7 @@ exec sleep 45 >/dev/null 2>&1
 SH
 chmod +x "$TMP_ROOT/stub-bin/claude"
 out=$(PATH="$TMP_ROOT/stub-bin:$PATH" "$LIVE_LAB" up --harness claude --source "$TMP_ROOT/missing-origin" "$PARTIAL" 2>&1)
-expect_code 1 "$?" "an unavailable source stops up before launch" "$out"
+expect_code 1 "$?" "an unavailable source stops up before launch"
 assert_present "$PARTIAL/.fm-live-lab" "up recorded its selected task IDs"
 ids=$(awk -F= '/^(mate_id|worker_id)=/ {print $2}' "$PARTIAL/.fm-live-lab")
 if ! printf '%s\n' "$ids" | grep -Eq '^lab[0-9a-f]{12}-(mate|worker)$'; then fail "task IDs need twelve nonce hex digits: $ids"; fi
@@ -731,7 +731,7 @@ U="$TMP_ROOT/up-lab"
 RIVAL=$!
 printf '%s\n' "$RIVAL" >> "$TMP_ROOT/pids"
 out=$(SHELL=/bin/sh PATH="$FAKEBIN:$PATH" "$LIVE_LAB" up --harness claude --source "$UPSRC" --ref HEAD --timeout 1 "$U" 2>&1)
-expect_code 1 "$?" "stand-in primary does not answer probe" "$out"
+expect_code 1 "$?" "stand-in primary does not answer probe"
 wait "$RIVAL" 2>/dev/null || true
 assert_equals dropped "$(cat "$TMP_ROOT/rival-dropped" 2>/dev/null)" "rival dropped primary trust once"
 assert_equals present "$(cat "$U/claude-launch-trust" 2>/dev/null)" "primary launched trusted after the rival write"
@@ -758,7 +758,7 @@ mkdir -p "$T/plain/bin"
 cp "$ROOT/AGENTS.md" "$T/plain/AGENTS.md"
 git -C "$T/plain" init -q -b main
 out=$(CLAUDE_CONFIG_DIR="$T/config" "$TRUST" --lab-home "$T/plain" 2>&1)
-expect_code 1 "$?" "an unmarked checkout is refused" "$out"
+expect_code 1 "$?" "an unmarked checkout is refused"
 assert_contains "$out" "carries no lab-home marker" "the refusal names the missing marker"
 
 fm_git_worktree "$T/proj" "$T/wt" lab-trust-wt
@@ -766,12 +766,12 @@ printf 'fm-lab-home v1\n' > "$T/wt/.fm-lab-home"
 cp "$ROOT/AGENTS.md" "$T/wt/AGENTS.md"
 mkdir -p "$T/wt/bin"
 out=$(CLAUDE_CONFIG_DIR="$T/config" "$TRUST" --lab-home "$T/wt" 2>&1)
-expect_code 1 "$?" "a linked worktree is refused" "$out"
+expect_code 1 "$?" "a linked worktree is refused"
 assert_contains "$out" "is a linked worktree" "the refusal names the linked worktree"
 
 rm "$T/home/.fm-lab-home"
 ln -s "$T/wt/.fm-lab-home" "$T/home/.fm-lab-home"
 out=$(CLAUDE_CONFIG_DIR="$T/config" "$TRUST" --lab-home "$T/home" 2>&1)
-expect_code 1 "$?" "a symlinked marker is refused" "$out"
+expect_code 1 "$?" "a symlinked marker is refused"
 assert_contains "$out" "is a symlink" "the refusal names the symlink"
 pass "fm-claude-trust.sh --lab-home trusts only a marked lab primary checkout"

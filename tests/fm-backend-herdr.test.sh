@@ -1224,7 +1224,7 @@ test_launcher_identity_refuses_a_pane_from_another_session_name() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=someother \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher pane naming another herdr session must refuse" "$out"
+  expect_code 1 "$status" "a launcher pane naming another herdr session must refuse"
   assert_contains "$out" "cross-session parent identity" "the cross-session refusal did not explain itself"
   [ ! -s "$log" ] || fail "a cross-session launcher identity must be refused before any herdr call"
   pass "fm_backend_herdr_launcher_identity: refuses a launcher pane that names a different herdr session"
@@ -1238,7 +1238,7 @@ test_launcher_identity_refuses_a_missing_server_socket() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher pane without an injected server socket must refuse" "$out"
+  expect_code 1 "$status" "a launcher pane without an injected server socket must refuse"
   assert_contains "$out" "no injected socket identity" "the missing-socket refusal did not explain itself"
   [ ! -s "$log" ] || fail "a missing-socket launcher identity must be refused before any herdr call"
   pass "fm_backend_herdr_launcher_identity: refuses a claimed pane without exact server identity"
@@ -1254,7 +1254,7 @@ test_launcher_identity_refuses_a_pane_from_another_server_socket() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/other.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher pane on a different herdr server socket must refuse" "$out"
+  expect_code 1 "$status" "a launcher pane on a different herdr server socket must refuse"
   assert_contains "$out" "cross-session parent identity" "the cross-socket refusal did not explain itself"
   assert_not_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''get' "a cross-server launcher identity must be refused before its pane is trusted"
   pass "fm_backend_herdr_launcher_identity: refuses a launcher pane whose injected socket belongs to another herdr server"
@@ -1271,7 +1271,7 @@ test_launcher_identity_refuses_an_unreadable_pane() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/fmtest.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher pane that no longer reads must refuse, not fall back to a label search" "$out"
+  expect_code 1 "$status" "a launcher pane that no longer reads must refuse, not fall back to a label search"
   assert_contains "$out" "w7:p3" "the unreadable-pane refusal did not name the pane it could not resolve"
   assert_contains "$out" "could not be read" "the unreadable-pane refusal did not say the pane could not be read"
   pass "fm_backend_herdr_launcher_identity: refuses as unreadable when the launcher's own pane was destroyed"
@@ -1318,7 +1318,7 @@ test_launcher_identity_refuses_a_pane_and_tab_that_disagree() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/fmtest.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a pane and tab that disagree about their workspace must refuse" "$out"
+  expect_code 1 "$status" "a pane and tab that disagree about their workspace must refuse"
   assert_contains "$out" "contradictory parent identity" "the contradictory-identity refusal did not explain itself"
   pass "fm_backend_herdr_launcher_identity: refuses when the launcher's pane and tab disagree about their workspace"
 }
@@ -1335,7 +1335,7 @@ test_launcher_identity_refuses_a_workspace_missing_from_the_session() {
     HERDR_ENV=1 HERDR_PANE_ID=w7:p3 HERDR_SESSION=fmtest HERDR_SOCKET_PATH=/tmp/fm-herdr-unit/fmtest.sock \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_launcher_identity fmtest' "$ROOT" 2>&1 )
   status=$?
-  expect_code 1 "$status" "a launcher workspace absent from the session listing must refuse" "$out"
+  expect_code 1 "$status" "a launcher workspace absent from the session listing must refuse"
   assert_contains "$out" "stale parent identity" "the stale-workspace refusal did not explain itself"
   pass "fm_backend_herdr_launcher_identity: refuses when the launcher's workspace is gone from its own session"
 }
@@ -1366,7 +1366,7 @@ test_workspace_ensure_refuses_an_ambiguous_label_with_no_launcher() {
   out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" HERDR_SESSION=fmtest \
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_workspace_ensure fmtest /tmp' "$ROOT" 2>&1 )
   status=$?
-  expect_code 3 "$status" "two same-labeled home workspaces with no launcher identity must refuse" "$out"
+  expect_code 3 "$status" "two same-labeled home workspaces with no launcher identity must refuse"
   assert_contains "$out" "labeled 'firstmate'" "the ambiguity refusal did not name the duplicated label"
   assert_contains "$out" "w1 w7" "the ambiguity refusal did not name the candidate workspaces"
   assert_not_contains "$(cat "$log")" $'\x1f''workspace'$'\x1f''create' "an ambiguous placement must not mint a third same-labeled workspace"
@@ -5724,6 +5724,28 @@ test_send_text_submit_claude_grey_slash_command_is_proven_and_submitted() {
   pass "fm_backend_herdr_send_text_submit: a typed slash command Claude draws in muted truecolor grey is proven and submitted"
 }
 
+test_send_text_submit_claude_verifies_empty_and_retries_on_unstyled() {
+  local dir log resp fb out enter_count text
+  dir="$TMP_ROOT/submit-claude-unstyled"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  text='echo test'
+  herdr_submit_claude_prefix "$resp" "$text"
+  printf '{"result":{"agent":{"agent":"claude","agent_status":"idle"}}}\n' > "$resp/5.out"
+  printf '{"result":{"agent":{"agent":"claude","agent_status":"idle"}}}\n' > "$resp/7.out"
+  printf '' > "$resp/8.out"
+  printf '  \xe2\x9d\xaf %s\n' "$text" > "$resp/9.out"
+  printf '  \xe2\x9d\xaf %s\n' "$text" > "$resp/10.out"
+  printf '{"result":{"agent":{"agent":"claude","agent_status":"idle"}}}\n' > "$resp/12.out"
+  printf '' > "$resp/13.out"
+  printf '  \xe2\x9d\xaf\n' > "$resp/14.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0.01' "$ROOT" "$text" )
+  [ "$out" = empty ] || fail "an unstyled Claude composer cleared on retry should report empty, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 2 ] || fail "send_text_submit should have retried Enter once on pending unstyled composer, sent $enter_count Enter(s)"
+  pass "fm_backend_herdr_send_text_submit: Claude unstyled composer checks content and retries Enter until empty"
+}
+
 test_send_text_submit_lone_paste_placeholder_submits_the_long_payload() {
   local dir log resp fb out enter_count text
   dir="$TMP_ROOT/submit-paste-placeholder"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -6425,6 +6447,64 @@ test_wait_transition_clean_timeout_returns_1() {
 
 # shellcheck source=bin/fm-backend.sh
 . "$ROOT/bin/fm-backend.sh"
+# fm_backend_herdr_canonical_socket_path folds a Windows drive-letter spelling
+# into the POSIX spelling of the same socket, so the launcher's claimed socket
+# and the session list's socket_path compare equal on native Windows. `cygpath`
+# ships only with Git for Windows, so these cases stub it and therefore run
+# everywhere; the guard in the adapter matches only `[A-Za-z]:[\/]*`, a shape
+# that cannot occur on Linux or macOS.
+# make_cygpath_fakebin <dir> <map|fail|empty> [mapped-path] -> echoes fakebin dir
+make_cygpath_fakebin() {
+  local dir=$1 mode=$2 mapped=${3-} fb="$1/cygpath-fakebin"
+  mkdir -p "$fb"
+  case "$mode" in
+    map)   printf '#!/usr/bin/env bash\nprintf %%s %s\n' "$(printf '%q' "$mapped")" > "$fb/cygpath" ;;
+    fail)  printf '#!/usr/bin/env bash\nexit 1\n' > "$fb/cygpath" ;;
+    empty) printf '#!/usr/bin/env bash\nprintf ""\n' > "$fb/cygpath" ;;
+  esac
+  chmod +x "$fb/cygpath"
+  printf '%s' "$fb"
+}
+
+canonical_socket_path_via() {  # <fakebin-dir-or-empty> <path> -> stdout, status
+  local fb=$1 path=$2
+  if [ -n "$fb" ]; then
+    PATH="$fb:$PATH" bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_canonical_socket_path "$1"' "$ROOT" "$path"
+  else
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_canonical_socket_path "$1"' "$ROOT" "$path"
+  fi
+}
+
+test_canonical_socket_path_folds_a_windows_drive_letter_spelling() {
+  local dir sock fb posix_id win_id
+  dir="$TMP_ROOT/cygpath-map"; mkdir -p "$dir"
+  sock="$dir/herdr.sock"; : > "$sock"
+  fb=$(make_cygpath_fakebin "$dir" map "$sock")
+  posix_id=$(canonical_socket_path_via '' "$sock")
+  [ -n "$posix_id" ] || fail "the POSIX spelling must canonicalize to a non-empty identity"
+  win_id=$(canonical_socket_path_via "$fb" 'C:\fake\herdr.sock')
+  [ "$win_id" = "$posix_id" ] || \
+    fail "a drive-letter spelling must normalize to the same identity as its POSIX spelling (got '$win_id', want '$posix_id')"
+}
+
+test_canonical_socket_path_refuses_a_failed_cygpath() {
+  local dir fb status
+  dir="$TMP_ROOT/cygpath-fail"; mkdir -p "$dir"
+  fb=$(make_cygpath_fakebin "$dir" fail)
+  status=0
+  canonical_socket_path_via "$fb" 'C:\fake\herdr.sock' >/dev/null || status=$?
+  expect_code 1 "$status" "a drive-letter path whose cygpath conversion fails must be refused, not compared half-converted"
+}
+
+test_canonical_socket_path_refuses_empty_cygpath_output() {
+  local dir fb status
+  dir="$TMP_ROOT/cygpath-empty"; mkdir -p "$dir"
+  fb=$(make_cygpath_fakebin "$dir" empty)
+  status=0
+  canonical_socket_path_via "$fb" 'C:\fake\herdr.sock' >/dev/null || status=$?
+  expect_code 1 "$status" "a drive-letter path whose cygpath output is empty must be refused"
+}
+
 
 test_version_check_accepts_current_protocol
 test_version_check_refuses_old_protocol
@@ -6652,6 +6732,7 @@ test_composer_content_claude_2_1_291_marked_popup_row_is_not_the_composer
 test_send_text_submit_claude_2_1_291_marked_popup_row_is_proven_and_submitted
 test_send_text_submit_claude_2_1_291_popup_still_refuses_a_partial_payload
 test_send_text_submit_claude_grey_slash_command_is_proven_and_submitted
+test_send_text_submit_claude_verifies_empty_and_retries_on_unstyled
 test_send_text_submit_lone_paste_placeholder_submits_the_long_payload
 test_send_text_submit_multiline_paste_placeholder_submits_the_long_payload
 test_send_text_submit_refuses_placeholder_followed_by_a_literal_remainder
@@ -6677,3 +6758,6 @@ test_wait_transition_stream_absorb_clears_then_timeout
 test_wait_transition_reader_failure_returns_2
 test_wait_transition_bad_ack_returns_2_and_cleans_up
 test_wait_transition_clean_timeout_returns_1
+test_canonical_socket_path_folds_a_windows_drive_letter_spelling
+test_canonical_socket_path_refuses_a_failed_cygpath
+test_canonical_socket_path_refuses_empty_cygpath_output

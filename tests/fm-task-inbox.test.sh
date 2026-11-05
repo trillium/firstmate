@@ -451,6 +451,55 @@ test_composer_holds_recognises_captured_stacked_doorbells() {
   pass "inbox: captured claude composers holding one or many stacked doorbells read as our own, mixed text does not"
 }
 
+test_composer_holds_uses_visible_capture_on_herdr() {
+  local state rec line fx probe
+  state="$TMP_ROOT/holds-visible/state"
+  mkdir -p "$state"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" robots-wave1-c "please continue")
+  line=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  fx="$ROOT/tests/fixtures/claude-2.1.316-stacked-doorbells/one.screen"
+  # shellcheck disable=SC2016 # the probe body expands in the child shell
+  probe='
+    . "$1"; . "${1%/*}/fm-backend.sh"; . "${1%/*}/fm-composer-lib.sh"
+    fm_backend_source() { return 0; }
+    fm_backend_visible_capture() { cat "$FIXTURE"; }
+    fm_backend_capture() { echo "stale scrollback tail"; }
+    fm_task_inbox_composer_holds herdr w:p "$2"'
+  FIXTURE="$fx" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" "$line" \
+    || fail "composer_holds on herdr should read visible capture rather than scrollback tail"
+  pass "inbox: composer_holds prefers visible capture over scrollback on herdr"
+}
+
+test_ring_fails_and_never_stacks_when_enter_does_not_clear() {
+  local dir state rec doorbell log composer drops rc
+  dir="$TMP_ROOT/ring-no-stack"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_composer_stub "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  log="$dir/send.log"; composer="$dir/composer"; drops="$dir/drops"
+  ring() {
+    PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_DROP_ENTERS="$drops" inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1
+  }
+  # A composer holding our doorbell where all Enters drop must return 2 (send-failed)
+  # and must NOT retype or stack lines.
+  : > "$log"; printf '%s' "$doorbell" > "$composer"; echo 99 > "$drops"
+  rc=0; ring || rc=$?
+  [ "$rc" = 2 ] || fail "when Enter does not clear the stuck doorbell, ring should return 2, got $rc"
+  [ ! -s "$log" ] \
+    || fail "when Enter drops, nothing should be submitted to log:"$'\n'"$(cat "$log")"
+  [ "$(cat "$composer")" = "$doorbell" ] || fail "composer content should remain exactly the single unsubmitted doorbell, not stacked: $(cat "$composer")"
+
+  # Initial ring where send_text_submit types the line, but Enters drop and leave it in composer:
+  # it must return 2 (send failed), never report success (0) over an unsubmitted doorbell.
+  : > "$log"; : > "$composer"; echo 99 > "$drops"
+  rc=0; ring || rc=$?
+  [ "$rc" = 2 ] || fail "when send_text_submit leaves the doorbell unsubmitted, ring should return 2, got $rc"
+  pass "inbox: ring reports send-failed and never stacks when Enter does not clear the doorbell"
+}
+
 test_idempotent_write_dedups_exact_body() {
   local state r1 r2 r3 r4 count text
   state="$TMP_ROOT/idem/state"; mkdir -p "$state"
@@ -1419,6 +1468,8 @@ test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_submits_its_own_stuck_doorbell
 test_composer_holds_recognises_captured_stacked_doorbells
+test_composer_holds_uses_visible_capture_on_herdr
+test_ring_fails_and_never_stacks_when_enter_does_not_clear
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_prefilters_history
 test_idempotent_write_prefilter_preserves_exact_bodies

@@ -150,6 +150,8 @@
 #     proof `exit` describes, and refuses unless that proof settles it).
 #   - A composer that visibly holds pending text refuses before an exit command
 #     is typed, so existing text is preserved instead of being concatenated.
+#     A pending or unproven composer refusal saves the screen the classifier
+#     read to data/<id>/composer-refusals/ and names the file in the message.
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -212,6 +214,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-omp-profile-lib.sh"
 # shellcheck source=bin/fm-exclude-tools-lib.sh
 . "$SCRIPT_DIR/fm-exclude-tools-lib.sh"
+# shellcheck source=bin/fm-task-inbox-lib.sh
+. "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -240,6 +244,9 @@ control_cleanup() {
   # the next lifecycle command for this task writes the same path.
   if [ -n "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     rm -f "$FM_COMPOSER_DIALOG_SINK"
+  fi
+  if [ -n "${FM_COMPOSER_SCREEN_SINK:-}" ]; then
+    rm -f "$FM_COMPOSER_SCREEN_SINK"
   fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
@@ -355,10 +362,6 @@ ID=$RAW_ID
 # live lease (contract: bin/fm-lease-lib.sh; no-op in homes without leases).
 # shellcheck source=bin/fm-lease-lib.sh
 . "$SCRIPT_DIR/fm-lease-lib.sh"
-# shellcheck source=bin/fm-timeout-lib.sh
-. "$SCRIPT_DIR/fm-timeout-lib.sh"
-# shellcheck source=bin/fm-pool-lease-lib.sh
-. "$SCRIPT_DIR/fm-pool-lease-lib.sh"
 fm_lease_guard "$ID" "lifecycle control (fm-control)"
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 trap control_cleanup EXIT
@@ -370,6 +373,12 @@ CONTROL_LOCK_HELD=1
 # only once the lock is held: a process that loses the lock runs the same
 # trap, and would remove the file the lock holder is reading.
 FM_COMPOSER_DIALOG_SINK=$STATE/$ID.composer-dialog
+# The classified screen is kept the same way, so a composer refusal can name it.
+# The composer reads source the backend inside a subshell, so load the capture
+# helper here for the refusal that runs in this shell.
+# shellcheck source=bin/fm-composer-lib.sh
+. "$SCRIPT_DIR/fm-composer-lib.sh"
+FM_COMPOSER_SCREEN_SINK=$STATE/$ID.composer-screen
 META="$STATE/$ID.meta"
 if [ ! -f "$META" ]; then
   case "$RAW_ID" in
@@ -473,6 +482,13 @@ refuse_blocking_prompt() {  # <dialog-name>
 # endpoint; fm_composer_blocking_dialog names it solely when the selected row
 # is Exit and stop tasks, so any other picker or row still refuses. Returns 1
 # without sending anything when the screen no longer shows that picker.
+# A composer refusal names the file holding the screen its verdict came from.
+composer_refusal_note() {  # <verb> -> " (classified screen saved at <path>)" or nothing
+  local saved
+  saved=$(fm_composer_refusal_capture "$DATA" "$ID" "$1") || return 0
+  printf ' (classified screen saved at %s)' "$saved"
+}
+
 confirm_exit_picker() {
   [ "$HARNESS" = claude ] || return 1
   : > "$FM_COMPOSER_DIALOG_SINK" || return 1
@@ -529,8 +545,8 @@ dismiss_interrupt_hazard() {  # <key> <ere>
 # further press is sent. Its hazard surface is then closed before returning.
 send_interrupt_keys() {
   local key repeat clear arm hazard gap i=0
-  if [ "$HARNESS" = hermes ] && [ "$(fm_backend_composer_state "$BACKEND" "$T")" != empty ]; then
-    die 'Hermes double-Escape clears an unsent draft; interrupt requires a proven empty composer'
+  if [ "$HARNESS" = hermes ] && : > "$FM_COMPOSER_SCREEN_SINK" && [ "$(fm_backend_composer_state "$BACKEND" "$T")" != empty ]; then
+    die "Hermes double-Escape clears an unsent draft; interrupt requires a proven empty composer$(composer_refusal_note "$VERB")"
   fi
   key=$(fm_control_interrupt_key "$HARNESS")
   repeat=$(fm_control_interrupt_repeat "$HARNESS")
@@ -812,6 +828,7 @@ do_exit() {
   fi
   : > "$FM_COMPOSER_DIALOG_SINK" \
     || die "task $ID's dialog check could not be recorded"
+  : > "$FM_COMPOSER_SCREEN_SINK" || true
   composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
     || composer_state=unknown
   # The classify that filled the sink ran in a subshell, so read the file
@@ -820,16 +837,33 @@ do_exit() {
     dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
     refuse_blocking_prompt "$dialog"
   fi
+  # If relaunching and the composer holds only firstmate's own doorbell text,
+  # clear it through the adapter's supported clear mechanism (Ctrl+U repeatedly)
+  # before typing the exit command. Never discard text that is not provably ours.
+  if [ "$VERB" = relaunch ]; then
+    doorbell_line=$(fm_task_inbox_doorbell_line "$(fm_task_inbox_dir "$STATE" "$ID")/x.msg" 2>/dev/null) || doorbell_line=
+    if [ -n "$doorbell_line" ] \
+       && fm_task_inbox_composer_holds "$BACKEND" "$T" "$doorbell_line" "$LABEL"; then
+      for ((clear_try = 0; clear_try < 24; clear_try++)); do
+        fm_backend_send_key "$BACKEND" "$T" C-u "$LABEL" >/dev/null 2>&1 || break
+        cstate_after=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || cstate_after=unknown
+        if [ "$cstate_after" = empty ] || fm_control_composer_structurally_empty "$BACKEND" "$T"; then
+          composer_state=empty
+          break
+        fi
+      done
+    fi
+  fi
   case "$composer_state" in
     empty) ;;
     pending)
-      die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
+      die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'$(composer_refusal_note "$VERB")"
       ;;
     *)
       if fm_control_composer_structurally_empty "$BACKEND" "$T"; then
         :
       else
-        die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'"
+        die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'$(composer_refusal_note "$VERB")"
       fi
       ;;
   esac
@@ -1415,8 +1449,6 @@ case "$VERB" in
   exit)
     result=$(do_exit)
     record_exit_marker "$result"
-    # The worker has exited, so its quota pool lease goes back at once.
-    fm_pool_lease_release "$STATE" "$ID" || true
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)

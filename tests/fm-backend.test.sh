@@ -600,7 +600,7 @@ SH
 
   # live_sock <path>: park a real listening unix socket for the probes.
   live_sock() {
-    python3 -c 'import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(5); time.sleep(300)' "$1" >/dev/null 2>&1 &
+    python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(5); exec("while True:\n c, _ = s.accept()\n c.close()")' "$1" >/dev/null 2>&1 &
     echo $!
   }
 
@@ -641,7 +641,10 @@ SH
     && fail "the app-terminal check must skip a dead socket (and must not autostart a core), got '$out'"
   # A dead socket is never probed further: nothing may have replaced the file
   # and no core may have been spawned for it.
-  [ ! -e "$sock" ] || [ -S "$sock" ] || fail "the app-terminal probe created state at the dead socket path"
+  [ ! -e "$sock" ] || python3 - "$sock" <<'PY' || fail "the app-terminal probe replaced socket state at the dead socket path"
+import os, stat, sys
+sys.exit(not stat.S_ISSOCK(os.stat(sys.argv[1]).st_mode))
+PY
   rm -f "$sock"
 
   lpid=$(live_sock "$sock"); sleep 0.2
