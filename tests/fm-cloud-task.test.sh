@@ -90,6 +90,7 @@ args=$(cat "$FM_STUB_ARGS")
 assert_contains "$args" "Do the cloud thing for t-one" "claude gets the brief"
 assert_contains "$args" "branch named claude/t-one" "claude gets the cloud trailer"
 assert_contains "$args" "no secrets" "the trailer forbids secrets"
+assert_contains "$args" ".fm-inbox" "the trailer teaches the run the steering inbox"
 meta="$STATE/t-one.meta"
 assert_grep "backend=cloud" "$meta" "meta marks the cloud backend"
 assert_grep "mode=direct-PR" "$meta" "meta records direct-PR"
@@ -136,6 +137,42 @@ assert_contains "$out" "bin/fm-cloud.sh land t-one" "the wake names the landing 
 assert_equals "" "$(env_run "$STATE/t-one.check.sh")" "the same PR is reported once"
 rm -f "$FM_STUB_PR"
 pass "the check fires once on a PR"
+
+# --- send: the git inbox -------------------------------------------------------
+
+out=$(cloud send t-one "use the staging key name, not the value" 2>&1) || fail "send failed: $out"
+assert_contains "$out" "sent: message 001 to claude/t-one" "send reports the message number"
+assert_not_contains "$out" "staging key" "send never prints the message text"
+assert_equals "" "$(git -C "$REPO" status --porcelain)" "send leaves the local checkout untouched"
+inbox_file=$(git -C "$REMOTE" show claude/t-one:.fm-inbox/001.md)
+assert_contains "$inbox_file" "use the staging key name, not the value" "the remote branch carries the message file"
+assert_contains "$(git -C "$REMOTE" log -1 --format=%s claude/t-one)" "inbox: message 001" "the delivery is one commit on the branch"
+out=$(printf 'second answer\n' | cloud send t-one - 2>&1) || fail "send from stdin failed: $out"
+assert_contains "$out" "message 002" "the next message is numbered 002"
+assert_contains "$(git -C "$REMOTE" show claude/t-one:.fm-inbox/002.md)" "second answer" "stdin text is delivered"
+# A handled message still counts toward the numbering.
+wt="$TMP_ROOT/wt"; git clone -q "$REMOTE" "$wt" -b claude/t-one
+mkdir -p "$wt/.fm-inbox/handled"
+git -C "$wt" mv .fm-inbox/002.md .fm-inbox/handled/002.md
+git -C "$wt" -c user.name=t -c user.email=t@example.invalid commit -q -m handled
+git -C "$wt" push -q origin claude/t-one
+out=$(cloud send t-one "third" 2>&1) || fail "send after a handled move failed: $out"
+assert_contains "$out" "message 003" "a message moved to handled/ is not renumbered"
+assert_grep "sent message 001 to cloud run branch claude/t-one" "$STATE/t-one.status" "the status log records each delivery"
+assert_grep "sent message 003" "$STATE/t-one.status" "the status log records the later delivery"
+assert_no_grep "staging key" "$STATE/t-one.status" "the status log holds no message text"
+pass "send commits numbered inbox files to the run branch and logs them"
+
+out=$(cloud send t-one "" 2>&1); rc=$?
+assert_equals 2 "$rc" "an empty message is a usage error"
+out=$(cloud send no-such-task "hi" 2>&1); rc=$?
+assert_equals 1 "$rc" "send for an unknown task is refused"
+printf '%s\n' 'backend=tmux' 'kind=ship' > "$STATE/t-local.meta"
+out=$(cloud send t-local "hi" 2>&1); rc=$?
+assert_equals 1 "$rc" "send for a non-cloud task is refused"
+assert_contains "$out" "not a cloud run" "the refusal names the reason"
+rm -f "$STATE/t-local.meta"
+pass "send refuses empty, unknown and non-cloud targets"
 
 # Timeout: a second task with no branch, back-dated.
 write_brief t-two

@@ -9,6 +9,7 @@ Run `bin/fm-cloud.sh doctor` first; it checks that the installed `claude` CLI su
 - `status` and `list` show the recorded runs; `status` also polls the run's remote for `claude/*` branches that are new since launch, which is where cloud work lands.
 - `cleanup <run-id>` retires the record and prints the remaining web-only steps without performing them; a run still bound to a task is retired with `teardown` instead.
 - `launch --task <id>` makes the run an ordinary dispatch, described below.
+- `send <id> <text>` delivers an answer into a live task-bound run, described below.
 - `check <id>`, `land <id>`, and `teardown <id>` finish a task-bound run.
 - `credit` reports the cloud credit's time remaining and the runs launched, and `doctor` prints the same line.
 
@@ -32,6 +33,16 @@ Delivery is always a direct PR to the fork or repository named by the run's remo
 
 `teardown` refuses unless the recorded PR is merged, and `--force` discards a run whose work was not landed.
 It retires the finish check, the merge poll, the run record, and the task record, and closes the backlog item.
+
+## Steering a live run
+
+The installed `claude` CLI has no supported way to message a running cloud session: `--cloud <session>` only attaches interactively and `--teleport` resumes the session locally.
+`bin/fm-send.sh` and `bin/fm-control.sh` do not reach cloud tasks, so `bin/fm-cloud.sh send <id> <text>` delivers through a git inbox on the run's branch instead (`-` reads the text from stdin).
+The `launch --task` trailer tells the run to fetch `claude/<id>` between steps, apply each new `.fm-inbox/NNN.md` in numeric order, move it to `.fm-inbox/handled/`, and remove `.fm-inbox` before it opens the pull request.
+`send` pushes the next numbered file as one non-forced commit on top of the branch's remote tip, without touching any local checkout, and notes the delivery on the task's status log by number, size and hash.
+It refuses for a non-cloud task, an empty message, and a run that has not pushed `claude/<id>` yet, in which case retry after the branch appears.
+A run sees an answer at its next inbox check, so delivery is not instant, but it no longer waits for the time limit.
+Never put a secret in a message: the text is committed to the branch.
 
 ## What stays manual
 
