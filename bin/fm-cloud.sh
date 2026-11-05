@@ -140,6 +140,7 @@ load_task_libs() {
 cloud_trailer() {  # <task-id> <base-branch>
   printf '\n\n---\nCloud run: work on a branch named claude/%s, push it, and open a pull request against %s.\n' "$1" "${2:-the default branch}"
   printf 'Put no secrets, tokens or credentials in the branch, the pull request or its description.\n'
+  # shellcheck disable=SC2016  # Backticks are literal markdown in the rendered trailer.
   printf 'Steering inbox: between steps, run `git fetch origin claude/%s` and look for new files under .fm-inbox/ on it (git ls-tree -r origin/claude/%s .fm-inbox).\n' "$1" "$1"
   printf 'Merge the branch (git pull --rebase origin claude/%s), read each .fm-inbox/NNN.md in numeric order, apply it as an instruction or answer from the supervisor, then git mv it into .fm-inbox/handled/ and commit.\n' "$1"
   printf 'Before you open or finalize the pull request, remove the .fm-inbox directory from the branch (git rm -r .fm-inbox) so it is not part of the change.\n'
