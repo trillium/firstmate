@@ -791,6 +791,9 @@ handle_arm_signal() {
 trap 'handle_arm_signal HUP 129' HUP
 trap 'handle_arm_signal TERM 143' TERM
 trap 'handle_arm_signal INT 130' INT
+# Backstop for exit paths that bypass the handlers above: never leave the
+# watcher output temp file behind in state.
+trap '[ -z "${child_out:-}" ] || rm -f "$child_out" 2>/dev/null || true' EXIT
 
 child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
   echo "watcher: FAILED - no live watcher with a fresh beacon"
