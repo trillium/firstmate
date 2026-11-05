@@ -501,6 +501,11 @@ test_dod_block_renders_and_bounds_consent() {
     "a publishing contract must render the recorded consent token"
   out=$(fm_dod_block direct-PR noconsent-id fm/noconsent-id)
   assert_not_contains "$out" "upstream-consent" "a contract without consent must not render the token"
+  assert_contains "$out" "pass \`-R <owner>/<repo>\`" "an unconsented PR must be pinned to the origin repository"
+  out=$(fm_dod_block direct-PR consent-id fm/consent-id none '' github.com/kunchenguid/firstmate)
+  assert_not_contains "$out" "-R <owner>/<repo>" "a consented upstream PR must not be pinned to origin"
+  out=$(fm_dod_block no-mistakes manual-id fm/manual-id none '' '' manual)
+  assert_contains "$out" "pass \`-R <owner>/<repo>\`" "a hand-written PR must be pinned to the origin repository"
   out=$(fm_dod_block local-only local-id fm/local-id none '' github.com/a/b 2>&1); rc=$?
   expect_code 1 "$rc" "local-only must refuse a consent token it can never spend" "$out"
   pass "fm_dod_block: upstream consent renders on publishing contracts and is refused on local-only"

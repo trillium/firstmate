@@ -13,8 +13,8 @@
 #
 # These cases are hermetic (stubbed tmux + ps + sleep, no real agent):
 #   1. No meta, foreground comm is kiro-cli, kiro idle placeholder: exit 0.
-#   2. No meta, foreground comm is bash, same placeholder: exit 3 pending.
-#   3. No meta, foreground comm is bash, bordered empty composer: exit 0.
+#   2. No meta, foreground comm is a live non-kiro agent (claude), same placeholder: exit 3 pending.
+#   3. No meta, foreground comm is a live non-kiro agent (claude), bordered empty composer: exit 0.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -34,7 +34,7 @@ kiro_idle_screen() {
 
 # make_stubs <dir> <fg-comm> <screen-kind>
 # screen-kind is kiro-idle or empty-border. fg-comm is the pane foreground
-# process name the ancestry walk sees (kiro-cli or bash).
+# process name the ancestry walk sees (kiro-cli or claude; a bare shell would read as an exited agent and be refused).
 make_stubs() {
   local dir=$1 fg_comm=$2 screen_kind=$3 fb="$1/fakebin"
   mkdir -p "$fb"
@@ -137,7 +137,7 @@ grep -q 'unconfirmed' "$case_dir/err" && \
 pass "fm-send: a meta-less explicit kiro target confirms its idle placeholder"
 
 # Same placeholder without a kiro process: shared rules still read pending.
-case_dir=$(run_send bash kiro-idle)
+case_dir=$(run_send claude kiro-idle)
 expect_code 3 "$(cat "$case_dir/rc")" \
   "explicit non-kiro target with the kiro idle placeholder should stay unconfirmed"
 grep -q 'verdict=pending' "$case_dir/err" || \
@@ -147,7 +147,7 @@ grep -q 'verdict=pending' "$case_dir/err" || \
 pass "fm-send: a meta-less non-kiro explicit target keeps the shared pending verdict"
 
 # Default empty composer on a non-kiro explicit target: unchanged fast confirm.
-case_dir=$(run_send bash empty-border)
+case_dir=$(run_send claude empty-border)
 expect_code 0 "$(cat "$case_dir/rc")" \
   "explicit non-kiro target with an empty composer should still confirm"
 grep -q 'unconfirmed' "$case_dir/err" && \

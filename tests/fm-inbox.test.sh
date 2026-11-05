@@ -605,3 +605,48 @@ repaired=$(run_inbox "$home" announce --json "$wedged_id") \
   || fail "announce should repair the note once the lock is free"
 assert_equals "True" "$(printf '%s' "$repaired" | json_get announced)" "announce repairs the held-lock note"
 pass "a wedged wake-queue lock holder cannot hang the note writer"
+
+# --- a slow announcer cannot hold the wake-queue lock past its bound ---------
+# Under heavy host load every command the announce runs inside the queue lock
+# is slow, so the holder is live but takes minutes. Slow shims for the commands
+# the append runs stand in for that load. A waiter with a short bound (the
+# watcher's startup lock wait) must get the lock once the announcer's hold bound
+# passes, and the note must stay saved and repairable by `announce`.
+
+home=$(make_home lock-slow-holder)
+shims="$TMP_ROOT/slow-shims"
+mkdir -p "$shims"
+for tool in date cat awk; do
+  real=$(command -v "$tool")
+  # Slow only once the queue lock is published, so the acquire is not slowed; the release is, as under real load.
+  printf '#!/bin/sh\n[ ! -s "%s/state/.wake-queue.lock/pid" ] || sleep 1.5\nexec %s "$@"\n' "$home" "$real" >"$shims/$tool"
+  chmod +x "$shims/$tool"
+done
+slow_out="$TMP_ROOT/slow-note.out"
+(
+  PATH="$shims:$PATH" FM_INBOX_LOCK_HOLD_SECS=2 \
+    run_inbox "$home" note --request-id slow-1 --json "slow holder" >"$slow_out" 2>/dev/null </dev/null
+) &
+slow_pid=$!
+i=0
+while [ ! -d "$home/state/.wake-queue.lock" ] && [ ! -L "$home/state/.wake-queue.lock" ] && [ "$i" -lt 100 ]; do
+  sleep 0.1
+  i=$((i + 1))
+done
+set +e
+FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" bash -c '
+  . "$1/bin/fm-wake-lib.sh"
+  fm_lock_acquire_wait_max "$FM_WAKE_QUEUE_LOCK" 8 || exit 1
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+' _ "$ROOT" >/dev/null 2>&1
+waiter_code=$?
+set -e
+wait "$slow_pid" 2>/dev/null || true
+assert_equals "0" "$waiter_code" "a waiter with an 8s bound gets the queue lock from a slow announcer"
+assert_equals "1" "$(count_notes "$home")" "the note is saved when its announce overran the hold bound"
+slow_id=$(json_get id <"$slow_out")
+repaired=$(run_inbox "$home" announce --json "$slow_id") \
+  || fail "announce should repair a note whose announce overran the hold bound"
+assert_equals "True" "$(printf '%s' "$repaired" | json_get announced)" "announce repairs the overrun note"
+assert_equals "1" "$(count_wakes "$home")" "exactly one wake row exists after the repair"
+pass "a slow announcer cannot hold the wake-queue lock past its bound"

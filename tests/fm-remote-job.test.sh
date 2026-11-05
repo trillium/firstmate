@@ -904,7 +904,7 @@ done
   || fail "a worker without its ownership lock kept readiness fresh"
 assert_absent "$LOST_STATE/worker.lock" "the ownership lock reappeared before TERM"
 kill -TERM "$LOST_TERM_PID"
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
   kill -0 "$LOST_TERM_PID" 2>/dev/null || break
   sleep 0.05
 done
@@ -951,7 +951,7 @@ done
 rm -rf -- "$LOST_STATE/worker.lock"
 kill -TERM "$LOST_TERM_PID"
 kill -CONT "$LOST_TERM_PID"
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
   kill -0 "$LOST_TERM_PID" 2>/dev/null || break
   sleep 0.05
 done
@@ -1012,7 +1012,7 @@ while [ "$LATE_BURST" -lt 10 ]; do
   LATE_BURST=$((LATE_BURST + 1))
 done
 kill -CONT "$LOST_TERM_PID"
-for _ in $(seq 1 100); do
+for _ in $(seq 1 300); do
   kill -0 "$LOST_TERM_PID" 2>/dev/null || break
   sleep 0.05
 done

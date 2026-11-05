@@ -27,6 +27,8 @@
 #  10. An empty or whitespace-only text steer is refused before anything is
 #      marked, recorded, or typed - on the marked secondmate path that means
 #      no marker-only record and no pending-reply expectation.
+#  11. The typed plane refuses an endpoint whose agent positively exited, so
+#      text is never run in the bare shell it left behind.
 # Every case below that passes a literal `$...` message quotes it on purpose
 # (the point is sending an unexpanded `$` line), so SC2016 is disabled.
 # shellcheck disable=SC2016
@@ -68,7 +70,13 @@ case "${1:-}" in
     fi
     exit 0 ;;
   display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
+    for a in "$@"; do
+      case "$a" in
+        *cursor_y*) printf '1\n'; exit 0 ;;
+        *pane_current_command*) [ -z "${FM_FAKE_TMUX_AGENT:-}" ] || { printf '%s\n' "$FM_FAKE_TMUX_AGENT"; exit 0; } ;;
+        *pane_tty*) [ -z "${FM_FAKE_TMUX_AGENT:-}" ] || { printf '\n'; exit 0; } ;;
+      esac
+    done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
     if [ "${FM_FAKE_TMUX_COMPOSER:-}" = pending ]; then
@@ -330,6 +338,28 @@ test_explicit_target_stays_typed() {
   pass "fm-send planes: an explicit backend target keeps the typed plane"
 }
 
+# The typed plane has no shell-no-op doorbell to protect it, so text typed at an
+# endpoint whose agent exited would run in the bare shell left behind. fm-send
+# refuses before typing when the backend positively reports the agent gone, on
+# both typed-plane routes, and still types at a live agent.
+test_typed_plane_refuses_a_dead_agent() {
+  local dir err target
+  for target in t1 sess:win; do
+    dir=$(setup_case "deadtyped-${target//:/-}")
+    err="$dir/send.err"
+    run_send "$dir" "$err" FM_FAKE_TMUX_AGENT=zsh -- "$target" "/status" \
+      && fail "a typed send to an exited agent ($target) should fail"
+    [ ! -s "$dir/send.log" ] || fail "text was typed into the dead pane ($target):"$'\n'"$(cat "$dir/send.log")"
+    assert_contains "$(cat "$err")" "agent there has exited" "the refusal should say why ($target)"
+  done
+  dir=$(setup_case livetyped)
+  err="$dir/send.err"
+  run_send "$dir" "$err" FM_FAKE_TMUX_AGENT=claude -- t1 "/status" \
+    || fail "a typed send to a live agent should still succeed"
+  assert_contains "$(cat "$dir/send.log")" "/status" "a live agent should receive the typed text"
+  pass "fm-send planes: the typed plane refuses a dead agent's bare shell and still types at a live agent"
+}
+
 test_key_path_never_touches_inbox() {
   local dir err
   dir=$(setup_case keypath)
@@ -514,6 +544,7 @@ test_fire_and_forget_unlanded_ring_owes_one_retry
 test_fire_and_forget_retry_stays_off_without_the_flag
 test_harness_invocations_stay_typed
 test_explicit_target_stays_typed
+test_typed_plane_refuses_a_dead_agent
 test_key_path_never_touches_inbox
 test_secondmate_marker_and_enqueue_delivery
 test_post_enqueue_bookkeeping_failure_is_not_retryable

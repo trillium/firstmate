@@ -1,0 +1,3 @@
+ok - fm-send: a meta-less explicit kiro target confirms its idle placeholder
+ok - fm-send: a meta-less non-kiro explicit target keeps the shared pending verdict
+ok - fm-send: a meta-less non-kiro explicit target still confirms an empty composer

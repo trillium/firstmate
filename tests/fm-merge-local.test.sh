@@ -308,7 +308,17 @@ SH
   pass 'two approved tasks with the same tree cannot roll back a successful landing'
 }
 
+test_done_line_without_prior_observation_lands() {
+  make_case unobserved
+  printf 'done [at=1790000000]: ready in branch fm/local-task\n' > "$HOME_DIR/state/local-task.status"
+  assert_no_regex '^local_done_head=' "$META" 'fixture started with a pinned head'
+  land >/dev/null 2>&1 || fail "landing did not observe the done line: $(land 2>&1)"
+  [ "$(git -C "$PROJ" rev-parse HEAD)" = "$X" ] || fail 'landing did not use X'
+  pass 'a reported done line lands without a prior crew-state observation'
+}
+
 fm_test_run test_two_tasks_cannot_undo_a_same_tree_landing test_branch_advance_does_not_change_approval \
   test_missing_and_malformed_head_refuse test_change_after_hold_check_refuses \
   test_diverged_default_refuses test_change_during_approval_check_refuses \
-  test_snapshot_cannot_pin_a_replacement_task test_done_recording_preserves_caller_locks
+  test_snapshot_cannot_pin_a_replacement_task test_done_recording_preserves_caller_locks \
+  test_done_line_without_prior_observation_lands

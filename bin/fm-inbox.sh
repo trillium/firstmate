@@ -56,7 +56,10 @@
 # enqueue again. The announce and the reply-sequence claim wait at most
 # FM_INBOX_LOCK_WAIT_SECS (default 30) for a lock another process holds, so a
 # wedged holder leaves the note saved-but-unannounced for `announce` to repair
-# instead of hanging the writer.
+# instead of hanging the writer. The announce also holds the wake-queue lock for
+# at most FM_INBOX_LOCK_HOLD_SECS (default 15), so a slow announcer on a loaded
+# host cannot starve the watcher's startup lock wait; an overrun leaves the note
+# saved-but-unannounced the same way.
 # `receipts` is the bounded JSON view of pending and handled notes, their
 # acknowledgement, announcement, and any recorded reply. Default bounds omit
 # rather than implying the first page is everything; omitted[] names the
@@ -213,6 +216,12 @@ REPLY_SEQ_LOCK="$INBOX/.replies.lock"
 # holds (FM_INBOX_LOCK_WAIT_SECS, default 30). A bad value falls back to 30.
 LOCK_WAIT_SECS=${FM_INBOX_LOCK_WAIT_SECS:-30}
 case "$LOCK_WAIT_SECS" in ''|*[!0-9]*|0) LOCK_WAIT_SECS=30 ;; esac
+# The announce also bounds how long it HOLDS the queue lock
+# (FM_INBOX_LOCK_HOLD_SECS, default 15): on a heavily loaded host a live but slow
+# holder would otherwise starve the watcher's startup lock wait and leave
+# supervision unarmed. A bad value falls back to 15.
+LOCK_HOLD_SECS=${FM_INBOX_LOCK_HOLD_SECS:-15}
+case "$LOCK_HOLD_SECS" in ''|*[!0-9]*|0) LOCK_HOLD_SECS=15 ;; esac
 
 RECEIPTS_PENDING_BOUND=20
 RECEIPTS_HANDLED_BOUND=20
@@ -374,10 +383,23 @@ announce_note() {  # <id> <summary>
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"
     return 2
   fi
-  if fm_wake_append_locked check "inbox:$id" "check: captain inbox note $id - $summary"; then
-    mark_announced "$id"
-  else
+  # The locked section runs in a subshell under a hold deadline. An overrun is
+  # killed and the lock released here; the note stays saved but unannounced and
+  # `announce <id>` repairs it. A kill between the append and the marker write
+  # leaves a wake row without its marker, so the repair can queue a second wake for the same note; a duplicate wake is harmless.
+  ( fm_wake_append_locked check "inbox:$id" "check: captain inbox note $id - $summary" \
+    && mark_announced "$id" ) &
+  local work=$! watchdog
+  ( sleep "$LOCK_HOLD_SECS"; kill -TERM "$work" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+  watchdog=$!
+  wait "$work" 2>/dev/null || status=$?
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+  if [ "$status" -ne 0 ] && ! note_announced "$id"; then
+    printf 'fm-inbox: note saved but NOT announced (wake queue lock hold exceeded %ss or append failed)\n' "$LOCK_HOLD_SECS" >&2
     status=1
+  else
+    status=0
   fi
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   return "$status"

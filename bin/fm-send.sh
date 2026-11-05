@@ -72,7 +72,9 @@
 # T3 Code's request-id retention and retry policy; a marked request's
 # pending-reply expectation stays armed because this outcome is not a proven
 # failure); any other nonzero = the send failed and nothing may be assumed
-# delivered. Submission dispatches through the target's recorded backend; the
+# delivered. Typing is refused (exit 1, nothing typed) when the backend positively
+# reports the endpoint's agent dead or missing, because the text would otherwise
+# run in the bare shell the agent left behind. Submission dispatches through the target's recorded backend; the
 # tmux adapter shares its composer/submit core with the away-mode daemon via
 # bin/fm-tmux-lib.sh. Tune with FM_SEND_RETRIES (default 3; agy typed targets
 # default to 20 for agy's late busy render) / FM_SEND_SLEEP (0.4). Slash
@@ -1213,7 +1215,7 @@ else
       esac
     fi
     case "$ring_rc" in
-    1) echo "fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
+    1) echo "fm-send: doorbell skipped (${FM_TASK_INBOX_RING_NOTE:-composer visibly holds pending text}); the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
     2) echo "fm-send: doorbell did not reach $T; the steer is durably recorded at $INBOX_RECORD and $ring_retry" >&2 ;;
     3) echo "fm-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane" >&2 ;;
     esac
@@ -1254,6 +1256,20 @@ else
   # verdict preserves the loud refusal boundary. Only LOCAL targets reach this
   # block: remote text rides the inbox leg above, and remote --key exits
   # earlier.
+  # A typed line goes straight to whatever owns the endpoint, so an exited
+  # agent leaves a bare shell that would run the steer text as commands. The
+  # inbox plane's doorbell is a shell no-op and is guarded in the ring; this
+  # plane has no such protection, so refuse before typing anything when the
+  # backend positively reports the agent gone. Any other state, including one
+  # the backend cannot classify, still sends.
+  case "$(fm_backend_agent_state "$TARGET_BACKEND" "$T" 2>/dev/null || true)" in
+  dead|missing)
+    fm_send_known_undelivered_cleanup ||
+      echo "error: known-undelivered pending-reply state could not be reset for $TARGET_TASK_ID" >&2
+    echo "error: text not sent to $T: the agent there has exited, and typing would run it in a bare shell (nothing was typed; recover the worker first, see stuck-crewmate-recovery)" >&2
+    exit 1
+    ;;
+  esac
   send_rc=0
   if verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
     :
