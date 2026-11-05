@@ -322,6 +322,16 @@ $missing
 EOF
   fi
 
+  # Only fm-pr-merge.sh defines the expected-head check; the read-only ready
+  # check sources this library without it.
+  if command -v note_expected_head >/dev/null 2>&1; then
+    note_expected_head "$live_head"
+    if [ -n "${FM_PR_EXPECTED_HEAD_REFUSAL:-}" ]; then
+      refusals="$refusals$FM_PR_EXPECTED_HEAD_REFUSAL
+"
+    fi
+  fi
+
   if [ -n "$mergeable_refusal" ]; then
     if [ -z "$refusals" ] && [ "$mergeable" = UNKNOWN ]; then
       return 3
