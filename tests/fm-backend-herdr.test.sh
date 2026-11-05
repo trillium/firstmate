@@ -5724,6 +5724,28 @@ test_send_text_submit_claude_grey_slash_command_is_proven_and_submitted() {
   pass "fm_backend_herdr_send_text_submit: a typed slash command Claude draws in muted truecolor grey is proven and submitted"
 }
 
+test_send_text_submit_claude_verifies_empty_and_retries_on_unstyled() {
+  local dir log resp fb out enter_count text
+  dir="$TMP_ROOT/submit-claude-unstyled"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  text='echo test'
+  herdr_submit_claude_prefix "$resp" "$text"
+  printf '{"result":{"agent":{"agent":"claude","agent_status":"idle"}}}\n' > "$resp/5.out"
+  printf '{"result":{"agent":{"agent":"claude","agent_status":"idle"}}}\n' > "$resp/7.out"
+  printf '' > "$resp/8.out"
+  printf '  \xe2\x9d\xaf %s\n' "$text" > "$resp/9.out"
+  printf '  \xe2\x9d\xaf %s\n' "$text" > "$resp/10.out"
+  printf '{"result":{"agent":{"agent":"claude","agent_status":"idle"}}}\n' > "$resp/12.out"
+  printf '' > "$resp/13.out"
+  printf '  \xe2\x9d\xaf\n' > "$resp/14.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_send_text_submit default:w1:p2 "$1" 3 0.01 0.01' "$ROOT" "$text" )
+  [ "$out" = empty ] || fail "an unstyled Claude composer cleared on retry should report empty, got '$out'"
+  enter_count=$(grep -c $'\x1f''pane'$'\x1f''send-keys'$'\x1f''w1:p2'$'\x1f''enter' "$log")
+  [ "$enter_count" -eq 2 ] || fail "send_text_submit should have retried Enter once on pending unstyled composer, sent $enter_count Enter(s)"
+  pass "fm_backend_herdr_send_text_submit: Claude unstyled composer checks content and retries Enter until empty"
+}
+
 test_send_text_submit_lone_paste_placeholder_submits_the_long_payload() {
   local dir log resp fb out enter_count text
   dir="$TMP_ROOT/submit-paste-placeholder"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -6710,6 +6732,7 @@ test_composer_content_claude_2_1_291_marked_popup_row_is_not_the_composer
 test_send_text_submit_claude_2_1_291_marked_popup_row_is_proven_and_submitted
 test_send_text_submit_claude_2_1_291_popup_still_refuses_a_partial_payload
 test_send_text_submit_claude_grey_slash_command_is_proven_and_submitted
+test_send_text_submit_claude_verifies_empty_and_retries_on_unstyled
 test_send_text_submit_lone_paste_placeholder_submits_the_long_payload
 test_send_text_submit_multiline_paste_placeholder_submits_the_long_payload
 test_send_text_submit_refuses_placeholder_followed_by_a_literal_remainder

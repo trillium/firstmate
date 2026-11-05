@@ -386,7 +386,8 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # ring whose Enter never landed, so on an agent not reported busy it is
 # submitted with Enter alone (never retyped) whatever verdict the classifier
 # gave; skipping it would block every later ring. A lost first Enter gets one
-# confirmed retry. A skip sets FM_TASK_INBOX_RING_NOTE to the reason.
+# confirmed retry, and if still unsubmitted returns 2 (send failed) so
+# re-rings do not assume delivery. A skip sets FM_TASK_INBOX_RING_NOTE to the reason.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   local backend=$1 target=$2 rec=$3 label=${4:-} line cstate verdict
   case "$(fm_backend_agent_state "$backend" "$target" 2>/dev/null || true)" in
@@ -410,7 +411,9 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
     sleep 0.3
     fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
     fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-    return 0
+    sleep 0.3
+    fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
+    return 2
   fi
   if [ "$cstate" = pending ]; then
     # shellcheck disable=SC2034 # read by the sourcing callers (fm-send.sh, fm-watch.sh)
@@ -427,6 +430,13 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   # The verdict is read only to report a failed keystroke; every other value
   # (empty, pending, unknown, ...) is deliberately ignored, never proof.
   [ "$verdict" != send-failed ] || return 2
+  if fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label"; then
+    fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+    sleep 0.3
+    fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
+    return 2
+  fi
+  [ "$verdict" != pending ] || return 2
   return 0
 }
 
@@ -437,7 +447,11 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
 fm_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
   local cap held want
   fm_backend_source "$1" || return 1
-  cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) || return 1
+  if fm_backend_visible_capture_supported "$1" && cap=$(fm_backend_visible_capture "$1" "$2" "${4:-}" 2>/dev/null) && [ -n "$cap" ]; then
+    :
+  else
+    cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) || return 1
+  fi
   held=$(fm_composer_extract_selected_content styled=0 "$cap") || return 1
   held=$(printf '%s' "$held" | tr -d '[:space:]')
   want=$(printf '%s' "$3" | tr -d '[:space:]')

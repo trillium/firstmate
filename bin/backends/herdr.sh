@@ -3332,9 +3332,9 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|pending-unprove
   # cortex=ask: a titled rounded composer box is the one shape a Cortex agent
   # identity changes, so the classifier answers need-identity for it and the
   # lazy probe below runs; no other verdict pays for it.
-  if cap=$(fm_backend_herdr_visible_capture_ansi "$target" 2>/dev/null); then
+  if cap=$(fm_backend_herdr_visible_capture_ansi "$target" 2>/dev/null) && [ -n "$cap" ]; then
     caps=$(printf 'styled=1\ncursor=0\nidentity=1\ncortex=ask')
-  elif cap=$(fm_backend_herdr_visible_capture "$target"); then
+  elif cap=$(fm_backend_herdr_visible_capture "$target") && [ -n "$cap" ]; then
     caps=$(printf 'styled=0\ncursor=0\nidentity=1\ncortex=ask')
   else
     printf 'unknown'
@@ -3629,6 +3629,15 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
       # Claude turn that never flipped agent_status). Proven pending retries.
       # A picker that classifies pending must not receive that retry.
       verdict=$(fm_backend_herdr_composer_state "$target")
+      if [ "$proof" = 1 ] && [ "$verdict" = unknown ]; then
+        if content=$(fm_backend_herdr_composer_content "$target"); then
+          if [ -z "${content//[$' \t\r\n\v\f']/}" ]; then
+            verdict=empty
+          elif fm_backend_herdr_composer_payload_shown "$text" "$content"; then
+            verdict=pending
+          fi
+        fi
+      fi
       if fm_composer_blocking_dialog_noted >/dev/null; then
         printf 'unknown'
         return 0
