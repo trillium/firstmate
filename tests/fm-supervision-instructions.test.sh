@@ -39,6 +39,10 @@ test_supervision_host_protocol_on_a_claude_home_unless_off() {
   assert_contains "$hosted" "Mode: Claude Stop-hook-owned supervision." "the host protocol replaced the claude protocol instead of adding to it"
   assert_contains "$hosted" "supervision-host: cycle boundary" "the host protocol did not tell main how to handle a park boundary"
   assert_contains "$hosted" "never run the return from it" "the host protocol did not say a handed-back wake is not the captain's return"
+  assert_contains "$hosted" "Codex worker's first-run" "the host protocol did not make Codex directory trust a firstmate action"
+  assert_contains "$hosted" "not a captain outcome" "the host protocol could still escalate Codex directory trust to the captain"
+  assert_contains "$hosted" "accept it with Enter" "the host protocol did not preserve Codex's documented trust action"
+  assert_contains "$hosted" "verify the worker begins processing its instructions" "the host protocol did not require verification after accepting Codex directory trust"
   [ "$(printf '%s\n' "$hosted" | grep -vF -e '- Supervision host: on;' | head -n "$(printf '%s\n' "$plain" | wc -l)")" = "$plain" ] \
     || fail "the host protocol changed the claude block it should only append to"
   other=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$config" "$RENDER" --harness pi)
