@@ -92,6 +92,31 @@ setup_home() {  # <name> -> echoes home dir
   printf '%s\n' "$home"
 }
 
+# An option-looking word that fm-send does not know must be refused, not
+# delivered as steering text: a worker once received the literal "--file <path>"
+# as a message with no instruction in it. "--" is the escape for text that
+# legitimately starts with a dash.
+test_unknown_option_is_refused_not_sent() {
+  local dir fb home err log rc
+  dir="$TMP_ROOT/unknown-opt"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); home=$(setup_home unkopt); err="$dir/send.err"; log="$dir/tmux.log"; : > "$log"
+  fm_write_meta "$home/state/lane-opt.meta" "window=sess:fm-lane-opt" "kind=ship"
+
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" lane-opt --file /tmp/brief.md >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "an unknown option was accepted"
+  assert_contains "$(cat "$err")" "unknown option '--file'" "the refusal should name the unknown option"
+  [ ! -s "$log" ] || fail "an unknown option still rang the doorbell: $(cat "$log")"
+  [ ! -e "$home/state/lane-opt.inbox/001.msg" ] || fail "an unknown option was recorded as a steering message"
+
+  PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_TMUX_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" lane-opt -- "--file is literal text" >/dev/null 2>"$err"; rc=$?
+  expect_code 0 "$rc" "text after -- should send even when it starts with a dash"
+  grep -qF -- '--file is literal text' "$home/state/lane-opt.inbox/001.msg" \
+    || fail "text after -- should be recorded verbatim"
+  pass "fm-send: unknown option refused with nothing sent; -- sends dash-leading text"
+}
+
 test_exact_lane_id_send_still_works() {
   local dir fb home err log rc got
   dir="$TMP_ROOT/exact"; mkdir -p "$dir"
@@ -249,6 +274,7 @@ test_key_send_exit_status_follows_delivery() {
 
 test_exact_lane_id_send_still_works
 test_help_prints_usage
+test_unknown_option_is_refused_not_sent
 test_key_send_exit_status_follows_delivery
 test_unset_fm_home_fails
 test_unresolvable_target_does_not_tmux_fallback
