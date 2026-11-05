@@ -136,8 +136,8 @@ grep -q 'unconfirmed' "$case_dir/err" && \
   fail "explicit kiro send: expected one Enter after a confirmed idle composer, got $(enter_count "$case_dir")"$'\n'"$(cat "$case_dir/tmux.log")"
 pass "fm-send: a meta-less explicit kiro target confirms its idle placeholder"
 
-# Same placeholder without a kiro process: shared rules still read pending.
-case_dir=$(run_send bash kiro-idle)
+# Same placeholder under a live non-kiro agent (a bare shell would count as an exited agent): shared rules still read pending.
+case_dir=$(run_send claude kiro-idle)
 expect_code 3 "$(cat "$case_dir/rc")" \
   "explicit non-kiro target with the kiro idle placeholder should stay unconfirmed"
 grep -q 'verdict=pending' "$case_dir/err" || \
@@ -147,7 +147,7 @@ grep -q 'verdict=pending' "$case_dir/err" || \
 pass "fm-send: a meta-less non-kiro explicit target keeps the shared pending verdict"
 
 # Default empty composer on a non-kiro explicit target: unchanged fast confirm.
-case_dir=$(run_send bash empty-border)
+case_dir=$(run_send claude empty-border)
 expect_code 0 "$(cat "$case_dir/rc")" \
   "explicit non-kiro target with an empty composer should still confirm"
 grep -q 'unconfirmed' "$case_dir/err" && \
