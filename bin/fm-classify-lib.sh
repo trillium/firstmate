@@ -2643,6 +2643,23 @@ crew_is_paused() {  # <id>
   [ "$(crew_absorb_class "$1")" = paused ]
 }
 
+# 0 if crew <id>'s authoritative current state is done. Unlike the absorb
+# predicates above, this is terminal evidence: an idle pane is the expected
+# shape after a worker has finished or is awaiting merge/cleanup, so the plain
+# stale path must not create a second supervisor wake for it.
+#
+# This reads the same current-state resolution as crew_absorb_class rather than
+# trusting the append-only status log, whose last event can be stale while a new
+# run is active. Callers keep deep-inspection stale reasons outside this gate.
+crew_is_done() {  # <id>
+  local id=$1 line state
+  [ -n "$id" ] || return 1
+  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || return 1
+  case "$line" in state:*) ;; *) return 1 ;; esac
+  state=${line#state: }; state=${state%% *}
+  [ "$state" = 'done' ]
+}
+
 # The one spelling of the verdict component that says a parked gate's answer is
 # owed by a HUMAN. bin/fm-crew-state.sh mints it (nm_gate_awaits_human_decision
 # owns the derivation: the findings table's `action` column, read by position);

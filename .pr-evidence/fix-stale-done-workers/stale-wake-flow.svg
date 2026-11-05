@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760">
+  <rect width="1400" height="760" fill="#0f172a"/>
+  <text x="70" y="88" fill="#f8fafc" font-family="Arial, sans-serif" font-size="42" font-weight="700">Finished workers no longer emit a duplicate stale wake</text>
+  <text x="70" y="132" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="24">Watcher behavior for an idle pane after status delivery</text>
+  <rect x="75" y="205" width="550" height="420" rx="22" fill="#1e293b" stroke="#f97316" stroke-width="3"/>
+  <text x="115" y="270" fill="#fed7aa" font-family="Arial, sans-serif" font-size="30" font-weight="700">Before</text>
+  <rect x="125" y="320" width="450" height="92" rx="14" fill="#334155"/>
+  <text x="161" y="377" fill="#f8fafc" font-family="Arial, sans-serif" font-size="27">Idle finished-worker pane</text>
+  <path d="M350 430 L350 482" stroke="#f97316" stroke-width="7"/><path d="M330 468 L350 490 L370 468" fill="none" stroke="#f97316" stroke-width="7"/>
+  <rect x="125" y="510" width="450" height="80" rx="14" fill="#7c2d12"/>
+  <text x="167" y="561" fill="#fff7ed" font-family="Arial, sans-serif" font-size="26" font-weight="700">Plain stale wake queued</text>
+  <rect x="775" y="205" width="550" height="420" rx="22" fill="#1e293b" stroke="#22c55e" stroke-width="3"/>
+  <text x="815" y="270" fill="#bbf7d0" font-family="Arial, sans-serif" font-size="30" font-weight="700">After</text>
+  <rect x="825" y="320" width="450" height="92" rx="14" fill="#334155"/>
+  <text x="861" y="377" fill="#f8fafc" font-family="Arial, sans-serif" font-size="27">Idle finished-worker pane</text>
+  <path d="M1050 430 L1050 462" stroke="#22c55e" stroke-width="7"/><path d="M1030 448 L1050 470 L1070 448" fill="none" stroke="#22c55e" stroke-width="7"/>
+  <rect x="825" y="490" width="450" height="100" rx="14" fill="#14532d"/>
+  <text x="862" y="534" fill="#dcfce7" font-family="Arial, sans-serif" font-size="25" font-weight="700">Resolved state: done</text>
+  <text x="862" y="568" fill="#dcfce7" font-family="Arial, sans-serif" font-size="23">Absorb plain stale wake</text>
+  <text x="70" y="700" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="24">Guardrail: any non-done state, including working, retains the existing stale detection path.</text>
+</svg>

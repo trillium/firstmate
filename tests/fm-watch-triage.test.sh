@@ -2250,6 +2250,63 @@ test_terminal_stale_surfaced() {
   pass "a stale pane sitting on a terminal status is surfaced (queue + exit)"
 }
 
+# A plain stale observation is redundant once fm-crew-state resolves the worker
+# as done: the status signal already delivered its finish, and an idle pane is
+# expected while that finished worker awaits merge or cleanup. A working verdict
+# from the same current-state resolver must retain the stale wake.
+test_terminal_stale_done_current_state_is_absorbed_but_working_still_surfaces() {
+  local dir state fakebin out capture_file window key pane_hash sig pid
+  dir=$(make_case terminal-stale-current-state); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-current-done"
+  printf 'finished, awaiting cleanup' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/current-done.meta"
+  printf 'done: PR https://example.test/pr/4\n' > "$state/current-done.status"
+  sig=$(seen_sig "$state/current-done.status"); printf '%s' "$sig" > "$state/.seen-current-done_status"
+  key=$(printf '%s' "$window" | tr ':/. ' '____')
+  pane_hash=$(hash_text "finished, awaiting cleanup")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · PR open, awaiting merge'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher surfaced a plain stale wake for a current done worker: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || { reap "$pid"; fail "current done worker printed a stale wake: $(cat "$out")"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "current done worker queued a stale wake"; }
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] \
+    || { reap "$pid"; fail "current done worker did not advance the stale suppressor"; }
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the done-worker watcher stop"
+
+  dir=$(make_case terminal-stale-current-working); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-current-working"
+  printf 'quiet working pane' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/current-working.meta"
+  printf 'done: earlier finish report\n' > "$state/current-working.status"
+  sig=$(seen_sig "$state/current-working.status"); printf '%s' "$sig" > "$state/.seen-current-working_status"
+  key=$(printf '%s' "$window" | tr ':/. ' '____')
+  pane_hash=$(hash_text "quiet working pane")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  FM_FAKE_CREW_STATE='state: working · source: status-log · working: continuing implementation'
+
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not retain the stale wake for a current working worker"
+  grep -Fx "stale: $window" "$out" >/dev/null \
+    || fail "current working worker did not print the stale wake: $(cat "$out")"
+  unset FM_FAKE_CREW_STATE
+  pass "current done workers absorb plain stale wakes while current working workers still surface"
+}
+
 # --- stale pane, STALE terminal status overridden by an active run: absorbed ---
 # Regression for the 2026-07 herdr false-surface incidents: a crew's own status
 # log gets no new entry once firstmate hands it to a no-mistakes validation
@@ -5544,6 +5601,7 @@ fm_test_run \
   test_unreadable_status_reports_once_per_file_state \
   test_permission_recovery_surfaces_preserved_status \
   test_terminal_stale_surfaced \
+  test_terminal_stale_done_current_state_is_absorbed_but_working_still_surfaces \
   test_stale_terminal_status_overridden_by_active_run \
   test_nonterminal_stale_provably_working_absorbed_then_escalated \
   test_wedge_escalation_marks_demand_deep_inspection_after_threshold \

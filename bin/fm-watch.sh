@@ -4698,7 +4698,17 @@ EOF
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+            if crew_is_done "$task"; then
+              # A current done verdict means this idle pane is the expected
+              # finished-worker shape, not a new stale condition. This applies
+              # only to this plain first-sighting path; wedge/deep-inspection
+              # reasons continue through their existing escalation routes.
+              printf '%s' "$h" > "$sf"
+              wedge_episode_end "$key" 0 1
+              clear_write_tracking "$key"
+              triage_log "absorbed stale (current state done): $w"
+              stale_decision_log "$w" "$task" absorb current-done unread
+            elif crew_is_provably_working "$task"; then
               printf '%s' "$h" > "$sf"
               # Pre-cap shape kept the count here (keep-count contract).
               wedge_episode_end "$key" 0 1
