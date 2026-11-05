@@ -11,6 +11,8 @@
 # before anything is marked, recorded, or submitted, because an empty marked
 # secondmate request delivers only marker and correlation bytes and leaves the
 # parent waiting on a reply to nothing.
+# An unrecognized leading --option is refused with nothing sent; put -- before
+# message text that itself starts with a dash.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca supports Enter and C-c only; T3 Code maps Escape and C-c to a native
@@ -570,6 +572,15 @@ while :; do
     }
     FIRE_AND_FORGET_ID=${1#--fire-and-forget=}
     shift
+    ;;
+  --key) break ;;
+  --)
+    shift
+    break
+    ;;
+  --*)
+    echo "error: unknown option '$1'; nothing was sent. To send text that starts with '--', put '--' before it." >&2
+    exit 1
     ;;
   *) break ;;
   esac
