@@ -289,15 +289,29 @@ test_live_stalled_watch_lock_is_replaced_past_hard_bound() {
 # Stop <pid> at a moment it holds no state lock but the watch lock, so a
 # successor never waits on a lock the stopped holder cannot release.
 stop_outside_state_locks() {  # <pid> <state>
-  local pid=$1 state=$2 i=0 lock held
+  local pid=$1 state=$2 i=0 held entry state_real owner
+  state_real=$(cd "$state" 2>/dev/null && pwd -P) || state_real=$state
   while [ "$i" -lt 100 ]; do
     kill -STOP "$pid" 2>/dev/null || return 1
     held=0
-    for lock in "$state"/.*.lock "$state"/.*.lock.steal "$state"/*.lock; do
-      [ "$lock" != "$state/.watch.lock" ] || continue
-      [ "$(cat "$lock/pid" 2>/dev/null || true)" != "$pid" ] || { held=1; break; }
+    if [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" != "$pid" ]; then
+      held=1
+    fi
+    owner=$(readlink "$state_real/.watch.lock" 2>/dev/null || true)
+    case "$owner" in
+      /*) ;;
+      *) [ -n "$owner" ] && owner="$state_real/$owner" ;;
+    esac
+    for entry in "$state_real"/.*.lock "$state_real"/.*.lock.steal "$state_real"/*.lock "$state_real"/*.lock.steal \
+                 "$state_real"/.*.owner.* "$state_real"/*.owner.* "$state_real"/.*.reaped.* "$state_real"/*.reaped.*; do
+      [ -e "$entry" ] || [ -L "$entry" ] || continue
+      [ "$entry" != "$state_real/.watch.lock" ] || continue
+      [ "$entry" != "$state/.watch.lock" ] || continue
+      [ -z "$owner" ] || [ "$entry" != "$owner" ] || continue
+      held=1
+      break
     done
-    [ "$held" -eq 1 ] || return 0
+    [ "$held" -eq 0 ] && return 0
     kill -CONT "$pid" 2>/dev/null || true
     sleep 0.05
     i=$((i + 1))
@@ -1085,8 +1099,12 @@ test_lock_reclaims_holder_whose_identity_no_longer_recomputes() {
   # if an assertion below fails before the kill at the end. A python holder
   # carries that name as its own argument instead of through `exec -a`, which a
   # multicall sleep rejects by dispatching on argv[0] and exiting at once.
-  python3 -c 'import sys, time; time.sleep(300)' "$dir/holder" >/dev/null 2>&1 &
+  python3 -c 'import sys, time; open(sys.argv[1], "w").close(); time.sleep(300)' "$dir/ready" "$dir/holder" >/dev/null 2>&1 &
   live=$!
+  while [ ! -f "$dir/ready" ] && is_live_non_zombie "$live"; do
+    sleep 0.01
+  done
+  [ -f "$dir/ready" ] || fail "fixture holder did not start"
   identity=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live") \
     || fail "could not identify the fixture holder"
   for case_name in mismatched matching unrecorded; do
@@ -1139,8 +1157,12 @@ test_lock_keeps_live_daemon_holder_with_stale_identity() {
   # if an assertion below fails before the kill at the end. A python holder
   # carries that name as its own argument instead of through `exec -a`, which a
   # multicall sleep rejects by dispatching on argv[0] and exiting at once.
-  python3 -c 'import sys, time; time.sleep(300)' "$dir/holder" >/dev/null 2>&1 &
+  python3 -c 'import sys, time; open(sys.argv[1], "w").close(); time.sleep(300)' "$dir/ready" "$dir/holder" >/dev/null 2>&1 &
   live=$!
+  while [ ! -f "$dir/ready" ] && is_live_non_zombie "$live"; do
+    sleep 0.01
+  done
+  [ -f "$dir/ready" ] || fail "fixture daemon did not start"
   identity=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live") \
     || fail "could not identify the fixture daemon"
   legacy=$(COLUMNS=10000 LC_ALL=C TZ=America/Los_Angeles ps -p "$live" -o lstart= -o command= 2>/dev/null | sed 's/^[[:space:]]*//')
