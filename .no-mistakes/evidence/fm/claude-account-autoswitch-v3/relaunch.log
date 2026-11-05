@@ -95,12 +95,3 @@ ok - reclaim: a herdr agent that came back with its server refuses, so one workt
 ok - reclaim: a herdr reclaim rebinds the endpoint and leaves the whole rest of the task alone
 ok - reclaim: a herdr secondmate whose endpoint is gone is sent to its own respawn owner
 ok - reclaim: a rebind refused from a plain shell reports the real cause, not a fabricated session mismatch
-ok - relaunch re-reads the backlog item instead of blindly re-running the transition
-ok - relaunch heals an item that drifted out of In flight while the task stayed live
-ok - fm-control relaunch: an idle agent with an empty OpenCode prompt block overrides an unproven composer
-ok - fm-control relaunch: an idle agent whose prompt block holds text is still refused
-ok - away supervision relaunches existing In-flight and queued items under the saturated fresh-spawn spend cap
-ok - fm-control relaunch: preserves control-exit on pre-stop refusal and retires it on publication
-ok - fm-control relaunch: preserves an auto-selected Claude account and reason until --account overrides it
-ok - fm-control relaunch: a fallback-pinned Claude account outside the declared list relaunches on the pin
-bash tests/fm-control-relaunch.test.sh  151.72s user 195.57s system 53% cpu 10:53.32 total
