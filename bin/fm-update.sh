@@ -289,7 +289,11 @@ if [ -f "$SECONDMATES_MD" ]; then
     home=$SECONDMATE_REGISTRY_HOME
     if [ "$SECONDMATE_REGISTRY_REMOTE" -eq 1 ]; then
       if remote_out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh update "$id" < /dev/null 2>&1); then
-        remote_result=$(printf '%s\n' "$remote_out" | tail -1)
+        remote_result=$(printf '%s\n' "$remote_out" | awk '
+          /^(synced|current): / { result=$0 }
+          END { if (result != "") print result }
+        ')
+        remote_last=$(printf '%s\n' "$remote_out" | tail -1)
         case "$remote_result" in
           synced:*)
             remote_detail=${remote_result#synced: }
@@ -322,7 +326,7 @@ if [ -f "$SECONDMATES_MD" ]; then
               claim_settled_secondmate "$id"
             fi
             ;;
-          *) echo "remote secondmate $id: skipped on $SECONDMATE_REGISTRY_HOST: malformed update result" >&2 ;;
+          *) echo "remote secondmate $id: skipped on $SECONDMATE_REGISTRY_HOST: malformed update result: $remote_last" >&2 ;;
         esac
       else
         echo "remote secondmate $id: skipped on $SECONDMATE_REGISTRY_HOST: ${remote_out%%$'\n'*}" >&2
