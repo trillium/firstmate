@@ -322,6 +322,12 @@ $missing
 EOF
   fi
 
+  note_expected_head "$live_head"
+  if [ -n "$FM_PR_EXPECTED_HEAD_REFUSAL" ]; then
+    refusals="$refusals$FM_PR_EXPECTED_HEAD_REFUSAL
+"
+  fi
+
   if [ -n "$mergeable_refusal" ]; then
     if [ -z "$refusals" ] && [ "$mergeable" = UNKNOWN ]; then
       return 3
