@@ -94,7 +94,14 @@ SH
 case "${1:-}" in
   verify) exit "${FM_FAKE_HOLD_VERIFY_RC:-0}" ;;
   open) exit "${FM_FAKE_HOLD_OPEN_RC:-1}" ;;
-  hold) printf 'hold %s\n' "$*" >> "${FM_FAKE_LOG:?}"; exit 0 ;;
+  hold)
+    printf 'hold %s\n' "$*" >> "${FM_FAKE_LOG:?}"
+    if [ "${FM_FAKE_HOLD_TITLE_REQUIRED:-0}" = 1 ] && [[ " $* " != *" --title "* ]]; then
+      echo "fm-captain-hold: --title is required to create task $2" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
   *) exit 2 ;;
 esac
 SH
@@ -107,7 +114,7 @@ SH
 # tmux window, and the task record. Extra meta lines land after the standard
 # ones so a `pr=` line keeps its identity-parser position at the end.
 add_record() {
-  local dir=$1 id=$2 kind=$3 yolo=$4 repo wt
+  local dir=$1 id=$2 kind=$3 yolo=$4 repo wt line has_spawn_gen=0
   shift 4
   repo="$dir/$id.project"
   wt="$dir/$id.wt"
@@ -117,10 +124,26 @@ add_record() {
   git -C "$wt" commit -qm "fm/$id work"
   git -C "$wt" push -q origin "fm/$id"
   printf 'zsh\n' > "$dir/tmux/fm-$id"
-  fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
-    "worktree=$wt" "project=$repo" "harness=claude" \
-    "kind=$kind" "mode=no-mistakes" "yolo=$yolo" "branch=fm/$id" "$@"
+  for line in "$@"; do
+    case "$line" in spawn_gen=*) has_spawn_gen=1 ;; esac
+  done
+  if [ "$has_spawn_gen" -eq 1 ]; then
+    fm_write_meta "$dir/home/state/$id.meta" \
+      "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+      "worktree=$wt" "project=$repo" "harness=claude" \
+      "kind=$kind" "mode=no-mistakes" "yolo=$yolo" "branch=fm/$id" "$@"
+  else
+    fm_write_meta "$dir/home/state/$id.meta" \
+      "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+      "worktree=$wt" "project=$repo" "harness=claude" \
+      "kind=$kind" "mode=no-mistakes" "yolo=$yolo" "branch=fm/$id" "spawn_gen=gen-1" "$@"
+  fi
+}
+
+remove_spawn_gen() {  # <meta>
+  local meta=$1
+  grep -v '^spawn_gen=' "$meta" > "$meta.tmp"
+  mv "$meta.tmp" "$meta"
 }
 
 # land_record <dir> <id>: merge the task branch into main, push main, and
@@ -272,7 +295,7 @@ test_ghost_slot_uses_record_only_teardown() {
   out=$(run_reap "$dir" scan --act)
   assert_contains "$(line_for "$out" stale)" "GHOST" "a record whose slot another task claims is a ghost"
   assert_contains "$(line_for "$out" claimant)" "ALIVE" "the claimant is left alone"
-  assert_line "^teardown stale --record-only$" "$dir/actions.log" "ghost reaches teardown as record-only"
+  assert_line "^teardown stale --legacy-record --record-only$" "$dir/actions.log" "a legacy ghost reaches guarded record-only teardown"
   assert_no_grep "claimant" "$dir/actions.log" "the live claimant reached an owner"
 
   # A ghost whose slot still sits on this task's branch with unpushed commits is
@@ -368,6 +391,28 @@ test_merge_due_yolo_off_files_one_captain_hold() {
   assert_contains "$(line_for "$out" ready)" "already filed" "the second scan reports the hold as filed"
   [ "$(grep -c '^hold' "$dir/actions.log")" -eq 1 ] || fail "the captain hold was filed more than once: $(cat "$dir/actions.log")"
   pass "fm-reap: with yolo off, a ready PR files exactly one captain hold and then waits"
+}
+
+test_legacy_records_reap_with_teardown_guard_and_hold_title_fallback() {
+  local dir out
+  dir=$(make_home legacy)
+  add_record "$dir" legacy-landed ship off "$(pr_line)"
+  remove_spawn_gen "$dir/home/state/legacy-landed.meta"
+  land_record "$dir" legacy-landed
+
+  out=$(run_reap "$dir" scan --act --task legacy-landed)
+  assert_contains "$(line_for "$out" legacy-landed)" "LANDED" "a legacy record with landed work is classified as landed"
+  assert_line "^teardown legacy-landed --legacy-record$" "$dir/actions.log" "a missing spawn_gen is passed through teardown's legacy guard"
+
+  : > "$dir/actions.log"
+  add_record "$dir" legacy-hold ship off "$(pr_line 11)"
+  remove_spawn_gen "$dir/home/state/legacy-hold.meta"
+  printf 'done [at=1]: PR ready\n' > "$dir/home/state/legacy-hold.status"
+  out=$(FM_FAKE_HOLD_TITLE_REQUIRED=1 run_reap "$dir" scan --act --task legacy-hold)
+  assert_contains "$(line_for "$out" legacy-hold)" "MERGE-DUE" "a legacy record with an open PR remains merge-due"
+  [ "$(grep -c '^hold' "$dir/actions.log")" -eq 2 ] || fail "the missing-title hold was not retried: $(cat "$dir/actions.log")"
+  assert_line "^hold hold legacy-hold --reason .* --title Task legacy-hold$" "$dir/actions.log" "a missing backlog row receives a task-id fallback title"
+  pass "fm-reap: legacy records retain teardown guards and create titleless captain holds"
 }
 
 test_closed_pr_is_reported_only() {
@@ -656,6 +701,7 @@ test_scout_done_tears_down_only_with_a_report_and_verified_calls
 test_resolved_status_is_classified_terminal
 test_merge_due_yolo_on_merges_only_green_unheld_prs
 test_merge_due_yolo_off_files_one_captain_hold
+test_legacy_records_reap_with_teardown_guard_and_hold_title_fallback
 test_closed_pr_is_reported_only
 test_dead_unlanded_relaunches_once_then_escalates
 test_dead_worker_with_uncommitted_changes_is_never_relaunched_blindly_or_torn_down

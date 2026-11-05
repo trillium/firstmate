@@ -433,6 +433,13 @@ read_record() {  # <meta> <id>
   E_BRANCH=$(fm_meta_get "$meta" branch)
   E_WT=$(fm_meta_get "$meta" worktree)
   E_PROJ=$(fm_meta_get "$meta" project)
+  # A record with no incarnation field predates spawn_gen.  Teardown owns the
+  # legacy acceptance gate, including its independent dead-endpoint check.
+  # An empty, repeated, or otherwise malformed field is not legacy and keeps
+  # teardown's ordinary refusal.
+  E_LEGACY_RECORD=0
+  [ "$(LC_ALL=C awk -F= '$1 == "spawn_gen" { count++ } END { print count + 0 }' "$meta" 2>/dev/null)" -ne 0 ] \
+    || E_LEGACY_RECORD=1
   E_STATUS=$(last_status_line "$STATE/$id.status")
   E_VERB=$(status_line_verb "$E_STATUS")
   read_exit_marker "$meta" "$id"
@@ -625,23 +632,63 @@ run_action() {
   return 1
 }
 
+run_hold_action() {  # <id> <reason>
+  local id=$1 reason=$2 err rc=0 line title
+  err=$("$CAPTAIN_HOLD_BIN" hold "$id" --reason "$reason" 2>&1 >/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    line=$(first_refusal_line "$err")
+    case "$line" in
+      "fm-captain-hold: --title is required to create task $id")
+        title="Task $id"
+        rc=0
+        err=$("$CAPTAIN_HOLD_BIN" hold "$id" --reason "$reason" --title "$title" 2>&1 >/dev/null) || rc=$?
+        ;;
+    esac
+  fi
+  if [ "$rc" -eq 0 ]; then
+    reap_wake "$id" hold ok
+    return 0
+  fi
+  if [ "$rc" -eq "$FM_LEASE_REFUSE_EXIT" ]; then
+    printf '%s %s %s\n' "$id" "$CLASS" "hold skipped: task leased to the other supervision actor"
+    return 1
+  fi
+  line=$(first_refusal_line "$err")
+  if [ -f "$STATE/$id.meta" ]; then
+    sidecar_set "$id" refused_fp "$ACTION_FP" || true
+    sidecar_set "$id" refused "hold: $line" || true
+  fi
+  printf '%s %s %s\n' "$id" "$CLASS" "hold refused: $(clean_text "$line")"
+  reap_wake "$id" hold "refused: $line"
+  return 1
+}
+
 act_on_record() {  # <id>
   local id=$1 note
   case "$ACTION" in
     teardown)
-      run_action "$id" teardown env FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-        FM_CONFIG_OVERRIDE="$CONFIG" "$TEARDOWN_BIN" "$id" && REAPED="$REAPED $id"
+      if [ "$E_LEGACY_RECORD" = 1 ]; then
+        run_action "$id" teardown env FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+          FM_CONFIG_OVERRIDE="$CONFIG" "$TEARDOWN_BIN" "$id" --legacy-record && REAPED="$REAPED $id"
+      else
+        run_action "$id" teardown env FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+          FM_CONFIG_OVERRIDE="$CONFIG" "$TEARDOWN_BIN" "$id" && REAPED="$REAPED $id"
+      fi
       ;;
     record-only)
-      run_action "$id" record-only env FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-        FM_CONFIG_OVERRIDE="$CONFIG" "$TEARDOWN_BIN" "$id" --record-only && REAPED="$REAPED $id"
+      if [ "$E_LEGACY_RECORD" = 1 ]; then
+        run_action "$id" record-only env FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+          FM_CONFIG_OVERRIDE="$CONFIG" "$TEARDOWN_BIN" "$id" --legacy-record --record-only && REAPED="$REAPED $id"
+      else
+        run_action "$id" record-only env FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+          FM_CONFIG_OVERRIDE="$CONFIG" "$TEARDOWN_BIN" "$id" --record-only && REAPED="$REAPED $id"
+      fi
       ;;
     merge)
       run_action "$id" merge "$PR_MERGE_BIN" "$id" "$E_PR_URL" || true
       ;;
     hold)
-      if run_action "$id" hold "$CAPTAIN_HOLD_BIN" hold "$id" \
-          --reason "PR ready for the captain's merge call: $E_PR_URL"; then
+      if run_hold_action "$id" "PR ready for the captain's merge call: $E_PR_URL"; then
         sidecar_set "$id" hold_filed 1 || true
       fi
       ;;
