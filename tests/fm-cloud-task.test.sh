@@ -146,8 +146,21 @@ rec2="$STATE/cloud-runs/$run2.run"
 git -C "$REPO" ls-remote --heads origin 'refs/heads/claude/*' | awk '{print $1":"$2}' | paste -sd, - > "$TMP_ROOT/heads"
 sed -i.bak "s#^heads_before=.*#heads_before=$(cat "$TMP_ROOT/heads")#" "$rec2"; rm -f "$rec2.bak"
 assert_equals "" "$(env_run "$STATE/t-two.check.sh")" "a fresh run with no result is silent"
+sed -i.bak "s#^launched_at=.*#launched_at=$(( $(date +%s) - 30 * 60 ))#" "$rec2"; rm -f "$rec2.bak"
+assert_equals "" "$(env_run "$STATE/t-two.check.sh")" "silence under the idle window stays quiet"
+sed -i.bak "s#^launched_at=.*#launched_at=$(( $(date +%s) - 90 * 60 ))#" "$rec2"; rm -f "$rec2.bak"
+out=$(env_run "$STATE/t-two.check.sh")
+assert_contains "$out" "no new branch push for 90 minutes" "a stalled run wakes firstmate at the idle window"
+assert_contains "$out" "possibly awaiting input" "the idle wake says possibly awaiting input"
+assert_contains "$out" "https://claude.ai/code/session_task123" "the idle wake names the session"
+assert_equals "" "$(env_run "$STATE/t-two.check.sh")" "the idle wake fires once"
+printf '%s\n' 100 > "$CONFIG/cloud-idle"
+assert_equals "" "$(env_run "$STATE/t-two.check.sh")" "config/cloud-idle widens the window"
+printf '%s\n' 500 > "$CONFIG/cloud-idle"
+rm -f "$STATE/cloud-runs/$run2.idle"
+assert_equals "" "$(env_run "$STATE/t-two.check.sh")" "an oversized idle window is capped below the limit, so 90 minutes of silence does not fire early"
+rm -f "$CONFIG/cloud-idle"
 sed -i.bak "s#^launched_at=.*#launched_at=$(( $(date +%s) - 3 * 3600 ))#" "$rec2"; rm -f "$rec2.bak"
-assert_equals "" "$(env_run "$STATE/t-two.check.sh")" "silence under the limit stays quiet"
 out=$(FM_CLOUD_TIMEOUT_MINUTES=60 env_run "$STATE/t-two.check.sh")
 assert_contains "$out" "no branch or PR after" "silence past the limit wakes firstmate"
 assert_contains "$out" "possibly stuck" "the wake says possibly stuck"
@@ -159,6 +172,44 @@ out=$(env_run "$STATE/t-two.check.sh")
 assert_contains "$out" "possibly stuck" "config/cloud-timeout sets the limit"
 rm -f "$CONFIG/cloud-timeout"
 pass "the check fires on timeout, once"
+
+# Idle after a push: a branch with no PR that then goes quiet, re-armed by a new push.
+write_brief t-idle
+cloud launch --task t-idle --repo "$REPO" >/dev/null 2>&1 || fail "launch t-idle failed"
+runi=$(sed -n 's/^cloud_run=//p' "$STATE/t-idle.meta")
+git -C "$REPO" push -q origin HEAD:refs/heads/claude/t-idle
+out=$(env_run "$STATE/t-idle.check.sh")
+assert_contains "$out" "branch claude/t-idle pushed" "the push is reported"
+echo $(( $(date +%s) - 2 * 3600 )) > "$STATE/cloud-runs/$runi.activity"
+out=$(env_run "$STATE/t-idle.check.sh")
+assert_contains "$out" "possibly awaiting input" "a pushed branch with no PR that goes quiet wakes firstmate"
+assert_equals "" "$(env_run "$STATE/t-idle.check.sh")" "the same quiet spell is reported once"
+git -C "$REPO" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m more
+git -C "$REPO" push -q origin HEAD:refs/heads/claude/t-idle
+assert_contains "$(env_run "$STATE/t-idle.check.sh")" "branch claude/t-idle pushed" "a new push is reported"
+assert_equals "" "$(env_run "$STATE/t-idle.check.sh")" "a new push resets the idle clock"
+echo $(( $(date +%s) - 2 * 3600 )) > "$STATE/cloud-runs/$runi.activity"
+assert_contains "$(env_run "$STATE/t-idle.check.sh")" "possibly awaiting input" "a later quiet spell is reported again"
+sed -i.bak 's#^remote_url=.*#remote_url=https://github.com/acme/widgets.git#' "$STATE/cloud-runs/$runi.run"; rm -f "$STATE/cloud-runs/$runi.run.bak"
+printf '%s\n' 79 > "$FM_STUB_PR"
+env_run "$STATE/t-idle.check.sh" >/dev/null
+echo $(( $(date +%s) - 5 * 3600 )) > "$STATE/cloud-runs/$runi.activity"
+assert_equals "" "$(env_run "$STATE/t-idle.check.sh")" "a run with a PR is never reported idle"
+rm -f "$FM_STUB_PR"
+cloud teardown t-idle --force >/dev/null 2>&1 || fail "cleanup of t-idle failed"
+assert_absent "$STATE/cloud-runs/$runi.activity" "teardown removes the activity record"
+pass "the check reports a stalled run once per quiet spell"
+
+# The launch prompt trailer: no-wait guidance and the no-attribution rule.
+write_brief t-trail
+cloud launch --task t-trail --repo "$REPO" >/dev/null 2>&1 || fail "launch t-trail failed"
+args=$(cat "$FM_STUB_ARGS")
+assert_contains "$args" "keep going rather than waiting for input" "the trailer says not to wait for input"
+assert_contains "$args" "record the choice and its reason in the pull request description" "the trailer asks for recorded choices"
+assert_contains "$args" "Co-Authored-By" "the trailer forbids the co-author trailer"
+assert_contains "$args" "generated-by footer" "the trailer forbids the generated-by footer"
+cloud teardown t-trail --force >/dev/null 2>&1 || fail "cleanup of t-trail failed"
+pass "the launch trailer carries the stall and attribution rules"
 
 # --- land ---------------------------------------------------------------------
 

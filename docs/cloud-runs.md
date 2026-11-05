@@ -23,10 +23,15 @@ A cloud run suits self-contained work in a GitHub repository whose commits are p
 5. After the merge, `bin/fm-teardown.sh <id>` retires the run.
 
 `launch --task` sends the brief plus a short trailer (work on `claude/<id>`, push it, open a pull request against the default branch, put no secrets in either).
+The trailer also tells the session that nobody is there to answer questions, so when blocked or unsure it makes the best reasonable choice, records the choice and its reason in the pull request description, and keeps going.
+It forbids attribution lines too: no `Co-Authored-By` or `Claude-Session` trailers, no session links, and no generated-by footer in commits or the pull request body.
 It refuses before launching when the task has no brief or no backlog item, then records the task with `backend=cloud`, moves the item to In flight, notes the session url on the status log, and registers the finish check.
 The fleet view and `fm-crew-state.sh` show the run as working with its session url, and a recorded PR is added to that line.
 
-The finish check wakes firstmate when a `claude/*` branch is new or moved, when its pull request appears, and once when the run has been silent past the time limit.
+The finish check wakes firstmate when a `claude/*` branch is new or moved, when its pull request appears, once when the run has been silent past the time limit, and once per quiet spell when no new branch push has landed within the idle window.
+The idle wake says the session is possibly awaiting input and names its url so firstmate can look; the `claude` CLI has no supported command that reports a session's state, so push silence stands in for it.
+The idle window is shorter than the time limit, and a fresh push restarts it; a run that already has a PR is never reported idle.
+Steering a live session is out of scope: the wake only points firstmate at the session.
 Each distinct result is reported once, and the check goes quiet when a PR is recorded because the merge poll owns the task from there.
 Delivery is always a direct PR to the fork or repository named by the run's remote; a cloud run never runs the no-mistakes pipeline.
 

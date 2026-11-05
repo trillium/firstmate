@@ -3470,7 +3470,10 @@ expires=2026-11-04
 It defaults to 240, and `FM_CLOUD_TIMEOUT_MINUTES` overrides the default when the file is absent.
 A value that is not a whole number falls back to the default.
 
-Both files are local, gitignored, and inherited by no secondmate.
+`config/cloud-idle` is the minutes without a new branch push before the finish check wakes firstmate with a possibly-awaiting-input line naming the session.
+It defaults to 60, `FM_CLOUD_IDLE_MINUTES` overrides the default when the file is absent, and the value is capped below `cloud-timeout`.
+
+All three files are local, gitignored, and inherited by no secondmate.
 
 ## Environment variables
 
