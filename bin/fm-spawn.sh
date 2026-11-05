@@ -252,13 +252,6 @@
 #   A batch reports such a pair as `batch: DEFERRED` and exits 75 when nothing
 #   else failed. A relaunch and a --secondmate spawn are never counted against
 #   capacity.
-#   Pool leases: when config/pool-lease declares a lease-axi authority and a cap
-#   for the launch's quota pool (bin/fm-pool-lease-lib.sh owns the declaration,
-#   the pool id, and the lease calls), a fresh or pool-changing spawn takes a
-#   lease before anything is created. A held pool prints one `deferred:` line and
-#   exits 75 exactly like project capacity; an unreachable authority or an
-#   unreadable declaration refuses with exit 1 rather than launching unleased.
-#   Claude is never leased, and an absent file changes nothing.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
@@ -1010,8 +1003,6 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-project-capacity-lib.sh
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
-# shellcheck source=bin/fm-pool-lease-lib.sh
-. "$SCRIPT_DIR/fm-pool-lease-lib.sh"
 # shellcheck source=bin/fm-sim-lib.sh
 . "$SCRIPT_DIR/fm-sim-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
@@ -1750,7 +1741,6 @@ SPAWN_META_LOCK=
 SPAWN_META_LOCK_HELD=0
 SPAWN_META_PUBLISH_STARTED=0
 SPAWN_FRESH_COMMIT_PENDING=0
-SPAWN_POOL_LEASE_NEW=0
 SPAWN_TASK_SET_LOCK=
 SPAWN_TASK_SET_LOCK_HELD=0
 SPAWN_TREEHOUSE_PROJECT_LOCK=
@@ -1953,12 +1943,6 @@ spawn_abort_cleanup() {
   if [ "$SPAWN_TASK_LOCK_HELD" = 1 ]; then
     SPAWN_TASK_LOCK_HELD=0
     fm_lock_release "$SPAWN_TASK_LOCK" || true
-  fi
-  # A fresh spawn that took a pool lease and then failed returns it, so a
-  # failed launch never holds a quota pool against the next attempt.
-  if [ "$status" -ne 0 ] && [ "$SPAWN_POOL_LEASE_NEW" = 1 ]; then
-    SPAWN_POOL_LEASE_NEW=0
-    fm_pool_lease_release "$STATE" "$ID" || true
   fi
   if [ "$SPAWN_FRESH_COMMIT_PENDING" = 1 ]; then
     if ! spawn_fresh_commit_rollback; then
@@ -2247,7 +2231,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
     pair_rc=0
     FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "${pair_args[@]}" || pair_rc=$?
     if [ "$pair_rc" -eq "$FM_PROJECT_CAPACITY_DEFER_EXIT" ]; then
-      echo "batch: DEFERRED ${pair%%=*} (${pair#*=}) - its project or quota pool is at capacity, so it stays queued" >&2
+      echo "batch: DEFERRED ${pair%%=*} (${pair#*=}) - its project is at capacity, so it stays queued" >&2
       [ "$rc" -ne 0 ] || rc=$FM_PROJECT_CAPACITY_DEFER_EXIT
     elif [ "$pair_rc" -ne 0 ]; then
       echo "batch: FAILED to spawn ${pair%%=*} (${pair#*=})" >&2
@@ -4348,54 +4332,6 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
   if [ "$FM_PROJECT_CAPACITY_OCCUPANTS" -ge "$SPAWN_PROJECT_CAPACITY" ]; then
     echo "deferred: project $(basename "$PROJ_ABS") admits $SPAWN_PROJECT_CAPACITY worker(s) at once on this machine ($FM_PROJECT_CAPACITY_FILE) and $FM_PROJECT_CAPACITY_OCCUPANTS already hold a place ($FM_PROJECT_CAPACITY_OCCUPANT_IDS); task $ID was not launched and its backlog item stays queued - dispatch it again once one of them records its ready PR or is cleaned up" >&2
     exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
-  fi
-fi
-# Pool lease admission (bin/fm-pool-lease-lib.sh owns the declaration, the pool
-# id, and the lease calls). A launch whose harness and model resolve to a capped
-# quota pool takes a lease from the lease-axi authority first; a pool at its cap
-# defers here, before any brief render, endpoint, worktree, record, or backlog
-# move exists, so the task stays exactly as queued as it was. An unreachable
-# authority refuses rather than launching unleased. A relaunch that stays in the
-# pool it already leases keeps that lease, and one that changes pool takes the
-# new lease before it returns the old.
-if [ "$KIND" != secondmate ]; then
-  if ! fm_pool_lease_load "$CONFIG"; then
-    echo "error: spawn refused: the pool lease declaration is unreadable ($FM_POOL_LEASE_ERROR); fix it so the captain's quota pool limits are known (docs/configuration.md \"Pool leases\")" >&2
-    exit 1
-  fi
-  if [ "$FM_POOL_LEASE_ENABLED" = 1 ]; then
-    fm_pool_lease_resolve "$HARNESS" "$MODEL" || {
-      echo "error: spawn refused: could not resolve the quota pool for harness $HARNESS" >&2
-      exit 1
-    }
-    SPAWN_POOL_LEASE_RECORD=$(fm_pool_lease_path "$STATE" "$ID")
-    SPAWN_POOL_LEASE_OLD_POOL=
-    SPAWN_POOL_LEASE_OLD_ID=
-    SPAWN_POOL_LEASE_OLD_SERVER=
-    if [ "$RELAUNCH" -eq 1 ] && [ -f "$SPAWN_POOL_LEASE_RECORD" ]; then
-      SPAWN_POOL_LEASE_OLD_POOL=$(fm_pool_lease_record_get "$SPAWN_POOL_LEASE_RECORD" pool)
-      SPAWN_POOL_LEASE_OLD_ID=$(fm_pool_lease_record_get "$SPAWN_POOL_LEASE_RECORD" lease)
-      SPAWN_POOL_LEASE_OLD_SERVER=$(fm_pool_lease_record_get "$SPAWN_POOL_LEASE_RECORD" server)
-    fi
-    if [ -n "$FM_POOL_LEASE_POOL" ] && [ "$FM_POOL_LEASE_POOL" != "$SPAWN_POOL_LEASE_OLD_POOL" ]; then
-      SPAWN_POOL_LEASE_STATUS=0
-      fm_pool_lease_grant "$STATE" "$ID" "fm:$(basename "$FM_HOME"):$ID" "$FM_POOL_LEASE_POOL" "$FM_POOL_LEASE_CAP" "$FM_POOL_LEASE_SERVER" "$FM_POOL_LEASE_TTL" || SPAWN_POOL_LEASE_STATUS=$?
-      case "$SPAWN_POOL_LEASE_STATUS" in
-        0) ;;
-        "$FM_POOL_LEASE_DEFER_EXIT")
-          echo "deferred: quota pool $FM_POOL_LEASE_POOL admits $FM_POOL_LEASE_CAP worker(s) at once ($FM_POOL_LEASE_FILE) and ${FM_POOL_LEASE_HOLDERS:-another worker} already hold it; task $ID was not launched and its backlog item stays queued - dispatch it again once the lease is released or expires" >&2
-          exit "$FM_POOL_LEASE_DEFER_EXIT"
-          ;;
-        *)
-          echo "error: spawn refused: quota pool $FM_POOL_LEASE_POOL is capped but its lease authority could not grant a lease ($FM_POOL_LEASE_ERROR); a capped spawn never launches unleased - fix the authority at $FM_POOL_LEASE_SERVER or remove $FM_POOL_LEASE_FILE" >&2
-          exit 1
-          ;;
-      esac
-      [ "$RELAUNCH" -eq 1 ] || SPAWN_POOL_LEASE_NEW=1
-      [ -z "$SPAWN_POOL_LEASE_OLD_ID" ] || fm_pool_lease_release_id "$SPAWN_POOL_LEASE_OLD_SERVER" "$SPAWN_POOL_LEASE_OLD_ID" "$ID"
-    elif [ -z "$FM_POOL_LEASE_POOL" ] && [ -n "$SPAWN_POOL_LEASE_OLD_ID" ]; then
-      fm_pool_lease_release "$STATE" "$ID"
-    fi
   fi
 fi
 [ -f "$BRIEF" ] || {
