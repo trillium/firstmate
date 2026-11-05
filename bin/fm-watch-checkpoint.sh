@@ -74,6 +74,11 @@ ERR=$(mktemp "${TMPDIR:-/tmp}/fm-watch-checkpoint.err.XXXXXX") || {
   exit 1
 }
 trap 'rm -f "$OUT" "$ERR"' EXIT
+# An untrapped signal ends bash without running the EXIT trap, which would leave
+# both temp files behind; convert HUP/INT/TERM into a normal exit so it fires.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 run_with_perl_timeout() {  # <seconds> <signal> <kill-after-seconds> <command...>
   perl -e '
