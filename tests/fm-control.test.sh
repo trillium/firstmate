@@ -146,6 +146,9 @@ case "${1:-}" in
           picker) [ -n "${FM_FAKE_DEVIN_PICKER_STUCK:-}" ] || printf idle > "$D/devin" ;;
         esac
       fi
+      if [ "$payload" = C-u ] && [ -f "$D/clear-on-ctrl-u" ]; then
+        cat "$D/clear-on-ctrl-u" > "$D/pane"
+      fi
       # enter-exits-at holds the number of the Enter that answers a picker
       # and lets the agent exit, like the second Enter after `/exit`.
       if [ "$payload" = Enter ] && [ -f "$D/enter-exits-at" ] \
@@ -732,6 +735,57 @@ test_commandcode_relaunch_off_tmux_and_herdr_refuses_before_stopping() {
       || fail "a refused commandcode relaunch on $backend must open no relaunch transaction"
   done
   pass "fm-control relaunch: commandcode off tmux and herdr is refused before the running agent is stopped"
+}
+
+test_relaunch_clears_own_doorbell_before_exit() {
+  local dir fx empty_pane out rc
+  fx="$ROOT/tests/fixtures/claude-2.1.316-stacked-doorbells"
+  empty_pane=$(printf '  Claude Code v2.1.316\n❯ \n')
+
+  # 1. Standalone exit refuses when composer holds doorbell and does not send C-u or /exit
+  dir=$(new_case exit-doorbell)
+  add_task "$dir" robots-wave1-c claude
+  alive_as "$dir" claude
+  cat "$fx/one.screen" > "$dir/fake/pane"
+  printf '%s\n' "$empty_pane" > "$dir/fake/clear-on-ctrl-u"
+  out=$(run_control "$dir" robots-wave1-c exit); rc=$?
+  expect_code 1 "$rc" "exit should refuse when composer holds doorbell"$'\n'"$out"
+  ! grep -qx C-u "$dir/fake/keys" || fail "exit must not send C-u to clear the composer"
+  [ -z "$(literals "$dir")" ] || fail "exit must not type /exit when refused"
+
+  # 2. Relaunch clears own doorbell with C-u, sends /exit, and progresses past stopping
+  dir=$(new_case relaunch-doorbell)
+  add_task "$dir" robots-wave1-c claude
+  alive_as "$dir" claude
+  cat "$fx/one.screen" > "$dir/fake/pane"
+  printf '%s\n' "$empty_pane" > "$dir/fake/clear-on-ctrl-u"
+  run_control "$dir" robots-wave1-c relaunch --note "progress note" >/dev/null 2>&1 || true
+  grep -qx C-u "$dir/fake/keys" || fail "relaunch should send C-u when composer holds our doorbell"
+  [ "$(literals "$dir")" = /exit ] || fail "relaunch should type /exit after clearing composer, got: $(literals "$dir")"
+  grep -qx "phase=failed:launching" "$dir/home/state/robots-wave1-c.control-relaunch" \
+    || fail "relaunch journal should reach launching phase after stopping agent"
+
+  # 3. Stacked doorbells are also cleared with C-u and /exit is typed
+  dir=$(new_case relaunch-stacked)
+  add_task "$dir" robots-wave1-c claude
+  alive_as "$dir" claude
+  cat "$fx/two.screen" > "$dir/fake/pane"
+  printf '%s\n' "$empty_pane" > "$dir/fake/clear-on-ctrl-u"
+  run_control "$dir" robots-wave1-c relaunch --note "progress note" >/dev/null 2>&1 || true
+  grep -qx C-u "$dir/fake/keys" || fail "relaunch should send C-u for stacked doorbells"
+  [ "$(literals "$dir")" = /exit ] || fail "relaunch should type /exit for stacked doorbells, got: $(literals "$dir")"
+
+  # 4. Mixed draft refuses relaunch and sends no C-u or /exit
+  dir=$(new_case relaunch-mixed)
+  add_task "$dir" robots-wave1-c claude
+  alive_as "$dir" claude
+  sed 's/handled\/\.$/handled\/. plus draft/' "$fx/one.screen" > "$dir/fake/pane"
+  printf '%s\n' "$empty_pane" > "$dir/fake/clear-on-ctrl-u"
+  out=$(run_control "$dir" robots-wave1-c relaunch --note "progress note"); rc=$?
+  expect_code 1 "$rc" "relaunch should refuse when composer holds mixed draft"$'\n'"$out"
+  ! grep -qx C-u "$dir/fake/keys" || fail "relaunch must not send C-u for mixed draft"
+  [ -z "$(literals "$dir")" ] || fail "relaunch must not type /exit for mixed draft"
+  pass "fm-control relaunch: clears only firstmate's own doorbell with C-u before exit, refuses mixed drafts and exit"
 }
 
 test_hermes_profile_refusals_preserve_running_worker() {
@@ -1553,6 +1607,7 @@ test_harness_kind_capability
 test_orca_refuses_an_escape_harness_interrupt
 test_unverified_state_backends_refuse_stop_verbs
 test_commandcode_relaunch_off_tmux_and_herdr_refuses_before_stopping
+test_relaunch_clears_own_doorbell_before_exit
 test_hermes_profile_refusals_preserve_running_worker
 test_state_verified_backends_are_exactly_tmux_herdr_and_rex
 test_window_label_is_refused_with_the_exact_id

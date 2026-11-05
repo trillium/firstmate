@@ -212,6 +212,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-omp-profile-lib.sh"
 # shellcheck source=bin/fm-exclude-tools-lib.sh
 . "$SCRIPT_DIR/fm-exclude-tools-lib.sh"
+# shellcheck source=bin/fm-task-inbox-lib.sh
+. "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 SETTLE_WAIT=${FM_CONTROL_SETTLE_WAIT:-5}
@@ -819,6 +821,23 @@ do_exit() {
   if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
     refuse_blocking_prompt "$dialog"
+  fi
+  # If relaunching and the composer holds only firstmate's own doorbell text,
+  # clear it through the adapter's supported clear mechanism (Ctrl+U repeatedly)
+  # before typing the exit command. Never discard text that is not provably ours.
+  if [ "$VERB" = relaunch ]; then
+    doorbell_line=$(fm_task_inbox_doorbell_line "$(fm_task_inbox_dir "$STATE" "$ID")/x.msg" 2>/dev/null) || doorbell_line=
+    if [ -n "$doorbell_line" ] \
+       && fm_task_inbox_composer_holds "$BACKEND" "$T" "$doorbell_line" "$LABEL"; then
+      for ((clear_try = 0; clear_try < 24; clear_try++)); do
+        fm_backend_send_key "$BACKEND" "$T" C-u "$LABEL" >/dev/null 2>&1 || break
+        cstate_after=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) || cstate_after=unknown
+        if [ "$cstate_after" = empty ] || fm_control_composer_structurally_empty "$BACKEND" "$T"; then
+          composer_state=empty
+          break
+        fi
+      done
+    fi
   fi
   case "$composer_state" in
     empty) ;;
