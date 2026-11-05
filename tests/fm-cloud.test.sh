@@ -140,3 +140,47 @@ out=$(FM_CLOUD_LAUNCH_TIMEOUT=2 cloud launch --repo "$REPO" "x" 2>&1); rc=$?
 assert_equals 1 "$rc" "a hung launch exits nonzero"
 assert_contains "$out" "no result within 2s" "timeout diagnostic"
 pass "launch timeout"
+
+# Credit expiry honours the real expiry moment.
+mkdir -p "$TMP_ROOT/home/config"
+CREDIT="$TMP_ROOT/home/config/cloud-credit"
+credit_out() { printf 'amount=10\nexpires=%s\n' "$1" > "$CREDIT"; TZ="${2:-UTC}" FM_HOME="$TMP_ROOT/home" bash "$(dirname "${BASH_SOURCE[0]}")/../bin/fm-cloud.sh" credit 2>&1; }
+now=$(date +%s)
+
+in5h=$(date -u -d "@$((now + 5 * 3600 + 600))" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -r "$((now + 5 * 3600 + 600))" +%Y-%m-%dT%H:%M:%S)
+out=$(credit_out "${in5h}Z")
+assert_contains "$out" "5 hour(s) remaining" "explicit Z time reports hours"
+
+# The same instant written with an offset is the same moment.
+off_local=$(date -u -d "@$((now + 5 * 3600 + 600  + 8 * 3600))" +%Y-%m-%dT%H:%M 2>/dev/null || date -u -r "$((now + 5 * 3600 + 600  + 8 * 3600))" +%Y-%m-%dT%H:%M)
+out=$(credit_out "${off_local}+08:00")
+assert_contains "$out" "5 hour(s) remaining" "explicit +08:00 offset is honoured"
+off_west=$(date -u -d "@$((now + 5 * 3600 + 600 - 8 * 3600))" +%Y-%m-%dT%H:%M 2>/dev/null || date -u -r "$((now + 5 * 3600 + 600 - 8 * 3600))" +%Y-%m-%dT%H:%M)
+out=$(credit_out "${off_west}-08:00")
+assert_contains "$out" "5 hour(s) remaining" "explicit -08:00 offset is honoured"
+
+in20m=$(date -u -d "@$((now + 20 * 60))" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -r "$((now + 20 * 60))" +%Y-%m-%dT%H:%M:%S)
+out=$(credit_out "${in20m}Z")
+assert_contains "$out" "minute(s) remaining" "under an hour reports minutes"
+
+in3d=$(date -u -d "@$((now + 3 * 86400 - 600))" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -r "$((now + 3 * 86400 - 600))" +%Y-%m-%dT%H:%M:%S)
+out=$(credit_out "${in3d}Z")
+assert_contains "$out" "3 day(s) remaining" "over a day reports days"
+
+# Date-only means the end of that day in local time: today's local date is still live
+# in a zone far behind UTC, where UTC end-of-day reading would have been wrong.
+for tz in Etc/GMT+8 Etc/GMT-10; do
+  today=$(TZ=$tz date +%Y-%m-%d)
+  out=$(credit_out "$today" "$tz")
+  assert_contains "$out" "remaining" "date-only today is unexpired in $tz"
+  case "$out" in *"day(s)"*) fail "date-only today under a day in $tz: $out" ;; esac
+done
+yesterday=$(TZ=Etc/GMT+8 date -d 'yesterday' +%Y-%m-%d 2>/dev/null || TZ=Etc/GMT+8 date -v-1d +%Y-%m-%d)
+out=$(credit_out "$yesterday" Etc/GMT+8)
+assert_contains "$out" "expired $yesterday" "past date-only is expired"
+
+out=$(credit_out "2020-01-01T00:00Z")
+assert_contains "$out" "expired 2020-01-01T00:00Z" "past explicit time is expired"
+out=$(credit_out "soon")
+assert_contains "$out" "not a YYYY-MM-DD" "malformed value reported"
+pass "credit expiry"

@@ -284,7 +284,7 @@ assert_contains "$(cloud doctor)" "credit: " "doctor includes the credit line"
 printf 'amount=249\nexpires=2020-01-01\n' > "$CONFIG/cloud-credit"
 assert_contains "$(cloud credit)" "expired 2020-01-01" "credit reports an expired credit"
 printf 'amount=249\nexpires=soon\n' > "$CONFIG/cloud-credit"
-assert_contains "$(cloud credit)" "is not a YYYY-MM-DD date" "credit reports a malformed expiry"
+assert_contains "$(cloud credit)" "is not a YYYY-MM-DD" "credit reports a malformed expiry"
 rm -f "$CONFIG/cloud-credit"
 pass "credit reports days remaining and runs launched"
 

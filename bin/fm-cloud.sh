@@ -59,8 +59,10 @@
 # then retires the check, PR poll, run record and task record and closes the
 # backlog item.
 #
-# credit reads config/cloud-credit (amount=<usd> and expires=<YYYY-MM-DD>) and
-# reports the days remaining and the runs launched; doctor prints the same line.
+# credit reads config/cloud-credit (amount=<usd> and expires=<YYYY-MM-DD> or
+# <YYYY-MM-DDTHH:MM[:SS]> plus Z or a +HH:MM/-HH:MM offset; a date-only value ends at
+# the end of that day in local time) and reports the time remaining (days, or hours
+# or minutes under a day) and the runs launched; doctor prints the same line.
 #
 # cleanup retires a run record and PRINTS the web-only steps that remain; it
 # performs none of them. A run still bound to a task is torn down with teardown. The steps are owned by runbooks-e8k (the
@@ -581,29 +583,52 @@ cmd_teardown() {
   printf 'teardown %s complete (cloud run %s retired)\n' "$task" "$run"
 }
 
-# config/cloud-credit: amount=<usd> and expires=<YYYY-MM-DD>.
-epoch_of_date() {  # <YYYY-MM-DD> -> epoch of 00:00 UTC, or nothing
-  case "$1" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) return 0 ;; esac
-  date -u -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" +%s 2>/dev/null \
-    || date -u -d "$1 00:00:00" +%s 2>/dev/null || true
+# config/cloud-credit: amount=<usd> and expires=<YYYY-MM-DD[THH:MM[:SS](Z|+HH:MM)]>.
+epoch_of_date() {  # <expires> -> epoch of the expiry moment, or nothing
+  local v="$1" d t off sign oh om base
+  case "$v" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])  # date only: end of that day, local time
+      date -j -v+1d -f '%Y-%m-%d %H:%M:%S' "$v 00:00:00" +%s 2>/dev/null \
+        || date -d "$v 1 day" +%s 2>/dev/null || true
+      return 0 ;;
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z | \
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z | \
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9][+-][0-9][0-9]:[0-9][0-9] | \
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9][+-][0-9][0-9]:[0-9][0-9]) ;;
+    *) return 0 ;;
+  esac
+  d=${v%%T*}; t=${v#*T}
+  case "$t" in
+    *Z) t=${t%Z}; sign=+; oh=00; om=00 ;;
+    *) off=${t: -6}; t=${t%"$off"}; sign=${off:0:1}; oh=${off:1:2}; om=${off:4:2} ;;
+  esac
+  case "$t" in ??:??) t="$t:00" ;; esac
+  base=$(date -u -j -f '%Y-%m-%d %H:%M:%S' "$d $t" +%s 2>/dev/null \
+    || date -u -d "$d $t" +%s 2>/dev/null) || return 0
+  [ -n "$base" ] || return 0
+  # a local time of sign HH:MM ahead of UTC is that many seconds earlier in UTC
+  if [ "$sign" = + ]; then echo $(( base - 10#$oh * 3600 - 10#$om * 60 ))
+  else echo $(( base + 10#$oh * 3600 + 10#$om * 60 )); fi
 }
 
 credit_line() {
-  local f="$CONFIG/cloud-credit" amount expires exp now days runs=0
+  local f="$CONFIG/cloud-credit" amount expires exp now left left_txt runs=0
   [ -f "$f" ] || { printf 'credit: not configured (add %s with amount= and expires=YYYY-MM-DD)\n' "$f"; return 0; }
   amount=$(rec_get "$f" amount); expires=$(rec_get "$f" expires)
   exp=$(epoch_of_date "$expires")
-  [ -z "$exp" ] || exp=$(( exp + 86400 ))  # the credit lasts through the expiry date
   [ ! -f "$LAUNCH_LEDGER" ] || runs=$(wc -l < "$LAUNCH_LEDGER" | tr -d ' ')
   now=$(date +%s)
   if [ -z "$exp" ]; then
-    printf 'credit: $%s, expiry %s is not a YYYY-MM-DD date; runs launched: %s\n' "${amount:-?}" "${expires:-unset}" "$runs"
+    printf 'credit: $%s, expiry %s is not a YYYY-MM-DD[THH:MM(Z|+HH:MM)] value; runs launched: %s\n' "${amount:-?}" "${expires:-unset}" "$runs"
   elif [ "$now" -ge "$exp" ]; then
     printf 'credit: $%s expired %s; runs launched: %s\n' "${amount:-?}" "$expires" "$runs"
   else
-    days=$(( (exp - now + 86399) / 86400 ))
-    printf 'credit: $%s expires %s, %s day(s) remaining; runs launched: %s (cloud is a preferred route for self-contained GitHub work until then)\n' \
-      "${amount:-?}" "$expires" "$days" "$runs"
+    left=$(( exp - now ))
+    if [ "$left" -ge 86400 ]; then left_txt="$(( (left + 86399) / 86400 )) day(s)"
+    elif [ "$left" -ge 3600 ]; then left_txt="$(( left / 3600 )) hour(s)"
+    else left_txt="$(( (left + 59) / 60 )) minute(s)"; fi
+    printf 'credit: $%s expires %s, %s remaining; runs launched: %s (cloud is a preferred route for self-contained GitHub work until then)\n' \
+      "${amount:-?}" "$expires" "$left_txt" "$runs"
   fi
 }
 
