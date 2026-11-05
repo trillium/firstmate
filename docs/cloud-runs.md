@@ -10,7 +10,7 @@ Run `bin/fm-cloud.sh doctor` first; it checks that the installed `claude` CLI su
 - `cleanup <run-id>` retires the record and prints the remaining web-only steps without performing them; a run still bound to a task is retired with `teardown` instead.
 - `launch --task <id>` makes the run an ordinary dispatch, described below.
 - `check <id>`, `land <id>`, and `teardown <id>` finish a task-bound run.
-- `credit` reports the cloud credit's days remaining and the runs launched, and `doctor` prints the same line.
+- `credit` reports the cloud credit's time remaining and the runs launched, and `doctor` prints the same line.
 
 ## Cloud runs as a dispatch route
 

@@ -3462,8 +3462,8 @@ expires=2026-11-04
 ```
 
 - `amount` is the dollar value, shown by the `credit` subcommand and `doctor`.
-- `expires` is a `YYYY-MM-DD` date; the credit counts as available through that whole day.
-- `bin/fm-cloud.sh credit` prints the days remaining and the runs launched, and `doctor` prints the same line.
+- `expires` is the moment the credit ends: `YYYY-MM-DD` for the end of that day in the machine's local time zone, or `YYYY-MM-DDTHH:MM[:SS]` followed by `Z` or a UTC offset such as `-08:00` for an exact instant (for example `2026-11-04T23:59-08:00`).
+- `bin/fm-cloud.sh credit` prints the time remaining (days, or hours or minutes once under a day) and the runs launched, and `doctor` prints the same line.
 - An absent file reports the credit as not configured, a past date reports it expired, and a malformed date is reported rather than guessed.
 
 `config/cloud-timeout` is the minutes a cloud run may stay silent before its finish check wakes firstmate with a possibly-stuck line naming the session.
