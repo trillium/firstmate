@@ -1,0 +1,30 @@
+=== Before Fix ===
+$ fm-config-push.sh (pushing absent config/pool-lease to remote secondmate with older code root)
+secondmate mini0-ops (/Users/mini0/fm_home/mini0-ops):
+  error: path is not inherited material: config/pool-lease
+  captain-shared.md: unchanged
+  crew-dispatch.json: unchanged
+
+=== After Fix ===
+$ fm-config-push.sh (pushing absent config/pool-lease to remote secondmate with older code root)
+secondmate mini0-ops (/Users/mini0/fm_home/mini0-ops):
+  config/pool-lease: unchanged
+  captain-shared.md: unchanged
+  crew-dispatch.json: unchanged
+
+=== Test Suite Execution ===
+$ bash tests/fm-bootstrap-network-parallel.test.sh
+ok - bootstrap network (parallel): per-mate output stays intact, fail-closed, and correctly sequenced
+ok - bootstrap network (fallback): per-mate output stays intact, fail-closed, and correctly sequenced
+ok - a remote inheritance failure reports its own error line, not an earlier unchanged item
+ok - remote inheritance push: items overlap up to the bound and replay in allowlist order
+ok - remote inheritance push: a failed item fails the push and no later item is started
+ok - remote inheritance push: an older receiver's refusal counts as unchanged only for an absent item
+ok - remote inheritance push: a local refusal is decided before any item is sent
+ok - per-mate convergence budget: a hung host is that mate's skip, keeps its retry marker, and does not hold the others
+ok - a push that fails after applying an item keeps the mate's re-read owed
+ok - config-push: a push that fails after applying an item keeps the mate's re-read owed
+ok - unknown-completion sync or push keeps the mate's re-read owed across an unchanged retry
+ok - parallel push preserves unknown completion status
+ok - a kill during the remote call keeps the mate's re-read owed
+# all fm-bootstrap-network-parallel tests passed

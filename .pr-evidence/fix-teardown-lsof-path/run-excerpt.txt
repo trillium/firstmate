@@ -1,0 +1,50 @@
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+●  /Users/trilliumsmith/.treehouse/firstmate-3f0df5/16/firstmate is on 'fm/fix-teardown-lsof-path', not its default branch 'main'.
+●  The work is SAFE on the 'fm/fix-teardown-lsof-path' ref.
+●  then re-validate 'fm/fix-teardown-lsof-path' in a proper isolated worktree.
+ok - lsof errors leave worktree index.lock in place and refuse teardown
+ok - missing lsof falls back to reaping the tmux pane process group
+ok - teardown reaps a leaked worktree process when lsof is only in a system directory off PATH
+ok - an erroring lsof scan refuses teardown and preserves the task
+exit=0
