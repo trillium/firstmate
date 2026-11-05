@@ -315,13 +315,13 @@ test_forge_external_renders_the_review_rail() {
   home="$TMP_ROOT/forge-external-home"
   mkdir -p "$home/data" "$home/config"
   out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ext-noadapter some-proj --mode direct-PR --forge external 2>&1); rc=$?
-  expect_code 1 "$rc" "--forge external without an adapter must be refused" "$out"
+  expect_code 1 "$rc" "--forge external without an adapter must be refused"
   assert_contains "$out" "external-review.md" "the missing-adapter refusal did not name the file"
   [ ! -e "$home/data/brief-ext-noadapter/brief.md" ] || fail "a refused external scaffold left a brief behind"
 
   printf '%s\n' 'Delivery contract: mode=direct-PR' > "$home/config/external-review.md"
   out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-ext-contract some-proj --mode direct-PR --forge external 2>&1); rc=$?
-  expect_code 1 "$rc" "an adapter carrying a delivery contract line must be refused" "$out"
+  expect_code 1 "$rc" "an adapter carrying a delivery contract line must be refused"
   assert_contains "$out" "must not carry a 'Delivery contract: mode=' line" "the adapter contract refusal did not say why"
 
   # shellcheck disable=SC2016 # Backticks are literal adapter text.
@@ -1412,7 +1412,7 @@ test_home_brief_include_is_appended_last() {
 
   printf '%s\n' 'Delivery contract: mode=local-only' > "$config/brief-include.md"
   out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" include-contract some-proj --scout 2>&1); rc=$?
-  expect_code 1 "$rc" "an include carrying a delivery contract line must stop the scaffold" "$out"
+  expect_code 1 "$rc" "an include carrying a delivery contract line must stop the scaffold"
   assert_contains "$out" "must not carry a 'Delivery contract: mode=' line" "delivery-contract refusal did not explain itself"
   assert_absent "$home/data/include-contract" "a refused include left a partial scaffold behind"
   printf '%s\n' 'Prefer small commits.' > "$config/brief-include.md"
@@ -1428,7 +1428,7 @@ test_home_brief_include_is_appended_last() {
   rm -f "$config/brief-include.md"
   mkdir "$config/brief-include.md"
   out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" include-unusable some-proj --scout 2>&1); rc=$?
-  expect_code 1 "$rc" "an unusable include path must stop the scaffold" "$out"
+  expect_code 1 "$rc" "an unusable include path must stop the scaffold"
   assert_contains "$out" "brief-include.md must be a readable regular file" "unusable include refusal did not name the file"
   assert_absent "$home/data/include-unusable" "an unusable include left a partial scaffold behind"
   pass "fm-brief.sh: the home brief include lands last on ship and scout, verbatim, and fails closed"

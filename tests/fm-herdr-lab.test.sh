@@ -294,7 +294,7 @@ test_viewer_refuses_unowned_sessions() {
   local name="fm-lab-viewer-guard-$$" status=0 out
   : > "$FAKE_LOG"
   out=$(run_with_fake fm_herdr_lab_viewer_start "$name" 2>&1) || status=$?
-  expect_code 1 "$status" "a session without an ownership tripwire must not be attached to" "$out"
+  expect_code 1 "$status" "a session without an ownership tripwire must not be attached to"
   assert_contains "$out" "does not own" \
     "the viewer refusal did not name the missing ownership record"
   [ ! -s "$FAKE_LOG" ] \
@@ -341,7 +341,7 @@ SH
   out=$(FM_FAKE_HERDR_FAST_POLL=1 FM_FAKE_HERDR_WAIT_MARKER="$started" \
     FM_FAKE_VIEWER_STARTED="$started" run_with_fake fm_herdr_lab_viewer_start "$name" 2>&1) || status=$?
   rm -f "$FAKEBIN/python3"
-  expect_code 1 "$status" "an unrecorded launcher must not outlive viewer start" "$out"
+  expect_code 1 "$status" "an unrecorded launcher must not outlive viewer start"
   assert_present "$started" "delayed viewer launcher did not start"
   launcher_pid=$(cat "$started")
   kill -0 "$launcher_pid" 2>/dev/null && fail "timed-out viewer launcher remained alive"
@@ -388,7 +388,7 @@ SH
   out=$(FM_FAKE_HERDR_FAST_POLL=1 FM_FAKE_VIEWER_MARKER="$marker" \
     run_with_fake fm_herdr_lab_viewer_start "$name" 2>&1) || status=$?
   rm -f "$FAKEBIN/python3"
-  expect_code 1 "$status" "a foreign foreground client must not satisfy viewer start" "$out"
+  expect_code 1 "$status" "a foreign foreground client must not satisfy viewer start"
   assert_present "$marker" "viewer ownership fixture did not launch"
   assert_contains "$out" "did not become the foreground client" "ownership failure did not time out clearly"
   assert_not_contains "$out" "viewer attached" "start claimed a foreign foreground client as its own"

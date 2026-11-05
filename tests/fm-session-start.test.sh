@@ -856,7 +856,7 @@ EOF
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
 
-  expect_code 0 "$status" "fm-session-start.sh must exit 0 even on a lock refusal" "$out"
+  expect_code 0 "$status" "fm-session-start.sh must exit 0 even on a lock refusal"
   assert_contains "$out" "READ-ONLY SESSION" "read-only banner missing on lock refusal"
   assert_contains "$out" "another live firstmate session holds the lock" "read-only banner did not surface fm-lock.sh's own error text"
   assert_contains "$out" "Skipping every mutating step" "read-only banner did not explain what was skipped"
@@ -908,7 +908,7 @@ EOF
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
   chmod 0700 "$home/state"
 
-  expect_code 0 "$status" "fm-session-start.sh must exit 0 when lock publication fails" "$out"
+  expect_code 0 "$status" "fm-session-start.sh must exit 0 when lock publication fails"
   assert_contains "$out" "cannot write session lock" "lock publication failure was not surfaced"
   assert_contains "$out" "READ-ONLY SESSION" "lock publication failure did not force a read-only session"
   assert_contains "$out" "FLEET LOCK OWNERSHIP WAS NOT VERIFIED" "lock publication failure was misreported as a live holder"
@@ -1470,7 +1470,7 @@ EOF
 
   out=$(FM_SESSION_START_ENDPOINT_TIMEOUT=bogus run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
 
-  expect_code 0 "$status" "one killed endpoint read must not fail the digest" "$out"
+  expect_code 0 "$status" "one killed endpoint read must not fail the digest"
   assert_contains "$out" \
     "endpoint: error (backend=herdr window=sess:p-doom - the endpoint read died or hit its 10s bound; the digest continued past it)" \
     "a killed endpoint read was not reported as that task's own error line"
@@ -1509,7 +1509,7 @@ EOF
   out=$(FM_HOME_SUMMARY_TIMEOUT=5 FM_SESSION_START_ENDPOINT_TIMEOUT=2 \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
 
-  expect_code 0 "$status" "a hung endpoint read must not fail the digest" "$out"
+  expect_code 0 "$status" "a hung endpoint read must not fail the digest"
   assert_contains "$out" \
     "endpoint: error (backend=herdr window=sess:p-slow - the endpoint read died or hit its 2s bound; the digest continued past it)" \
     "a hung endpoint read was not bounded into that task's own configured bound"
@@ -1544,7 +1544,7 @@ EOF
   out=$(FM_HOME_SUMMARY_TIMEOUT=5 FM_SESSION_START_ENDPOINT_TIMEOUT=00 \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
 
-  expect_code 0 "$status" "a padded-zero per-read bound must not fail the digest" "$out"
+  expect_code 0 "$status" "a padded-zero per-read bound must not fail the digest"
   assert_contains "$out" \
     "endpoint: error (backend=herdr window=sess:p-slow - the endpoint read died or hit its 10s bound; the digest continued past it)" \
     "a padded-zero bound did not fall back to the 10s default, so the hung read went unbounded"
@@ -1629,7 +1629,7 @@ SH
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
 
-  expect_code 0 "$status" "a digest child that died mid-stage must still let the session open (parent exits 0)" "$out"
+  expect_code 0 "$status" "a digest child that died mid-stage must still let the session open (parent exits 0)"
   assert_contains "$out" \
     "STARTUP TRUNCATED - SESSION START DIED UNEXPECTEDLY (exit 143, not its runtime bound)" \
     "a digest child killed mid-stage did not name its abnormal death"
@@ -2295,7 +2295,7 @@ EOF
   out=$(FM_TIMEOUT_MECHANISM_OVERRIDE=bash FM_SESSION_START_TIMEOUT=3 FM_STARTUP_NETWORK_TIMEOUT=2 \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
 
-  expect_code 0 "$status" "a truncated session start must still exit 0 so the session can open" "$out"
+  expect_code 0 "$status" "a truncated session start must still exit 0 so the session can open"
   assert_contains "$out" "SESSION START - $home" "the truncated digest lost the output it had already produced"
   assert_contains "$out" "LOCK" "the truncated digest lost a stage that had completed"
   assert_contains "$out" "STARTUP TRUNCATED - SESSION START HIT ITS" "a truncated session start did not say so"

@@ -299,7 +299,7 @@ test_inert_in_child_worktree() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "hook must stay inert in a child task worktree" "$out"
+  expect_code 0 "$status" "hook must stay inert in a child task worktree"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed inside a child worktree"
   [ ! -e "$dir/state/.claude-autoarm-epoch" ] || fail "hook wrote an epoch inside a child worktree"
   pass "auto-arm: inert in a linked child worktree even when in-flight"
@@ -312,7 +312,7 @@ test_inert_without_session_lock() {
   write_arm_fixture "$dir" actionable
   # No state/.lock: run the hook directly (no fake harness, no lock file).
   out=$(printf '%s\n' '{"session_id":"s"}' | FM_HOME="$dir" bash "$dir/bin/fm-claude-stop-autoarm.sh" 2>&1); status=$?
-  expect_code 0 "$status" "hook must stay inert when no session holds the home lock" "$out"
+  expect_code 0 "$status" "hook must stay inert when no session holds the home lock"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed without a session lock"
   pass "auto-arm: inert with no session lock"
 }
@@ -351,7 +351,7 @@ test_inert_when_lock_held_by_other_harness() {
   owner_after=$(cat "$dir/state/.lock")
   kill "$other" 2>/dev/null || true
   wait "$other" 2>/dev/null || true
-  expect_code 0 "$status" "hook must stay inert when another live harness holds the session lock" "$out"
+  expect_code 0 "$status" "hook must stay inert when another live harness holds the session lock"
   [ "$owner_after" = "$other" ] || fail "hook replaced another live harness owner: expected $other, got $owner_after"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed while another session owned the lock"
   [ ! -e "$dir/state/.claude-autoarm-epoch" ] || fail "hook wrote an epoch while another session owned the lock"
@@ -367,7 +367,7 @@ test_inert_when_afk() {
   : > "$dir/state/.claude-autoarm-failure-alarmed"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "hook must never arm or rewake while away mode owns triage" "$out"
+  expect_code 0 "$status" "hook must never arm or rewake while away mode owns triage"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed while state/.afk existed"
   assert_present "$dir/state/.claude-autoarm-failure-notified" "AFK without positive recovery reset the failure notice"
   assert_present "$dir/state/.claude-autoarm-failure-alarmed" "AFK without positive recovery reset the attended alarm"
@@ -382,7 +382,7 @@ test_stale_lock_recovery_preserves_afk_and_need_gates() {
   printf '9999999\n' > "$afk_dir/state/.lock"
   write_arm_fixture "$afk_dir" actionable
   out=$(printf '%s\n' '{"session_id":"stale-afk"}' | FM_HOME="$afk_dir" "$FAKE_CLAUDE" -c '"$FM_HOME/bin/fm-claude-stop-autoarm.sh"' 2>&1); status=$?
-  expect_code 0 "$status" "a stale owner must not widen the AFK gate" "$out"
+  expect_code 0 "$status" "a stale owner must not widen the AFK gate"
   [ "$(cat "$afk_dir/state/.lock")" = 9999999 ] || fail "AFK stale lock was reclaimed despite away ownership"
   [ ! -e "$afk_dir/state/arm-ran" ] || fail "stale AFK home armed"
 
@@ -390,7 +390,7 @@ test_stale_lock_recovery_preserves_afk_and_need_gates() {
   printf '9999999\n' > "$idle_dir/state/.lock"
   write_arm_fixture "$idle_dir" actionable
   out=$(printf '%s\n' '{"session_id":"stale-idle"}' | FM_HOME="$idle_dir" "$FAKE_CLAUDE" -c '"$FM_HOME/bin/fm-claude-stop-autoarm.sh"' 2>&1); status=$?
-  expect_code 0 "$status" "a stale owner must not widen the supervision-need gate" "$out"
+  expect_code 0 "$status" "a stale owner must not widen the supervision-need gate"
   [ "$(cat "$idle_dir/state/.lock")" = 9999999 ] || fail "idle stale lock was reclaimed without supervision need"
   [ ! -e "$idle_dir/state/arm-ran" ] || fail "stale idle home armed"
   pass "auto-arm: stale-owner recovery leaves the AFK and supervision-need gates unchanged"
@@ -434,7 +434,7 @@ test_inert_when_fleet_idle() {
   : > "$dir/state/.claude-autoarm-failure-alarmed"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "hook must exit 0 in an idle home with no X-mode poll" "$out"
+  expect_code 0 "$status" "hook must exit 0 in an idle home with no X-mode poll"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed an idle home"
   assert_present "$dir/state/.claude-autoarm-failure-notified" "idle state without positive recovery reset the failure notice"
   assert_present "$dir/state/.claude-autoarm-failure-alarmed" "idle state without positive recovery reset the attended alarm"
@@ -449,7 +449,7 @@ test_actionable_close_rewakes_with_reason() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "an actionable arm close must exit 2 so Claude rewakes" "$out"
+  expect_code 2 "$status" "an actionable arm close must exit 2 so Claude rewakes"
   assert_contains "$out" "firstmate watcher wake" "rewake must carry the wake banner"
   assert_contains "$out" "stale: fixture-win actionable" "rewake must carry the arm's reason line"
   assert_contains "$out" "bin/fm-wake-drain.sh" "rewake must direct the drain-first protocol"
@@ -478,7 +478,7 @@ test_stands_down_only_on_pi_code_transcript_path() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" '{"session_id":"sess-pi","stop_hook_active":false,"transcript_path":"/home/u/.pi/agent/sessions/s.jsonl"}' 2>/dev/null); status=$?
-  expect_code 0 "$status" "hook must stand down silently on a pi-code-delivered transcript_path" "$out"
+  expect_code 0 "$status" "hook must stand down silently on a pi-code-delivered transcript_path"
   [ -z "$out" ] || fail "pi-code stand-down printed output: $out"
   [ ! -e "$dir/state/arm-ran" ] || fail "hook armed on a pi-code-delivered payload"
 
@@ -486,14 +486,14 @@ test_stands_down_only_on_pi_code_transcript_path() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" '{"session_id":"sess-claude","stop_hook_active":false,"transcript_path":"/home/u/.claude/projects/-home-u--pi-proj/s.jsonl"}' 2>/dev/null); status=$?
-  expect_code 2 "$status" "a Claude-shaped transcript_path must still arm and rewake" "$out"
+  expect_code 2 "$status" "a Claude-shaped transcript_path must still arm and rewake"
   [ -e "$dir/state/arm-ran" ] || fail "hook did not arm with a Claude-shaped transcript_path present"
 
   dir=$(make_primary_dir "$TMP_ROOT/picode-none")
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a payload without transcript_path must still arm" "$out"
+  expect_code 2 "$status" "a payload without transcript_path must still arm"
   [ -e "$dir/state/arm-ran" ] || fail "hook did not arm without a transcript_path"
 
   pass "auto-arm: stands down only on a pi-code-delivered transcript_path (/.pi/)"
@@ -514,7 +514,7 @@ test_actionable_close_with_live_successor_rewakes_once() {
   write_arm_fixture "$dir" benign-live
   out2=$(run_autoarm "$dir" 2>/dev/null); status2=$?
 
-  expect_code 2 "$status" "an actionable close must rewake when a live successor already exists" "$out"
+  expect_code 2 "$status" "an actionable close must rewake when a live successor already exists"
   expect_code 0 "$status2" "a repeated non-actionable close with the live successor must stay quiet"
   [ "$(printf '%s\n' "$out" | grep -c '^firstmate watcher wake')" -eq 1 ] \
     || fail "actionable close with a live successor did not emit exactly one wake banner: $out"
@@ -540,7 +540,7 @@ test_attached_cycle_end_starts_handling_successor() {
   write_arm_fixture "$dir" attached-delivered
   : > "$dir/state/successor-park"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "an attached cycle's delivered wake must still rewake" "$out"
+  expect_code 2 "$status" "an attached cycle's delivered wake must still rewake"
   assert_contains "$out" "signal: task.status done: fixture peer cycle ended" "rewake must carry the delivered reason"
   [ -s "$dir/state/successor-ran" ] \
     || fail "the hook returned from the ended attached cycle without starting a handling successor"
@@ -573,7 +573,7 @@ test_unconfirmed_handling_successor_still_rewakes() {
   write_arm_fixture "$dir" attached-delivered
   : > "$dir/state/successor-fail"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a failed handling successor must never withhold the delivered wake" "$out"
+  expect_code 2 "$status" "a failed handling successor must never withhold the delivered wake"
   assert_contains "$out" "signal: task.status done: fixture peer cycle ended" "rewake must still carry the delivered reason"
   assert_contains "$out" "did not confirm a live watcher" "the rewake must say this turn runs uncovered"
   assert_contains "$out" "watcher: FAILED - no live watcher with a fresh beacon" "the rewake must carry the successor's own failure line"
@@ -587,7 +587,7 @@ test_failed_close_rewakes_with_failure_banner() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" failed
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a typed watcher failure must rewake as an alarm" "$out"
+  expect_code 2 "$status" "a typed watcher failure must rewake as an alarm"
   assert_contains "$out" "automatic supervision mechanism is broken" "failure rewake must describe the automatic mechanism failure"
   assert_contains "$out" "watcher: FAILED" "failure rewake must carry the arm's typed failure"
   assert_not_contains "$out" "bin/fm-watch-arm.sh" "failure rewake must not create a manual arm loop"
@@ -649,7 +649,7 @@ test_unverified_clean_close_exhausts_retries() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" clean
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a non-actionable close without a healthy watcher must fail closed" "$out"
+  expect_code 2 "$status" "a non-actionable close without a healthy watcher must fail closed"
   assert_contains "$out" "automatic supervision mechanism is broken" "unverified close must report automatic failure"
   [ "$(wc -l < "$dir/state/arm-ran" | tr -d ' ')" -eq 2 ] || fail "unverified close must exhaust exactly two bounded attempts"
   [ "$(epoch_outcome "$dir")" = failed ] || fail "epoch must record outcome=failed, got: $(epoch_outcome "$dir")"
@@ -664,7 +664,7 @@ test_post_alarm_actionable_close_is_suppressed() {
   : > "$dir/state/.claude-autoarm-failure-alarmed"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "an actionable result after attended fail-open must not continue" "$out"
+  expect_code 0 "$status" "an actionable result after attended fail-open must not continue"
   assert_contains "$out" "suppressed continuation" "a suppressed post-alarm result did not carry its one-line reason: $out"
   assert_not_contains "$out" "automatic supervision mechanism is broken" "post-alarm result repeated the operator notice: $out"
   assert_present "$dir/state/.claude-autoarm-failure-notified" "post-alarm actionable result cleared the failure notice"
@@ -690,7 +690,7 @@ test_benign_cycle_end_with_live_watcher_is_silent() {
   out2=$(run_autoarm "$dir" 2>/dev/null); status2=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a failed-looking cycle with a live fresh watcher must be benign" "$out"
+  expect_code 0 "$status" "a failed-looking cycle with a live fresh watcher must be benign"
   expect_code 0 "$status2" "the next Stop-owned cycle must remain benign with the live watcher"
   [ -z "$out" ] || fail "benign live cycle produced an operator notice: $out"
   [ -z "$out2" ] || fail "next benign live cycle produced an operator notice: $out2"
@@ -720,7 +720,7 @@ test_lagging_live_watcher_that_beats_again_is_not_a_failure() {
   wait "$beater" 2>/dev/null || true
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a live watcher that beats again within the settle window must not be reported as a failure" "$out"
+  expect_code 0 "$status" "a live watcher that beats again within the settle window must not be reported as a failure"
   [ -z "$out" ] || fail "lagging live watcher produced an operator notice: $out"
   [ "$(epoch_outcome "$dir")" = clean ] || fail "lagging live watcher must record outcome=clean, got: $(epoch_outcome "$dir")"
   [ ! -e "$dir/state/.claude-autoarm-failure-notified" ] || fail "lagging live watcher left a failure-notice marker"
@@ -740,7 +740,7 @@ test_frozen_live_watcher_still_reports_failure_after_settle() {
   out=$(FM_CLAUDE_AUTOARM_SETTLE=2 run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a live watcher whose beacon never advances must still fail" "$out"
+  expect_code 2 "$status" "a live watcher whose beacon never advances must still fail"
   assert_contains "$out" "automatic supervision mechanism is broken" "a frozen live watcher must still report the failure"
   [ "$(epoch_outcome "$dir")" = failed ] || fail "frozen live watcher must record outcome=failed, got: $(epoch_outcome "$dir")"
   pass "auto-arm: a live watcher whose beacon stays frozen past the settle window still reports the failure"
@@ -763,7 +763,7 @@ test_positive_recovery_budget_contention_preserves_episode() {
   mkdir -p "$dir/state/.turnend-claude-blocks.lock"
   printf '%s\n' "$holder" > "$dir/state/.turnend-claude-blocks.lock/pid"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a healthy auto-arm must continue when the episode reset lock is busy" "$out"
+  expect_code 2 "$status" "a healthy auto-arm must continue when the episode reset lock is busy"
   assert_contains "$out" "suppressed continuation" "a reset-refused suppressed continuation did not carry its one-line reason: $out"
   [ "$(epoch_outcome "$dir")" = failed-suppressed ] || fail "recovery contention must not record ordinary clean recovery"
   assert_present "$dir/state/.turnend-claude-blocks" "recovery contention partially cleared the block budget"
@@ -773,7 +773,7 @@ test_positive_recovery_budget_contention_preserves_episode() {
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a later healthy auto-arm must complete the episode reset" "$out"
+  expect_code 0 "$status" "a later healthy auto-arm must complete the episode reset"
   assert_absent "$dir/state/.turnend-claude-blocks" "successful retry left the block budget"
   assert_absent "$dir/state/.claude-autoarm-failure-notified" "successful retry left the failure notice"
   pass "auto-arm: budget contention preserves the episode and forces a reset retry"
@@ -835,7 +835,7 @@ test_arms_for_x_mode_poll_need_without_inflight() {
   printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/state/x-watch.check.sh"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "an X-mode relay poll need must keep the auto-arm active with zero tasks in flight" "$out"
+  expect_code 2 "$status" "an X-mode relay poll need must keep the auto-arm active with zero tasks in flight"
   [ -e "$dir/state/arm-ran" ] || fail "hook did not arm for the X-mode poll need"
   pass "auto-arm: X-mode poll need arms the cycle even with no tasks in flight"
 }
@@ -849,7 +849,7 @@ test_arms_for_registered_custom_check_without_inflight() {
     || fail "fm-check-register.sh could not register the custom check"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a registered custom check must keep the auto-arm active with zero tasks in flight" "$out"
+  expect_code 2 "$status" "a registered custom check must keep the auto-arm active with zero tasks in flight"
   [ -e "$dir/state/arm-ran" ] || fail "hook did not arm for the registered custom check"
   pass "auto-arm: a registered custom check arms the cycle even with no tasks in flight"
 }
@@ -1182,7 +1182,7 @@ test_abandoned_owner_claim_is_reclaimed_and_rearms() {
   kill -0 "$pid" 2>/dev/null || fail "an identityless abandoned owner must be reclaimed without being signalled"
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a claim whose ledger outcome is already terminal must be reclaimed, not deferred to forever" "$out"
+  expect_code 2 "$status" "a claim whose ledger outcome is already terminal must be reclaimed, not deferred to forever"
   [ -e "$dir/state/arm-ran" ] || fail "abandoned claim left the home unarmed with work in flight"
   assert_contains "$out" "firstmate watcher wake" "the reclaimed cycle must still translate its wake"
   [ "$(epoch_field "$dir" epoch)" -gt 464 ] || fail "reclaimed cycle did not advance the frozen ledger: $(epoch_field "$dir" epoch)"
@@ -1234,7 +1234,7 @@ SH
   out=$(PATH="$lnbin:$PATH" FM_TEST_LN_LOG="$lnlog" run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a dead-owner steal mutex must not keep an abandoned claim unrecoverable" "$out"
+  expect_code 2 "$status" "a dead-owner steal mutex must not keep an abandoned claim unrecoverable"
   [ -e "$dir/state/arm-ran" ] || fail "dead-owner steal mutex left the home unarmed with work in flight"
   ! grep -q '\.steal\.steal$' "$lnlog" \
     || fail "reclaiming past a dead steal owner created a nested steal marker: $(tr '\n' ' ' < "$lnlog")"
@@ -1257,7 +1257,7 @@ test_arming_claim_with_fresh_beacon_is_never_reclaimed() {
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a legacy claim still arming under a fresh beacon must keep the single-flight gate closed" "$out"
+  expect_code 0 "$status" "a legacy claim still arming under a fresh beacon must keep the single-flight gate closed"
   [ -z "$out" ] || fail "deferring to an arming claim produced output: $out"
   assert_absent "$dir/state/arm-ran" "an arming claim was stolen and double-armed"
   [ "$(epoch_field "$dir" epoch)" = 464 ] || fail "deferred firing rewrote the arming ledger entry"
@@ -1283,7 +1283,7 @@ test_fresh_arming_claim_with_stale_beacon_is_never_reclaimed() {
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a freshly arming legacy claim must keep the single-flight gate closed even after a long lapse" "$out"
+  expect_code 0 "$status" "a freshly arming legacy claim must keep the single-flight gate closed even after a long lapse"
   [ -z "$out" ] || fail "deferring to a fresh arming claim produced output: $out"
   assert_absent "$dir/state/arm-ran" "a fresh arming claim was stolen and double-armed"
   assert_present "$dir/state/.claude-autoarm.lock" "a fresh arming claim lost its owner lock"
@@ -1305,7 +1305,7 @@ test_claim_not_named_by_the_ledger_is_never_reclaimed() {
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "a live claim the ledger does not name is unproven and must be left alone" "$out"
+  expect_code 0 "$status" "a live claim the ledger does not name is unproven and must be left alone"
   [ -z "$out" ] || fail "deferring to an unnamed claim produced output: $out"
   assert_absent "$dir/state/arm-ran" "a claim the ledger does not name was stolen and double-armed"
   assert_present "$dir/state/.claude-autoarm.lock" "an unproven claim lost its owner lock"
@@ -1335,7 +1335,7 @@ test_pid_reused_arming_claim_is_reclaimed_and_rearms() {
   kill -0 "$pid" 2>/dev/null || fail "the unrelated live process inheriting the number must never be signalled"
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a claim whose recorded identity no longer matches its live pid must be reclaimed, arming entry or not" "$out"
+  expect_code 2 "$status" "a claim whose recorded identity no longer matches its live pid must be reclaimed, arming entry or not"
   [ -e "$dir/state/arm-ran" ] || fail "a reused-pid claim left the home unarmed with work in flight"
   assert_contains "$out" "firstmate watcher wake" "the reclaimed cycle must still translate its wake"
   [ "$(epoch_field "$dir" epoch)" -gt 464 ] || fail "reclaimed cycle did not advance the frozen ledger: $(epoch_field "$dir" epoch)"
@@ -1360,7 +1360,7 @@ test_pid_reused_claim_with_no_ledger_is_reclaimed_and_rearms() {
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a reused-pid claim with no ledger to consult must still be reclaimed" "$out"
+  expect_code 2 "$status" "a reused-pid claim with no ledger to consult must still be reclaimed"
   [ -e "$dir/state/arm-ran" ] || fail "a reused-pid claim with no ledger left the home unarmed"
   assert_contains "$out" "firstmate watcher wake" "the reclaimed cycle must still translate its wake"
   [ "$(epoch_outcome "$dir")" = rewake ] || fail "reclaimed cycle did not record its own outcome: $(epoch_outcome "$dir")"
@@ -1386,7 +1386,7 @@ test_identity_matched_arming_claim_is_never_reclaimed() {
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "an identity-matched claim still arming must keep the single-flight gate closed" "$out"
+  expect_code 0 "$status" "an identity-matched claim still arming must keep the single-flight gate closed"
   [ -z "$out" ] || fail "deferring to an identity-matched arming claim produced output: $out"
   assert_absent "$dir/state/arm-ran" "an identity-matched arming claim was stolen and double-armed"
   [ "$(epoch_field "$dir" epoch)" = 464 ] || fail "deferred firing rewrote the arming ledger entry"
@@ -1408,7 +1408,7 @@ test_terminal_check_claim_is_never_reclaimed() {
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 0 "$status" "the guard's own terminal-check claim must never be reclaimed by the arm hook" "$out"
+  expect_code 0 "$status" "the guard's own terminal-check claim must never be reclaimed by the arm hook"
   [ -z "$out" ] || fail "deferring to a terminal-check claim produced output: $out"
   assert_absent "$dir/state/arm-ran" "a terminal-check claim was stolen and double-armed"
   assert_present "$dir/state/.claude-autoarm.lock" "a terminal-check claim lost its owner lock"
@@ -1430,7 +1430,7 @@ test_stuck_live_legacy_owner_is_retired_and_reclaimed() {
   record_autoarm_epoch "$dir" 464 "$pid" arming
   touch -t 202001010000 "$dir/state/.last-watcher-beat"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a proven-stuck identity-verified live legacy owner must be retired and reclaimed" "$out"
+  expect_code 2 "$status" "a proven-stuck identity-verified live legacy owner must be retired and reclaimed"
   kill -0 "$pid" 2>/dev/null && fail "the stuck legacy owner was reclaimed without being retired"
   wait "$pid" 2>/dev/null || true
   [ -e "$dir/state/arm-ran" ] || fail "the reclaimed home did not re-arm"
@@ -1456,7 +1456,7 @@ test_stopped_legacy_owner_is_reclaimed_with_term_pending() {
   touch -t 202001010000 "$dir/state/.last-watcher-beat"
   kill -STOP "$pid" 2>/dev/null || fail "could not stop the legacy owner fixture"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a stopped legacy owner with TERM queued must not block the reclaim forever" "$out"
+  expect_code 2 "$status" "a stopped legacy owner with TERM queued must not block the reclaim forever"
   [ -e "$dir/state/arm-ran" ] || fail "the reclaimed home did not re-arm past the stopped owner"
   assert_absent "$dir/state/.claude-autoarm.lock" "reclaim left the stopped owner's lock behind"
   kill -CONT "$pid" 2>/dev/null || true
@@ -1539,7 +1539,7 @@ test_stuck_generation_claim_is_superseded_and_rearms() {
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "a live owner stuck arming past grace with a beacon just as stale must be superseded, not deferred to forever" "$out"
+  expect_code 2 "$status" "a live owner stuck arming past grace with a beacon just as stale must be superseded, not deferred to forever"
   [ -e "$dir/state/arm-ran" ] || fail "a stuck generation claim left the home unarmed with work in flight"
   assert_contains "$out" "firstmate watcher wake" "the superseding generation must still translate its wake"
   [ "$(epoch_field "$dir" epoch)" -gt 464 ] || fail "superseding claim did not advance the frozen ledger: $(epoch_field "$dir" epoch)"
@@ -1601,7 +1601,7 @@ test_orphaned_claim_from_dead_session_is_superseded_by_replacement() {
   for i in $(seq 1 250); do kill -0 "$orphan_pid" 2>/dev/null || break; sleep 0.02; done
   kill -0 "$orphan_pid" 2>/dev/null && { kill "$orphan_pid" 2>/dev/null; fail "the orphaned hook never finished after its cycle closed"; }
 
-  expect_code 2 "$status" "the replacement session's first Stop must supersede the dead session's orphaned claim and rewake, not defer to it" "$out"
+  expect_code 2 "$status" "the replacement session's first Stop must supersede the dead session's orphaned claim and rewake, not defer to it"
   assert_contains "$out" "firstmate watcher wake" "the replacement's rewake must carry the wake banner"
   assert_contains "$out" "signal: $dir/state/tfmut-116.turn-ended" "the replacement's rewake must carry the cycle's reason line"
   # Three arms: the orphan's foreground arm, the replacement's foreground arm,
@@ -1811,7 +1811,7 @@ test_identityless_ledger_never_defers() {
   kill -0 "$pid" 2>/dev/null || fail "the unrelated live pid on an identityless ledger must never be signalled"
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  expect_code 2 "$status" "an identityless arming ledger must be superseded, never deferred to" "$out"
+  expect_code 2 "$status" "an identityless arming ledger must be superseded, never deferred to"
   [ -e "$dir/state/arm-ran" ] || fail "an identityless ledger left the home unarmed"
   [ "$(epoch_field "$dir" epoch)" -gt 464 ] || fail "the identityless entry was not superseded: $(epoch_field "$dir" epoch)"
   pass "auto-arm: an identityless arming ledger never defers the gate (reused-pid loophole closed)"
@@ -1826,7 +1826,7 @@ test_superseded_owner_never_reinvokes_the_arm() {
   : > "$dir/state/task1.meta"
   write_arm_fixture "$dir" supersede-then-fail
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "an owner superseded between arm attempts must exit 0 silently" "$out"
+  expect_code 0 "$status" "an owner superseded between arm attempts must exit 0 silently"
   [ -z "$out" ] || fail "a superseded owner produced output at the arm boundary: $out"
   count=$(wc -l < "$dir/state/arm-ran" | tr -d ' ')
   [ "$count" -eq 1 ] || fail "a superseded owner re-invoked the arm, saw $count arms"
@@ -1896,7 +1896,7 @@ test_need_vanished_mid_cycle_closes_quietly() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" meta-vanishes
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "an actionable close after the fleet went idle must not rewake" "$out"
+  expect_code 0 "$status" "an actionable close after the fleet went idle must not rewake"
   [ -z "$out" ] || fail "vanished-need close produced output: $out"
   [ "$(epoch_outcome "$dir")" = clean ] || fail "epoch must record outcome=clean, got: $(epoch_outcome "$dir")"
   pass "auto-arm: need vanishing mid-cycle closes without a rewake"
@@ -1908,7 +1908,7 @@ test_afk_mid_cycle_suppresses_rewake() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" afk-appears
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "AFK appearing mid-cycle must suppress the primary rewake" "$out"
+  expect_code 0 "$status" "AFK appearing mid-cycle must suppress the primary rewake"
   [ -z "$out" ] || fail "AFK-suppressed close produced output: $out"
   [ "$(epoch_outcome "$dir")" = afk ] || fail "epoch must record outcome=afk, got: $(epoch_outcome "$dir")"
   pass "auto-arm: mid-cycle AFK hands triage to the daemon with no rewake"
@@ -1920,7 +1920,7 @@ test_active_in_marked_secondmate_home() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" actionable
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a marked secondmate home must get the same active auto-arm as the main primary" "$out"
+  expect_code 2 "$status" "a marked secondmate home must get the same active auto-arm as the main primary"
   [ -e "$dir/state/arm-ran" ] || fail "hook did not arm in a marked secondmate home"
   [ "$(epoch_outcome "$dir")" = rewake ] || fail "secondmate epoch must record outcome=rewake"
   pass "auto-arm: active in a marked secondmate home"
@@ -1932,7 +1932,7 @@ test_long_poll_grace_reaches_arm_wrapper() {
   : > "$dir/state/task.meta"
   write_arm_fixture "$dir" records-grace
   out=$(unset FM_GUARD_GRACE; FM_POLL=900 run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "an unverified close without a healthy watcher must still fail closed" "$out"
+  expect_code 2 "$status" "an unverified close without a healthy watcher must still fail closed"
   [ -e "$dir/state/arm-received-grace" ] || fail "arm wrapper never recorded FM_GUARD_GRACE"
   [ "$(cat "$dir/state/arm-received-grace")" = 960 ] || fail "arm wrapper must see the poll-derived grace (900+60), got: $(cat "$dir/state/arm-received-grace")"
   pass "auto-arm: a long FM_POLL with FM_GUARD_GRACE unset reaches fm-watch-arm.sh with the derived grace"
@@ -2006,7 +2006,7 @@ test_host_off_flag_keeps_the_arm() {
   write_arm_fixture "$dir" actionable
   write_host_fixture "$dir" boundary
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a home opted out by config/supervision-host-off must still rewake from the arm" "$out"
+  expect_code 2 "$status" "a home opted out by config/supervision-host-off must still rewake from the arm"
   assert_present "$dir/state/arm-ran" "a home opted out by config/supervision-host-off did not run the arm"
   [ ! -e "$dir/state/host-ran" ] || fail "a home opted out by config/supervision-host-off ran the supervision host"
   assert_contains "$out" "stale: fixture-win actionable" "the arm's reason must still reach the rewake"
@@ -2022,7 +2022,7 @@ test_host_absent_flag_runs_the_host() {
   write_arm_fixture "$dir" actionable
   write_host_fixture "$dir" boundary
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a host cycle boundary on a Claude home without the file must rewake main" "$out"
+  expect_code 2 "$status" "a host cycle boundary on a Claude home without the file must rewake main"
   assert_present "$dir/state/host-ran" "a Claude home without config/supervision-host did not run the supervision host"
   [ ! -e "$dir/state/arm-ran" ] || fail "a Claude home without config/supervision-host ran the plain arm instead of the host"
   assert_contains "$out" "supervision-host: cycle boundary - fixture" "the rewake must carry the host's line"
@@ -2040,7 +2040,7 @@ test_host_boundary_rewakes_with_the_host_line() {
   write_arm_fixture "$dir" actionable
   write_host_fixture "$dir" boundary
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a host cycle boundary must rewake main" "$out"
+  expect_code 2 "$status" "a host cycle boundary must rewake main"
   assert_contains "$out" "firstmate watcher wake" "the host close must carry the wake banner"
   assert_contains "$out" "supervision-host: cycle boundary - fixture" "the rewake must carry the host's line"
   [ ! -e "$dir/state/arm-ran" ] || fail "an opted-in home ran the plain arm instead of the host"
@@ -2064,7 +2064,7 @@ test_host_handback_under_away_record_is_not_a_return() {
   : > "$dir/state/.afk-contract"
   write_host_fixture "$dir" handed-back
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a wake the host hands back must rewake main" "$out"
+  expect_code 2 "$status" "a wake the host hands back must rewake main"
   assert_contains "$out" "signal: fixture.status" "the handed-back wake must carry its reason line"
   assert_contains "$out" "supervision-host: the away session could not take this wake" "the handed-back wake must say why"
   assert_contains "$out" "not from the captain: it is not a return" "an away-posture handback must say it is not the captain's return"
@@ -2083,7 +2083,7 @@ test_host_handback_beside_a_quiet_record_carries_no_away_note() {
     || fail "fixture: could not record quiet mode"
   write_host_fixture "$dir" handed-back
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a wake the host hands back must rewake main" "$out"
+  expect_code 2 "$status" "a wake the host hands back must rewake main"
   assert_contains "$out" "signal: fixture.status" "the handed-back wake must carry its reason line"
   assert_not_contains "$out" "not a return" "a present captain's rewake must not call itself away-posture supervision"
   pass "auto-arm: a wake the host hands back beside a quiet record carries no away note"
@@ -2112,7 +2112,7 @@ test_host_handback_carries_every_host_line() {
   : > "$dir/state/task.meta"
   write_host_fixture "$dir" handed-back-many
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a wake the host hands back must rewake main" "$out"
+  expect_code 2 "$status" "a wake the host hands back must rewake main"
   expected=$(
     printf 'supervision-host: the away session could not take this wake: fixture; relay its outcomes\n'
     for i in 1 2 3 4 5 6 7 8 9 10; do printf 'supervision-host: outcome %s for demo [routine]: fixture %s\n' "$i" "$i"; done
@@ -2132,7 +2132,7 @@ test_host_stand_down_is_silent() {
   : > "$dir/state/task.meta"
   write_host_fixture "$dir" stood-down
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "a host that stood down must not rewake main" "$out"
+  expect_code 0 "$status" "a host that stood down must not rewake main"
   [ -z "$out" ] || fail "a host stand-down printed to main: $out"
   [ "$(wc -l < "$dir/state/host-ran" | tr -d ' ')" -eq 1 ] || fail "a host stand-down was retried"
   [ "$(epoch_outcome "$dir")" = clean ] || fail "a host stand-down must record outcome=clean, got: $(epoch_outcome "$dir")"
@@ -2150,7 +2150,7 @@ test_host_benign_rewake_refusal_opens_no_failure_episode() {
   : > "$dir/state/task.meta"
   write_host_fixture "$dir" benign-refusal
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 0 "$status" "a refused rewake on an acknowledged marker must stay silent" "$out"
+  expect_code 0 "$status" "a refused rewake on an acknowledged marker must stay silent"
   assert_not_contains "$out" "auto-arm FAILED" "a benign refusal must not deliver a failure notice"
   assert_absent "$dir/state/.claude-autoarm-failure-notified" "a benign refusal opened a failure episode"
   [ "$(epoch_outcome "$dir")" != failed ] || fail "a benign refusal must not record outcome=failed"
@@ -2168,12 +2168,12 @@ assert_host_lost_handback_notifies_once_per_episode() {
   : > "$dir/state/task.meta"
   write_host_fixture "$dir" "$kind"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a lost hand-back must reach main" "$out"
+  expect_code 2 "$status" "a lost hand-back must reach main"
   assert_contains "$out" "auto-arm FAILED - the supervision host returned an actionable wake" "a lost hand-back must deliver the failure notice"
   assert_present "$dir/state/.claude-autoarm-failure-notified" "a lost hand-back did not record its failure episode"
   [ "$(epoch_outcome "$dir")" = failed ] || fail "a lost hand-back must record outcome=failed, got: $(epoch_outcome "$dir")"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "a repeated lost hand-back must still reach main" "$out"
+  expect_code 2 "$status" "a repeated lost hand-back must still reach main"
   assert_not_contains "$out" "auto-arm FAILED" "a repeated lost hand-back must not repeat the failure notice"
   [ "$(epoch_outcome "$dir")" = failed-suppressed ] \
     || fail "a repeated lost hand-back must record outcome=failed-suppressed, got: $(epoch_outcome "$dir")"
@@ -2200,7 +2200,7 @@ test_host_crash_is_retried_then_reported() {
   # check; a host that died has no owner for such a cycle, so it must not.
   printf 'pending:downtime:fixture-generation\n' > "$dir/state/.watcher-down"
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "an exhausted host crash must notify" "$out"
+  expect_code 2 "$status" "an exhausted host crash must notify"
   [ "$(wc -l < "$dir/state/host-ran" | tr -d ' ')" -eq 2 ] || fail "a crashed host was not retried within the attempt bound"
   assert_contains "$out" "auto-arm FAILED" "an exhausted host crash must deliver the failure notice"
   assert_contains "$out" "The supervision host (docs/supervision-host.md) ran these cycles; its last one exited 137 without a wake." \
@@ -2247,7 +2247,7 @@ test_arguments_never_arm() {
     [ "$before_contents" = "$after_contents" ] || fail "$arg changed state file contents: before=[$before_contents] after=[$after_contents]"
   done
   out=$(run_autoarm "$dir" 2>/dev/null); status=$?
-  expect_code 2 "$status" "the ordinary Stop path must still rewake from the host" "$out"
+  expect_code 2 "$status" "the ordinary Stop path must still rewake from the host"
   assert_present "$dir/state/host-ran" "the ordinary Stop path did not run the host in the same home"
   pass "auto-arm: --help, -h, and an unknown argument arm nothing; the Stop path still arms"
 }

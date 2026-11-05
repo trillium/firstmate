@@ -1176,7 +1176,7 @@ test_stop_ends_the_home_watcher_and_publishes_downtime() {
   mkdir -p "$state"
   FM_HOME="$home" start_seed_watcher "$state" "$fakebin" "$dir/watch.out"
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" --stop 2>&1); status=$?
-  expect_code 0 "$status" "--stop of a live home watcher must succeed" "$out"
+  expect_code 0 "$status" "--stop of a live home watcher must succeed"
   assert_contains "$out" "watcher: stopped pid=$SEED_PID" "--stop must name the watcher it stopped"
   wait_for_exit "$SEED_PID" 50 >/dev/null 2>&1 || true
   kill -0 "$SEED_PID" 2>/dev/null && fail "--stop left the home watcher running"
@@ -1185,7 +1185,7 @@ test_stop_ends_the_home_watcher_and_publishes_downtime() {
     *) fail "--stop did not leave downtime published: $(cat "$state/.watcher-down" 2>/dev/null)" ;;
   esac
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" --stop 2>&1); status=$?
-  expect_code 0 "$status" "--stop with no watcher must succeed" "$out"
+  expect_code 0 "$status" "--stop with no watcher must succeed"
   assert_contains "$out" "watcher: none running" "--stop with no watcher must say so"
   pass "watch-arm: --stop ends only this home's watcher, publishes downtime, and reports when none runs"
 }

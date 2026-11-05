@@ -72,13 +72,13 @@ FAKEBIN="$TMP_ROOT/fakebin"
 test_help_and_usage() {
   local out rc=0
   out=$("$CHECK" --help 2>&1) || rc=$?
-  expect_code 0 "$rc" "--help must exit 0" "$out"
+  expect_code 0 "$rc" "--help must exit 0"
   assert_contains "$out" "check" "--help lists the check action"
   assert_contains "$out" "arm" "--help lists the arm action"
   assert_contains "$out" "disarm" "--help lists the disarm action"
   rc=0
   out=$("$CHECK" bogus 2>&1) || rc=$?
-  expect_code 2 "$rc" "unknown action must exit 2" "$out"
+  expect_code 2 "$rc" "unknown action must exit 2"
   assert_contains "$out" "unknown action" "unknown action is refused loudly"
   pass "fm-mail-check: help and usage plumbing"
 }
@@ -123,7 +123,7 @@ test_arm_refuses_a_symlink_at_the_shim_path() {
   printf '#!/usr/bin/env bash\n' > "$target/mail.check.sh"
   ln -s "$target/mail.check.sh" "$home/state/mail.check.sh"
   out=$(FM_HOME="$home" "$CHECK" arm 2>&1) || rc=$?
-  expect_code 1 "$rc" "arm must refuse a symlink at the shim path" "$out"
+  expect_code 1 "$rc" "arm must refuse a symlink at the shim path"
   assert_contains "$out" "could not write" "arm reports the shim write failure"
   assert_absent "$home/state/mail.check-trust" "no trust binding is left behind by a refused arm"
   pass "fm-mail-check: arm refuses a symlink at the shim path"
@@ -141,7 +141,7 @@ test_arm_refuses_without_the_mail_plane() {
     [ -e "$tmpbin/$lib" ] || ln -s "$ROOT/bin/$lib" "$tmpbin/$lib"
   done
   out=$(FM_HOME="$home" "$tmpbin/fm-mail-check.sh" arm 2>&1) || rc=$?
-  expect_code 1 "$rc" "arm must refuse when the mail plane is missing" "$out"
+  expect_code 1 "$rc" "arm must refuse when the mail plane is missing"
   assert_contains "$out" "mail plane is missing" "arm names the missing plane"
   assert_absent "$home/state/mail.check.sh" "a refused arm writes no shim"
   pass "fm-mail-check: arm refuses without the mail plane"

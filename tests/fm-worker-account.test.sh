@@ -189,7 +189,7 @@ test_claude_pin_refuses_a_signed_out_root_despite_an_ambient_login() {
   mkdir -p "$CASE/work"
   printf '%s\n' "$CASE/work" > "$HOME_DIR/config/claude-account"
   out=$(spawn_ship "$id"); rc=$?
-  expect_code 1 "$rc" "a Claude pin to a signed-out root must refuse" "$out"
+  expect_code 1 "$rc" "a Claude pin to a signed-out root must refuse"
   assert_refused_before_launch "$id" "$out" "config/claude-account pins Claude workers to $CASE/work, which is not signed in"
   assert_absent "$CASE/work/.claude.json" "a refused spawn must not register trust in the pinned root"
   pass "a Claude pin refuses a signed-out root even when the invoking process has a usable login and API key"
@@ -200,7 +200,7 @@ test_claude_ordinary_pin_unsets_the_config_root() {
   new_case ordinary claude
   printf 'ordinary' > "$HOME_DIR/config/claude-account"
   out=$(spawn_ship "$id"); rc=$?
-  expect_code 1 "$rc" "an ordinary pin with no default login must refuse" "$out"
+  expect_code 1 "$rc" "an ordinary pin with no default login must refuse"
   assert_refused_before_launch "$id" "$out" "pins Claude workers to the ordinary account, which is not signed in"
   signed_in_claude_root "$HOME_DIR/user-home/.claude"
   : > "$CASE/claude-checks"
@@ -233,12 +233,12 @@ test_malformed_pins_refuse_before_launch() {
   rm "$HOME_DIR/config/claude-account"
   mkdir "$HOME_DIR/config/claude-account"
   out=$(spawn_ship "$id-dir"); rc=$?
-  expect_code 1 "$rc" "a directory in place of the pin must refuse" "$out"
+  expect_code 1 "$rc" "a directory in place of the pin must refuse"
   assert_refused_before_launch "$id-dir" "$out" "config/claude-account must be a readable regular file"
   rmdir "$HOME_DIR/config/claude-account"
   printf 'ordinary\n' > "$HOME_DIR/config/pi-account"
   out=$(spawn_ship "$id-pi" --harness pi --model openai-codex/gpt-5.5); rc=$?
-  expect_code 1 "$rc" "a Pi pin without a providers line must refuse" "$out"
+  expect_code 1 "$rc" "a Pi pin without a providers line must refuse"
   assert_refused_before_launch "$id-pi" "$out" "config/pi-account must hold"
   assert_absent "$CASE/claude-checks" "a malformed pin must refuse before any sign-in check"
   pass "malformed, relative, CR-terminated, empty, extra-line, missing-root, and non-file pins refuse before launch"
@@ -275,19 +275,19 @@ test_pi_pin_refusals() {
   printf 'openai-codex\n' > "$CASE/pi-work/signed-in"
   printf '%s\nopenai-codex anthropic\n' "$CASE/pi-work" > "$HOME_DIR/config/pi-account"
   out=$(spawn_ship "$id-bare" --model gpt-5.5); rc=$?
-  expect_code 1 "$rc" "an unqualified Pi model must refuse under a pin" "$out"
+  expect_code 1 "$rc" "an unqualified Pi model must refuse under a pin"
   assert_refused_before_launch "$id-bare" "$out" "'gpt-5.5' names no provider"
   out=$(spawn_ship "$id-none"); rc=$?
-  expect_code 1 "$rc" "a Pi launch with no model must refuse under a pin" "$out"
+  expect_code 1 "$rc" "a Pi launch with no model must refuse under a pin"
   assert_refused_before_launch "$id-none" "$out" "'none' names no provider"
   out=$(spawn_ship "$id-other" --model openrouter/gpt-5.5); rc=$?
-  expect_code 1 "$rc" "an undeclared Pi provider must refuse" "$out"
+  expect_code 1 "$rc" "an undeclared Pi provider must refuse"
   assert_refused_before_launch "$id-other" "$out" "names provider 'openrouter'"
   out=$(OPENAI_API_KEY=ambient-invoker-openai spawn_ship "$id-out" --model anthropic/claude-sonnet); rc=$?
-  expect_code 1 "$rc" "a declared provider the root is not signed in to must refuse" "$out"
+  expect_code 1 "$rc" "a declared provider the root is not signed in to must refuse"
   assert_refused_before_launch "$id-out" "$out" "which is not signed in for provider 'anthropic'"
   out=$(spawn_ship "$id-raw" --harness "pi --provider openai-codex --model openai-codex/gpt-5.5"); rc=$?
-  expect_code 1 "$rc" "a raw Pi launch must refuse under a pin" "$out"
+  expect_code 1 "$rc" "a raw Pi launch must refuse under a pin"
   assert_refused_before_launch "$id-raw" "$out" "a raw Pi launch command runs verbatim"
   pass "a Pi pin refuses unqualified, missing, undeclared, signed-out, and raw launches"
 }
@@ -299,7 +299,7 @@ test_pi_extension_provider_and_old_pi_fall_back_to_the_model_listing() {
   printf 'codex-native\n' > "$CASE/pi-work/extension-providers"
   printf '%s\ncodex-native openai-codex\n' "$CASE/pi-work" > "$HOME_DIR/config/pi-account"
   out=$(spawn_ship "$id-unlisted" --model codex-native/gpt-6); rc=$?
-  expect_code 1 "$rc" "an extension provider the root lists no model for must refuse" "$out"
+  expect_code 1 "$rc" "an extension provider the root lists no model for must refuse"
   assert_refused_before_launch "$id-unlisted" "$out" "no model listed for provider codex-native"
   printf 'codex-native  gpt-6  272K\n' > "$CASE/pi-work/listed"
   out=$(spawn_ship "$id-ext" --model codex-native/gpt-6); rc=$?
@@ -307,7 +307,7 @@ test_pi_extension_provider_and_old_pi_fall_back_to_the_model_listing() {
   : > "$CASE/pi-work/old-pi"
   printf 'openai-codex-mini  gpt-5  128K\n' > "$CASE/pi-work/listed"
   out=$(spawn_ship "$id-old-near" --model openai-codex/gpt-5); rc=$?
-  expect_code 1 "$rc" "a Pi without auth check must match the provider column exactly" "$out"
+  expect_code 1 "$rc" "a Pi without auth check must match the provider column exactly"
   assert_refused_before_launch "$id-old-near" "$out" "no model listed for provider openai-codex"
   printf 'openai-codex  gpt-5  128K\n' > "$CASE/pi-work/listed"
   out=$(spawn_ship "$id-old" --model openai-codex/gpt-5); rc=$?
@@ -476,12 +476,12 @@ test_secondmate_account_refusals() {
     rm "$pin"
     ln -s "$CASE/no-file" "$pin"
     out=$(spawn_account_secondmate "$id" --model openai-codex/gpt-5.5); rc=$?
-    expect_code 1 "$rc" "a broken per-mate pin link must not fall back" "$out"
+    expect_code 1 "$rc" "a broken per-mate pin link must not fall back"
     assert_refused_before_launch "$id" "$out" "$pin"
     rm "$pin"
     mkdir "$pin"
     out=$(spawn_account_secondmate "$id" --model openai-codex/gpt-5.5); rc=$?
-    expect_code 1 "$rc" "a non-file per-mate pin must not fall back" "$out"
+    expect_code 1 "$rc" "a non-file per-mate pin must not fall back"
     assert_refused_before_launch "$id" "$out" "$pin"
   done
   pass "unusable per-mate pins name the setting and refuse rather than use the primary's usable account"
@@ -495,7 +495,7 @@ test_remote_secondmate_account_override_refuses_locally() {
   printf -- '- %s - Remote fixture (host: account-test.invalid; root: /srv/firstmate; home: /srv/mate; scope: tests; projects: none; added 2026-10-17)\n' \
     "$id" > "$HOME_DIR/data/secondmates.md"
   out=$(fm_test_run_spawn "$HOME_DIR" "$WT" "$FAKEBIN" "$id" --secondmate); rc=$?
-  expect_code 1 "$rc" "a primary-side remote account override must refuse" "$out"
+  expect_code 1 "$rc" "a primary-side remote account override must refuse"
   assert_refused_before_launch "$id" "$out" "$HOME_DIR/config/secondmate-accounts/$id/claude-account cannot pin remote secondmate"
   assert_absent "$CASE/claude-checks" "a remote refusal must not inspect a local login"
   pass "a remote route refuses a primary-side account override instead of silently ignoring it"
@@ -560,34 +560,34 @@ test_token_pin_refusals_never_print_the_token() {
   # unreadable-by-others rule: a group/world-readable file holding a real token
   make_token_file "$CASE/tokens/t.token" "$TOKEN_SENTINEL" 644
   out=$(spawn_ship "$id-mode"); rc=$?
-  expect_code 1 "$rc" "a group- or world-readable token file must refuse" "$out"
+  expect_code 1 "$rc" "a group- or world-readable token file must refuse"
   assert_refused_before_launch "$id-mode" "$out" "is readable by group or other"
   assert_not_contains "$out" "$TOKEN_SENTINEL" "a refusal must never print the token"
   rm -f "$CASE/tokens/t.token"
   out=$(spawn_ship "$id-missing"); rc=$?
-  expect_code 1 "$rc" "a missing token file must refuse" "$out"
+  expect_code 1 "$rc" "a missing token file must refuse"
   assert_refused_before_launch "$id-missing" "$out" "the token file $CASE/tokens/t.token does not exist"
   : > "$CASE/tokens/t.token"; chmod 600 "$CASE/tokens/t.token"
   out=$(spawn_ship "$id-empty"); rc=$?
-  expect_code 1 "$rc" "an empty token file must refuse" "$out"
+  expect_code 1 "$rc" "an empty token file must refuse"
   assert_refused_before_launch "$id-empty" "$out" "is empty"
   for body in "$TOKEN_SENTINEL two" "$TOKEN_SENTINEL"$'\n'"$TOKEN_SENTINEL"; do
     n=$((n + 1))
     printf '%s\n' "$body" > "$CASE/tokens/t.token"
     out=$(spawn_ship "$id-multi-$n"); rc=$?
-    expect_code 1 "$rc" "a token file holding more than one token must refuse" "$out"
+    expect_code 1 "$rc" "a token file holding more than one token must refuse"
     assert_refused_before_launch "$id-multi-$n" "$out" "must hold one token with no spaces or line breaks"
     assert_not_contains "$out" "$TOKEN_SENTINEL" "a refusal must never print the token"
   done
   rm -f "$CASE/tokens/t.token"
   mkdir "$CASE/tokens/t.token"
   out=$(spawn_ship "$id-dir"); rc=$?
-  expect_code 1 "$rc" "a directory in place of the token file must refuse" "$out"
+  expect_code 1 "$rc" "a directory in place of the token file must refuse"
   assert_refused_before_launch "$id-dir" "$out" "is not a regular file"
   rmdir "$CASE/tokens/t.token"
   make_token_file "$CASE/tokens/t.token" sk-ant-oat01-REJECTED
   out=$(spawn_ship "$id-rejected"); rc=$?
-  expect_code 1 "$rc" "a token claude does not report as signed in must refuse" "$out"
+  expect_code 1 "$rc" "a token claude does not report as signed in must refuse"
   assert_refused_before_launch "$id-rejected" "$out" "does not report it as the signed-in credential"
   for body in 'token:relative/t.token' 'token:' 'token: /abs/t.token'; do
     printf '%s\n' "$body" > "$HOME_DIR/config/claude-account"
@@ -611,7 +611,7 @@ test_raw_claude_command_receives_the_token_pin() {
   assert_grep "CLAUDE_CODE_OAUTH_TOKEN=$TOKEN_SENTINEL" "$CASE/claude-worker" "a raw Claude worker should receive the pinned token"
   assert_grep "ARGS=--print raw" "$CASE/claude-worker" "the raw command's own arguments must survive"
   out=$(spawn_ship "$id-override" --harness "CLAUDE_CODE_OAUTH_TOKEN=other claude --print raw"); rc=$?
-  expect_code 1 "$rc" "a raw command setting its own token must refuse under a pin" "$out"
+  expect_code 1 "$rc" "a raw command setting its own token must refuse under a pin"
   assert_refused_before_launch "$id-override" "$out" "the raw launch command sets CLAUDE_CODE_OAUTH_TOKEN"
   pass "a raw Claude launch command receives the token pin and cannot override it"
 }
@@ -657,12 +657,12 @@ test_relaunch_check_and_exec_helper() {
   # shellcheck disable=SC2016  # The command runs in the exec helper's shell.
   out=$("$REPO_ROOT/bin/fm-claude-token-exec.sh" \
     "$CASE/tokens/h.token" sh -c 'printf "%s" "$CLAUDE_CODE_OAUTH_TOKEN"'); rc=$?
-  expect_code 0 "$rc" "the exec helper should run the command" "$out"
+  expect_code 0 "$rc" "the exec helper should run the command"
   [ "$out" = "$TOKEN_SENTINEL" ] || fail "the exec helper should export the token to the command"
   chmod 644 "$CASE/tokens/h.token"
   out=$("$REPO_ROOT/bin/fm-claude-token-exec.sh" \
     "$CASE/tokens/h.token" sh -c 'echo ran' 2>&1); rc=$?
-  expect_code 1 "$rc" "the exec helper must refuse a loose token file" "$out"
+  expect_code 1 "$rc" "the exec helper must refuse a loose token file"
   assert_not_contains "$out" "$TOKEN_SENTINEL" "the exec helper must never print the token"
   assert_not_contains "$out" "ran" "the exec helper must not run the command after a refusal"
   pass "the relaunch check and the exec helper handle a token pin without exposing the token"
@@ -720,16 +720,16 @@ test_per_launch_account_works_with_no_home_pin_and_refuses_bad_values() {
   expect_code 0 "$rc" "--account with no home pin should select that account: $out"
   assert_contains "$out" "account=token:max100.token" "the spawn should report the chosen account"
   out=$(spawn_ship acct-ovr-rel --account relative/path); rc=$?
-  expect_code 1 "$rc" "a relative --account must refuse" "$out"
+  expect_code 1 "$rc" "a relative --account must refuse"
   assert_refused_before_launch acct-ovr-rel "$out" "--account must be 'ordinary'"
   chmod 644 "$CASE/tokens/max100.token"
   out=$(spawn_ship acct-ovr-loose --account "token:$CASE/tokens/max100.token"); rc=$?
-  expect_code 1 "$rc" "a loose token file must refuse under --account" "$out"
+  expect_code 1 "$rc" "a loose token file must refuse under --account"
   assert_refused_before_launch acct-ovr-loose "$out" "--account pins Claude workers to a setup token"
   assert_not_contains "$out" "$TOKEN_SENTINEL" "a refusal must never print the token"
   rm -f "$HOME_DIR/user-home/.claude/.credentials.json" "$CASE/ambient-claude/.credentials.json"
   out=$(spawn_ship acct-ovr-out --account ordinary); rc=$?
-  expect_code 1 "$rc" "a signed-out ordinary account must refuse under --account" "$out"
+  expect_code 1 "$rc" "a signed-out ordinary account must refuse under --account"
   assert_refused_before_launch acct-ovr-out "$out" "--account pins Claude workers to the ordinary account, which is not signed in"
   pass "--account works without a home pin and refuses malformed, loose, and signed-out values before launch"
 }
@@ -738,7 +738,7 @@ test_per_launch_account_refuses_non_claude_runners() {
   local out rc id=acct-ovr-pi
   new_case ovr-pi pi
   out=$(spawn_ship "$id" --harness pi --account ordinary); rc=$?
-  expect_code 1 "$rc" "--account on a Pi launch must refuse" "$out"
+  expect_code 1 "$rc" "--account on a Pi launch must refuse"
   assert_refused_before_launch "$id" "$out" "--account selects a Claude account"
   pass "--account refuses a non-Claude runner"
 }

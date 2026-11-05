@@ -195,7 +195,7 @@ test_spawn_model_validation_scoped_to_listed_providers() {
   id=omp-model-refused-q2
   out=$(run_scout_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness omp --model openai-codex/gpt-nope)
   status=$?
-  expect_code 1 "$status" "a model absent from a listed provider must refuse" "$out"
+  expect_code 1 "$status" "a model absent from a listed provider must refuse"
   assert_contains "$out" "is not listed by 'omp models --json' although provider 'openai-codex' is" "refusal did not name the listing evidence"
   assert_absent "$HOME_DIR/state/$id.meta" "a refused spawn must publish no record"
 

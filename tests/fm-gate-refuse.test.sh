@@ -108,7 +108,7 @@ run_guard_lib() {
 test_helper_env_marker_refuses() {
   local out rc
   out=$(run_guard_lib "$NORMAL_CWD" set); rc=$?
-  expect_code 3 "$rc" "helper: env marker must exit 3" "$out"
+  expect_code 3 "$rc" "helper: env marker must exit 3"
   assert_contains "$out" "$ENV_MSG" "helper: env-marker refusal message"
   pass "fm-gate-refuse-lib: refuses when NO_MISTAKES_GATE is set"
 }
@@ -116,7 +116,7 @@ test_helper_env_marker_refuses() {
 test_helper_empty_env_marker_refuses() {
   local out rc
   out=$(run_guard_lib "$NORMAL_CWD" empty); rc=$?
-  expect_code 3 "$rc" "helper: empty env marker must exit 3" "$out"
+  expect_code 3 "$rc" "helper: empty env marker must exit 3"
   assert_contains "$out" "$ENV_MSG" "helper: empty env-marker refusal message"
   pass "fm-gate-refuse-lib: refuses when NO_MISTAKES_GATE is set empty"
 }
@@ -125,7 +125,7 @@ test_helper_path_backstop_refuses() {
   local out rc
   # Marker UNSET: only the git-common-dir backstop can fire here.
   out=$(run_guard_lib "$GATE_WT"); rc=$?
-  expect_code 3 "$rc" "helper: gate worktree must exit 3 even with the marker unset" "$out"
+  expect_code 3 "$rc" "helper: gate worktree must exit 3 even with the marker unset"
   assert_contains "$out" "$PATH_MSG" "helper: path-backstop refusal message"
   assert_not_contains "$out" "$ENV_MSG" "helper: backstop must not be attributed to the env marker"
   pass "fm-gate-refuse-lib: refuses from a gate worktree via git-common-dir (marker unset)"
@@ -134,7 +134,7 @@ test_helper_path_backstop_refuses() {
 test_helper_normal_is_noop() {
   local out rc
   out=$(run_guard_lib "$NORMAL_CWD"); rc=$?
-  expect_code 0 "$rc" "helper: a normal session (neither signal) must not refuse" "$out"
+  expect_code 0 "$rc" "helper: a normal session (neither signal) must not refuse"
   [ -z "$out" ] || fail "helper: normal session printed output: $out"
   pass "fm-gate-refuse-lib: no-op for a normal session (neither signal, set -eu clean)"
 }
@@ -165,18 +165,18 @@ test_helper_lab_home_admits() {
   # gate + marked lab home -> permitted (env signal; the path backstop shares
   # the same fm_is_gate_agent gate).
   out=$(run_guard_lib_home "$NORMAL_CWD" "$lab" NO_MISTAKES_GATE=1); rc=$?
-  expect_code 0 "$rc" "helper: gate + marked lab home must be permitted" "$out"
+  expect_code 0 "$rc" "helper: gate + marked lab home must be permitted"
   assert_contains "$out" "lab home" "helper: lab permit should name the lab home"
 
   # gate + unmarked home -> refused.
   out=$(run_guard_lib_home "$NORMAL_CWD" "$plain" NO_MISTAKES_GATE=1); rc=$?
-  expect_code 3 "$rc" "helper: gate + unmarked home must still refuse" "$out"
+  expect_code 3 "$rc" "helper: gate + unmarked home must still refuse"
   assert_contains "$out" "$ENV_MSG" "helper: unmarked-home refusal message"
 
   # Production Pi supplies the tracked root and the stock state/config paths.
   out=$(run_guard_lib_home "$GATE_WT" "$lab" NO_MISTAKES_GATE=1 \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$lab/state" FM_CONFIG_OVERRIDE="$lab/config"); rc=$?
-  expect_code 0 "$rc" "helper: production branch paths in a marked lab must be permitted" "$out"
+  expect_code 0 "$rc" "helper: production branch paths in a marked lab must be permitted"
 
   for name in FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE; do
     for value in "$plain" "$lab/../plain-home" "$lab/state/.."; do
@@ -191,7 +191,7 @@ test_helper_lab_home_admits() {
   ln -s "$lab" "$TMP/lab-alias"
   for value in "$TMP/lab-alias" "$lab/."; do
     out=$(run_guard_lib_home "$GATE_WT" "$value" NO_MISTAKES_GATE=1 FM_ROOT_OVERRIDE="$ROOT"); rc=$?
-    expect_code 3 "$rc" "helper: noncanonical home must refuse" "$out"
+    expect_code 3 "$rc" "helper: noncanonical home must refuse"
   done
   for dir in state config data projects; do
     mv "$lab/$dir" "$lab/$dir.saved"
@@ -204,16 +204,16 @@ test_helper_lab_home_admits() {
   mv "$lab/.fm-lab-home" "$lab/marker.saved"
   ln -s "$lab/marker.saved" "$lab/.fm-lab-home"
   out=$(run_guard_lib_home "$GATE_WT" "$lab" NO_MISTAKES_GATE=1); rc=$?
-  expect_code 3 "$rc" "helper: symlinked lab identity must refuse" "$out"
+  expect_code 3 "$rc" "helper: symlinked lab identity must refuse"
   rm "$lab/.fm-lab-home"
   printf 'invalid lab identity\n' > "$lab/.fm-lab-home"
   out=$(run_guard_lib_home "$GATE_WT" "$lab" NO_MISTAKES_GATE=1); rc=$?
-  expect_code 3 "$rc" "helper: invalid lab identity must refuse" "$out"
+  expect_code 3 "$rc" "helper: invalid lab identity must refuse"
   mv "$lab/marker.saved" "$lab/.fm-lab-home"
 
   # no gate signal + lab home -> still a normal no-op.
   out=$(run_guard_lib_home "$NORMAL_CWD" "$lab"); rc=$?
-  expect_code 0 "$rc" "helper: lab home outside a gate must not refuse" "$out"
+  expect_code 0 "$rc" "helper: lab home outside a gate must not refuse"
   pass "fm-gate-refuse-lib: production lab paths permitted; relocated paths and invalid identities refused"
 }
 
@@ -362,19 +362,19 @@ test_spawn_refuses_and_admits() {
 
   # env-marker refuse: neutral cwd, marker set.
   out=$(run_spawn "$NORMAL_CWD" "$home" spawn-envmark "$proj" "$wt" "$fakebin" NO_MISTAKES_GATE=1); rc=$?
-  expect_code 3 "$rc" "spawn: NO_MISTAKES_GATE must refuse" "$out"
+  expect_code 3 "$rc" "spawn: NO_MISTAKES_GATE must refuse"
   assert_contains "$out" "$ENV_MSG" "spawn: env-marker refusal message"
   assert_absent "$home/state/spawn-envmark.meta" "spawn: refused env-marker launch must not record meta"
 
   # path-backstop refuse: gate-worktree cwd, marker UNSET.
   out=$(run_spawn "$GATE_WT" "$home" spawn-backstop "$proj" "$wt" "$fakebin"); rc=$?
-  expect_code 3 "$rc" "spawn: gate-worktree cwd must refuse with the marker unset" "$out"
+  expect_code 3 "$rc" "spawn: gate-worktree cwd must refuse with the marker unset"
   assert_contains "$out" "$PATH_MSG" "spawn: path-backstop refusal message"
   assert_absent "$home/state/spawn-backstop.meta" "spawn: refused backstop launch must not record meta"
 
   # no-regression: neutral cwd, marker UNSET, genuine isolated worktree.
   out=$(run_spawn "$NORMAL_CWD" "$home" spawn-ok "$proj" "$wt" "$fakebin"); rc=$?
-  expect_code 0 "$rc" "spawn: a normal session must still spawn" "$out"
+  expect_code 0 "$rc" "spawn: a normal session must still spawn"
   assert_contains "$out" "spawned spawn-ok" "spawn: normal launch should report success"
   assert_not_contains "$out" "$ENV_MSG" "spawn: normal launch must not print the gate refusal"
   assert_not_contains "$out" "$PATH_MSG" "spawn: normal launch must not print the backstop refusal"
@@ -438,21 +438,21 @@ test_send_refuses_and_admits() {
   # env-marker refuse.
   : > "$log"
   out=$(run_send "$NORMAL_CWD" "$home" "$fakebin" "$log" fm-lane-ok "hello captain" NO_MISTAKES_GATE=1); rc=$?
-  expect_code 3 "$rc" "send: NO_MISTAKES_GATE must refuse" "$out"
+  expect_code 3 "$rc" "send: NO_MISTAKES_GATE must refuse"
   assert_contains "$out" "$ENV_MSG" "send: env-marker refusal message"
   [ ! -s "$log" ] || fail "send: refused env-marker send still typed to the endpoint"$'\n'"$(cat "$log")"
 
   # path-backstop refuse (marker UNSET).
   : > "$log"
   out=$(run_send "$GATE_WT" "$home" "$fakebin" "$log" fm-lane-ok "hello captain"); rc=$?
-  expect_code 3 "$rc" "send: gate-worktree cwd must refuse with the marker unset" "$out"
+  expect_code 3 "$rc" "send: gate-worktree cwd must refuse with the marker unset"
   assert_contains "$out" "$PATH_MSG" "send: path-backstop refusal message"
   [ ! -s "$log" ] || fail "send: refused backstop send still typed to the endpoint"$'\n'"$(cat "$log")"
 
   # no-regression.
   : > "$log"
   out=$(run_send "$NORMAL_CWD" "$home" "$fakebin" "$log" fm-lane-ok "hello captain"); rc=$?
-  expect_code 0 "$rc" "send: a normal session must still send" "$out"
+  expect_code 0 "$rc" "send: a normal session must still send"
   assert_not_contains "$out" "$ENV_MSG" "send: normal send must not print the gate refusal"
   assert_not_contains "$out" "$PATH_MSG" "send: normal send must not print the backstop refusal"
   [ "$(bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" \
@@ -549,21 +549,21 @@ test_teardown_refuses_and_admits() {
   # env-marker refuse: a genuinely-landed task is still refused; nothing is torn down.
   case_dir=$(make_teardown_case teardown-envmark)
   out=$(run_teardown "$NORMAL_CWD" "$case_dir" NO_MISTAKES_GATE=1); rc=$?
-  expect_code 3 "$rc" "teardown: NO_MISTAKES_GATE must refuse" "$out"
+  expect_code 3 "$rc" "teardown: NO_MISTAKES_GATE must refuse"
   assert_contains "$out" "$ENV_MSG" "teardown: env-marker refusal message"
   assert_present "$case_dir/state/task-x1.meta" "teardown: refused env-marker teardown must leave the task"
 
   # path-backstop refuse (marker UNSET).
   case_dir=$(make_teardown_case teardown-backstop)
   out=$(run_teardown "$GATE_WT" "$case_dir"); rc=$?
-  expect_code 3 "$rc" "teardown: gate-worktree cwd must refuse with the marker unset" "$out"
+  expect_code 3 "$rc" "teardown: gate-worktree cwd must refuse with the marker unset"
   assert_contains "$out" "$PATH_MSG" "teardown: path-backstop refusal message"
   assert_present "$case_dir/state/task-x1.meta" "teardown: refused backstop teardown must leave the task"
 
   # no-regression: a normal session tears down the landed task.
   case_dir=$(make_teardown_case teardown-ok)
   out=$(run_teardown "$NORMAL_CWD" "$case_dir"); rc=$?
-  expect_code 0 "$rc" "teardown: a normal session must still tear down landed work" "$out"
+  expect_code 0 "$rc" "teardown: a normal session must still tear down landed work"
   assert_not_contains "$out" "$ENV_MSG" "teardown: normal teardown must not print the gate refusal"
   assert_not_contains "$out" "$PATH_MSG" "teardown: normal teardown must not print the backstop refusal"
   assert_not_contains "$out" "REFUSED" "teardown: normal teardown of landed work must not refuse"
@@ -571,7 +571,7 @@ test_teardown_refuses_and_admits() {
   # lab-home admit: gate context + FM_HOME=marked lab home -> tears down.
   case_dir=$(make_teardown_lab_case teardown-lab)
   out=$(run_teardown_lab "$GATE_WT" "$case_dir"); rc=$?
-  expect_code 0 "$rc" "teardown: gate + marked lab home must tear down landed work" "$out"
+  expect_code 0 "$rc" "teardown: gate + marked lab home must tear down landed work"
   assert_absent "$case_dir/state/task-x1.meta" "teardown: lab teardown should remove the task record"
 
   # regression: a home reached through a symlinked spelling must not
@@ -580,7 +580,7 @@ test_teardown_refuses_and_admits() {
   case_dir=$(make_teardown_case teardown-symlink)
   ln -s "$case_dir" "$TMP/teardown-symlinked"
   out=$(run_teardown_lab "$NORMAL_CWD" "$TMP/teardown-symlinked"); rc=$?
-  expect_code 0 "$rc" "teardown: a symlinked home spelling must not self-collide" "$out"
+  expect_code 0 "$rc" "teardown: a symlinked home spelling must not self-collide"
   assert_absent "$case_dir/state/task-x1.meta" "teardown: symlinked-home teardown should remove the task"
   pass "fm-teardown: refuses on marker and gate-worktree backstop; a normal teardown is unaffected"
 }

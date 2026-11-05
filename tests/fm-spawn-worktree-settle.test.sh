@@ -137,7 +137,7 @@ test_single_stale_first_read_is_not_accepted() {
 
   out=$(run_settle_spawn "$id")
   status=$?
-  expect_code 0 "$status" "spawn should succeed once the pane settles" "$out"
+  expect_code 0 "$status" "spawn should succeed once the pane settles"
   assert_contains "$out" "spawned $id" "spawn did not report success"
   assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" \
     "meta did not record the settled worktree"
@@ -267,7 +267,7 @@ test_unborn_head_project_is_refused_at_once() {
   out=$(run_settle_spawn "$id")
   status=$?
   elapsed=$((SECONDS - started))
-  expect_code 1 "$status" "spawn into a project with no commit should be refused" "$out"
+  expect_code 1 "$status" "spawn into a project with no commit should be refused"
   assert_contains "$out" "unborn HEAD" "the refusal did not name the unborn HEAD cause"
   assert_contains "$out" "make one commit" "the refusal did not name the remedy"
   [ "$elapsed" -lt 30 ] || fail "refusal took ${elapsed}s instead of failing before the treehouse wait"
