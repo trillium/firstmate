@@ -278,7 +278,6 @@ fm_backend_detect() {
 # unreliable for this on macOS.
 fm_backend_unix_sock_live() {  # <path>
   command -v python3 >/dev/null 2>&1 || return 1
-  [ -S "$1" ] || return 1
   python3 - "$1" <<'PY' >/dev/null 2>&1
 import socket, sys
 s = socket.socket(socket.AF_UNIX)

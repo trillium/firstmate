@@ -821,7 +821,12 @@ os.execv(sys.executable, [sys.executable, "-c", "import sys,time; open(sys.argv[
     [ "$got" = "$expected" ] || fail "$shape argv routes disagree: provider '$got', ps '$expected'"
     args=${got##*$'\t'}
     case "$shape" in
-      one|two) suffix='--resume' ;;
+      one)
+        [ "$(uname -s)" = Darwin ] && suffix='--resume ' || suffix='--resume'
+        ;;
+      two)
+        [ "$(uname -s)" = Darwin ] && suffix='--resume  ' || suffix='--resume'
+        ;;
       middle) suffix='aa  bb' ;;
       space) suffix='tail ' ;;
     esac
@@ -830,7 +835,7 @@ os.execv(sys.executable, [sys.executable, "-c", "import sys,time; open(sys.argv[
       *) fail "$shape argv lost element spacing: '$args'" ;;
     esac
   done
-  pass "trailing empty argv elements are dropped; interior empties and argument spaces survive"
+  pass "empty argv elements and argument spaces preserve the ps-visible argv shape"
 }
 
 test_unreadable_owner_refuses_acquisition() {
