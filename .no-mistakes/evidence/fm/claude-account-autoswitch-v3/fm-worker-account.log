@@ -1,0 +1,49 @@
+ok - Claude, Pi, and pi-signed secondmates use their own pins without changing other launches
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+ok - unusable per-mate pins name the setting and refuse rather than use the primary's usable account
+ok - a per-launch ordinary account overrides a token pin and leaves the file as the default
+ok - a per-launch token account overrides an ordinary pin
+ok - --account works without a home pin and refuses malformed, loose, and signed-out values before launch
+ok - --account refuses a non-Claude runner
+ok - the relaunch check honors a recorded per-launch account over the home pin
+ok - a remote route refuses a primary-side account override instead of silently ignoring it
+ok - a remote secondmate refuses --account instead of launching on the remote home's account
+ok - an absent pin leaves Claude and Pi launches exactly as they were
+ok - a Claude pin selects its root and sheds the credentials that would outrank it
+ok - a Claude pin refuses a signed-out root even when the invoking process has a usable login and API key
+ok - an ordinary Claude pin selects the default login and drops an ambient root
+ok - malformed, relative, CR-terminated, empty, extra-line, missing-root, and non-file pins refuse before launch
+ok - a Pi pin selects its root and passes the declared provider
+ok - a Pi pin refuses unqualified, missing, undeclared, signed-out, and raw launches
+ok - extension providers and a Pi without auth check fall back to an exact model-listing match
+ok - a Claude pin leaves codex and Pi launches unchanged
+ok - a raw Claude launch command receives the home's pin
+ok - a pinned home refuses a raw Claude command that overrides the account
+ok - an unpinned home keeps a raw Claude account override
+ok - a local secondmate reads the launching home's pin and its own home's file is never inherited over
+ok - a token pin launches the worker with the token for that worker only, and the token reaches no output or record
+ok - a token pin refuses a loose, missing, empty, multi-token, non-file, rejected, or malformed file without printing the token
+ok - a raw Claude launch command receives the token pin and cannot override it
+ok - a per-secondmate token pin applies to that mate alone
+ok - the relaunch check and the exec helper handle a token pin without exposing the token
+ok - without config/claude-accounts the launch, the single pin, and the record are unchanged, and --account is a per-launch account
+ok - a declared account named with --account is checked, launched, and recorded like a pin
+ok - a list refuses a missing, undeclared, signed-out, wrong-runner, raw-override, malformed-fallback, or malformed choice
+warning: re-init: ignored --initial-branch=main
+warning: re-init: ignored --initial-branch=main
+ok - a list never chooses a secondmate's account: it needs its own pin and refuses --account
+ok - both healthy: selects the declared Claude account with higher usable headroom and records account + reason
+ok - one low: skips an account below the low-headroom threshold (default 20% or configured) and chooses the healthy account
+ok - both low: emits a clear warning and keeps today's pinned-account fallback
+ok - measurement unavailable keeps the candidate account eligible with disclosed uncertainty
+ok - explicit --account overrides automatic selection, and malformed pool or threshold files refuse before launch
+# all fm-worker-account tests passed
