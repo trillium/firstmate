@@ -792,6 +792,32 @@ trap 'handle_arm_signal HUP 129' HUP
 trap 'handle_arm_signal TERM 143' TERM
 trap 'handle_arm_signal INT 130' INT
 
+# Every exit path removes the output file, including ones that never reach the
+# explicit removals below (an error exit or an untrapped termination route).
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
+remove_child_out() {
+  if [ -n "$child_out" ]; then
+    rm -f "$child_out" 2>/dev/null || true
+  fi
+}
+trap remove_child_out EXIT
+
+# A SIGKILLed arm cannot run any trap, so it leaves its empty output file
+# behind. Sweep those: only this state dir's own empty regular files older than
+# a day, and never one a live process still holds open (a long watcher cycle
+# keeps its file open the whole time). Without lsof the holder cannot be ruled
+# out, so nothing is removed.
+sweep_stale_arm_output() {
+  local f
+  command -v lsof >/dev/null 2>&1 || return 0
+  find "$STATE" -maxdepth 1 -type f -name '.watch-arm-output.*' -empty \
+    -user "$(id -u)" -mmin +1440 2>/dev/null | while IFS= read -r f; do
+    [ -z "$(lsof -t -- "$f" 2>/dev/null)" ] || continue
+    rm -f -- "$f" 2>/dev/null || true
+  done
+}
+sweep_stale_arm_output
+
 child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
   echo "watcher: FAILED - no live watcher with a fresh beacon"
   exit 1
