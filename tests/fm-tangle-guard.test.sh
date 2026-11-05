@@ -189,21 +189,21 @@ test_spawn_isolation_abort() {
   # cause fired, not the operator wording that explains it.
   out=$(GIT_CEILING_DIRECTORIES="$TMP_ROOT/spawn-notgit-root" \
     run_spawn "$home" abort-notgit-dd4 "$proj" "$TMP_ROOT/spawn-notgit-root/plain" "$fakebin"); status=$?
-  expect_code 1 "$status" "spawn into a non-worktree dir should abort" "$out"
+  expect_code 1 "$status" "spawn into a non-worktree dir should abort"
   assert_contains "$out" "did not enter an isolated worktree" "non-worktree spawn lacked the isolation error"
   assert_contains "$out" "not inside a git worktree" "non-worktree spawn did not say why the path was rejected"
   assert_absent "$home/state/abort-notgit-dd4.meta" "aborted spawn must not record meta"
 
   # Abort: the pane resolves INTO the primary checkout (a subdir of PROJ_ABS).
   out=$(run_spawn "$home" abort-primary-ee5 "$proj" "$proj/sub" "$fakebin"); status=$?
-  expect_code 1 "$status" "spawn landing inside the primary checkout should abort" "$out"
+  expect_code 1 "$status" "spawn landing inside the primary checkout should abort"
   assert_contains "$out" "did not enter an isolated worktree" "primary-checkout spawn lacked the isolation error"
   assert_contains "$out" "not a worktree root" "primary-checkout spawn did not say why the path was rejected"
   assert_absent "$home/state/abort-primary-ee5.meta" "aborted spawn must not record meta"
 
   # Proceed: the pane resolves to a genuine, isolated worktree.
   out=$(run_spawn "$home" ok-isolated-ff6 "$proj" "$TMP_ROOT/spawn-wt" "$fakebin"); status=$?
-  expect_code 0 "$status" "spawn into a genuine isolated worktree should succeed" "$out"
+  expect_code 0 "$status" "spawn into a genuine isolated worktree should succeed"
   assert_contains "$out" "spawned ok-isolated-ff6" "isolated spawn did not report success"
   assert_not_contains "$out" "isolated worktree" "isolated spawn wrongly tripped the guard"
   pass "fm-spawn: aborts unless the resolved worktree is a genuine, isolated worktree"
@@ -245,7 +245,7 @@ test_spawn_clears_stale_secondmate_marker() {
   # Stale: no registry entry and no parent binding, so the marker is a leftover.
   # The spawn proceeds and the slot is restored to a plain task worktree.
   out=$(run_spawn "$home" marker-stale-gg7 "$proj" "$wt_stale" "$fakebin"); status=$?
-  expect_code 0 "$status" "spawn into a slot with a stale marker should proceed" "$out"
+  expect_code 0 "$status" "spawn into a slot with a stale marker should proceed"
   assert_absent "$wt_stale/.fm-secondmate-home" "stale secondmate marker was not cleared"
   assert_contains "$out" "cleared a stale secondmate-home marker" \
     "clearing a stale marker must be reported"
@@ -254,7 +254,7 @@ test_spawn_clears_stale_secondmate_marker() {
   # handed out a provisioned home. That is a refusal, not something to clean up -
   # and the home must keep its identity.
   out=$(run_spawn "$home" marker-live-hh8 "$proj" "$wt_live" "$fakebin"); status=$?
-  expect_code 1 "$status" "spawn into a registered secondmate's home should abort" "$out"
+  expect_code 1 "$status" "spawn into a registered secondmate's home should abort"
   assert_contains "$out" "live secondmate home" "live-home spawn lacked the refusal error"
   assert_present "$wt_live/.fm-secondmate-home" "refused spawn destroyed a live home's marker"
   assert_absent "$home/state/marker-live-hh8.meta" "aborted spawn must not record meta"
@@ -262,7 +262,7 @@ test_spawn_clears_stale_secondmate_marker() {
   # Parent binding present: the home belongs to another parent's tree, so this
   # home's registry cannot see it. Refuse on the binding alone.
   out=$(run_spawn "$home" marker-parent-ii9 "$proj" "$wt_parent" "$fakebin"); status=$?
-  expect_code 1 "$status" "spawn into a home with a parent binding should abort" "$out"
+  expect_code 1 "$status" "spawn into a home with a parent binding should abort"
   assert_contains "$out" "live secondmate home" "parent-bound spawn lacked the refusal error"
   assert_present "$wt_parent/.fm-secondmate-home" "refused spawn destroyed a bound home's marker"
 
@@ -342,7 +342,7 @@ test_spawn_tmux_window_construction() {
   git -C "$proj" worktree add -q --detach "$wt" >/dev/null 2>&1
 
   out=$(run_spawn_record "$home" rec-win-gg7 "$proj" "$wt" "$fakebin" "$rec"); status=$?
-  expect_code 0 "$status" "spawn into a genuine worktree should succeed" "$out"
+  expect_code 0 "$status" "spawn into a genuine worktree should succeed"
   assert_contains "$out" "spawned rec-win-gg7" "recording spawn did not report success"
 
   # Bug 1 fix: append-form window creation (trailing colon on the session target).

@@ -586,7 +586,7 @@ test_host_outside_the_lock_owner_stands_down() {
   printf '%s\n' "$other" >> "$home/claude-pids"
   printf '%s\n' "$other" > "$home/state/.lock"
   out=$(FM_HOME="$home" PATH="$home/fakebin:$PATH" "$HOST" park 2>&1); rc=$?
-  expect_code 0 "$rc" "a host that does not own supervision exits 0" "$out"
+  expect_code 0 "$rc" "a host that does not own supervision exits 0"
   assert_contains "$out" "supervision-host stood down: this session does not own supervision" "the stand-down must say why"
   watcher_live "$home" && fail "a host that does not own supervision started a watcher"
   kill -TERM "$other" 2>/dev/null || true

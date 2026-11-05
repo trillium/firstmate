@@ -3675,7 +3675,7 @@ set +e
 out=$(records_status 2>&1)
 code=$?
 set -e
-expect_code 2 "$code" "an unknown read scope should refuse" "$out"
+expect_code 2 "$code" "an unknown read scope should refuse"
 assert_contains "$out" 'voice-read-scope' "the refusal should name the setting"
 pass "an unknown read scope refuses instead of widening"
 

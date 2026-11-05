@@ -988,7 +988,7 @@ test_polytoken_effort_maps_to_nearest_listed_level() {
   out=$(run_polytoken_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model zai/glm-5.3-flash --effort medium)
   rc=$?
-  expect_code 0 "$rc" "a polytoken spawn with an effort outside the model's set should still succeed" "$out"
+  expect_code 0 "$rc" "a polytoken spawn with an effort outside the model's set should still succeed"
   launch=$(cat "$CASE_DIR/launch.log")
   assert_contains "$launch" "--model zai/glm-5.3-flash(low)" \
     "the launch must carry the nearest supported effort"
@@ -1178,7 +1178,7 @@ test_polytoken_spawn_arms_the_busy_contract() {
   out=$(run_polytoken_spawn "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" \
     --model zai/glm-5.3-flash)
   rc=$?
-  expect_code 0 "$rc" "the busy-armed spawn should succeed" "$out"
+  expect_code 0 "$rc" "the busy-armed spawn should succeed"
   statedir="$HOME_DIR/state"
   [ -e "$statedir/$id.busy-gen" ] || fail "the spawn must arm a busy generation"
   out=$(fm_busy_record_read "$statedir" "$id")

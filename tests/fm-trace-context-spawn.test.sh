@@ -298,7 +298,7 @@ test_enabled_records_and_injects_identical_carrier_before_launch() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "enabled trace-context spawn should succeed" "$out"
+  expect_code 0 "$status" "enabled trace-context spawn should succeed"
   assert_contains "$out" "spawned $CASE_ID" "enabled spawn should report success"
   meta="$HOME_DIR/state/$CASE_ID.meta"
   jq -e --arg id "$CASE_ID" '
@@ -330,7 +330,7 @@ test_disabled_writes_and_injects_neither() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "default-off spawn should succeed" "$out"
+  expect_code 0 "$status" "default-off spawn should succeed"
   assert_contains "$out" "spawned $CASE_ID" "default-off spawn should report success"
   meta="$HOME_DIR/state/$CASE_ID.meta"
 
@@ -351,7 +351,7 @@ test_failed_delivery_omits_metadata_and_still_launches() {
   out=$(FM_FAKE_TRACEPARENT_SEND_FAIL=1 \
     run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "failed traceparent delivery must not abort spawn" "$out"
+  expect_code 0 "$status" "failed traceparent delivery must not abort spawn"
   assert_contains "$out" "spawned $CASE_ID" "spawn should report success after failed traceparent delivery"
   meta="$HOME_DIR/state/$CASE_ID.meta"
 
@@ -391,7 +391,7 @@ test_failed_metadata_append_unsets_carrier_and_still_launches() {
   out=$(FM_FAKE_TRACE_METADATA_APPEND_FAIL=1 \
     run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "failed traceparent metadata append must not abort spawn" "$out"
+  expect_code 0 "$status" "failed traceparent metadata append must not abort spawn"
   assert_contains "$out" "spawned $CASE_ID" "spawn should report success after failed metadata append"
   meta="$HOME_DIR/state/$CASE_ID.meta"
 
@@ -453,7 +453,7 @@ test_relaunch_reuses_recorded_carrier() {
 
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "first trace-context spawn should succeed" "$out"
+  expect_code 0 "$status" "first trace-context spawn should succeed"
   assert_contains "$out" "spawned $CASE_ID" "first spawn should report success"
   first=$(meta_traceparent "$meta")
   fm_trace_context_valid "$first" || fail "first spawn must record a valid carrier (got '$first')"
@@ -463,7 +463,7 @@ test_relaunch_reuses_recorded_carrier() {
   # restarts.
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "relaunch spawn should succeed" "$out"
+  expect_code 0 "$status" "relaunch spawn should succeed"
   assert_contains "$out" "spawned $CASE_ID" "relaunch spawn should report success"
   second=$(meta_traceparent "$meta")
   injected=$(injected_traceparent "$LAUNCH_LOG")
@@ -480,7 +480,7 @@ test_session_start_freezes_env_override_and_ignores_later_edits() {
   start_trace_session "$HOME_DIR" off
   out=$(run_spawn_tc on "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "env-off spawn should succeed" "$out"
+  expect_code 0 "$status" "env-off spawn should succeed"
   assert_contains "$out" "spawned $CASE_ID" "env-off spawn should report success"
   meta="$HOME_DIR/state/$CASE_ID.meta"
   ! grep -q '^traceparent=' "$meta" || fail "session-frozen off must ignore a later FM_TRACE_CONTEXT=on"
@@ -492,7 +492,7 @@ test_session_start_freezes_env_override_and_ignores_later_edits() {
   : > "$HOME_DIR/config/trace-context"
   out=$(run_spawn_tc off "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "env-on spawn should succeed" "$out"
+  expect_code 0 "$status" "env-on spawn should succeed"
   meta="$HOME_DIR/state/$CASE_ID.meta"
   fm_trace_context_valid "$(meta_traceparent "$meta")" \
     || fail "session-frozen on must ignore a later FM_TRACE_CONTEXT=off"
@@ -571,11 +571,11 @@ test_two_routed_tasks_through_one_secondmate_root_distinct_traces() {
 
   out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_a" "$fakebin" "$log_a" "$id_a" "$proj_a")
   status=$?
-  expect_code 0 "$status" "routed task A spawn should succeed" "$out"
+  expect_code 0 "$status" "routed task A spawn should succeed"
   assert_contains "$out" "spawned $id_a" "routed task A spawn should report success"
   out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_b" "$fakebin" "$log_b" "$id_b" "$proj_b")
   status=$?
-  expect_code 0 "$status" "routed task B spawn should succeed" "$out"
+  expect_code 0 "$status" "routed task B spawn should succeed"
   assert_contains "$out" "spawned $id_b" "routed task B spawn should report success"
 
   tp_a=$(meta_traceparent "$sm/state/$id_a.meta")
@@ -597,7 +597,7 @@ test_two_routed_tasks_through_one_secondmate_root_distinct_traces() {
   # carrier verbatim, so the per-task boundary never costs recovery identity.
   out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_a" "$fakebin" "$log_a" "$id_a" "$proj_a")
   status=$?
-  expect_code 0 "$status" "routed task A relaunch should succeed" "$out"
+  expect_code 0 "$status" "routed task A relaunch should succeed"
   relaunch_tp=$(meta_traceparent "$sm/state/$id_a.meta")
   relaunch_in=$(injected_traceparent "$log_a")
   [ "$relaunch_tp" = "$tp_a" ] \

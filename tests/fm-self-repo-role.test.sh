@@ -165,7 +165,7 @@ test_check_user_home_refused_on_self_repo() {
   local home out rc
   home=$(make_role_home check-user)
   out=$(run_role "$home" check "$ROOT"); rc=$?
-  expect_code 1 "$rc" "a user/operator home must be refused a publishing contract on firstmate itself" "$out"
+  expect_code 1 "$rc" "a user/operator home must be refused a publishing contract on firstmate itself"
   assert_contains "$out" "user/operator" "the refusal must name the role"
   assert_contains "$out" "no publication authority" "the refusal must name the missing grant"
   pass "fm-role.sh check: the default user/operator home cannot publish to firstmate upstream"
@@ -178,7 +178,7 @@ test_check_foreign_project_passes_through() {
   git init -q "$proj" || fail "could not initialize foreign project fixture"
   git -C "$proj" remote add origin https://github.com/someone/elseware.git
   out=$(run_role "$home" check "$proj"); rc=$?
-  expect_code 2 "$rc" "an ordinary project must not be gated at all" "$out"
+  expect_code 2 "$rc" "an ordinary project must not be gated at all"
   assert_contains "$out" "not a self-repository task" "an ordinary project must be reported as outside the boundary"
   pass "fm-role.sh check: a task on an ordinary project is untouched by the boundary"
 }
@@ -211,7 +211,7 @@ test_check_wrong_scope_and_remote_presence_do_not_authorize() {
   # inferred from the remote itself.
   home=$(make_role_home check-other 'maintainer github.com/other/firstmate')
   out=$(run_role "$home" check "$ROOT"); rc=$?
-  expect_code 1 "$rc" "a non-matching maintainer scope must be refused" "$out"
+  expect_code 1 "$rc" "a non-matching maintainer scope must be refused"
   assert_contains "$out" "no publication authority for $PUB_TARGET" \
     "the refusal must name the target the grant did not cover"
 
@@ -221,7 +221,7 @@ test_check_wrong_scope_and_remote_presence_do_not_authorize() {
   home=$(make_role_home check-clone)
   clone=$(clone_with_origin "$ROOT" second-clone "$ORIGIN_URL")
   out=$(run_role "$home" check "$clone"); rc=$?
-  expect_code 1 "$rc" "a second clone of the same upstream must still be gated" "$out"
+  expect_code 1 "$rc" "a second clone of the same upstream must still be gated"
   assert_contains "$out" "user/operator" "a second clone must be treated as firstmate's own repository"
   pass "fm-role.sh check: scope mismatch and mere upstream remote presence never authorize"
 }
@@ -353,7 +353,7 @@ test_check_task_consent_authorizes_one_task() {
   assert_contains "$out" "authorized: task consent for $PUB_TARGET" "the authority must be recorded as task consent"
 
   out=$(run_role "$home" check "$ROOT" upstream-consent github.com/other/repo); rc=$?
-  expect_code 1 "$rc" "a consent naming a different repository must be refused" "$out"
+  expect_code 1 "$rc" "a consent naming a different repository must be refused"
   assert_contains "$out" "no publication authority for $PUB_TARGET" \
     "a mismatched consent must not widen into a grant"
   pass "fm-role.sh check: recorded one-task consent authorizes its named repository only"
@@ -372,7 +372,7 @@ test_secondmate_cannot_self_grant() {
   assert_contains "$out" "no propagation receipt" "the report must name the missing receipt"
   if [ -n "$PUB_TARGET" ]; then
     out=$(run_role "$home" check "$ROOT"); rc=$?
-    expect_code 1 "$rc" "a self-granted secondmate must be refused at the gate" "$out"
+    expect_code 1 "$rc" "a self-granted secondmate must be refused at the gate"
   fi
   pass "secondmate home: a role file without an inheritance receipt grants nothing"
 }
@@ -510,9 +510,9 @@ test_dod_block_renders_and_bounds_consent() {
   out=$(fm_dod_block no-mistakes auto-id fm/auto-id none '' '' '' me/fork)
   assert_contains "$out" "pass \`--repo me/fork\`" "a no-mistakes PR must be pinned to the origin repository"
   out=$(fm_dod_block direct-PR bare-id fm/bare-id 2>&1); rc=$?
-  expect_code 1 "$rc" "a publishing contract with no derivable PR base repository must refuse" "$out"
+  expect_code 1 "$rc" "a publishing contract with no derivable PR base repository must refuse"
   out=$(fm_dod_block local-only local-id fm/local-id none '' github.com/a/b 2>&1); rc=$?
-  expect_code 1 "$rc" "local-only must refuse a consent token it can never spend" "$out"
+  expect_code 1 "$rc" "local-only must refuse a consent token it can never spend"
   pass "fm_dod_block: upstream consent renders on publishing contracts and is refused on local-only"
 }
 
@@ -525,17 +525,17 @@ test_brief_consent_flag_bounds() {
 
   out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$home/config" FM_DATA_OVERRIDE="$home/data" \
     "$BRIEF" brief-consent-bad some-proj --mode direct-PR --upstream-consent 'not a scope' 2>&1); rc=$?
-  expect_code 1 "$rc" "an invalid consent scope must be refused" "$out"
+  expect_code 1 "$rc" "an invalid consent scope must be refused"
   assert_contains "$out" "must be <host>/<owner>/<repo>" "an invalid consent scope must name the schema"
 
   out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$home/config" FM_DATA_OVERRIDE="$home/data" \
     "$BRIEF" brief-consent-scout some-proj --scout --upstream-consent github.com/a/b 2>&1); rc=$?
-  expect_code 1 "$rc" "a scout must refuse a consent it can never spend" "$out"
+  expect_code 1 "$rc" "a scout must refuse a consent it can never spend"
   assert_contains "$out" "applies only to ship briefs" "a scout consent refusal must name the boundary"
 
   out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$home/config" FM_DATA_OVERRIDE="$home/data" \
     "$BRIEF" brief-consent-local some-proj --mode local-only --upstream-consent github.com/a/b 2>&1); rc=$?
-  expect_code 1 "$rc" "local-only must refuse a consent it publishes nothing with" "$out"
+  expect_code 1 "$rc" "local-only must refuse a consent it publishes nothing with"
   assert_contains "$out" "local-only" "a local-only consent refusal must name the mode"
 
   out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$home/config" FM_DATA_OVERRIDE="$home/data" \
@@ -558,7 +558,7 @@ test_brief_self_repo_gate_without_project_flag() {
       "$BRIEF" "$id" selfclone "$@" 2>&1
   }
   out=$(brief_np brief-np-refuse --mode direct-PR); rc=$?
-  expect_code 1 "$rc" "a publishing brief for the registered firstmate clone must be refused without --project" "$out"
+  expect_code 1 "$rc" "a publishing brief for the registered firstmate clone must be refused without --project"
   assert_contains "$out" "no publication authority" "the refusal must name the missing grant"
   assert_absent "$home/data/brief-np-refuse/brief.md" "a refused scaffold must write no brief"
 
@@ -577,7 +577,7 @@ test_brief_self_repo_pre_gate() {
   home=$(make_role_home brief-selfrepo)
   out=$(FM_HOME="$home" FM_CONFIG_OVERRIDE="$home/config" FM_DATA_OVERRIDE="$home/data" \
     "$BRIEF" brief-selfrefuse some-proj --mode direct-PR --project "$ROOT" 2>&1); rc=$?
-  expect_code 1 "$rc" "a user home must be refused a publishing brief for firstmate itself" "$out"
+  expect_code 1 "$rc" "a user home must be refused a publishing brief for firstmate itself"
   assert_contains "$out" "user/operator" "the refusal must name the role"
   assert_contains "$out" "no publication authority" "the refusal must name the missing grant"
 
@@ -744,7 +744,7 @@ test_promote_gate_on_self_repo() {
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" \
     "$PROMOTE" promote-r1 --mode direct-PR --yolo off 2>&1); rc=$?
-  expect_code 1 "$rc" "a user home must not promote a self-repo scout into a publishing ship" "$out"
+  expect_code 1 "$rc" "a user home must not promote a self-repo scout into a publishing ship"
   assert_contains "$out" "promotion refused for promote-r1" "the refusal must name the task"
   assert_contains "$out" "user/operator" "the refusal must name the role"
   assert_grep 'kind=scout' "$meta" "a refused promotion must leave the scout kind untouched"

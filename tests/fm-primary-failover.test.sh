@@ -113,9 +113,9 @@ alive() { kill -0 "$1" 2>/dev/null; }
 
 # --- usage ---------------------------------------------------------------
 out=$(bash "$BIN" bogus 2>&1); rc=$?
-expect_code 2 "$rc" "unknown command" "$out"
+expect_code 2 "$rc" "unknown command"
 out=$(bash "$BIN" failover --to codex 2>&1); rc=$?
-expect_code 2 "$rc" "codex is never a failover target" "$out"
+expect_code 2 "$rc" "codex is never a failover target"
 assert_contains "$(bash "$BIN" --help)" "SESSION LOCK HANDOVER" "help documents the lock handover"
 pass "usage and codex refusal"
 
@@ -124,7 +124,7 @@ set_quota 0 0
 start_fake claude
 OLD=$(lock_pid)
 out=$(run failover --dry-run --to grok); rc=$?
-expect_code 0 "$rc" "dry-run exit" "$out"
+expect_code 0 "$rc" "dry-run exit"
 assert_contains "$out" "plan: claude pid $OLD -> grok in tmux pane $PANE" "dry-run prints the plan"
 alive "$OLD" || fail "dry-run killed the old session"
 assert_absent "$HOME_DIR/state/primary-failover.state" "dry-run wrote state"
@@ -133,7 +133,7 @@ pass "dry-run prints the plan and touches nothing"
 
 # --- debounce ---------------------------------------------------------------
 out=$(CONFIRM=2 run check); rc=$?
-expect_code 0 "$rc" "debounced check exit" "$out"
+expect_code 0 "$rc" "debounced check exit"
 assert_contains "$out" "exhaustion signal 1/2" "first signal is only counted"
 alive "$OLD" || fail "debounced check exited the session"
 set_quota 80 90
@@ -146,7 +146,7 @@ pass "exhaustion is debounced"
 set_quota 0 0
 : >"$FAKE_DIR/ignore-exit"
 out=$(EXIT_WAIT=3 run check); rc=$?
-expect_code 3 "$rc" "stuck old session aborts the handover" "$out"
+expect_code 3 "$rc" "stuck old session aborts the handover"
 alive "$OLD" || fail "failover killed a session that would not exit"
 assert_absent "$FAKE_DIR/argv.grok" "grok launched while the old session lived"
 assert_contains "$out" "nothing signalled" "abort is logged"

@@ -579,7 +579,7 @@ test_unverified_harness_is_refused() {
   add_task "$dir" t1 someagent
   alive_as "$dir" someagent
   out=$(run_control "$dir" t1 exit); rc=$?
-  expect_code 1 "$rc" "an unverified harness should refuse" "$out"
+  expect_code 1 "$rc" "an unverified harness should refuse"
   assert_contains "$out" "no verified control mechanics" "refusal should name the missing verification"
   [ -z "$(literals "$dir")" ] || fail "an unverified harness must receive no bytes"
   pass "fm-control: a harness with no verified control mechanics is refused, not guessed at"
@@ -644,7 +644,7 @@ test_orca_refuses_an_escape_harness_interrupt() {
   } > "$dir/home/state/t1.meta.new"
   sed 's|^window=.*|window=fm-t1|' "$dir/home/state/t1.meta.new" > "$dir/home/state/t1.meta"
   out=$(run_control "$dir" t1 interrupt); rc=$?
-  expect_code 1 "$rc" "an Escape harness on orca should refuse" "$out"
+  expect_code 1 "$rc" "an Escape harness on orca should refuse"
   assert_contains "$out" "cannot deliver" "refusal should name the undeliverable key"
   pass "fm-control interrupt: a backend that cannot deliver the harness's key refuses instead of sending another"
 }
@@ -776,7 +776,7 @@ test_window_label_is_refused_with_the_exact_id() {
   add_task "$dir" t1 claude
   alive_as "$dir" claude
   out=$(run_control "$dir" fm-t1 exit); rc=$?
-  expect_code 1 "$rc" "a window label should refuse" "$out"
+  expect_code 1 "$rc" "a window label should refuse"
   assert_contains "$out" "pass the exact task id 't1'" "the refusal should name the exact id"
   [ -z "$(literals "$dir")" ] || fail "a refused target must receive no bytes"
   pass "fm-control: a legacy window label is refused and the exact task id is named"
@@ -788,7 +788,7 @@ test_explicit_endpoint_is_refused() {
   add_task "$dir" t1 claude
   alive_as "$dir" claude
   out=$(run_control "$dir" "fmses:fm-t1" exit); rc=$?
-  expect_code 1 "$rc" "an explicit endpoint should refuse" "$out"
+  expect_code 1 "$rc" "an explicit endpoint should refuse"
   assert_contains "$out" "exact task id only" "the refusal should name the exact-id rule"
   [ -z "$(literals "$dir")" ] || fail "a refused target must receive no bytes"
   pass "fm-control: an explicit backend endpoint is never a control target"
@@ -799,7 +799,7 @@ test_unknown_task_is_refused() {
   dir=$(new_case unknown)
   add_task "$dir" t1 claude
   out=$(run_control "$dir" t2 exit); rc=$?
-  expect_code 1 "$rc" "an unknown task should refuse" "$out"
+  expect_code 1 "$rc" "an unknown task should refuse"
   assert_contains "$out" "no task 't2'" "the refusal should name the missing task"
   pass "fm-control: an unrecorded task id is refused"
 }
@@ -813,7 +813,7 @@ test_record_bound_to_another_task_is_refused() {
     > "$dir/home/state/t1.meta.tmp"
   mv "$dir/home/state/t1.meta.tmp" "$dir/home/state/t1.meta"
   out=$(run_control "$dir" t1 exit); rc=$?
-  expect_code 1 "$rc" "a record bound to another task should refuse" "$out"
+  expect_code 1 "$rc" "a record bound to another task should refuse"
   assert_contains "$out" "belongs to task other" "the refusal should name the conflicting binding"
   [ -z "$(literals "$dir")" ] || fail "a foreign record must receive no bytes"
   pass "fm-control: a record whose endpoint identity names another task is refused"
@@ -902,15 +902,15 @@ test_verb_allowlist_is_closed() {
   add_task "$dir" t1 claude
   alive_as "$dir" claude
   out=$(run_control "$dir" t1 restart); rc=$?
-  expect_code 2 "$rc" "an unknown verb should be a usage error" "$out"
+  expect_code 2 "$rc" "an unknown verb should be a usage error"
   assert_contains "$out" "is not a control verb" "the refusal should say so"
   assert_contains "$out" "interrupt" "the refusal should list the allowed verbs"
   out=$(run_control "$dir" t1 --key); rc=$?
-  expect_code 2 "$rc" "a raw key is not a control verb" "$out"
+  expect_code 2 "$rc" "a raw key is not a control verb"
   out=$(run_control "$dir" t1 clear); rc=$?
-  expect_code 2 "$rc" "clear is not a control verb" "$out"
+  expect_code 2 "$rc" "clear is not a control verb"
   out=$(run_control "$dir" t1 "please stop what you are doing"); rc=$?
-  expect_code 2 "$rc" "arbitrary text is not a control verb" "$out"
+  expect_code 2 "$rc" "arbitrary text is not a control verb"
   [ -z "$(literals "$dir")" ] || fail "a refused verb must send nothing"
   [ -z "$(keys_sent "$dir")" ] || fail "a refused verb must send no keys"
   pass "fm-control: the verb list is closed - no raw keys, arbitrary text, or clear verb"
@@ -921,7 +921,7 @@ test_resume_is_refused_with_its_reason() {
   dir=$(new_case resume)
   add_task "$dir" t1 claude
   out=$(run_control "$dir" t1 resume); rc=$?
-  expect_code 2 "$rc" "resume should be refused" "$out"
+  expect_code 2 "$rc" "resume should be refused"
   assert_contains "$out" "not deterministic across the verified adapters" \
     "the refusal should explain why resume is excluded"
   assert_contains "$out" "relaunch" "the refusal should point at the deterministic alternative"
@@ -934,7 +934,7 @@ test_relaunch_only_flags_are_rejected_on_other_verbs() {
   add_task "$dir" t1 claude
   alive_as "$dir" claude
   out=$(run_control "$dir" t1 exit --harness codex); rc=$?
-  expect_code 1 "$rc" "--harness should not apply to exit" "$out"
+  expect_code 1 "$rc" "--harness should not apply to exit"
   assert_contains "$out" "apply to 'relaunch' only" "the refusal should scope the flags"
   pass "fm-control: profile and note flags belong to relaunch only"
 }
@@ -947,7 +947,7 @@ test_already_stopped_exit_is_idempotent() {
   add_task "$dir" t1 claude
   alive_as "$dir" zsh
   out=$(run_control "$dir" t1 exit); rc=$?
-  expect_code 0 "$rc" "exiting an already-stopped agent should succeed" "$out"
+  expect_code 0 "$rc" "exiting an already-stopped agent should succeed"
   assert_contains "$out" "already-stopped t1" "the outcome should say it was already stopped"
   [ -z "$(literals "$dir")" ] || fail "an already-stopped agent must not be sent an exit command"
   pass "fm-control exit: an already-stopped agent is idempotent success with no bytes sent"
@@ -979,7 +979,7 @@ test_interrupt_refuses_when_no_agent_runs() {
   add_task "$dir" t1 claude
   alive_as "$dir" zsh
   out=$(run_control "$dir" t1 interrupt); rc=$?
-  expect_code 1 "$rc" "interrupting a stopped agent should refuse" "$out"
+  expect_code 1 "$rc" "interrupting a stopped agent should refuse"
   assert_contains "$out" "nothing to interrupt" "the refusal should say there is no agent"
   [ -z "$(keys_sent "$dir")" ] || fail "no key should reach a stopped agent"
   pass "fm-control interrupt: refuses when no agent is running rather than keying a shell"
@@ -991,7 +991,7 @@ test_ambiguous_endpoint_refuses() {
   add_task "$dir" t1 claude
   alive_as "$dir" some-unrelated-process
   out=$(run_control "$dir" t1 exit); rc=$?
-  expect_code 1 "$rc" "an unattributed endpoint should refuse" "$out"
+  expect_code 1 "$rc" "an unattributed endpoint should refuse"
   assert_contains "$out" "positively classified" "the refusal should name the missing attribution"
   [ -z "$(literals "$dir")" ] || fail "an unattributed endpoint must receive no bytes"
   pass "fm-control exit: an endpoint whose process cannot be attributed refuses"
@@ -1236,7 +1236,7 @@ test_interrupt_revalidates_agent_after_acknowledgement_wait() {
     "$root" "$dir/wt-t1" > "$dir/home/state/t1.muse-session"
   out=$(FM_FAKE_MUSE_LOG="$log" FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK=1 \
     run_control "$dir" t1 interrupt); rc=$?
-  expect_code 1 "$rc" "interrupt should fail when the agent stops during acknowledgement polling" "$out"
+  expect_code 1 "$rc" "interrupt should fail when the agent stops during acknowledgement polling"
   assert_contains "$out" "agent is 'dead' after its interrupt key" \
     "the final postcondition should observe the agent after acknowledgement polling"
   assert_not_contains "$out" "interrupt-delivered" \
@@ -1274,7 +1274,7 @@ test_agent_that_does_not_stop_fails_closed() {
   out=$(env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
     FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
     "$CONTROL" t1 exit 2>&1); rc=$?
-  expect_code 1 "$rc" "an agent that ignores its exit command should fail closed" "$out"
+  expect_code 1 "$rc" "an agent that ignores its exit command should fail closed"
   assert_contains "$out" "did not stop" "the failure should say the agent did not stop"
   assert_contains "$out" "exit-delivered t1 interrupt=delivered verified=agent-alive cancel=unconfirmed exit-command=delivered agent-state=alive exit=unconfirmed" \
     "the failure should distinguish delivered lifecycle input from the unconfirmed exit"
@@ -1513,7 +1513,7 @@ SH
   out=$(env PATH="$dir/stubborn-bin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     FM_CONTROL_POLL=0.01 FM_CONTROL_SETTLE_WAIT=0.02 FM_CONTROL_EXIT_WAIT=0.03 \
     "$CONTROL" t1 exit 2>&1); rc=$?
-  expect_code 1 "$rc" "unconfirmed exit must fail closed" "$out"
+  expect_code 1 "$rc" "unconfirmed exit must fail closed"
   assert_absent "$dir/home/state/t1.control-exit" "failed exit must not write control-exit"
 
   # Verified live stop records v1 marker with current spawn_gen and leaves .meta untouched.
