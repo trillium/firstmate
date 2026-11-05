@@ -821,8 +821,12 @@ os.execv(sys.executable, [sys.executable, "-c", "import sys,time; open(sys.argv[
     [ "$got" = "$expected" ] || fail "$shape argv routes disagree: provider '$got', ps '$expected'"
     args=${got##*$'\t'}
     case "$shape" in
-      one) suffix='--resume ' ;;
-      two) suffix='--resume  ' ;;
+      one)
+        [ "$(uname -s)" = Darwin ] && suffix='--resume ' || suffix='--resume'
+        ;;
+      two)
+        [ "$(uname -s)" = Darwin ] && suffix='--resume  ' || suffix='--resume'
+        ;;
       middle) suffix='aa  bb' ;;
       space) suffix='tail ' ;;
     esac
