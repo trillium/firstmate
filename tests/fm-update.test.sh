@@ -250,14 +250,8 @@ test_dead_secondmate_gets_no_action() {
   pass "T3d an already-stopped secondmate is left to startup recovery"
 }
 
-# --- T3e: a legacy remote advance still restarts ---------------------------
-# The host's instr= suffix is reporting detail; the parent no longer routes on it,
-# so an older host that cannot report a diff can no longer suppress the restart.
-test_legacy_remote_advance_restarts() {
-  local w out fake_ssh
-  w=$(new_world t3e)
-  fake_ssh="$w/fakebin/fake-ssh"
-  cat > "$fake_ssh" <<'SH'
+write_remote_update_fake_ssh() {  # <path>
+  cat > "$1" <<'SH'
 #!/usr/bin/env bash
 set -u
 cat > /dev/null
@@ -270,12 +264,30 @@ decode() { printf '%s' "$1" | base64 --decode 2>/dev/null || printf '%s' "$1" | 
 rargs=()
 while IFS= read -r -d '' a; do rargs+=("$a"); done < <(decode "$argv_b64")
 case "${rargs[1]:-}" in
-  update) printf 'synced: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+  update)
+    case "${FM_REMOTE_UPDATE_FIXTURE:-legacy}" in
+      legacy) printf 'synced: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+      synced-warning) printf 'synced: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ntrailing updater warning\n' ;;
+      current-warning) printf 'current: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ntrailing updater warning\n' ;;
+      no-result) printf 'trailing updater warning\n' ;;
+      *) exit 92 ;;
+    esac
+    ;;
   state) printf 'alive\n' ;;
   *) exit 91 ;;
 esac
 SH
-  chmod +x "$fake_ssh"
+  chmod +x "$1"
+}
+
+# --- T3e: a legacy remote advance still restarts ---------------------------
+# The host's instr= suffix is reporting detail; the parent no longer routes on it,
+# so an older host that cannot report a diff can no longer suppress the restart.
+test_legacy_remote_advance_restarts() {
+  local w out fake_ssh
+  w=$(new_world t3e)
+  fake_ssh="$w/fakebin/fake-ssh"
+  write_remote_update_fake_ssh "$fake_ssh"
   cat > "$w/home/state/sm1.meta" <<EOF
 window=remote:sm1
 endpoint_task_id=sm1
@@ -299,6 +311,61 @@ EOF
   assert_contains "$out" "nudge-secondmates: none" \
     "a restarted remote mate must not also be steered"
   pass "T3e a legacy remote advance still restarts the live remote mate"
+}
+
+# --- T3f: remote result lines survive trailing diagnostics -----------------
+test_remote_result_ignores_trailing_diagnostics() {
+  local fixture expected w out fake_ssh
+  for fixture in synced-warning current-warning; do
+    w=$(new_world "t3f-$fixture")
+    fake_ssh="$w/fakebin/fake-ssh"
+    write_remote_update_fake_ssh "$fake_ssh"
+    cat > "$w/home/state/sm1.meta" <<EOF
+window=remote:sm1
+endpoint_task_id=sm1
+worktree=/srv/sm1
+project=/srv/sm1
+harness=claude
+kind=secondmate
+home=/srv/sm1
+remote_host=remote-mac
+remote_backend=herdr
+EOF
+    printf -- '- sm1 - remote domain (host: remote-mac; root: /srv/fm; home: /srv/sm1; scope: things; projects: p; added 2026-09-03)\n' \
+      > "$w/home/data/secondmates.md"
+
+    out=$(FM_TEST_SSH_BIN="$fake_ssh" FM_REMOTE_UPDATE_FIXTURE="$fixture" run_update "$w")
+    case "$fixture" in
+      synced-warning) expected='remote secondmate sm1: updated on remote-mac' ;;
+      current-warning) expected='remote secondmate sm1: already current on remote-mac' ;;
+    esac
+    assert_contains "$out" "$expected" "$fixture result was not accepted"
+    assert_contains "$out" 'restart-secondmates: fm-sm1' "$fixture result did not claim restart"
+  done
+
+  w=$(new_world t3f-no-result)
+  fake_ssh="$w/fakebin/fake-ssh"
+  write_remote_update_fake_ssh "$fake_ssh"
+  cat > "$w/home/state/sm1.meta" <<EOF
+window=remote:sm1
+endpoint_task_id=sm1
+worktree=/srv/sm1
+project=/srv/sm1
+harness=claude
+kind=secondmate
+home=/srv/sm1
+remote_host=remote-mac
+remote_backend=herdr
+EOF
+  printf -- '- sm1 - remote domain (host: remote-mac; root: /srv/fm; home: /srv/sm1; scope: things; projects: p; added 2026-09-03)\n' \
+    > "$w/home/data/secondmates.md"
+  out=$(PATH="$w/fakebin:$PATH" FM_FAKE_DIR="$w/fake" FM_SSH_BIN="$fake_ssh" \
+    FM_REMOTE_UPDATE_FIXTURE=no-result FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" "$UPDATE" 2>&1)
+  assert_contains "$out" 'malformed update result: trailing updater warning' \
+    "a missing result line did not report its trailing output"
+  assert_contains "$out" 'restart-secondmates: none' \
+    "a missing result line incorrectly claimed restart"
+  pass "T3f remote result parsing tolerates diagnostics and exposes malformed output"
 }
 
 # --- T4: dirty secondmate is skipped, its edit preserved -------------------
@@ -697,6 +764,7 @@ test_bin_only_advance_restarts
 test_unprovable_runtime_gets_fallback_nudge
 test_dead_secondmate_gets_no_action
 test_legacy_remote_advance_restarts
+test_remote_result_ignores_trailing_diagnostics
 test_dirty_secondmate_skipped
 test_diverged_secondmate_skipped
 test_squash_merged_divergence_reconciles
