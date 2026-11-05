@@ -39,6 +39,9 @@
 #   parent_status=          absolute path of parent state/<task_id>.status
 #   parent_status_scan_signature=
 #   request_summary=        short sanitized summary (no secrets by design)
+#   closes_corrs=           comma-separated same-task corr ids a closure ask
+#                           (confirm, close, or retire) named that were still
+#                           unresolved at creation; empty otherwise
 #   created_epoch=          when the expectation was created
 #   delivered_epoch=        when the marked request was confirmed delivered
 #                           (empty until delivery; delivery never resolves)
@@ -66,7 +69,9 @@
 #                           escalation was closed again (see the escalation
 #                           lifecycle note below); empty until then
 #   resolved_epoch=
-#   resolved_via=           status | document | helper | empty
+#   resolved_via=           status | document | helper | retirement-moot | empty
+#   moot_evidence=          recorded reason for a retirement-moot close; empty
+#                           until then
 #   wrong_home_hits=        count of corr sightings under the secondmate home
 #   wrong_home_first_sighting= encoded path:line identity of the first sighting
 #   wrong_home_sightings=   comma-separated encoded path:line identities
@@ -109,6 +114,19 @@
 # phase, is never reset. Without this, a wake retried only through its owner
 # (bin/fm-backlog-handoff.sh's receiver wake) stayed refused forever once the
 # watcher escalated between the lost transport and the next resume.
+#
+# Retirement settlement (fm_pending_reply_settle_retirement_moot): a delivered
+# closure ask whose closes_corrs are all now resolved is not unanswered work.
+# Only a request that asks to confirm, close, or retire records closes_corrs.
+# A closure-shaped ask that also requests new work is still settled once every
+# cited reply is resolved. A request that does not ask to confirm, close, or
+# retire stays blocking even when it names a corr. Settlement sets
+# phase=resolved, resolved_via=retirement-moot, and moot_evidence, leaves the
+# file in place, and closes an escalation that record opened. A record with no
+# closes_corrs, a still-unresolved cited reply, or no delivered_epoch is left
+# untouched. bin/fm-teardown.sh runs this before the non-forced retirement
+# refusal. It does not delete records; successful retirement cleanup still
+# removes them afterward.
 #
 # Sourced by bin/fm-send.sh, bin/fm-watch.sh, bin/fm-secondmate-report.sh, and
 # tests. No side effects on source. set -u / set -e safe.
@@ -328,11 +346,47 @@ fm_pending_reply_embed_corr() {  # <message> <corr_id> <result-var>
   printf -v "$result_var" '%s' "${FM_FROMFIRST_MARK}${token} ${body}"
 }
 
+# 0 when <text> asks to confirm, close, or retire named replies.
+fm_pending_reply_request_is_closure_ask() {  # <text>
+  if printf '%s' "$1" | grep -Eqi \
+    '(^|[^[:alpha:]])(confirm|confirms|confirmed|confirmation|close|closed|closing|retire|retiring|retirement)([^[:alpha:]]|$)'; then
+    return 0
+  fi
+  return 1
+}
+
+# Corr ids of same-task replies a closure ask named that are still unresolved.
+# Prints a comma-separated list, or nothing. Always returns 0.
+fm_pending_reply_closes_corrs_value() {  # <state-dir> <task_id> <text>
+  local state=$1 task_id=$2 text=$3 token corr rec phase owner seen out=''
+  seen=' '
+  fm_pending_reply_request_is_closure_ask "$text" || {
+    printf '%s' ''
+    return 0
+  }
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
+    corr=$(printf '%s' "$token" | cut -d= -f2- | tr 'A-F' 'a-f')
+    printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || continue
+    case "$seen" in *" $corr "*) continue ;; esac
+    printf '%s' "$text" | grep -Eqi "(^|[^[:alnum:]_])corr=${corr}([^[:alnum:]_]|$)" || continue
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    [ -f "$rec" ] && [ ! -L "$rec" ] || continue
+    owner=$(fm_pending_reply_get "$rec" task_id)
+    [ "$owner" = "$task_id" ] || continue
+    phase=$(fm_pending_reply_get "$rec" phase)
+    [ "$phase" != resolved ] || continue
+    seen="$seen$corr "
+    if [ -n "$out" ]; then out="$out,$corr"; else out=$corr; fi
+  done < <(printf '%s' "$text" | grep -oE "$FM_PENDING_REPLY_CORR_RE" || true)
+  printf '%s' "$out"
+}
+
 # Create a durable pending-reply expectation. Prints corr_id on success.
 # Does not deliver anything. Fails if parent paths cannot be prepared.
 fm_pending_reply_create() {  # <parent-home> <state-dir> <task_id> <request-text>
   local parent_home=$1 state=$2 task_id=$3 request_text=$4
-  local dir rec corr now summary status_path tmp
+  local dir rec corr now summary status_path tmp closes
   [ -n "$parent_home" ] && [ -n "$state" ] && [ -n "$task_id" ] || return 2
   dir=$(fm_pending_reply_dir "$state")
   mkdir -p "$dir" || return 1
@@ -348,6 +402,7 @@ fm_pending_reply_create() {  # <parent-home> <state-dir> <task_id> <request-text
   fi
   now=$(fm_pending_reply_now)
   summary=$(fm_pending_reply_summarize "$request_text")
+  closes=$(fm_pending_reply_closes_corrs_value "$state" "$task_id" "$request_text")
   status_path="$state/${task_id}.status"
   # Prefer absolute parent_status when parent_home/state resolve.
   case "$status_path" in
@@ -367,6 +422,7 @@ parent_home=$parent_home
 parent_status=$status_path
 parent_status_scan_signature=
 request_summary=$summary
+closes_corrs=$closes
 created_epoch=$now
 delivered_epoch=
 phase=awaiting_report
@@ -382,6 +438,7 @@ recovery_turn_completed_epoch=
 escalated_epoch=
 resolved_epoch=
 resolved_via=
+moot_evidence=
 wrong_home_hits=0
 wrong_home_first_sighting=
 wrong_home_sightings=
@@ -1299,6 +1356,105 @@ EOF
   fi
   now=$(fm_pending_reply_now)
   fm_pending_reply_set "$rec" escalation_closed_epoch "$now"
+}
+
+# 0 when <record> is a delivered confirmation ask whose cited replies are all
+# resolved. 1 otherwise. Does not modify the record.
+fm_pending_reply_retirement_moot_eligible() {  # <state-dir> <record-path>
+  local state=$1 rec=$2 closes corr cited phase owner task_id delivered cited_id rest
+  [ -f "$rec" ] && [ ! -L "$rec" ] || return 1
+  phase=$(fm_pending_reply_get "$rec" phase)
+  [ "$phase" != resolved ] || return 1
+  delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
+  case "$delivered" in ''|*[!0-9]*) return 1 ;; esac
+  closes=$(fm_pending_reply_get "$rec" closes_corrs)
+  printf '%s' "$closes" | grep -Eq '^[a-f0-9]{16}(,[a-f0-9]{16})*$' || return 1
+  task_id=$(fm_pending_reply_get "$rec" task_id)
+  [ -n "$task_id" ] || return 1
+  rest=$closes
+  while [ -n "$rest" ]; do
+    corr=${rest%%,*}
+    rest=${rest#"$corr"}
+    rest=${rest#,}
+    cited=$(fm_pending_reply_path "$state" "$corr")
+    [ -f "$cited" ] && [ ! -L "$cited" ] || return 1
+    owner=$(fm_pending_reply_get "$cited" task_id)
+    [ "$owner" = "$task_id" ] || return 1
+    [ "$(fm_pending_reply_get "$cited" phase)" = resolved ] || return 1
+    cited_id=$(fm_pending_reply_get "$cited" corr_id)
+    [ -z "$cited_id" ] || [ "$cited_id" = "$corr" ] || return 1
+  done
+  return 0
+}
+
+_fm_pending_reply_settle_one_retirement_moot_locked() {  # <state-dir> <corr_id>
+  local state=$1 corr=$2 rec closes now task_id evidence
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_retirement_moot_eligible "$state" "$rec" || return 2
+  closes=$(fm_pending_reply_get "$rec" closes_corrs)
+  task_id=$(fm_pending_reply_get "$rec" task_id)
+  now=$(fm_pending_reply_now)
+  evidence="cited replies already resolved: $closes"
+  fm_pending_reply_set "$rec" phase resolved || return 1
+  fm_pending_reply_set "$rec" resolved_epoch "$now" || return 1
+  fm_pending_reply_set "$rec" resolved_via "retirement-moot" || return 1
+  fm_pending_reply_set "$rec" moot_evidence "$evidence" || return 1
+  # Same escalation close a correlated report uses. A failed close stays
+  # retryable from the watcher tick, matching fm_pending_reply_try_resolve.
+  _fm_pending_reply_close_escalation_locked "$state" "$corr" || true
+  echo "settled moot confirmation reply $corr for secondmate $task_id: $evidence" >&2
+  return 0
+}
+
+# Record one moot confirmation ask closed. 0 settled, 2 no longer eligible, 1 failed.
+fm_pending_reply_settle_one_retirement_moot() {  # <state-dir> <corr_id>
+  local state=$1 corr=$2 lock rc=0
+  local STATE FM_WAKE_QUEUE FM_WAKE_QUEUE_LOCK
+  printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 1
+  STATE=$state
+  lock="$state/.pending-reply-$corr.lock"
+  # Deliberately undirected: bin/fm-wake-lib.sh is expanded once at the
+  # fm_pending_reply_try_resolve site; each directed site would re-expand its
+  # whole transitive graph under ShellCheck's external-source traversal.
+  . "$_FM_PENDING_REPLY_LIB_DIR/fm-wake-lib.sh"
+  fm_lock_acquire_wait "$lock" || return 1
+  _fm_pending_reply_settle_one_retirement_moot_locked "$state" "$corr" || rc=$?
+  fm_lock_release "$lock" || return 1
+  return "$rc"
+}
+
+# Close every delivered confirmation ask for <task_id> whose cited replies are
+# already resolved, repeating so a later ask that only cited an earlier
+# confirmation ask settles in the same call. Never deletes a record.
+# Returns 0 when the pass finishes, including when nothing was eligible.
+fm_pending_reply_settle_retirement_moot() {  # <state-dir> <task_id>
+  local state=$1 task_id=$2 dir rec corr progress guard rc
+  [ -n "$state" ] && [ -n "$task_id" ] || return 2
+  dir=$(fm_pending_reply_dir "$state")
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 0
+  progress=1
+  guard=0
+  while [ "$progress" = 1 ]; do
+    progress=0
+    guard=$((guard + 1))
+    [ "$guard" -le 100 ] || return 1
+    for rec in "$dir"/*; do
+      [ -e "$rec" ] || [ -L "$rec" ] || continue
+      [ -f "$rec" ] && [ ! -L "$rec" ] || return 1
+      [ "$(fm_pending_reply_get "$rec" task_id)" = "$task_id" ] || continue
+      fm_pending_reply_retirement_moot_eligible "$state" "$rec" || continue
+      corr=$(fm_pending_reply_get "$rec" corr_id)
+      [ -n "$corr" ] || corr=${rec##*/}
+      rc=0
+      fm_pending_reply_settle_one_retirement_moot "$state" "$corr" || rc=$?
+      case "$rc" in
+        0) progress=1 ;;
+        2) ;;
+        *) return 1 ;;
+      esac
+    done
+  done
+  return 0
 }
 
 # Escalate once after a missed recovery report or failed delivery outcome.
