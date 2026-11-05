@@ -2282,6 +2282,36 @@ fm_composer_dialog_sink_release() {
   fi
 }
 
+# The same subshell limit applies to the screen itself, so the exact text a
+# classify read is written to FM_COMPOSER_SCREEN_SINK when that path is set.
+# The latest classify wins, which is the read that produced the verdict a
+# caller then acts on. The verdict is unchanged and no extra pane read happens.
+fm_composer_note_screen() {  # <screen>
+  [ -n "${FM_COMPOSER_SCREEN_SINK:-}" ] || return 0
+  printf '%s' "$1" > "$FM_COMPOSER_SCREEN_SINK" 2>/dev/null || true
+}
+
+# fm_composer_refusal_capture: persist the screen the latest classify saw under
+# <data-dir>/<task-id>/composer-refusals/ and print the file path, so a refused
+# lifecycle or doorbell action can be diagnosed afterwards. Only the newest
+# FM_COMPOSER_REFUSAL_KEEP (default 5) files per task are kept. Returns 1 and
+# prints nothing when no screen was captured or the file cannot be written.
+fm_composer_refusal_capture() {  # <data-dir> <task-id> <label>
+  local dir=$1/$2/composer-refusals keep=${FM_COMPOSER_REFUSAL_KEEP:-5} file f total i=0
+  [ -n "${FM_COMPOSER_SCREEN_SINK:-}" ] && [ -s "$FM_COMPOSER_SCREEN_SINK" ] || return 1
+  mkdir -p "$dir" 2>/dev/null || return 1
+  file=$dir/$(date +%s)-$$-$3.txt
+  cp "$FM_COMPOSER_SCREEN_SINK" "$file" 2>/dev/null || return 1
+  # Names lead with the epoch, so the glob's lexical order is oldest first.
+  set -- "$dir"/*.txt
+  total=$#
+  for f in "$@"; do
+    i=$((i + 1))
+    [ $((total - i)) -ge "$keep" ] && rm -f "$f"
+  done
+  printf '%s' "$file"
+}
+
 # Hermes TUI 0.21.7: profile-prefixed ❯ prompt immediately below the status
 # rule; placeholder text is dim, while typed drafts are bright. Identity is
 # required, and dialogs, wrapped drafts, non-ready status and unstyled reads
@@ -2313,6 +2343,7 @@ fm_composer_classify_screen() {  # <caps> <screen> [cursor_row] [identity]
   local styled=0 cursor=0 has_identity=0 cortex_proven=0 cortex_ask=0 kv plain
   # Note the dialog before any early return so a pending picker is still named.
   fm_composer_note_blocking_dialog "$screen" || true
+  fm_composer_note_screen "$screen"
   while IFS= read -r kv; do
     case "$kv" in
       styled=1) styled=1 ;;

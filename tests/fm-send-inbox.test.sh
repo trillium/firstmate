@@ -224,7 +224,7 @@ test_resend_enqueues_new_sequence() {
 }
 
 test_pending_composer_skips_ring_advisorily() {
-  local dir err rc
+  local dir err rc saved
   dir=$(setup_case pendingskip)
   err="$dir/send.err"
   run_send "$dir" "$err" FM_FAKE_TMUX_COMPOSER=pending -- t1 "steer past a stuck composer"
@@ -234,7 +234,28 @@ test_pending_composer_skips_ring_advisorily() {
   [ ! -s "$dir/send.log" ] || fail "a visibly pending composer should skip the ring:"$'\n'"$(cat "$dir/send.log")"
   assert_contains "$(cat "$err")" "watcher will re-ring" \
     "the skip notice should point at the re-ring"
+  # The skip names a saved copy of exactly the screen the classifier read.
+  saved=$(sed -n 's/.*the classified screen is saved at //p' "$err")
+  [ -n "$saved" ] || fail "the skip notice should name the saved screen: $(cat "$err")"
+  case "$saved" in
+  "$dir/home/data/t1/composer-refusals/"*) ;;
+  *) fail "the saved screen should live in the task data dir, got: $saved" ;;
+  esac
+  [ "$(cat "$saved")" = "$(printf '╭──────────────╮\n│ leftover txt │\n╰──────────────╯')" ] \
+    || fail "the saved screen differs from the one classified: $(cat "$saved")"
   pass "fm-send inbox: a visibly pending composer skips the ring, and the steer stays durably sent"
+}
+
+test_refusal_captures_stay_bounded() {
+  local dir err i n
+  dir=$(setup_case capbound)
+  err="$dir/send.err"
+  for i in 1 2 3 4 5 6 7; do
+    run_send "$dir" "$err" FM_FAKE_TMUX_COMPOSER=pending FM_COMPOSER_REFUSAL_KEEP=3 -- t1 "steer $i"
+  done
+  n=$(find "$dir/home/data/t1/composer-refusals" -type f | wc -l | tr -d ' ')
+  [ "$n" = 3 ] || fail "only the newest 3 captures should be kept, found $n"
+  pass "fm-send inbox: repeated skips keep only the newest few saved screens"
 }
 
 test_failed_ring_is_still_sent() {
@@ -539,6 +560,7 @@ test_deep_home_doorbell_stays_short
 test_multiline_steer_is_legal
 test_resend_enqueues_new_sequence
 test_pending_composer_skips_ring_advisorily
+test_refusal_captures_stay_bounded
 test_failed_ring_is_still_sent
 test_fire_and_forget_unlanded_ring_owes_one_retry
 test_fire_and_forget_retry_stays_off_without_the_flag
