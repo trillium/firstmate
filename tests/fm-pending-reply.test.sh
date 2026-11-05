@@ -38,6 +38,11 @@
 #      the decision; a retry while that decision is still open appends nothing
 #  19. A request summary keeps accented letters, drops control characters, and
 #      caps at 120 characters without splitting one under any caller locale
+#  20. A delivered confirmation ask whose cited replies are already resolved is
+#      recorded closed at retirement, including a later ask that only cited that
+#      confirmation. An undelivered ask, a still-open cited reply, another
+#      task's corr, a request that does not ask to confirm, close, or retire,
+#      and a pair of asks that cite only each other stay unresolved
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -2123,6 +2128,206 @@ test_summary_keeps_accents_and_caps_by_character() {
   pass "the summary keeps accented letters, drops control characters, and caps by character"
 }
 
+# Record fields the retirement settlement reads back.
+reply_field() {  # <state> <corr> <key>
+  fm_pending_reply_get "$(fm_pending_reply_path "$1" "$2")" "$3"
+}
+
+test_retirement_confirmation_ask_settles_without_dropping_unanswered_work() {
+  local home state old genuine ask chain follow redo finished undelivered
+  local other_corr foreign both cycle_a cycle_b rec payload err closed
+  home=$(setup_parent retire-moot)
+  state="$home/state"
+
+  old=$(fm_pending_reply_create "$home" "$state" hibit "re-read the calendar")
+  genuine=$(fm_pending_reply_create "$home" "$state" hibit "audit the ledger")
+  [ -n "$old" ] && [ -n "$genuine" ] || fail "could not create the open replies"
+  fm_pending_reply_mark_delivered "$state" "$old" || fail "could not deliver the cited reply"
+  fm_pending_reply_mark_delivered "$state" "$genuine" || fail "could not deliver the unanswered reply"
+
+  ask=$(fm_pending_reply_create "$home" "$state" hibit \
+    "confirm or close the open replies so retirement can proceed corr=$old")
+  [ -n "$ask" ] || fail "could not create the confirmation ask"
+  fm_pending_reply_mark_delivered "$state" "$ask" || fail "could not deliver the confirmation ask"
+  [ "$(reply_field "$state" "$ask" closes_corrs)" = "$old" ] \
+    || fail "a confirmation ask must record the still-open reply it names"
+
+  chain=$(fm_pending_reply_create "$home" "$state" hibit "confirm corr=$ask")
+  [ -n "$chain" ] || fail "could not create the later confirmation ask"
+  fm_pending_reply_mark_delivered "$state" "$chain" || fail "could not deliver the later confirmation ask"
+  [ "$(reply_field "$state" "$chain" closes_corrs)" = "$ask" ] \
+    || fail "a later confirmation ask must record the earlier ask it names"
+
+  both=$(fm_pending_reply_create "$home" "$state" hibit \
+    "confirm corr=$old and corr=$genuine before retirement")
+  [ -n "$both" ] || fail "could not create the two-reply confirmation"
+  fm_pending_reply_mark_delivered "$state" "$both" || fail "could not deliver the two-reply confirmation"
+  [ "$(reply_field "$state" "$both" closes_corrs)" = "$old,$genuine" ] \
+    || fail "a confirmation must record every still-open reply it names, in order"
+
+  follow=$(fm_pending_reply_create "$home" "$state" hibit "also finish corr=$genuine")
+  redo=$(fm_pending_reply_create "$home" "$state" hibit "please redo the open audit corr=$genuine")
+  [ -n "$follow" ] && [ -n "$redo" ] || fail "could not create the non-closure asks"
+  fm_pending_reply_mark_delivered "$state" "$follow" || fail "could not deliver the follow-up"
+  fm_pending_reply_mark_delivered "$state" "$redo" || fail "could not deliver the redo"
+  [ -z "$(reply_field "$state" "$follow" closes_corrs)" ] \
+    || fail "a request that does not ask to confirm, close, or retire must not record closes_corrs"
+  [ -z "$(reply_field "$state" "$redo" closes_corrs)" ] \
+    || fail "a redo must not record closes_corrs just because it names a corr"
+
+  undelivered=$(fm_pending_reply_create "$home" "$state" hibit "confirm corr=$genuine")
+  [ -n "$undelivered" ] || fail "could not create the undelivered confirmation"
+  [ "$(reply_field "$state" "$undelivered" closes_corrs)" = "$genuine" ] \
+    || fail "an undelivered confirmation still records the open reply it names"
+
+  other_corr=$(fm_pending_reply_create "$home" "$state" other "another mate's open work")
+  [ -n "$other_corr" ] || fail "could not create the other task's reply"
+  fm_pending_reply_mark_delivered "$state" "$other_corr" || fail "could not deliver the other task's reply"
+  foreign=$(fm_pending_reply_create "$home" "$state" hibit "confirm corr=$other_corr")
+  [ -n "$foreign" ] || fail "could not create the cross-task confirmation"
+  fm_pending_reply_mark_delivered "$state" "$foreign" || fail "could not deliver the cross-task confirmation"
+  [ -z "$(reply_field "$state" "$foreign" closes_corrs)" ] \
+    || fail "a confirmation must not record another task's corr"
+
+  cycle_a=$(fm_pending_reply_create "$home" "$state" hibit "hold the first retirement note")
+  cycle_b=$(fm_pending_reply_create "$home" "$state" hibit "hold the second retirement note")
+  [ -n "$cycle_a" ] && [ -n "$cycle_b" ] || fail "could not create the citation cycle"
+  fm_pending_reply_mark_delivered "$state" "$cycle_a" || fail "could not deliver the first cycle ask"
+  fm_pending_reply_mark_delivered "$state" "$cycle_b" || fail "could not deliver the second cycle ask"
+  fm_pending_reply_set "$(fm_pending_reply_path "$state" "$cycle_a")" closes_corrs "$cycle_b" \
+    || fail "could not point the first cycle ask at the second"
+  fm_pending_reply_set "$(fm_pending_reply_path "$state" "$cycle_b")" closes_corrs "$cycle_a" \
+    || fail "could not point the second cycle ask at the first"
+
+  fm_pending_reply_settle_retirement_moot "$state" hibit \
+    || fail "settlement must succeed while the cited replies are still open"
+  [ "$(phase_of "$state" "$ask")" = awaiting_report ] \
+    || fail "a confirmation must stay open until its cited reply is resolved"
+  [ "$(phase_of "$state" "$chain")" = awaiting_report ] \
+    || fail "a later confirmation must stay open until the ask it names is resolved"
+  [ "$(phase_of "$state" "$genuine")" = awaiting_report ] \
+    || fail "unanswered work must stay open"
+
+  printf 'done [corr=%s]: confirmed\n' "$old" >> "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$old" || fail "the cited reply should resolve from its report"
+
+  finished=$(fm_pending_reply_create "$home" "$state" hibit "confirm the finished report corr=$old")
+  [ -n "$finished" ] || fail "could not create the late confirmation"
+  fm_pending_reply_mark_delivered "$state" "$finished" || fail "could not deliver the late confirmation"
+  [ -z "$(reply_field "$state" "$finished" closes_corrs)" ] \
+    || fail "a confirmation created after its cited reply resolved must not record that reply"
+
+  rec=$(fm_pending_reply_path "$state" "$ask")
+  fm_pending_reply_set "$rec" phase escalated || fail "could not mark the confirmation escalated"
+  fm_pending_reply_set "$rec" escalated_epoch 12001 || fail "could not record the escalation time"
+  payload=$(fm_pending_reply_escalation_payload "$rec" missed) \
+    || fail "could not build the escalation note"
+  printf 'blocked [key=pending-reply-%s]: %s\n' "$ask" "$payload" >> "$state/hibit.status"
+
+  err=$(fm_pending_reply_settle_retirement_moot "$state" hibit 2>&1) \
+    || fail "settlement must close the moot confirmation while unanswered work remains"
+  assert_contains "$err" \
+    "settled moot confirmation reply $ask for secondmate hibit: cited replies already resolved: $old" \
+    "settlement must name the confirmation it closed"
+  assert_contains "$err" \
+    "settled moot confirmation reply $chain for secondmate hibit: cited replies already resolved: $ask" \
+    "the same pass must close a confirmation that only cited the moot ask"
+  [ -f "$rec" ] || fail "settlement must keep the confirmation record"
+  [ "$(reply_field "$state" "$ask" phase)" = resolved ] || fail "the moot confirmation must be resolved"
+  [ "$(reply_field "$state" "$ask" resolved_via)" = retirement-moot ] \
+    || fail "the moot confirmation must record retirement-moot"
+  [ "$(reply_field "$state" "$ask" moot_evidence)" = "cited replies already resolved: $old" ] \
+    || fail "the moot confirmation must record which replies it closed"
+  [ "$(phase_of "$state" "$chain")" = resolved ] || fail "the later confirmation must be resolved in the same pass"
+  [ "$(reply_field "$state" "$chain" resolved_via)" = retirement-moot ] \
+    || fail "the later confirmation must record retirement-moot"
+  [ -f "$(fm_pending_reply_path "$state" "$chain")" ] || fail "settlement must keep the later confirmation"
+  grep -Fq "resolved [key=pending-reply-$ask]" "$state/hibit.status" \
+    || fail "settlement must close the escalation the confirmation opened"
+  [ "$(phase_of "$state" "$both")" = awaiting_report ] \
+    || fail "a confirmation that still cites open work must stay open"
+  [ "$(phase_of "$state" "$genuine")" = awaiting_report ] \
+    || fail "unanswered work must stay open after the moot confirmation closes"
+  [ "$(phase_of "$state" "$follow")" = awaiting_report ] \
+    || fail "a non-closure follow-up must stay open"
+  [ "$(phase_of "$state" "$redo")" = awaiting_report ] \
+    || fail "a redo must stay open"
+  [ "$(phase_of "$state" "$finished")" = awaiting_report ] \
+    || fail "a confirmation of an already-finished reply must stay open"
+  [ "$(phase_of "$state" "$undelivered")" = awaiting_report ] \
+    || fail "an undelivered confirmation must stay open"
+  [ "$(phase_of "$state" "$foreign")" = awaiting_report ] \
+    || fail "a cross-task confirmation must stay open"
+  [ "$(phase_of "$state" "$cycle_a")" = awaiting_report ] \
+    || fail "a citation cycle must stay open"
+  [ "$(phase_of "$state" "$cycle_b")" = awaiting_report ] \
+    || fail "the other side of a citation cycle must stay open"
+  closed=$(grep -cF "resolved [key=pending-reply-$ask]" "$state/hibit.status")
+  fm_pending_reply_settle_retirement_moot "$state" hibit \
+    || fail "a second settlement must succeed"
+  [ "$(grep -cF "resolved [key=pending-reply-$ask]" "$state/hibit.status")" = "$closed" ] \
+    || fail "a second settlement must not close the escalation again"
+  [ "$(phase_of "$state" "$ask")" = resolved ] || fail "the moot confirmation must stay resolved"
+
+  printf 'done [corr=%s]: ledger audited\n' "$genuine" >> "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$genuine" || fail "the unanswered reply should resolve from its report"
+  err=$(fm_pending_reply_settle_retirement_moot "$state" hibit 2>&1) \
+    || fail "settlement must close the confirmation once every cited reply is resolved"
+  assert_contains "$err" \
+    "settled moot confirmation reply $both for secondmate hibit: cited replies already resolved: $old,$genuine" \
+    "the two-reply confirmation must close only once both replies are resolved"
+  [ "$(phase_of "$state" "$both")" = resolved ] || fail "the two-reply confirmation must be resolved"
+  [ "$(phase_of "$state" "$follow")" = awaiting_report ] \
+    || fail "resolving the named reply must not close a non-closure follow-up"
+  [ "$(phase_of "$state" "$undelivered")" = awaiting_report ] \
+    || fail "resolving the named reply must not close an undelivered confirmation"
+  [ "$(phase_of "$state" "$genuine")" = resolved ] || fail "the reported reply must stay resolved"
+  pass "retirement closes a delivered confirmation once its cited replies are resolved, and leaves unanswered work open"
+}
+
+test_fm_send_closure_ask_records_the_open_reply_it_names() {
+  local dir fb log home state old rec got corr follow plain rc
+  dir="$TMP_ROOT/send-closure"
+  mkdir -p "$dir"
+  fb=$(make_stubs "$dir")
+  log="$dir/send.log"
+  home=$(setup_parent send-closure)
+  state="$home/state"
+  fm_write_secondmate_meta "$state/hibit.meta" "$home/sm" "sess:fm-hibit"
+  old=$(fm_pending_reply_create "$home" "$state" hibit "re-read the calendar")
+  [ -n "$old" ] || fail "could not create the open reply"
+  fm_pending_reply_mark_delivered "$state" "$old" || fail "could not deliver the open reply"
+  # An escalated delivered reply is not reusable, so the send mints a new record
+  # instead of attaching to the reply the message names. That is the retirement
+  # ask that used to block teardown.
+  fm_pending_reply_set "$(fm_pending_reply_path "$state" "$old")" phase escalated \
+    || fail "could not mark the open reply escalated"
+  run_send "$fb" "$home" "$log" hibit "confirm the open reply corr=$old so retirement can proceed"
+  rc=$?
+  expect_code 0 "$rc" "closure ask send should succeed"
+  got=$(latest_record_body "$home" hibit)
+  corr=$(fm_pending_reply_extract_corr "$got")
+  [ "$corr" != "$old" ] || fail "a closure ask must mint its own reply instead of reusing the cited one"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ "$(fm_pending_reply_get "$rec" closes_corrs)" = "$old" ] \
+    || fail "fm-send closure ask must record the open reply it names, got '$(fm_pending_reply_get "$rec" closes_corrs)'"
+  run_send "$fb" "$home" "$log" hibit "also finish the audit corr=$old"
+  rc=$?
+  expect_code 0 "$rc" "non-closure send should succeed"
+  got=$(latest_record_body "$home" hibit)
+  follow=$(fm_pending_reply_extract_corr "$got")
+  [ "$follow" != "$old" ] || fail "a non-closure mention must still mint its own reply"
+  [ -z "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$follow")" closes_corrs)" ] \
+    || fail "a request that does not ask to confirm, close, or retire must not record closes_corrs"
+  run_send "$fb" "$home" "$log" hibit "note the weather"
+  rc=$?
+  expect_code 0 "$rc" "ordinary send should succeed"
+  plain=$(fm_pending_reply_extract_corr "$(latest_record_body "$home" hibit)")
+  [ -z "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$plain")" closes_corrs)" ] \
+    || fail "an ordinary send must record empty closes_corrs"
+  pass "fm-send records closes_corrs only for a closure ask that names an open reply"
+}
+
 # --- run --------------------------------------------------------------------
 
 test_normal_correlated_reply_resolves_once
@@ -2174,5 +2379,7 @@ test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
 test_same_kind_escalation_reopens_after_operator_close
 test_summary_keeps_accents_and_caps_by_character
+test_retirement_confirmation_ask_settles_without_dropping_unanswered_work
+test_fm_send_closure_ask_records_the_open_reply_it_names
 
 printf 'ok - all pending-reply tests passed\n'

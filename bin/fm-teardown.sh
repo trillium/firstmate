@@ -215,7 +215,10 @@
 # secondmate retirement, every parent pending-reply record for that id (resolved
 # leftovers included) and its delivery confirmation is removed so retired mates
 # cannot leave durable reply expectations behind. Non-forced retirement refuses
-# while any of those records is still unresolved. Teardown then discards child
+# while a record is still unresolved. Before that refusal, a delivered
+# confirmation ask whose cited replies are already resolved is recorded closed
+# and does not itself refuse; bin/fm-pending-reply-lib.sh owns that settlement.
+# Teardown then discards child
 # work, kills child runtime endpoints, and removes the retired home. Removing a
 # leased home releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
@@ -1173,9 +1176,14 @@ remote_pending_replies_cleanup() {
 
 # Refuse non-forced secondmate retirement while any parent pending-reply for
 # this id is still unresolved (local and remote share the gate).
+# Moot confirmation asks are settled first by fm_pending_reply_settle_retirement_moot.
 secondmate_unresolved_pending_replies_refuse() {
   local rec task_id phase
   [ -d "$STATE/pending-replies" ] || return 0
+  fm_pending_reply_settle_retirement_moot "$STATE" "$ID" || {
+    echo "REFUSED: secondmate $ID pending-reply settlement failed" >&2
+    return 1
+  }
   for rec in "$STATE/pending-replies"/*; do
     [ -f "$rec" ] || continue
     task_id=$(fm_meta_get "$rec" task_id)

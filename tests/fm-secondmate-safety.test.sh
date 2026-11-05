@@ -2069,6 +2069,111 @@ EOF
   pass "secondmate teardown raw-removes plain-clone homes, including a leaked read-only strip dir"
 }
 
+test_secondmate_teardown_settles_a_moot_confirmation_and_keeps_unanswered_work() {
+  local home subhome fakebin log capture out err ids old genuine ask teardown_rc
+  home="$TMP_ROOT/retire-loop-home"
+  subhome="$TMP_ROOT/retire-loop-subhome"
+  out="$TMP_ROOT/retire-loop.out"
+  err="$TMP_ROOT/retire-loop.err"
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  mark_firstmate_home "$subhome"
+  printf 'retireloop\n' > "$subhome/.fm-secondmate-home"
+  cat > "$home/state/retireloop.meta" <<EOF
+window=firstmate:fm-retireloop
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- retireloop - calendar domain (home: '"$subhome"'; scope: calendar domain; projects: alpha; added 2026-11-05)' > "$home/data/secondmates.md"
+  ids=$(FM_HOME="$home" bash -c '
+    . "$1"
+    home=$2
+    state="$home/state"
+    old=$(fm_pending_reply_create "$home" "$state" retireloop "re-read the calendar") || exit 1
+    genuine=$(fm_pending_reply_create "$home" "$state" retireloop "audit the ledger") || exit 1
+    fm_pending_reply_mark_delivered "$state" "$old" || exit 1
+    fm_pending_reply_mark_delivered "$state" "$genuine" || exit 1
+    ask=$(fm_pending_reply_create "$home" "$state" retireloop \
+      "confirm or close the open replies so retirement can proceed corr=$old") || exit 1
+    fm_pending_reply_mark_delivered "$state" "$ask" || exit 1
+    printf "%s %s %s\n" "$old" "$genuine" "$ask"
+  ' _ "$ROOT/bin/fm-pending-reply-lib.sh" "$home") || fail "could not seed the retirement replies"
+  # shellcheck disable=SC2086
+  set -- $ids
+  old=$1
+  genuine=$2
+  ask=$3
+  [ "${#old}" -eq 16 ] && [ "${#genuine}" -eq 16 ] && [ "${#ask}" -eq 16 ] \
+    || fail "seeded reply ids were not 16 hex chars: '$ids'"
+  grep -q "^closes_corrs=$old$" "$home/state/pending-replies/$ask" \
+    || fail "the confirmation ask did not record the open reply it names"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/retire-loop-fake")
+  log="$TMP_ROOT/retire-loop-fake/tmux.log"
+  capture="$TMP_ROOT/retire-loop-fake/pane.txt"
+
+  teardown_rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TREEHOUSE_RETURN_FAIL=1 \
+    "$ROOT/bin/fm-teardown.sh" retireloop >"$out" 2>"$err" || teardown_rc=$?
+  [ "$teardown_rc" -ne 0 ] || fail "teardown must refuse while the cited reply is still open"
+  grep -F "still has an unresolved routed reply" "$err" >/dev/null \
+    || fail "the refusal must name the unresolved reply"$'\n'"$(cat "$err")"
+  grep -F "settled moot confirmation reply $ask" "$err" >/dev/null \
+    && fail "teardown must not close a confirmation whose cited reply is still open"
+  grep -q '^phase=awaiting_report$' "$home/state/pending-replies/$ask" \
+    || fail "the confirmation must stay open while its cited reply is open"
+  [ -d "$subhome" ] || fail "a refused retirement removed the secondmate home"
+  [ -e "$home/state/retireloop.meta" ] || fail "a refused retirement cleared the parent record"
+
+  printf 'done [corr=%s]: confirmed\n' "$old" >> "$home/state/retireloop.status"
+  FM_HOME="$home" bash -c '
+    . "$1"
+    fm_pending_reply_try_resolve "$2" "$3"
+  ' _ "$ROOT/bin/fm-pending-reply-lib.sh" "$home/state" "$old" \
+    || fail "the cited reply should resolve from its report"
+
+  teardown_rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TREEHOUSE_RETURN_FAIL=1 \
+    "$ROOT/bin/fm-teardown.sh" retireloop >"$out" 2>"$err" || teardown_rc=$?
+  [ "$teardown_rc" -ne 0 ] || fail "teardown must still refuse while unanswered work remains"
+  grep -F "settled moot confirmation reply $ask for secondmate retireloop: cited replies already resolved: $old" "$err" >/dev/null \
+    || fail "teardown must record the moot confirmation closed"$'\n'"$(cat "$err")"
+  grep -F "still has an unresolved routed reply" "$err" >/dev/null \
+    || fail "unanswered work must still refuse retirement"$'\n'"$(cat "$err")"
+  [ -f "$home/state/pending-replies/$ask" ] || fail "the closed confirmation record must stay in place"
+  grep -q '^phase=resolved$' "$home/state/pending-replies/$ask" \
+    || fail "the moot confirmation must be resolved"
+  grep -q '^resolved_via=retirement-moot$' "$home/state/pending-replies/$ask" \
+    || fail "the moot confirmation must record how it closed"
+  grep -q "^moot_evidence=cited replies already resolved: $old$" "$home/state/pending-replies/$ask" \
+    || fail "the moot confirmation must record which reply it closed"
+  grep -q '^phase=awaiting_report$' "$home/state/pending-replies/$genuine" \
+    || fail "unanswered work must stay unresolved"
+  [ -d "$subhome" ] || fail "the remaining unanswered reply must keep the secondmate home"
+
+  printf 'done [corr=%s]: ledger audited\n' "$genuine" >> "$home/state/retireloop.status"
+  FM_HOME="$home" bash -c '
+    . "$1"
+    fm_pending_reply_try_resolve "$2" "$3"
+  ' _ "$ROOT/bin/fm-pending-reply-lib.sh" "$home/state" "$genuine" \
+    || fail "the unanswered reply should resolve from its report"
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TREEHOUSE_RETURN_FAIL=1 \
+    "$ROOT/bin/fm-teardown.sh" retireloop >"$out" 2>"$err" \
+    || fail "teardown must succeed once the unanswered reply is resolved"$'\n'"$(cat "$err")"
+  [ ! -d "$subhome" ] || fail "teardown did not remove the secondmate home"
+  [ ! -e "$home/state/retireloop.meta" ] || fail "teardown did not clear the parent record"
+  grep -F -- '- retireloop ' "$home/data/secondmates.md" >/dev/null \
+    && fail "teardown did not remove the registry route"
+  pass "retirement closes a delivered confirmation whose cited reply is resolved, and still refuses unanswered work"
+}
+
 test_secondmate_force_teardown_discards_child_work() {
   local home subhome childproj childwt fakebin log
   home="$TMP_ROOT/force-teardown-home"
@@ -3232,6 +3337,7 @@ test_secondmate_force_teardown_sweeps_nested_homes
 test_secondmate_force_teardown_preserves_nested_restore_status
 test_secondmate_teardown_refuses_failed_leased_home_return
 test_secondmate_teardown_removes_plain_clone_home_without_treehouse_return
+test_secondmate_teardown_settles_a_moot_confirmation_and_keeps_unanswered_work
 test_secondmate_force_teardown_discards_child_work
 test_secondmate_force_teardown_refuses_duplicated_child_slot
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
