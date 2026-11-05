@@ -755,6 +755,7 @@ test_relaunch_reuses_the_recorded_per_launch_account() {
     # shellcheck source=bin/fm-worker-account-lib.sh
     . "$REPO_ROOT/bin/fm-worker-account-lib.sh"
     # shellcheck disable=SC2030
+    # shellcheck disable=SC2030
     export HOME="$HOME_DIR/user-home"
     PATH="$FAKEBIN:$PATH" fm_worker_account_select claude "$HOME_DIR/config" "" claude "" "" ordinary
   ) 2>&1); rc=$?
