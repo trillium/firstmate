@@ -37,7 +37,8 @@
 # launch --task makes the run an ordinary firstmate dispatch: the prompt is
 # data/<task-id>/brief.md (the scaffold bin/fm-brief.sh writes) plus a short
 # cloud trailer (work on claude/<task-id>, push it, open a PR against the default
-# branch, no secrets). It refuses before launching when the task has no backlog
+# branch, no secrets, decide and record rather than wait for input, and no
+# attribution lines in commits or the PR body). It refuses before launching when the task has no backlog
 # item or already has a record, then publishes state/<task-id>.meta (backend=cloud,
 # no worktree; cloud_run, cloud_session and cloud_url link the run), moves the
 # backlog item to In flight with bin/fm-backlog-transition-lib.sh, appends a
@@ -46,9 +47,12 @@
 #
 # check <task-id> is what that script runs. It prints one line, and only when
 # firstmate should wake: a claude/* branch is new or moved since launch, a PR for
-# it appears, or the run is silent past the time limit (config/cloud-timeout in
-# minutes, default 240; the line says possibly stuck and names the session url).
-# Each distinct result is reported once.
+# it appears, the run is silent past the time limit (config/cloud-timeout in
+# minutes, default 240; the line says possibly stuck and names the session url),
+# or no new branch push has landed within the idle window (config/cloud-idle in
+# minutes, default 60, always below the time limit; the line says possibly
+# awaiting input and names the session url). Each distinct result is reported
+# once.
 #
 # land <task-id> finds the run's PR and hands it to bin/fm-pr-check.sh, which
 # replaces the check with the ordinary merge poll; from there merge, cleanup and
@@ -126,6 +130,8 @@ load_task_libs() {
 cloud_trailer() {  # <task-id> <base-branch>
   printf '\n\n---\nCloud run: work on a branch named claude/%s, push it, and open a pull request against %s.\n' "$1" "${2:-the default branch}"
   printf 'Put no secrets, tokens or credentials in the branch, the pull request or its description.\n'
+  printf 'No one is watching this session to answer questions: if you are blocked or unsure, make the best reasonable choice, record the choice and its reason in the pull request description, and keep going rather than waiting for input.\n'
+  printf 'Add no attribution lines anywhere: no Co-Authored-By or Claude-Session trailers, no session links, and no generated-by footer in commit messages or the pull request body.\n'
 }
 
 # config/cloud-timeout: minutes of silence before a run reports as possibly stuck.
@@ -134,6 +140,19 @@ cloud_timeout_minutes() {
   [ ! -f "$CONFIG/cloud-timeout" ] || v=$(tr -d '[:space:]' < "$CONFIG/cloud-timeout")
   case "$v" in ''|*[!0-9]*) v=${FM_CLOUD_TIMEOUT_MINUTES:-240} ;; esac
   case "$v" in ''|*[!0-9]*) v=240 ;; esac
+  printf '%s\n' "$v"
+}
+
+# config/cloud-idle: minutes without a new branch push before a run reports as
+# possibly awaiting input. Default 60, always shorter than the overall time limit.
+cloud_idle_minutes() {
+  local v="" t
+  [ ! -f "$CONFIG/cloud-idle" ] || v=$(tr -d '[:space:]' < "$CONFIG/cloud-idle")
+  case "$v" in ''|*[!0-9]*) v=${FM_CLOUD_IDLE_MINUTES:-60} ;; esac
+  case "$v" in ''|*[!0-9]*) v=60 ;; esac
+  t=$(cloud_timeout_minutes)
+  if [ "$t" -gt 1 ] && [ "$v" -ge "$t" ]; then v=$((t - 1)); fi
+  [ "$v" -ge 1 ] || v=1
   printf '%s\n' "$v"
 }
 
@@ -439,7 +458,7 @@ cmd_cleanup() {
   if [ -n "$bound" ]; then
     rm -f "$STATE/$bound.check.sh" "$STATE/$bound.check-trust"
   fi
-  rm -f "$f" "${f%.run}.seen" "${f%.run}.stuck"
+  rm -f "$f" "${f%.run}.seen" "${f%.run}.stuck" "${f%.run}.activity" "${f%.run}.idle"
   printf 'retired run record: %s\n' "$1"
   cat <<'WEB'
 web-only steps (this tool performs none of them; runbook: runbooks-e8k):
@@ -464,12 +483,13 @@ task_run_record() {  # <task-id>
 # should wake, and never fail (a silent check is a quiet one).
 cmd_check() {
   [ $# -eq 1 ] || usage_die "check needs exactly one task id"
-  local task=$1 meta f ref sha branch slug n url sig seen age limit url_s
+  local task=$1 meta f ref sha branch slug n url sig seen age limit url_s run_name
   valid_id "$task" || usage_die "invalid task id: $task"
   meta="$STATE/$task.meta"
   [ -f "$meta" ] || return 0
   [ -z "$(rec_get "$meta" pr)" ] || return 0  # the PR poll owns the task now
-  f="$RUNS/$(rec_get "$meta" cloud_run).run"
+  run_name=$(rec_get "$meta" cloud_run)
+  f="$RUNS/$run_name.run"
   [ -f "$f" ] || return 0
   url_s=$(rec_get "$f" url)
   if ! branch=$(run_result_branch "$f" "$task"); then
@@ -483,8 +503,13 @@ cmd_check() {
     sig="$ref:$sha:${n:-nopr}"
     seen=""
     [ ! -f "$RUNS/$(rec_get "$meta" cloud_run).seen" ] || seen=$(cat "$RUNS/$(rec_get "$meta" cloud_run).seen")
-    [ "$sig" != "$seen" ] || return 0
-    printf '%s\n' "$sig" > "$RUNS/$(rec_get "$meta" cloud_run).seen"
+    if [ "$sig" = "$seen" ]; then
+      [ -z "$n" ] || return 0  # the PR poll takes over once a PR is recorded
+      check_idle "$task" "$f" "$meta" "$RUNS/$run_name" "$url_s"
+      return 0
+    fi
+    printf '%s\n' "$sig" > "$RUNS/$run_name.seen"
+    date +%s > "$RUNS/$run_name.activity"
     if [ -n "$n" ]; then
       printf 'cloud run %s: PR https://github.com/%s/pull/%s opened from %s - hand it to the landing path with: bin/fm-cloud.sh land %s (session %s)\n' \
         "$task" "$slug" "$n" "$ref" "$task" "${url_s:-unknown}"
@@ -495,12 +520,33 @@ cmd_check() {
   fi
   age=$(( $(date +%s) - $(rec_get "$f" launched_at) ))
   limit=$(( $(cloud_timeout_minutes) * 60 ))
-  if [ "$age" -ge "$limit" ] && [ ! -e "$RUNS/$(rec_get "$meta" cloud_run).stuck" ]; then
-    : > "$RUNS/$(rec_get "$meta" cloud_run).stuck"
-    printf 'cloud run %s: no branch or PR after %s minutes, possibly stuck - check the session %s\n' \
-      "$task" "$(( age / 60 ))" "${url_s:-unknown}"
+  if [ "$age" -ge "$limit" ]; then
+    if [ ! -e "$RUNS/$run_name.stuck" ]; then
+      : > "$RUNS/$run_name.stuck"
+      printf 'cloud run %s: no branch or PR after %s minutes, possibly stuck - check the session %s\n' \
+        "$task" "$(( age / 60 ))" "${url_s:-unknown}"
+    fi
+    return 0
   fi
+  check_idle "$task" "$f" "$meta" "$RUNS/$run_name" "$url_s"
   return 0
+}
+
+# Wake once per quiet spell when no new branch push has landed within the idle
+# window: the signature of a session sitting at "Awaiting input". The claude CLI
+# has no supported command that reports a session's state, so push silence is the
+# signal. A fresh push moves the baseline, which re-arms the wake.
+check_idle() {  # <task> <run-file> <meta> <run-path-prefix> <url>
+  local task=$1 f=$2 base=$4 url_s=$5 since reported idle_s
+  since=$(cat "$base.activity" 2>/dev/null || true)
+  case "$since" in ''|*[!0-9]*) since=$(rec_get "$f" launched_at) ;; esac
+  idle_s=$(( $(date +%s) - since ))
+  [ "$idle_s" -ge $(( $(cloud_idle_minutes) * 60 )) ] || return 0
+  reported=$(cat "$base.idle" 2>/dev/null || true)
+  [ "$reported" != "$since" ] || return 0
+  printf '%s\n' "$since" > "$base.idle"
+  printf 'cloud run %s: no new branch push for %s minutes, possibly awaiting input - look at the session %s\n' \
+    "$task" "$(( idle_s / 60 ))" "${url_s:-unknown}"
 }
 
 # Hand the run's PR to the ordinary landing path.
@@ -564,7 +610,7 @@ cmd_teardown() {
   fm_pr_poll_merge_notified_remove "$STATE" "$task" || true
   rm -f "$STATE/$task.check.sh" "$STATE/$task.check-trust" "$STATE/$task.pr-poll" \
     "$STATE/$task.pr-poll-registration" "$STATE/$task.pr-poll-retirement" "$STATE/$task.merge-authority" \
-    "$RUNS/$run.run" "$RUNS/$run.seen" "$RUNS/$run.stuck"
+    "$RUNS/$run.run" "$RUNS/$run.seen" "$RUNS/$run.stuck" "$RUNS/$run.activity" "$RUNS/$run.idle"
   status_retire_presentation_task "$STATE" "$task" || true
   rm -rf "$STATE/$task.inbox"
   if [ "$transition_applies" -eq 1 ]; then
@@ -649,6 +695,6 @@ case "$sub" in
   teardown) cmd_teardown "$@" ;;
   credit) cmd_credit "$@" ;;
   doctor) cmd_doctor "$@" ;;
-  -h|--help|help) sed -n '2,77p' "${BASH_SOURCE[0]}" ;;
+  -h|--help|help) sed -n '2,81p' "${BASH_SOURCE[0]}" ;;
   *) usage_die "unknown subcommand: $sub" ;;
 esac
