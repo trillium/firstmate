@@ -1182,18 +1182,25 @@ resolve_relaunch_profile() {
   # this one names its own; it does not transfer to a non-Claude runner. Under a
   # declared Claude account list, the replacement stays on the account the task
   # records unless --account explicitly moves it.
-  local account_model=$TARGET_MODEL account_mate='' account_request=''
+  local account_model=$TARGET_MODEL account_mate='' account_request='' account_override_setting=''
+  local account_cfg="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   [ "$account_model" != default ] || account_model=
   [ "$KIND" != secondmate ] || account_mate=$ID
   if [ "$ACCOUNT_SET" = 1 ]; then
     account_request=$NEW_ACCOUNT
   elif [ "$TARGET_HARNESS" = claude ]; then
     account_request=$(fm_meta_get "$META" account_request)
+    case "$(fm_meta_get "$META" account_reason)" in
+      'fallback-pinned:'*) account_override_setting='config/claude-account' ;;
+    esac
   fi
-  TARGET_ACCOUNT=$(fm_worker_account_relaunch_request "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
+  TARGET_ACCOUNT=$(fm_worker_account_relaunch_request "$TARGET_HARNESS" "$account_cfg" \
     "$PRIOR_HARNESS" "$(fm_meta_get "$META" account)" "$account_request" "$account_mate") || return 1
-  fm_worker_account_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
-    "$account_model" "$TARGET_HARNESS" "" "$account_mate" "$TARGET_ACCOUNT" >/dev/null || return 1
+  if [ "$TARGET_HARNESS" = claude ] && [ -z "$account_mate" ]; then
+    fm_worker_account_low_threshold "$account_cfg" >/dev/null || return 1
+  fi
+  fm_worker_account_select "$TARGET_HARNESS" "$account_cfg" \
+    "$account_model" "$TARGET_HARNESS" "" "$account_mate" "$TARGET_ACCOUNT" "$account_override_setting" >/dev/null || return 1
   fm_omp_profile_select "$TARGET_HARNESS" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" \
     "$account_mate" >/dev/null || return 1
   # Likewise polytoken's launch profile and wiring refusals
@@ -1383,7 +1390,7 @@ do_relaunch() {
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   [ "$TARGET_MODEL" = default ] || spawn_args+=(--model "$TARGET_MODEL")
   [ "$TARGET_EFFORT" = default ] || spawn_args+=(--effort "$TARGET_EFFORT")
-  [ -z "$TARGET_ACCOUNT" ] || spawn_args+=(--account "$TARGET_ACCOUNT")
+  [ "$ACCOUNT_SET" = 0 ] || spawn_args+=(--account "$NEW_ACCOUNT")
   if FM_CONTROL_RELAUNCH_TX="$RELAUNCH_TX" \
       "$SCRIPT_DIR/fm-spawn.sh" "${spawn_args[@]}" >/dev/null; then
     RELAUNCH_META_PUBLISHED=1

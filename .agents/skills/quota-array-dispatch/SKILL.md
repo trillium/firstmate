@@ -44,19 +44,18 @@ It never removes this skill's authority, and its `ambiguous`, `escalate`, and `e
 
 ## Claude account list
 
-When the home declares `config/claude-accounts`, each Claude candidate is one candidate per declared account, and the spawn needs the chosen account as `--account <entry>`.
-Measure them with `bin/fm-claude-account-quota.sh [--model <model>]` instead of the default TOON's single `claude` row, which reads only the ambient account; its header owns the per-account read and output.
+When the home declares `config/claude-accounts`, measure the declared entries with `bin/fm-claude-account-quota.sh [--model <model>]` instead of the default TOON's single `claude` row, which reads only the ambient account; its header owns the per-account read and output.
 It prints data only, never a choice: each account's applicable scopes and any uncertainty it could not measure.
-Apply the three gates below to each account's rows, taking a projected runway's time from the row's own `usableRunwaySeconds`, rank the eligible ones by their limiting scope's `spendPriority` exactly as for profiles, and pass the chosen entry as `--account <entry>`.
-A genuine tie or no rankable account is the same terminal case as below: decide in the open from the rows or ask the captain, never by file order.
+Apply the three gates below to each account's rows, taking a projected runway's time from the row's own `usableRunwaySeconds`, so a `claude` candidate is evaluated across all declared accounts rather than the ambient account alone.
 Account for every declared account in the rationale, including unmeasured ones.
-A typed-resolver `clear` profile for Claude still needs this step's `--account`.
-The account is chosen once, at intake: a relaunch keeps the recorded one, and only an explicit `--account` relaunch moves a task ([`docs/configuration.md`](../../../docs/configuration.md#several-claude-accounts-configclaude-accounts) owns the contract).
+You may pass an explicit `--account <entry>` when a specific declared account is required, or omit `--account` (including on a typed-resolver `clear` profile for Claude without an explicit `account`) so `bin/fm-spawn.sh` automatically selects the declared account with the most usable headroom above `config/claude-account-low-threshold` (default `20%`) and falls back to `config/claude-account` (or the first declared entry) with a warning when all are low.
+The account is chosen once, at spawn: a plain relaunch keeps the recorded one, and only an explicit `--account` relaunch moves a task ([`docs/configuration.md`](../../../docs/configuration.md#several-claude-accounts-configclaude-accounts) owns the contract).
 
 ## Read the default TOON
 
 When the home declares the [shared-quota opt-out](#shared-quota-opt-out), skip this section's quota reading and every quota-derived check built on it (quota rows, floors, runway, and `spendPriority`); catalog eligibility and reasoning-class fit still apply.
 Start each intake by running `quota-axi` once with no `--json`, and reuse that TOON for every candidate.
+When `config/claude-accounts` exists in this home, also run `bin/fm-claude-account-quota.sh` once (passing `--model <model>` when model-scoped windows matter) as described in [Claude account list](#claude-account-list) above.
 Post-consolidation quota-axi (the floor owned by `bin/fm-quota-axi-lib.sh`) puts `spendPriority` in the default `quota[]` block beside `effectivePercentRemaining`, `runway`, `confidence`, `limitedBy`, and `resetsAt`.
 Sparse `exhaustion[]` carries finite-runway seconds only for `projected_exhaustion` and `exhausted_now`.
 Sparse `attention[]` names auth, stale, and unmeasurable facts.

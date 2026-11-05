@@ -1,0 +1,18 @@
+```mermaid
+flowchart LR
+  subgraph Before
+    Q1["quota-axi: ordinary account only"] --> DR1["fm-dispatch-resolve"]
+    P1["config/claude-account: all-or-nothing pin"] --> SP1["fm-spawn: manual --account only"]
+  end
+  subgraph After
+    POOL["config/claude-accounts: ordinary + token:<file>"] --> MQ["fm-claude-account-quota.sh (isolated + 5m token cache)"]
+    MQ --> DR2["fm-dispatch-resolve: claude evaluated across all declared accounts"]
+    MQ --> SEL{"fm-spawn (no --account): usable headroom >= threshold (20%)?"}
+    SEL -->|"healthy"| HI["launch highest-headroom account"]
+    SEL -->|"unmeasured"| UNC["eligible with disclosed uncertainty"]
+    SEL -->|"all < threshold"| FB["warn + fallback to config/claude-account"]
+    HI --> META["state/<id>.meta: account, account_request, account_reason"]
+    UNC --> META
+    FB --> META
+  end
+```
