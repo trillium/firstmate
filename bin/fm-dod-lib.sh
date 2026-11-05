@@ -27,6 +27,12 @@
 # and appends " pr=manual" to the Delivery contract line, which bin/fm-spawn.sh
 # checks against the registry like the forge. fm_pr_text_valid refuses it on any
 # other mode or forge.
+# The optional eighth argument is the clone's origin <owner>/<repo> from
+# fm_dod_origin_repo. On a gh forge a publishing contract names its PR base
+# repository - the consent target when one is recorded, else this - and requires
+# every gh-axi pr command to pass it as --repo, because gh ranks an `upstream`
+# remote above `origin` and would otherwise open a fork's PR on a third party's
+# repository. fm_dod_block refuses to render such a contract without either.
 # The optional sixth argument is the task's recorded upstream consent for a
 # firstmate-repository contribution (bin/fm-role-lib.sh owns the boundary): a
 # captain-approved <host>/<owner>/<repo> publication scope for this one task,
@@ -144,6 +150,8 @@
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-brief-heading-lib.sh"
 # shellcheck source=bin/fm-external-review-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-external-review-lib.sh"
+# shellcheck source=bin/fm-role-lib.sh
+. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-role-lib.sh"
 
 fm_brief_worker_role() {  # <state-dir> <task-id> <code-root>
   local state=$1 task_id=$2 root=$3
@@ -534,6 +542,61 @@ EOF
   esac
 }
 
+# fm_dod_origin_repo <project-dir> - prints the <owner>/<repo> a GitHub PR for
+# this clone must land on, read from the clone's own origin remote and never from
+# gh's resolved default (which ranks an `upstream` remote first). Writes nothing
+# into the clone. Returns 1 with a diagnostic when the clone, its origin, or a
+# host/owner/repo identity for it cannot be determined, so a caller refuses
+# rather than leaving the worker to a bare gh call.
+fm_dod_origin_repo() {
+  local dir=$1 url ident
+  [ -n "$dir" ] && [ -d "$dir" ] || { echo "error: cannot pin the PR base repository: project clone '${dir:-}' not found" >&2; return 1; }
+  url=$(git -C "$dir" remote get-url origin 2>/dev/null) && [ -n "$url" ] || { echo "error: cannot pin the PR base repository: $dir has no origin remote" >&2; return 1; }
+  ident=$(fm_role_remote_identity "$url" "$dir")
+  case $ident in
+    path:* | '') ident= ;;
+  esac
+  if [ -z "$ident" ] || ! fm_role_scope_valid "$ident"; then
+    echo "error: cannot pin the PR base repository: origin '$url' of $dir is not a <host>/<owner>/<repo> remote" >&2
+    return 1
+  fi
+  fm_dod_gh_repo_form "$ident"
+}
+
+# fm_dod_gh_repo_form <host/owner/repo> - the form gh's --repo takes: owner/repo
+# on github.com, HOST/OWNER/REPO elsewhere.
+fm_dod_gh_repo_form() {
+  case $1 in
+    github.com/*) printf '%s\n' "${1#github.com/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# fm_dod_needs_origin_repo <mode> <forge> <consent> - 0 when the contract pins a
+# gh PR base repository from the clone's origin (a publishing mode on a gh forge
+# with no upstream consent), so the caller derives it with fm_dod_origin_repo.
+fm_dod_needs_origin_repo() {
+  [ -z "$3" ] || return 1
+  case "$1:$2" in
+    local-only:* | *:gerrit | *:external | *:forgejo) return 1 ;;
+  esac
+  return 0
+}
+
+# fm_dod_pr_repo <consent> <origin-repo> - the PR base repository a task names:
+# a recorded upstream consent target wins over the clone's origin. Prints nothing
+# and returns 1 when neither is known.
+fm_dod_pr_repo() {
+  local consent=${1:-} origin_repo=${2:-}
+  if [ -n "$consent" ]; then
+    fm_dod_gh_repo_form "$(fm_role_scope_norm "$consent")"
+  elif [ -n "$origin_repo" ]; then
+    printf '%s\n' "$origin_repo"
+  else
+    return 1
+  fi
+}
+
 # The no-mistakes block for a pr=manual project, where the worker owns the PR
 # title and body. The pipeline's pr step would rewrite them on every validated
 # push, so the run skips `pr` and, with no PR for it to watch, `ci`; push stays,
@@ -541,8 +604,8 @@ EOF
 # check holds unchanged. The worker then opens or updates the PR and watches its
 # checks itself. Shaped like the gerrit block: skip flags, the shared driving
 # block, then what to do once the run passes. Callers are fm_dod_block only.
-fm_dod_manual_pr_block() {  # <branch> <forge-cli> <draft-check> <contract-suffix> <nm-base> <pr-base> [<origin-target>]
-  local branch=$1 forge_cli=$2 draft_check=$3 suffix=$4 nm_base=$5 pr_base=$6 origin_target=${7:-}
+fm_dod_manual_pr_block() {  # <branch> <forge-cli> <draft-check> <contract-suffix> <nm-base> <pr-base> [<pr-repo-rule> <repo-flag>]
+  local branch=$1 forge_cli=$2 draft_check=$3 suffix=$4 nm_base=$5 pr_base=$6 pr_repo_rule=${7:-} repo_flag=${8:-}
   cat <<EOF
 # Definition of done
 Delivery contract: mode=no-mistakes$suffix pr=manual
@@ -560,9 +623,9 @@ EOF
 
 When the run's outcome is passed, passed-with-skips, or passed-with-override, write the PR title and body yourself and publish them with \`$forge_cli\`:
 1. Write the PR body to a file of your own under the scratch location rule 2 names, and verify it with \`head\` before using it. Match the title and body style of the project's recent merged PRs and its contribution guide, in plain English for a reviewer who lacks your context, with no direct address, and keep any issue reference the captain's intent names.
-2. Find the PR for your branch first (\`$forge_cli pr list --head <branch>\`). If one exists, update its title and body with \`$forge_cli pr edit <number> --title '<title>' --body-file <path>\`. Otherwise open it with \`$forge_cli pr create\` from the branch the run pushed, ready for review, not a draft$pr_base.${origin_target:+ $origin_target}
+2. Find the PR for your branch first (\`$forge_cli pr list --head <branch>$repo_flag\`). If one exists, update its title and body with \`$forge_cli pr edit <number> --title '<title>' --body-file <path>$repo_flag\`. Otherwise open it with \`$forge_cli pr create$repo_flag\` from the branch the run pushed, ready for review, not a draft$pr_base.${pr_repo_rule:+ $pr_repo_rule}
 3. Never post a comment or review on the PR or on any other thread, and never rely on the pipeline for the PR text: it is yours on every push.
-4. Wait for the PR's checks with \`$forge_cli pr checks <number> --watch\`, under the ten-minute command limit as the driving block bounds its waits, and run the same command again whenever it returns with checks still pending. \`$forge_cli pr checks\` exits 1 when the project reports no checks at all: that is not a failed check and needs no fix. If a check fails, commit the fix, drive a new run with the same \`--skip pr,ci\`, and update the PR text if the change affects it.
+4. Wait for the PR's checks with \`$forge_cli pr checks <number>$repo_flag --watch\`, under the ten-minute command limit as the driving block bounds its waits, and run the same command again whenever it returns with checks still pending. \`$forge_cli pr checks\` exits 1 when the project reports no checks at all: that is not a failed check and needs no fix. If a check fails, commit the fix, drive a new run with the same \`--skip pr,ci\`, and update the PR text if the change affects it.
 Then read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
@@ -571,10 +634,10 @@ If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the 
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<pr>]
+fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<pr>] [<origin-repo>]
   local target_check=''
-  local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-} pr=${7:-auto}
-  local branch=${3:-fm/$id} pr_base='' nm_base='' origin_target='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check adapter
+  local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-} pr=${7:-auto} origin_repo=${8:-}
+  local branch=${3:-fm/$id} pr_base='' nm_base='' pr_repo='' pr_repo_rule='' repo_flag='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check adapter
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
   fm_base_branch_valid "$base" "$mode" "$forge" fm_dod_block || return 1
   fm_pr_text_valid "$pr" "$mode" "$forge" fm_dod_block || return 1
@@ -593,10 +656,22 @@ Read the file list it prints before pushing, and push only after it exits clean.
     forge_cli=tea
     draft_check="(\`tea api --repo <owner>/<repo> /repos/{owner}/{repo}/pulls/<number>\` must show \`draft\` as false, where <owner>/<repo> and <number> come from your PR URL); Forgejo marks a draft by a work-in-progress title prefix such as \`WIP:\`, so if it is a draft, remove that prefix with \`tea pulls edit <number> --repo <owner>/<repo> --title '<title without the prefix>'\`."
   fi
-  if [ -z "$consent" ] && [ "$forge_cli" = gh-axi ]; then
-    # gh defaults a fork's PR to the upstream parent; without consent the PR belongs on origin.
-    origin_target="Open the PR on this clone's own origin repository, never its upstream parent, which \`gh-axi pr create\` would pick by default for a fork: read \`<owner>/<repo>\` from \`git remote get-url origin\` and pass \`-R <owner>/<repo>\`."
-  fi
+  case "$mode:$forge" in
+    local-only:* | *:gerrit | *:external) ;;
+    *)
+      if [ "$forge_cli" = gh-axi ]; then
+        # gh ranks an `upstream` remote above `origin`, so a bare gh call in a fork clone
+        # resolves to a third party's repository: every gh call names its repository.
+        pr_repo=$(fm_dod_pr_repo "$consent" "$origin_repo") || {
+          echo "error: fm_dod_block: no PR base repository: pass the clone's origin <owner>/<repo> (fm_dod_origin_repo) or an upstream consent, because a bare gh call in a fork clone resolves to its upstream" >&2
+          return 1
+        }
+        repo_flag=" --repo $pr_repo"
+        pr_repo_rule="This task's PR base repository is \`$pr_repo\`, the repository the PR must land on, never the upstream parent that gh would rank first for a fork clone: pass \`--repo $pr_repo\` on every \`gh-axi pr\` command (create, list, view, checks, ready, edit, merge) and never rely on gh's default repository. If your branch already has a PR on any other repository, append \`blocked [at=<epoch>]: PR is not on $pr_repo\` and stop."
+        draft_check="(\`gh-axi pr view <number>$repo_flag\` must print \`draft: no\`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with \`gh-axi pr ready <number>$repo_flag\`."
+      fi
+      ;;
+  esac
   if [ -n "$base" ]; then
     printf -v base_q '%q' "$base"
     pr_base=", against the base branch \`$base\` (\`--base $base_q\`), not the repository default"
@@ -688,7 +763,7 @@ Delivery contract: mode=direct-PR$contract_forge$contract_consent
 Ship branch: $branch
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.${origin_target:+ $origin_target}
+When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.${pr_repo_rule:+ $pr_repo_rule}
 Before you report done, read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
@@ -717,7 +792,7 @@ EOF
       if [ "$pr" = manual ]; then
         [ -z "$nm_base" ] || nm_base="This task's base branch is \`$base\`, not the repository default: pass \`--base-branch $base_q\` on every \`no-mistakes axi run\` that starts a run, so the pipeline rebases onto that branch, and open the PR against it with \`--base $base_q\`.
 "
-        fm_dod_manual_pr_block "$branch" "$forge_cli" "$draft_check" "$contract_forge$contract_consent" "$nm_base" "$pr_base" "$origin_target"
+        fm_dod_manual_pr_block "$branch" "$forge_cli" "$draft_check" "$contract_forge$contract_consent" "$nm_base" "$pr_base" "$pr_repo_rule" "$repo_flag"
         return
       fi
       cat <<EOF
@@ -735,7 +810,8 @@ EOF
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
-Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
+${pr_repo_rule:+$pr_repo_rule
+}Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finished.
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the run; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 EOF

@@ -325,6 +325,10 @@ If these promotion steps were already completed before a relaunch, preserve the 
 6. Treat the scout-time Firstmate spec and any unmarked legacy \`# Task\` text as investigation context, not captain intent or current ship-time instructions.
 7. Everything else in your original instructions carries over unchanged: the status protocol; the instruction inbox and its acknowledgement; the escalation rules, including ask-user; and every safety rule, except where the current delivery contract below explicitly replaces scout-only delivery rules.
 EOF
+PROMOTE_ORIGIN_REPO=
+if fm_dod_needs_origin_repo "$MODE" "$FORGE" "$UPSTREAM_CONSENT"; then
+  PROMOTE_ORIGIN_REPO=$(fm_dod_origin_repo "$PROMOTE_PROJECT") || { echo "error: promotion refused for $ID: its PR base repository cannot be pinned" >&2; exit 1; }
+fi
 promote_delivery_contract() {
   cat <<EOF
 # Current delivery mode contract
@@ -346,7 +350,7 @@ EOF
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"
   fi
   printf '\n'
-  fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT"
+  fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$UPSTREAM_CONSENT" "$PR_TEXT" "$PROMOTE_ORIGIN_REPO"
 }
 mkdir -p "$DATA/$ID"
 [ ! -d "$INSTRUCTIONS" ] || { echo "error: ship instructions path is a directory: $INSTRUCTIONS" >&2; exit 1; }

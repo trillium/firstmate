@@ -1762,6 +1762,7 @@ test_promoted_scout_relaunch_receives_the_current_delivery_contract() {
     dir=$(new_case "promoted-scout-$mode" "$id")
     home="$dir/home"
     fm_git_worktree "$dir/proj" "$dir/wt" "task-$id"
+    git -C "$dir/proj" remote set-url origin https://github.com/fm-test/proj.git
     FM_HOME="$home" "$BRIEF" "$id" firstmate --scout >/dev/null \
       || fail "$mode: could not scaffold the scout brief"
     brief="$home/data/$id/brief.md"

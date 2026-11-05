@@ -432,6 +432,17 @@ fm_test_tmproot() {
   printf '%s\n' "$root"
 }
 
+# fm_test_seed_origin_clone <projects-dir> <name> [<origin-url>] - a registered
+# project clone whose origin names a GitHub repository, which is what a ship
+# brief needs to pin its pull request's base repository.
+fm_test_seed_origin_clone() {
+  local projects=$1 name=$2 url=${3:-https://github.com/fm-test/$2.git}
+  [ -d "$projects/$name/.git" ] && return 0
+  mkdir -p "$projects/$name" || return 1
+  git init -q "$projects/$name" || return 1
+  git -C "$projects/$name" remote add origin "$url"
+}
+
 trap fm_test_cleanup EXIT
 trap 'fm_test_cleanup; exit 130' INT
 trap 'fm_test_cleanup; exit 143' TERM

@@ -2463,6 +2463,7 @@ test_worker_launch_delivers_role_scope() {
       if [ "$kind" = scout ]; then
         FM_HOME="$HOME_DIR" "$ROOT/bin/fm-brief.sh" "$id" arbitrary-project-name --scout >/dev/null || fail "scout scaffold failed"
       else
+        fm_test_seed_origin_clone "$HOME_DIR/projects" arbitrary-project-name
         FM_HOME="$HOME_DIR" "$ROOT/bin/fm-brief.sh" "$id" arbitrary-project-name --mode "$kind" >/dev/null || fail "$kind scaffold failed"
       fi
       brief="$HOME_DIR/data/$id/brief.md"

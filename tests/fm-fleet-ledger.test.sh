@@ -180,6 +180,7 @@ EOF
 worker_status_command() {  # <state> <note> [<state-dir> [<config-dir>]]
   local cmd
   rm -rf "${HOME_DIR:?}/data/$TASK"
+  fm_test_seed_origin_clone "$HOME_DIR/projects" sample
   (cd "$HOME_DIR" && in_home env FM_STATE_OVERRIDE="${3:-$HOME_DIR/state}" \
     FM_CONFIG_OVERRIDE="${4:-$HOME_DIR/config}" \
     "$ROOT/bin/fm-brief.sh" "$TASK" sample --mode no-mistakes >/dev/null) \

@@ -18,11 +18,28 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
-BRIEF="$ROOT/bin/fm-brief.sh"
+REAL_BRIEF="$ROOT/bin/fm-brief.sh"
 PROMOTE="$ROOT/bin/fm-promote.sh"
 PROJECT_MODE="$ROOT/bin/fm-project-mode.sh"
 MERGE_LOCAL="$ROOT/bin/fm-merge-local.sh"
 TMP_ROOT=$(fm_test_tmproot fm-task-delivery)
+
+# A ship brief pins its PR base repository from the project clone's origin, so
+# the scaffolding wrapper seeds a clone with a GitHub origin for the named
+# project when the home has none yet.
+BRIEF="$TMP_ROOT/brief-with-clone.sh"
+mkdir -p "$TMP_ROOT"
+cat > "$BRIEF" <<WRAP
+#!/usr/bin/env bash
+if [ -n "\${2:-}" ] && [ "\${2#-}" = "\$2" ] && [ -n "\${FM_HOME:-}" ]; then
+  clone="\${FM_PROJECTS_OVERRIDE:-\$FM_HOME/projects}/\$2"
+  if [ ! -d "\$clone/.git" ]; then
+    mkdir -p "\$clone" && git init -q "\$clone" && git -C "\$clone" remote add origin "https://github.com/fm-test/\$2.git"
+  fi
+fi
+exec "$REAL_BRIEF" "\$@"
+WRAP
+chmod +x "$BRIEF"
 
 # A home with one registered project, one project directory, and a fake tmux that
 # refuses, so a spawn that clears the delivery checks still creates nothing.
@@ -35,6 +52,8 @@ make_home() {  # <name> [<registry-line>...]
   fakebin="$TMP_ROOT/$name/bin"
   mkdir -p "$home/data" "$home/state" "$home/config" "$projects/proj" "$fakebin"
   git -C "$projects/proj" init -q || fail "could not initialize project fixture"
+  git -C "$projects/proj" remote add origin https://github.com/fm-test/proj.git
+  [ -e "$home/projects" ] || ln -s "$projects" "$home/projects"
   git -c user.name=test -c user.email=test@example.com -C "$projects/proj" commit -q --allow-empty -m init || fail "could not commit project fixture"
   printf '#!/bin/sh\nexit 1\n' > "$fakebin/tmux"
   chmod +x "$fakebin/tmux"
@@ -42,6 +61,13 @@ make_home() {  # <name> [<registry-line>...]
     printf '%s\n' "$@" > "$home/data/projects.md"
   fi
   printf '%s\n' "$home|$projects/proj|$fakebin"
+}
+
+# seeded_project <home>: a project clone with a GitHub origin under the home's
+# projects directory, so a promotion can pin its PR base repository.
+seeded_project() {
+  fm_test_seed_origin_clone "$1/projects" fixture-project
+  printf '%s\n' "$1/projects/fixture-project"
 }
 
 write_brief() {  # <home> <id> [<recorded-mode>]
@@ -220,7 +246,8 @@ test_promote_requires_and_records_the_delivery_contract() {
   write_brief "$home" promote-d1
 
   write_scout_meta() {
-    printf 'window=fm-promote-d1\nkind=scout\nworktree=/tmp/wt\n' > "$meta"
+    fm_test_seed_origin_clone "$home/projects" proj
+    printf 'window=fm-promote-d1\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$home/projects/proj" > "$meta"
   }
 
   write_scout_meta
@@ -289,7 +316,7 @@ test_promote_names_origin_for_a_publishing_mode_in_an_opted_in_home() {
         IFS='|' read -r home proj fakebin <<EOF
 $rec
 EOF
-        [ "$remote" = none ] || git -C "$proj" remote add origin "file://$TMP_ROOT/promote-base-$flag-$remote-$mode/origin.git"
+        [ "$remote" != none ] || git -C "$proj" remote remove origin
         id="promote-base-$flag-$remote-${mode%%-*}-c1"
         [ "$flag" = off ] || : > "$home/config/spawn-base-primary-checkout"
         write_brief "$home" "$id"
@@ -297,6 +324,12 @@ EOF
 
         out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode "$mode" --yolo off 2>&1)
         status=$?
+        if [ "$remote" = none ] && [ "$mode" != local-only ]; then
+          # A publishing promotion with no origin cannot pin its PR base repository.
+          expect_code 1 "$status" "flag $flag, remote none, $mode: the promotion should refuse"$'\n'"$out"
+          assert_contains "$out" "cannot pin the PR base repository" "flag $flag, remote none, $mode: the refusal did not name the missing origin"
+          continue
+        fi
         expect_code 0 "$status" "flag $flag, remote $remote, $mode: the promotion should succeed"$'\n'"$out"
         instructions="$home/data/$id/ship-instructions.md"
         if [ "$flag" = on ] && [ "$remote" = origin ] && [ "$mode" != local-only ]; then
@@ -315,7 +348,8 @@ EOF
   mkdir -p "$home/state" "$home/config"
   : > "$home/config/spawn-base-primary-checkout"
   write_brief "$home" "$id"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nbase_branch=feature/hub\n' "$id" > "$home/state/$id.meta"
+  fm_test_seed_origin_clone "$home/projects" proj
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nbase_branch=feature/hub\nproject=%s\n' "$id" "$home/projects/proj" > "$home/state/$id.meta"
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo off 2>&1)
   status=$?
   expect_code 0 "$status" "a named-base promotion in an opted-in home should succeed"$'\n'"$out"
@@ -373,7 +407,7 @@ STUB
   for mode in no-mistakes direct-PR local-only; do
     id="promote-dod-$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
     meta="$home/state/$id.meta"
-    printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+    printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
     FM_HOME="$home" "$BRIEF" "$id" fixture-project --scout >/dev/null 2>&1 \
       || fail "$mode: scout brief generation should succeed"
     fill_brief_subsections "$home/data/$id/brief.md" \
@@ -423,6 +457,7 @@ STUB
     # payload ends at its Definition of done, as does an ordinary generated
     # brief, so identical suffixes prove both workers receive the same contract.
     rm "$home/data/$id/brief.md"
+    fm_test_seed_origin_clone "$home/projects" fixture-project
     FM_HOME="$home" "$BRIEF" "$id" fixture-project --mode "$mode" >/dev/null 2>&1 \
       || fail "$mode: ordinary ship brief generation should succeed"
     brief_dod="$TMP_ROOT/promote-dod/brief-dod-$id"
@@ -468,7 +503,7 @@ test_promotion_persists_the_selected_ship_branch() {
   id=promote-branch-e1
   meta="$home/state/$id.meta"
   mkdir -p "$home/state"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
   FM_HOME="$home" "$BRIEF" "$id" fixture-project --scout >/dev/null 2>&1 \
     || fail "branch-prefix promotion scout brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
@@ -498,7 +533,7 @@ test_promotion_branch_command_is_shell_safe() {
   prefix="\$(touch\${IFS}$marker)/"
   meta="$home/state/$id.meta"
   mkdir -p "$home/state"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
   FM_HOME="$home" "$BRIEF" "$id" fixture-project --scout >/dev/null 2>&1 \
     || fail "shell-safe promotion scout brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
@@ -677,7 +712,7 @@ test_pr_manual_brief_hands_the_pr_text_to_the_worker() {
   assert_grep 'gh-axi pr create' "$brief" "the worker was not told to open the PR itself"
   assert_grep 'Never post a comment or review' "$brief" "the worker was not kept from posting comments"
   # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
-  assert_grep 'gh-axi pr checks <number> --watch' "$brief" "the worker was not told how to wait for the PR's checks"
+  assert_grep 'gh-axi pr checks <number> --repo fm-test/proj --watch' "$brief" "the worker was not told how to wait for the PR's checks"
   assert_grep 'done [at=<epoch>]: PR {url} checks green' "$brief" "the CI-green ready report was lost"
   assert_grep 'is one the /no-mistakes run pushed' "$brief" "the named-head rule was lost"
   assert_grep 'ask-user findings are never yours to answer' "$brief" "the ask-user escalation rule was lost"
@@ -1048,7 +1083,7 @@ EOF
   id=promote-unfilled-e1
   meta="$home/state/$id.meta"
   mkdir -p "$home/state"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
   FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
     || fail "unfilled promote scout brief should scaffold"
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo on 2>&1)
@@ -1062,7 +1097,7 @@ EOF
 
   id=promote-missing-brief
   meta="$home/state/$id.meta"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo off 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "promotion without a scout brief should exit non-zero"
@@ -1074,7 +1109,7 @@ EOF
 
   id=promote-unmarked-legacy
   meta="$home/state/$id.meta"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<'EOF'
 # Task
@@ -1098,7 +1133,7 @@ EOF
 
   id=promote-filled-e2
   meta="$home/state/$id.meta"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
   FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
     || fail "filled promote scout brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
@@ -1123,7 +1158,7 @@ EOF
 
   id=promote-nested-spec
   meta="$home/state/$id.meta"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<'EOF'
 # Task
@@ -1162,7 +1197,7 @@ EOF
 
   id=promote-legacy-e3
   meta="$home/state/$id.meta"
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$meta"
   mkdir -p "$home/data/$id"
   cat > "$home/data/$id/brief.md" <<'EOF'
 You are a crewmate.
@@ -1251,7 +1286,7 @@ EOF
   done
 
   id='intent-addressed-promote'
-  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\n' "$id" > "$home/state/$id.meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$(seeded_project "$home")" > "$home/state/$id.meta"
   write_brief "$home" "$id"
   printf '# Task\n## Captain'"'"'s intent\nCaptain: investigate the refusal.\n\n## Firstmate spec\nReproduce it first.\n' > "$home/data/$id/brief.md"
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode no-mistakes --yolo off 2>&1)
@@ -1579,6 +1614,7 @@ test_forge_gerrit_changes_what_no_mistakes_means() {
     "the gerrit worker lost the ask-user escalation rule"
   # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
   assert_grep 'NEVER pass `--yes` (or `-y`)' "$brief" "the gerrit worker lost the --yes ban"
+  fm_test_seed_origin_clone "$home/projects" other-project
   FM_HOME="$home" "$BRIEF" forge-dod-n1 other-project --mode no-mistakes >/dev/null \
     || fail "a default-forge no-mistakes brief should scaffold"
   plain="$home/data/forge-dod-n1/brief.md"
@@ -1944,6 +1980,7 @@ test_forge_gerrit_direct_pr_publishes_one_change() {
   assert_contains "$out" "--shape stack is refused" "the stack refusal did not name the refused shape"
   assert_contains "$out" "pinned when its watch is armed" "the stack refusal did not carry its reason"
   assert_absent "$home/data/forge-direct-g2/brief.md" "the refused stack brief was still written"
+  fm_test_seed_origin_clone "$home/projects" review-server-project
   out=$(FM_HOME="$home" "$BRIEF" forge-direct-g3 review-server-project --mode direct-PR --shape squash 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "a shape was accepted without a forge that publishes changes"
