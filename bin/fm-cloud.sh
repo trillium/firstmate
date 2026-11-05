@@ -171,20 +171,37 @@ pr_number_for_branch() {  # <slug> <branch>
 }
 
 # The run's result branch: new or moved claude/* heads since launch, preferring
-# the claude/<task-id>* name the trailer asked for. Prints "<ref> <sha>" or nothing;
-# returns 1 when the remote cannot be read.
+# the claude/<task-id>* name the trailer asked for. Without one, falls back to
+# the single new or moved head that no other cloud task of this home claims by its
+# claude/<other-id>* prefix; with none or several such heads it reports nothing.
+# Prints "<ref> <sha>" or nothing; returns 1 when the remote cannot be read.
 run_result_branch() {  # <record-file> <task-id>
-  local f=$1 task=$2 repo remote before now sha ref first="" want=""
+  local f=$1 task=$2 repo remote before now sha ref want="" other o m claimed
+  local loose="" nloose=0 others=""
   repo=$(rec_get "$f" repo); remote=$(rec_get "$f" remote); before=$(rec_get "$f" heads_before)
   now=$(git -C "$repo" ls-remote --heads "$remote" 'refs/heads/claude/*' 2>/dev/null) || return 1
+  for m in "$STATE"/*.meta; do
+    [ -f "$m" ] || continue
+    [ "$(rec_get "$m" backend)" = cloud ] || continue
+    other=$(basename "$m" .meta)
+    [ "$other" != "$task" ] || continue
+    others="$others $other"
+  done
   while read -r sha ref; do
     [ -n "$ref" ] || continue
     case ",$before," in *",$sha:$ref,"*) continue ;; esac
     ref=${ref#refs/heads/}
-    [ -n "$first" ] || first="$ref $sha"
-    case "$ref" in "claude/$task"*) [ -n "$want" ] || want="$ref $sha" ;; esac
+    case "$ref" in "claude/$task"*) [ -n "$want" ] || want="$ref $sha"; continue ;; esac
+    claimed=0
+    for o in $others; do
+      case "$ref" in "claude/$o"*) claimed=1; break ;; esac
+    done
+    [ "$claimed" -eq 0 ] || continue
+    loose="$ref $sha"; nloose=$((nloose + 1))
   done <<< "$now"
-  printf '%s\n' "${want:-$first}"
+  if [ -n "$want" ]; then printf '%s\n' "$want"
+  elif [ "$nloose" -eq 1 ]; then printf '%s\n' "$loose"
+  fi
 }
 
 cmd_launch() {
