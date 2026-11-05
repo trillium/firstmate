@@ -174,6 +174,32 @@ assert_contains "$out" "not a cloud run" "the refusal names the reason"
 rm -f "$STATE/t-local.meta"
 pass "send refuses empty, unknown and non-cloud targets"
 
+# Two live cloud tasks: each check claims only its own branch, never the other's.
+write_brief t-attr-a; write_brief t-attr-b; write_brief t-attr-c
+cloud launch --task t-attr-a --repo "$REPO" >/dev/null 2>&1 || fail "launch t-attr-a failed"
+cloud launch --task t-attr-b --repo "$REPO" >/dev/null 2>&1 || fail "launch t-attr-b failed"
+git -C "$REPO" push -q origin HEAD:refs/heads/claude/t-attr-b-x1
+out=$(env_run "$STATE/t-attr-a.check.sh")
+assert_equals "" "$out" "a branch named for another live task is not this task's result"
+out=$(env_run "$STATE/t-attr-b.check.sh")
+assert_contains "$out" "cloud run t-attr-b: branch claude/t-attr-b-x1" "the owner claims its own branch"
+git -C "$REPO" push -q origin HEAD:refs/heads/claude/t-attr-a-y2
+out=$(env_run "$STATE/t-attr-a.check.sh")
+assert_contains "$out" "cloud run t-attr-a: branch claude/t-attr-a-y2" "each task claims its own branch"
+assert_not_contains "$out" "t-attr-b" "the wake never names the other task's branch"
+# A single unclaimed head still falls back; two unclaimed heads are ambiguous.
+cloud launch --task t-attr-c --repo "$REPO" >/dev/null 2>&1 || fail "launch t-attr-c failed"
+git -C "$REPO" push -q origin HEAD:refs/heads/claude/mystery-1
+out=$(env_run "$STATE/t-attr-c.check.sh")
+assert_contains "$out" "branch claude/mystery-1" "one unclaimed head is the fallback"
+git -C "$REPO" push -q origin HEAD:refs/heads/claude/mystery-2
+rm -f "$STATE"/cloud-runs/*.seen
+out=$(env_run "$STATE/t-attr-c.check.sh")
+assert_equals "" "$out" "two unclaimed heads are ambiguous, so nothing is reported"
+for t in t-attr-a t-attr-b t-attr-c; do cloud teardown "$t" --force >/dev/null 2>&1 || fail "teardown $t failed"; done
+for b in claude/t-attr-b-x1 claude/t-attr-a-y2 claude/mystery-1 claude/mystery-2; do git -C "$REPO" push -q origin ":refs/heads/$b"; done
+pass "concurrent cloud tasks never claim each other's branch"
+
 # Timeout: a second task with no branch, back-dated.
 write_brief t-two
 cloud launch --task t-two --repo "$REPO" >/dev/null 2>&1 || fail "launch t-two failed"
