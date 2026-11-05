@@ -12,6 +12,7 @@
 #   fm-cloud.sh list
 #   fm-cloud.sh cleanup <run-id>
 #   fm-cloud.sh check <task-id>
+#   fm-cloud.sh send <task-id> <text...>|-
 #   fm-cloud.sh land <task-id>
 #   fm-cloud.sh teardown <task-id> [--force]
 #   fm-cloud.sh credit
@@ -37,7 +38,7 @@
 # launch --task makes the run an ordinary firstmate dispatch: the prompt is
 # data/<task-id>/brief.md (the scaffold bin/fm-brief.sh writes) plus a short
 # cloud trailer (work on claude/<task-id>, push it, open a PR against the default
-# branch, no secrets). It refuses before launching when the task has no backlog
+# branch, no secrets, and the .fm-inbox protocol that send uses). It refuses before launching when the task has no backlog
 # item or already has a record, then publishes state/<task-id>.meta (backend=cloud,
 # no worktree; cloud_run, cloud_session and cloud_url link the run), moves the
 # backlog item to In flight with bin/fm-backlog-transition-lib.sh, appends a
@@ -49,6 +50,19 @@
 # it appears, or the run is silent past the time limit (config/cloud-timeout in
 # minutes, default 240; the line says possibly stuck and names the session url).
 # Each distinct result is reported once.
+#
+# send <task-id> <text...> delivers an answer into a live task-bound run ("-"
+# reads the text from stdin). The installed claude CLI has no supported way to
+# message an existing cloud session (--cloud <session> only attaches
+# interactively and --teleport resumes it locally), so delivery is a git inbox:
+# the launch --task trailer tells the run to fetch its claude/<task-id> branch
+# between steps, apply any new .fm-inbox/NNN.md, and move it to .fm-inbox/handled/.
+# send adds the next numbered file as one commit on top of the branch's remote
+# tip (plumbing only; no local checkout is touched) and pushes it without
+# forcing. It refuses for a non-cloud task, an empty message, or while the run
+# has not pushed its claude/<task-id> branch yet. Each delivery is noted on the
+# task's status log by number, size and hash only; the text itself is never
+# printed, logged or recorded outside the pushed file.
 #
 # land <task-id> finds the run's PR and hands it to bin/fm-pr-check.sh, which
 # replaces the check with the ordinary merge poll; from there merge, cleanup and
@@ -87,7 +101,7 @@ RUNS="$STATE/cloud-runs"
 LAUNCH_LEDGER="$RUNS/.launched"
 
 die() { printf 'fm-cloud: %s\n' "$*" >&2; exit 1; }
-usage_die() { printf 'fm-cloud: %s\n' "$*" >&2; sed -n '6,18p' "${BASH_SOURCE[0]}" >&2; exit 2; }
+usage_die() { printf 'fm-cloud: %s\n' "$*" >&2; sed -n '6,19p' "${BASH_SOURCE[0]}" >&2; exit 2; }
 
 valid_id() { case "$1" in ''|*[!A-Za-z0-9._-]*|.*) return 1 ;; esac; }
 
@@ -126,6 +140,9 @@ load_task_libs() {
 cloud_trailer() {  # <task-id> <base-branch>
   printf '\n\n---\nCloud run: work on a branch named claude/%s, push it, and open a pull request against %s.\n' "$1" "${2:-the default branch}"
   printf 'Put no secrets, tokens or credentials in the branch, the pull request or its description.\n'
+  printf 'Steering inbox: between steps, run `git fetch origin claude/%s` and look for new files under .fm-inbox/ on it (git ls-tree -r origin/claude/%s .fm-inbox).\n' "$1" "$1"
+  printf 'Merge the branch (git pull --rebase origin claude/%s), read each .fm-inbox/NNN.md in numeric order, apply it as an instruction or answer from the supervisor, then git mv it into .fm-inbox/handled/ and commit.\n' "$1"
+  printf 'Before you open or finalize the pull request, remove the .fm-inbox directory from the branch (git rm -r .fm-inbox) so it is not part of the change.\n'
 }
 
 # config/cloud-timeout: minutes of silence before a run reports as possibly stuck.
@@ -503,6 +520,50 @@ cmd_check() {
   return 0
 }
 
+# Deliver an answer into a live task-bound run through the branch's git inbox.
+cmd_send() {
+  [ $# -ge 2 ] || usage_die "send needs a task id and the message text (or - for stdin)"
+  local task=$1 text f ref repo remote branch tip n seq max name blob tree commit idx tries=0 msg_sha bytes
+  shift
+  if [ "$*" = "-" ]; then text=$(cat); else text="$*"; fi
+  [ -n "$text" ] || usage_die "send needs a non-empty message"
+  f=$(task_run_record "$task") || exit $?
+  meta="$STATE/$task.meta"
+  repo=$(rec_get "$f" repo); remote=$(rec_get "$f" remote)
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || die "the run's repository is gone: $repo"
+  branch=$(run_result_branch "$f" "$task") || die "cannot read the remote $remote to find the run's branch"
+  ref=${branch% *}
+  case "$ref" in "claude/$task"*) ;; *) die "run for $task has not pushed claude/$task yet, so there is no branch to put the message on; retry once the run has pushed" ;; esac
+  msg_sha=$(printf '%s' "$text" | sha256_of | cut -c1-12)
+  bytes=$(printf '%s' "$text" | wc -c | tr -d ' ')
+  idx=$(mktemp "${TMPDIR:-/tmp}/fm-cloud-idx.XXXXXX") || die "cannot create a temporary index"
+  while :; do
+    tries=$((tries + 1))
+    git -C "$repo" fetch -q --no-tags "$remote" "refs/heads/$ref" >/dev/null 2>&1 || { rm -f "$idx"; die "cannot fetch $ref from $remote"; }
+    tip=$(git -C "$repo" rev-parse FETCH_HEAD)
+    max=0
+    while read -r name; do
+      n=${name##*/}; n=${n%.md}
+      case "$n" in ''|*[!0-9]*) continue ;; esac
+      [ $((10#$n)) -le "$max" ] || max=$((10#$n))
+    done < <(git -C "$repo" ls-tree -r --name-only "$tip" -- .fm-inbox 2>/dev/null)
+    seq=$(printf '%03d' $((max + 1)))
+    blob=$(printf 'Message %s from the supervisor (apply it, then move this file to .fm-inbox/handled/):\n\n%s\n' "$seq" "$text" | git -C "$repo" hash-object -w --stdin)
+    rm -f "$idx"
+    GIT_INDEX_FILE=$idx git -C "$repo" read-tree "$tip"
+    GIT_INDEX_FILE=$idx git -C "$repo" update-index --add --cacheinfo "100644,$blob,.fm-inbox/$seq.md"
+    tree=$(GIT_INDEX_FILE=$idx git -C "$repo" write-tree)
+    commit=$(GIT_AUTHOR_NAME=firstmate GIT_AUTHOR_EMAIL=firstmate@localhost GIT_COMMITTER_NAME=firstmate \
+      GIT_COMMITTER_EMAIL=firstmate@localhost git -C "$repo" commit-tree "$tree" -p "$tip" -m "inbox: message $seq")
+    if git -C "$repo" push -q "$remote" "$commit:refs/heads/$ref" >/dev/null 2>&1; then break; fi
+    [ "$tries" -lt 3 ] || { rm -f "$idx"; die "push of message $seq to $ref was rejected $tries times (the run keeps moving); retry"; }
+  done
+  rm -f "$idx"
+  printf 'working [at=%s]: sent message %s to cloud run branch %s (%s bytes, sha256 %s)\n' \
+    "$(date +%s)" "$seq" "$ref" "$bytes" "$msg_sha" >> "$STATE/$task.status"
+  printf 'sent: message %s to %s (%s bytes); the run picks it up at its next inbox check\n' "$seq" "$ref" "$bytes"
+}
+
 # Hand the run's PR to the ordinary landing path.
 cmd_land() {
   [ $# -eq 1 ] || usage_die "land needs exactly one task id"
@@ -645,10 +706,11 @@ case "$sub" in
   list) cmd_list "$@" ;;
   cleanup) cmd_cleanup "$@" ;;
   check) cmd_check "$@" ;;
+  send) cmd_send "$@" ;;
   land) cmd_land "$@" ;;
   teardown) cmd_teardown "$@" ;;
   credit) cmd_credit "$@" ;;
   doctor) cmd_doctor "$@" ;;
-  -h|--help|help) sed -n '2,77p' "${BASH_SOURCE[0]}" ;;
+  -h|--help|help) sed -n '2,98p' "${BASH_SOURCE[0]}" ;;
   *) usage_die "unknown subcommand: $sub" ;;
 esac
