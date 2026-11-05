@@ -1,0 +1,12 @@
+flowchart LR
+  subgraph Before
+    A1[fork main] --> B1[expect_code decoration in 54 test files]
+    A1 --> C1[dispatch question/answer log]
+    A1 --> D1[agy model-name quota inference]
+    A1 --> E1[quota pool leases]
+    A1 --> F1[inbox-note scan in live watcher]
+  end
+  subgraph After
+    A2[fork main] --> F2[inbox-note scan kept: upstream covers only part of it]
+  end
+  Before --> After
