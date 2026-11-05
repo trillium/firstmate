@@ -1190,6 +1190,39 @@ test_stop_ends_the_home_watcher_and_publishes_downtime() {
   pass "watch-arm: --stop ends only this home's watcher, publishes downtime, and reports when none runs"
 }
 
+# An arm leaves no .watch-arm-output.* temp file behind, and it sweeps the
+# empty ones an earlier SIGKILLed arm could not remove - but only when they are
+# a day old and no live process still holds them open.
+test_arm_sweeps_only_stale_unheld_output_files() {
+  local dir state fakebin armout holder stale held young filled
+  command -v lsof >/dev/null 2>&1 || { pass "watch-arm: stale output sweep skipped (no lsof)"; return 0; }
+  dir=$(make_case arm-output-sweep)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  mkdir -p "$state"
+  stale="$state/.watch-arm-output.STALE1"
+  held="$state/.watch-arm-output.HELD01"
+  young="$state/.watch-arm-output.YOUNG1"
+  filled="$state/.watch-arm-output.FULL01"
+  : > "$stale"; : > "$young"; printf 'wake\n' > "$filled"
+  sleep 120 > "$held" &
+  holder=$!
+  touch -t 202001010000 "$stale" "$held" "$filled"
+  start_rearm_arm "$dir" "$state" "$fakebin" "$armout"
+  [ ! -e "$stale" ] || fail "arm kept a stale empty output file nothing holds"
+  [ -e "$held" ] || fail "arm removed an old output file a live process still holds"
+  [ -e "$young" ] || fail "arm removed an output file younger than a day"
+  [ -e "$filled" ] || fail "arm removed a non-empty output file"
+  kill -TERM "$ARM_PID" 2>/dev/null
+  wait_for_exit "$ARM_PID" 120 >/dev/null 2>&1 || true
+  kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$WATCH_ARM" --stop >/dev/null 2>&1 || true
+  [ -z "$(find "$state" -maxdepth 1 -name '.watch-arm-output.*' ! -name '*HELD01' ! -name '*YOUNG1' ! -name '*FULL01')" ] \
+    || fail "arm left its own output file behind: $(ls -A "$state")"
+  pass "watch-arm: arm sweeps only stale unheld empty output files and removes its own on exit"
+}
+
 # --take-over stops only a watcher that the named arm itself owns. The seed
 # watcher here is this shell's child, so naming any other process leaves it
 # running and the arm attaches to it exactly as a plain arm does.
@@ -1991,6 +2024,7 @@ test_handling_window_close_keeps_the_acknowledgement_valid
 test_moved_generation_acknowledgement_is_self_healing
 test_downtime_marker_does_not_follow_symlink
 test_stop_ends_the_home_watcher_and_publishes_downtime
+test_arm_sweeps_only_stale_unheld_output_files
 test_handling_delivered_accepts_already_acked_generation
 test_handling_delivered_rejects_a_superseded_generation
 test_take_over_attaches_to_a_cycle_the_named_arm_does_not_own
