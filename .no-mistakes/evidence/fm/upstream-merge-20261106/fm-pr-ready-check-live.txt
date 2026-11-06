@@ -1,0 +1,54 @@
+$ bin/fm-pr-ready-check.sh https://github.com/trillium/firstmate/pull/355
+error: refusing to merge https://github.com/trillium/firstmate/pull/355
+  - check 'Behavior portable serial 4' is not green
+  - required check 'Behavior timing aggregate' has not reported at head 62275e28c3c39a7cbbdd75984910d62eb6e5b1ff
+error: these checks are not green: Behavior portable serial 4
+error: these required checks have not reported: Behavior timing aggregate
+exit=1
+
+$ bin/fm-pr-ready-check.sh https://github.com/trillium/firstmate/pull/354
+error: refusing to merge https://github.com/trillium/firstmate/pull/354
+  - check 'Behavior portable parallel 1' is not green
+  - check 'Behavior portable serial 1' is not green
+  - check 'Behavior portable serial 10' is not green
+  - check 'Behavior portable serial 12' is not green
+  - check 'Behavior portable serial 2' is not green
+  - check 'Behavior portable serial 3' is not green
+  - check 'Behavior portable serial 4' is not green
+  - check 'Behavior portable serial 5' is not green
+  - check 'Behavior portable serial 6' is not green
+  - check 'Behavior portable serial 7' is not green
+  - check 'Behavior portable serial 9' is not green
+  - required check 'Behavior timing aggregate' has not reported at head c41b878213677fd1129fde36b4a938d0839e64d4
+error: these checks are not green: Behavior portable parallel 1, Behavior portable serial 1, Behavior portable serial 10, Behavior portable serial 12, Behavior portable serial 2, Behavior portable serial 3, Behavior portable serial 4, Behavior portable serial 5, Behavior portable serial 6, Behavior portable serial 7, Behavior portable serial 9
+error: these required checks have not reported: Behavior timing aggregate
+exit=1
+
+$ bin/fm-pr-ready-check.sh https://github.com/trillium/firstmate/pull/352
+error: refusing to merge https://github.com/trillium/firstmate/pull/352
+  - check 'Behavior portable parallel 1' is not green
+  - check 'Behavior portable parallel 2' is not green
+  - check 'Behavior portable serial 1' is not green
+  - check 'Behavior portable serial 10' is not green
+  - check 'Behavior portable serial 11' is not green
+  - check 'Behavior portable serial 12' is not green
+  - check 'Behavior portable serial 2' is not green
+  - check 'Behavior portable serial 3' is not green
+  - check 'Behavior portable serial 4' is not green
+  - check 'Behavior portable serial 5' is not green
+  - check 'Behavior portable serial 6' is not green
+  - check 'Behavior portable serial 7' is not green
+  - check 'Behavior portable serial 8' is not green
+  - check 'Behavior portable serial 9' is not green
+  - check 'Behavior tests (Herdr)' is not green
+  - check 'Lint 1' is not green
+  - check 'Lint 2' is not green
+  - check 'Lint 3' is not green
+  - check 'Lint 4' is not green
+  - check 'Repo invariants' is not green
+  - check 'Test coverage guard' is not green
+  - required check 'Behavior timing aggregate' has not reported at head 0c41482adf4603687884dc264b8b1d91f52df130
+error: these checks are not green: Behavior portable parallel 1, Behavior portable parallel 2, Behavior portable serial 1, Behavior portable serial 10, Behavior portable serial 11, Behavior portable serial 12, Behavior portable serial 2, Behavior portable serial 3, Behavior portable serial 4, Behavior portable serial 5, Behavior portable serial 6, Behavior portable serial 7, Behavior portable serial 8, Behavior portable serial 9, Behavior tests (Herdr), Lint 1, Lint 2, Lint 3, Lint 4, Repo invariants, Test coverage guard
+error: these required checks have not reported: Behavior timing aggregate
+exit=1
+
