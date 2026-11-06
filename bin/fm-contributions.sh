@@ -22,6 +22,12 @@
 # the task opened is owned before any pr= exists; it changes nothing when the
 # task already has a record for that URL and fails when that record is
 # retired, so a retirement is never undone by rediscovery.
+# Each poll also lists open PRs authored by the authenticated operator on the
+# GitHub upstream of every registered project clone. Newly found URLs are
+# enrolled under the durable `contributions-auto` task id. A URL already owned
+# through a backlog link or any durable record is left entirely unchanged.
+# A missing clone, non-GitHub upstream, or failed discovery is reported and
+# skipped; discovery never prevents the ordinary owned-URL poll from running.
 # owned prints the supported PR URLs this home owns as a JSON array of
 # {url,tasks,recorded,final}, where recorded names the tasks holding a durable
 # record for the URL and final means a saved observation is merged or closed.
@@ -197,6 +203,9 @@ export FM_HOME FM_STATE_OVERRIDE="$STATE"
 . "$SCRIPT_DIR/fm-path-lib.sh"
 # shellcheck source=bin/fm-contribution-integrity-lib.sh
 . "$SCRIPT_DIR/fm-contribution-integrity-lib.sh"
+# fm-role-lib owns the offline choice of a clone's known publication upstream.
+# shellcheck source=bin/fm-role-lib.sh
+. "$SCRIPT_DIR/fm-role-lib.sh"
 
 fail() { printf 'fm-contributions: %s\n' "$*" >&2; exit 1; }
 usage() { sed -n '2,/^set -eu$/s/^# \{0,1\}//p' "$0"; }
@@ -652,6 +661,58 @@ clear_unsupported_errors() {
     | [$task,.url] | @tsv')
 }
 
+registered_github_repositories() { # stdout: unique owner/repo entries for registered GitHub clone upstreams
+  local name dir target
+  [ -f "$DATA/projects.md" ] || return 0
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    dir="$FM_HOME/projects/$name"
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || continue
+    target=$(fm_role_publication_target "$dir")
+    case "$target" in github.com/*/*) printf '%s\n' "${target#github.com/}" ;; esac
+  done < <(awk '
+    /^- / {
+      line = substr($0, 3)
+      bracket = index(line, " [")
+      dash = index(line, " - ")
+      if (bracket > 0 && (dash == 0 || bracket < dash)) print substr(line, 1, bracket - 1)
+      else if (dash > 0) print substr(line, 1, dash - 1)
+    }
+  ' "$DATA/projects.md" | sort -u)
+}
+
+discover_authored_prs() { # enroll new authenticated-operator PRs without changing existing owners
+  local repo out err url rc task=contributions-auto
+  while IFS= read -r repo; do
+    [ -n "$repo" ] || continue
+    out=$(mktemp "$TMP/discovery-output.XXXXXX")
+    err=$(mktemp "$TMP/discovery-error.XXXXXX")
+    rc=0
+    fm_run_timed 5 env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
+      gh pr list --repo "$repo" --author @me --state open --json url --limit 100 > "$out" 2> "$err" || rc=$?
+    if [ "$rc" -ne 0 ] || ! jq -e 'type == "array" and all(.[]; (.url | type) == "string")' "$out" >/dev/null 2>&1; then
+      printf 'contributions: discovery unavailable for %s - %s\n' "$repo" \
+        "$(sed -n '/[^[:space:]]/{p;q;}' "$err" | tr -d '\000-\037\177' | cut -c1-160)" >&2
+      rm -f -- "$out" "$err"
+      continue
+    fi
+    while IFS= read -r url; do
+      jq_lib -ne --arg url "$url" '$url | supported_url and contains("/pull/")' >/dev/null || continue
+      if jq_lib -ne --slurpfile input "$TMP/input.json" --slurpfile saved "$TMP/saved.json" --arg url "$url" \
+        'any(known($input[0];$saved[0])[]; .url == $url)' >/dev/null; then
+        continue
+      fi
+      jq -n --arg url "$url" '{url:$url,kind:"pr",checked_at:null,error:null,observation:null,verdict:null,seen:[],pending:[],notified:[]}' \
+        > "$TMP/row.json"
+      write_record "$task" "$TMP/row.json"
+      jq --arg task "$task" --slurpfile row "$TMP/row.json" \
+        '. + [{schema:"fm-contributions.v1",task:$task,records:$row}]' "$TMP/saved.json" > "$TMP/saved.updated.json"
+      mv -f -- "$TMP/saved.updated.json" "$TMP/saved.json"
+    done < <(jq -r '.[].url' "$out")
+    rm -f -- "$out" "$err"
+  done < <(registered_github_repositories)
+}
+
 poll() {
   local task url old kind error observed why
   local -a row
@@ -660,6 +721,7 @@ poll() {
   read_saved
   [ "$ERRORS" -eq 0 ] || printf 'contributions: %s unreadable durable record(s)\n' "$ERRORS"
   clear_unsupported_errors
+  discover_authored_prs
   # Only supported URLs enter final settlement and the forge-read rotation.
   # One line per distinct URL: its settlement, the URL, then every owning task.
   # A contribution with a final observation is not re-read for any owner; it
