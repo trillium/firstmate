@@ -686,6 +686,11 @@ fm_control_composer_structurally_empty() {  # <backend> <target>
   # backend is not loaded in this shell yet; a failed load is "not proven".
   fm_backend_source "$backend" || return 1
   case "$backend" in
+    tmux)
+      local screen
+      screen=$(fm_backend_visible_capture tmux "$target" 2>/dev/null) || return 1
+      fm_control_grok_composer_empty "$screen"
+      ;;
     herdr)
       fm_backend_herdr_parse_target "$target" || return 1
       local out agent status screen

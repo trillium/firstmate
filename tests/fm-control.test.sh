@@ -804,7 +804,10 @@ test_relaunch_dismisses_grok_weekly_limit_without_selecting_an_option() {
   expect_code 1 "$rc" "the fake replacement launch should stop after proving the old Grok agent exited: $out"
   grep -qx S-x "$dir/fake/keys" || fail "relaunch must dismiss the quota modal with Shift+x"
   [ "$(literals "$dir")" = /exit ] || fail "relaunch must exit only after the empty composer is proven, got: $(literals "$dir")"
-  ! grep -qx Enter "$dir/fake/keys" || fail "relaunch must never select a weekly-limit dialog option"
+  [ "$(sed -n '1p' "$dir/fake/keys")" = S-x ] \
+    || fail "Shift+x must dismiss the weekly-limit dialog before /exit submits"
+  [ "$(grep -cx Enter "$dir/fake/keys" || true)" -eq 1 ] \
+    || fail "only the /exit submission may send Enter after the weekly-limit dialog is dismissed"
   grep -qx "phase=failed:launching" "$dir/home/state/t1.control-relaunch" \
     || fail "relaunch should reach launch after safely replacing the quota-limited worker"
   pass "fm-control relaunch: dismisses Grok's weekly limit with Shift+x and never selects an option"
