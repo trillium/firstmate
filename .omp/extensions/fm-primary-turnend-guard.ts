@@ -462,7 +462,7 @@ async function claimSessionstartMessage(
 // forced continuation per turn.
 function runGuard(stopHookActive: boolean): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/fm-turnend-guard.sh`, {
+    const child = spawn(`${root}/bin/fm-hook-guard-run.sh`, ["fm-turnend-guard.sh"], {
       stdio: ["pipe", "ignore", "pipe"],
     });
     let stderr = "";
@@ -484,7 +484,7 @@ function runGuard(stopHookActive: boolean): Promise<{ code: number; stderr: stri
 // decision and is inert outside the real primary checkout.
 function runChecker(script: string, command: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/${script}`, ["--command", command], {
+    const child = spawn(`${root}/bin/fm-hook-guard-run.sh`, [script, "--command", command], {
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";

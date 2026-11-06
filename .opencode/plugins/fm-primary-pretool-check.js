@@ -55,7 +55,7 @@ export const FmPrimaryPretoolCheck = async ({ directory, worktree }) => {
       const command = output?.args?.command;
       if (!command || typeof command !== "string") return;
 
-      const result = await runProcess(`${root}/bin/fm-arm-pretool-check.sh`, ["--command", command]);
+      const result = await runProcess(`${root}/bin/fm-hook-guard-run.sh`, ["fm-arm-pretool-check.sh", "--command", command]);
       if (result.code !== 2) return;
 
       const reason = result.stderr.trim() || "denied by the watcher-arm PreToolUse seatbelt";
@@ -74,7 +74,7 @@ function installPretoolCheck(ctx) {
     const root = await getRoot();
     if (!root) return;
 
-    const result = await runProcess(`${root}/bin/fm-arm-pretool-check.sh`, ["--command", command]);
+    const result = await runProcess(`${root}/bin/fm-hook-guard-run.sh`, ["fm-arm-pretool-check.sh", "--command", command]);
     if (result.code !== 2) return;
 
     const reason = result.stderr.trim() || "denied by the watcher-arm PreToolUse seatbelt";

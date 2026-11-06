@@ -60,7 +60,8 @@ export const FmPrimaryQuestionTool = async ({ directory, worktree }) => {
     "tool.execute.before": async (input) => {
       if (!root || !PICKER.has(normalize(input?.tool))) return;
 
-      const result = await runProcess(`${root}/bin/fm-question-tool-pretool-check.sh`, [
+      const result = await runProcess(`${root}/bin/fm-hook-guard-run.sh`, [
+        "fm-question-tool-pretool-check.sh",
         "--tool",
         String(input.tool),
       ]);
