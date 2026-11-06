@@ -388,11 +388,14 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
-# Record export owns its root boundary independently of the lock context below.
-# In a state-override test or recovery context, the derived lock home is only a
-# safe location for Treehouse's shared lock; it must not make sibling export
-# storage appear inside the record-export home.
+# Record export and removal safety own their root boundaries independently of
+# the lock context below.
+# In a state-override test or recovery context, the derived lock home is only
+# a safe location for Treehouse's shared lock.
+# It must not make sibling export storage or a seeded secondmate home look as
+# though it lives under the active firstmate home.
 RECORD_EXPORT_HOME=$FM_HOME
+REMOVAL_GUARD_HOME=$FM_HOME
 # A state override is a complete home-shaped test or recovery context.  When
 # its caller did not also set FM_HOME, keep Treehouse's shared project lock in
 # that same context instead of accidentally anchoring it under FM_ROOT/state.
@@ -2980,7 +2983,7 @@ validate_removal_target() {
   [ -n "$target" ] || return 0
   [ -e "$target" ] || return 0
   abs_target=$(removal_target_abs_path "$target")
-  if abs_home=$(cd "$FM_HOME" 2>/dev/null && pwd -P); then
+  if abs_home=$(cd "$REMOVAL_GUARD_HOME" 2>/dev/null && pwd -P); then
     :
   else
     abs_home=
@@ -3075,7 +3078,7 @@ validate_child_worktree_for_removal() {
   [ -n "$target" ] || return 0
   [ -e "$target" ] || return 0
   abs_target=$(validate_removal_target "$target" "child worktree") || return 1
-  if abs_home=$(cd "$FM_HOME" 2>/dev/null && pwd -P); then
+  if abs_home=$(cd "$REMOVAL_GUARD_HOME" 2>/dev/null && pwd -P); then
     if path_is_ancestor_of "$abs_home" "$abs_target"; then
       echo "REFUSED: unsafe child worktree removal target $target is inside the active firstmate home" >&2
       return 1
