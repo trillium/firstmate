@@ -383,10 +383,18 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+FM_HOME_WAS_GIVEN=${FM_HOME+x}
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# A state override is a complete home-shaped test or recovery context.  When
+# its caller did not also set FM_HOME, keep Treehouse's shared project lock in
+# that same context instead of accidentally anchoring it under FM_ROOT/state.
+# An explicit FM_HOME remains authoritative for secondmates and production.
+if [ "$FM_HOME_WAS_GIVEN" != x ] && [ -n "${FM_STATE_OVERRIDE:-}" ]; then
+  FM_HOME=$(dirname "$STATE")
+fi
 SECONDMATE_REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
 SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
