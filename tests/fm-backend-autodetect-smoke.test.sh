@@ -117,9 +117,13 @@ git -C "$PROJ" remote add origin "file://$PROJ.origin.git"
 # --- spawn with NO explicit backend config; HERDR_ENV=1 is the only marker --
 
 OUT_FILE="$TMP_ROOT/spawn.out"; ERR_FILE="$TMP_ROOT/spawn.err"
+# The shared project lock lives in the home's state directory. FM_HOME has to
+# be this scratch home: an unset home falls back to the checkout, and a CI
+# checkout has no state directory for that lock to resolve in.
 env -u TMUX -u FM_BACKEND PATH="$PATH" HERDR_ENV=1 \
-  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-  FM_CONFIG_OVERRIDE="$CONFIG" FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$TMP_ROOT" FM_STATE_OVERRIDE="$STATE" \
+  FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
+  FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" \
   FM_SPAWN_NO_GUARD=1 \
   "$ROOT/bin/fm-spawn.sh" "$ID" "$PROJ" "sh -c 'echo autodetect-smoke-ok'" --mode no-mistakes --yolo off \
   >"$OUT_FILE" 2>"$ERR_FILE"
@@ -169,8 +173,8 @@ pass "real herdr: the auto-detected spawn's launch command actually ran in the h
 # --- teardown completes the trivial spawn/teardown cycle --------------------
 
 TEARDOWN_OUT="$TMP_ROOT/teardown.out"
-FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-  FM_CONFIG_OVERRIDE="$CONFIG" \
+FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$TMP_ROOT" FM_STATE_OVERRIDE="$STATE" \
+  FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
   "$ROOT/bin/fm-teardown.sh" "$ID" >"$TEARDOWN_OUT" 2>&1
 status=$?
 [ "$status" -eq 0 ] || fail "fm-teardown.sh failed for the auto-detected herdr task"$'\n'"$(cat "$TEARDOWN_OUT")"
