@@ -5,19 +5,12 @@
 #
 # These tests intentionally exercise the runner with fixtures, --list, and
 # focused scheduler checks, not the complete Firstmate suite.
-#
-# Set FM_TEST_SELECTOR to one or more comma-separated test function names to
-# run only those cases, for example:
-#   FM_TEST_SELECTOR=test_single_script_selection bash tests/fm-test-run.test.sh
-# The script writes FM_TEST_CASE_BEGIN and FM_TEST_CASE_END progress markers to
-# stderr before and after each selected case.
 set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 RUNNER="$ROOT/bin/fm-test-run.sh"
-SELF="$ROOT/tests/$(basename "${BASH_SOURCE[0]}")"
 
 assert_present "$RUNNER" "bin/fm-test-run.sh is missing"
 [ -x "$RUNNER" ] || fail "bin/fm-test-run.sh must be executable"
@@ -2177,110 +2170,49 @@ EOF
   pass "affected selection follows references and source lines, and keeps the whole selection when it cannot"
 }
 
-test_case_progress_and_selector() {
-  local out
-  out=$(FM_TEST_SELECTOR=test_single_script_selection bash "$SELF" 2>&1) \
-    || fail "selected self-run failed: $out"
-  assert_contains "$out" "FM_TEST_CASE_BEGIN test_single_script_selection" \
-    "selected self-run did not print its begin marker"
-  assert_contains "$out" "FM_TEST_CASE_END test_single_script_selection exit=0" \
-    "selected self-run did not print its successful end marker"
-  assert_not_contains "$out" "FM_TEST_CASE_BEGIN test_family_selection" \
-    "selector ran an unrequested test case"
-  pass "per-case progress markers and FM_TEST_SELECTOR focus one test"
-}
-
-test_selected() {
-  local test_name=$1
-  [ -z "${FM_TEST_SELECTOR:-}" ] && return 0
-  case ",${FM_TEST_SELECTOR:-}," in
-    *,"$test_name",*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-run_test() {
-  local test_name=$1 rc started elapsed
-  printf 'FM_TEST_CASE_BEGIN %s\n' "$test_name" >&2
-  CURRENT_TEST=$test_name
-  CURRENT_TEST_STARTED=$SECONDS
-  started=$CURRENT_TEST_STARTED
-  "$test_name"
-  rc=$?
-  elapsed=$((SECONDS - started))
-  printf 'FM_TEST_CASE_END %s exit=%s elapsed_s=%s\n' "$test_name" "$rc" "$elapsed" >&2
-  CURRENT_TEST=
-  CURRENT_TEST_STARTED=
-  return "$rc"
-}
-
-report_interrupted_test() {
-  local rc=$?
-  trap - EXIT
-  if [ -n "${CURRENT_TEST:-}" ]; then
-    printf 'FM_TEST_CASE_END %s exit=%s elapsed_s=%s\n' "$CURRENT_TEST" "$rc" \
-      "$((SECONDS - CURRENT_TEST_STARTED))" >&2
-  fi
-  exit "$rc"
-}
-
-trap report_interrupted_test EXIT
-
-TESTS=(
-  test_list_all_exact_suite_coverage
-  test_family_selection
-  test_single_script_selection
-  test_changed_file_selection_is_conservative
-  test_task_marker_refuses_the_primary_checkout
-  test_changed_runner_surfaces_select_their_family
-  test_shell_line_ending_policy_selects_runner_contract
-  test_changed_remote_inheritance_selects_generation_contract
-  test_changed_dependency_selection_and_unmapped_failure
-  test_changed_bin_reference_selects_per_script_not_per_family
-  test_changed_uses_bounded_automatic_concurrency
-  test_windows_posix_mode_emulation_does_not_fail_parallel_runs
-  test_script_list_uses_bounded_automatic_concurrency
-  test_family_proofs_run_in_separate_concurrent_phases
-  test_empty_selection_emits_summary
-  test_timing_markers_and_json
-  test_aggregate_exit_behavior
-  test_gate_skip_accounting
-  test_gate_skip_reason_is_recorded
-  test_a_run_that_ran_records_no_skip_reason
-  test_live_guards_expect_a_capability_skip_class
-  test_fail_on_gate_skip_token
-  test_exclude_family
-  test_tern_family_selection
-  test_list_scheduled_proven_isolated_uses_serial_weights
-  test_list_scheduled_non_lane_selections_use_serial_weights
-  test_portable_shard_union_and_coverage_guard
-  test_portable_parallel_lanes_stay_duration_balanced
-  test_portable_serial_shards_partition_the_serial_lane
-  test_portable_serial_hint_coverage_is_reported_and_bounded
-  test_portable_serial_packing_budget_boundary
-  test_portable_serial_shard_lane_refusals
-  test_jobs_requires_proven_isolated
-  test_jobs_admits_a_concurrent_safe_family
-  test_unmapped_new_test_never_inherits_family_concurrency
-  test_changed_shared_fixture_selects_its_readers
-  test_changed_t3_sources_select_their_readers
-  test_concurrent_runs_are_ordered_longest_first
-  test_stop_is_scoped_to_one_run
-  test_per_script_timeout_bounds_a_hang
-  test_changed_bound_gives_slow_watcher_suites_headroom
-  test_max_wall_ms_is_a_result_not_advice
-  test_jobs_parallel_scheduler_and_failure_propagation
-  test_herdr_ci_family_run_has_a_step_timeout
-  test_aggregate_json
-  test_affected_filter_narrows_and_falls_back_to_the_whole_selection
-  test_case_progress_and_selector
-)
-
-selected=0
-for test_name in "${TESTS[@]}"; do
-  test_selected "$test_name" || continue
-  selected=$((selected + 1))
-  run_test "$test_name"
-done
-
-[ "$selected" -gt 0 ] || fail "FM_TEST_SELECTOR selected no known test functions: ${FM_TEST_SELECTOR:-}"
+test_list_all_exact_suite_coverage
+test_family_selection
+test_single_script_selection
+test_changed_file_selection_is_conservative
+test_task_marker_refuses_the_primary_checkout
+test_changed_runner_surfaces_select_their_family
+test_shell_line_ending_policy_selects_runner_contract
+test_changed_remote_inheritance_selects_generation_contract
+test_changed_dependency_selection_and_unmapped_failure
+test_changed_bin_reference_selects_per_script_not_per_family
+test_changed_uses_bounded_automatic_concurrency
+test_windows_posix_mode_emulation_does_not_fail_parallel_runs
+test_script_list_uses_bounded_automatic_concurrency
+test_family_proofs_run_in_separate_concurrent_phases
+test_empty_selection_emits_summary
+test_timing_markers_and_json
+test_aggregate_exit_behavior
+test_gate_skip_accounting
+test_gate_skip_reason_is_recorded
+test_a_run_that_ran_records_no_skip_reason
+test_live_guards_expect_a_capability_skip_class
+test_fail_on_gate_skip_token
+test_exclude_family
+test_tern_family_selection
+test_list_scheduled_proven_isolated_uses_serial_weights
+test_list_scheduled_non_lane_selections_use_serial_weights
+test_portable_shard_union_and_coverage_guard
+test_portable_parallel_lanes_stay_duration_balanced
+test_portable_serial_shards_partition_the_serial_lane
+test_portable_serial_hint_coverage_is_reported_and_bounded
+test_portable_serial_packing_budget_boundary
+test_portable_serial_shard_lane_refusals
+test_jobs_requires_proven_isolated
+test_jobs_admits_a_concurrent_safe_family
+test_unmapped_new_test_never_inherits_family_concurrency
+test_changed_shared_fixture_selects_its_readers
+test_changed_t3_sources_select_their_readers
+test_concurrent_runs_are_ordered_longest_first
+test_stop_is_scoped_to_one_run
+test_per_script_timeout_bounds_a_hang
+test_changed_bound_gives_slow_watcher_suites_headroom
+test_max_wall_ms_is_a_result_not_advice
+test_jobs_parallel_scheduler_and_failure_propagation
+test_herdr_ci_family_run_has_a_step_timeout
+test_aggregate_json
+test_affected_filter_narrows_and_falls_back_to_the_whole_selection
