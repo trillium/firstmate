@@ -1,0 +1,18 @@
+$ bin/fm-pr-status.sh   (first 12 lines of 53 PRs; real gh, read-only)
+Open pull requests for trillium
+#365 [trillium/firstmate] Bound inbox note announce against held watcher-down lock
+  https://github.com/trillium/firstmate/pull/365
+  merge: BLOCKED · age: 0d · updated: 0d ago (2026-11-06T21:20:27Z)
+  last non-operator comment: coderabbitai[bot] at 2026-11-06T21:20:27Z
+  task: unlinked
+#330 [trillium/firstmate] fm-cloud: stop cloud runs waiting for input, forbid attribution, wake on stalls
+  https://github.com/trillium/firstmate/pull/330
+  merge: UNKNOWN · age: 1d · updated: 1d ago (2026-11-05T04:31:16Z)
+  last non-operator comment: coderabbitai[bot] at 2026-11-05T04:31:16Z
+  task: unlinked
+#304 [trillium/firstmate] Choose the Claude account with more headroom automatically
+...
+$ bin/fm-pr-status.sh --json | jq -c "{schema,operator,prs:(.prs|length),errors}"
+{"schema":"fm-pr-status.v1","operator":"trillium","prs":53,"errors":[]}
+
+Repos queried: trillium/firstmate (27 PRs) and kunchenguid/firstmate (26 PRs); errors: []
