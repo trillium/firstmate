@@ -149,6 +149,9 @@ case "${1:-}" in
       if [ "$payload" = C-u ] && [ -f "$D/clear-on-ctrl-u" ]; then
         cat "$D/clear-on-ctrl-u" > "$D/pane"
       fi
+      if [ "$payload" = S-x ] && [ -f "$D/dismiss-on-shift-x" ]; then
+        cat "$D/dismiss-on-shift-x" > "$D/pane"
+      fi
       # enter-exits-at holds the number of the Enter that answers a picker
       # and lets the agent exit, like the second Enter after `/exit`.
       if [ "$payload" = Enter ] && [ -f "$D/enter-exits-at" ] \
@@ -786,6 +789,28 @@ test_relaunch_clears_own_doorbell_before_exit() {
   ! grep -qx C-u "$dir/fake/keys" || fail "relaunch must not send C-u for mixed draft"
   [ -z "$(literals "$dir")" ] || fail "relaunch must not type /exit for mixed draft"
   pass "fm-control relaunch: clears only firstmate's own doorbell with C-u before exit, refuses mixed drafts and exit"
+}
+
+test_relaunch_dismisses_grok_weekly_limit_without_selecting_an_option() {
+  local dir out rc quota empty
+  dir=$(new_case grok-weekly-limit-relaunch)
+  add_task "$dir" t1 grok
+  alive_as "$dir" grok
+  quota=$'  ┃  You hit your weekly limit.\n  ┃  1 (○) Upgrade tier      Upgrade to a higher tier for more usage\n  ┃  2 (○) Buy more credits  Purchase credits to keep using Grok Build\n  ┃  3 (○) Try Again         Resubmit the last prompt once you have usage again\n  ┃  ↑/↓ navigate · y copy                                                                              Enter:submit\n'
+  empty=$'  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰────────────────────────────────────────────────────────── Grok 4.7 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+.:shortcuts\n'
+  printf '%s' "$quota" > "$dir/fake/pane"
+  printf '%s' "$empty" > "$dir/fake/dismiss-on-shift-x"
+  out=$(run_control "$dir" t1 relaunch --harness codex --note 'move off quota'); rc=$?
+  expect_code 1 "$rc" "the fake replacement launch should stop after proving the old Grok agent exited: $out"
+  grep -qx S-x "$dir/fake/keys" || fail "relaunch must dismiss the quota modal with Shift+x"
+  [ "$(literals "$dir")" = /exit ] || fail "relaunch must exit only after the empty composer is proven, got: $(literals "$dir")"
+  [ "$(sed -n '1p' "$dir/fake/keys")" = S-x ] \
+    || fail "Shift+x must dismiss the weekly-limit dialog before /exit submits"
+  [ "$(grep -cx Enter "$dir/fake/keys" || true)" -eq 1 ] \
+    || fail "only the /exit submission may send Enter after the weekly-limit dialog is dismissed"
+  grep -qx "phase=failed:launching" "$dir/home/state/t1.control-relaunch" \
+    || fail "relaunch should reach launch after safely replacing the quota-limited worker"
+  pass "fm-control relaunch: dismisses Grok's weekly limit with Shift+x and never selects an option"
 }
 
 test_hermes_profile_refusals_preserve_running_worker() {
@@ -1632,6 +1657,7 @@ test_orca_refuses_an_escape_harness_interrupt
 test_unverified_state_backends_refuse_stop_verbs
 test_commandcode_relaunch_off_tmux_and_herdr_refuses_before_stopping
 test_relaunch_clears_own_doorbell_before_exit
+test_relaunch_dismisses_grok_weekly_limit_without_selecting_an_option
 test_hermes_profile_refusals_preserve_running_worker
 test_state_verified_backends_are_exactly_tmux_herdr_and_rex
 test_window_label_is_refused_with_the_exact_id

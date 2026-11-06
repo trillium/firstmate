@@ -60,7 +60,7 @@
 #   cursor-transcript, missing, malformed, gen-mismatch, source-mismatch,
 #   kimi-unverified, codex-unverified, capture-failed, no-target, launch-prompt
 #
-# Classification (fm_busy_classify): busy | idle | unknown | dead, always
+# Classification (fm_busy_classify): busy | idle | blocked | unknown | dead, always
 # with the producing source as the second token. Precedence:
 #   1. dead endpoint (fm_busy_classify_live only) -> dead endpoint-gone
 #   2. a t3code task: the T3 server's busy, idle, or unknown verdict
@@ -980,6 +980,23 @@ fm_busy_grok_tail_busy() {
     | grep -qiE "${FM_BUSY_REGEX:-${FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT:-Ctrl\\+c:cancel}}"
 }
 
+# fm_busy_grok_tail_quota_exhausted: Grok's full-screen weekly-limit modal is
+# a blocked worker, not an idle completed task. Require its heading, all three
+# choices, and the navigation row so quoted prose or a partial error cannot
+# manufacture a quota verdict.
+fm_busy_grok_tail_quota_exhausted() {
+  local esc
+  esc=$(printf '\033')
+  printf '%s\n' "${1-}" | LC_ALL=C sed "s/${esc}\\[[0-9;:?]*[[:alpha:]]//g" | LC_ALL=C awk '
+    /^[ \t]*┃[ \t]*You hit your weekly limit\.[ \t]*$/ { heading = 1 }
+    heading && /^[ \t]*┃[ \t]*1 \(○\) Upgrade tier[ \t]/ { upgrade = 1 }
+    heading && /^[ \t]*┃[ \t]*2 \(○\) Buy more credits[ \t]/ { credits = 1 }
+    heading && /^[ \t]*┃[ \t]*3 \(○\) Try Again[ \t]/ { retry = 1 }
+    heading && /^[ \t]*┃[ \t]*↑\/↓ navigate · y copy[ \t]+Enter:submit[ \t]*$/ { controls = 1 }
+    END { exit !(heading && upgrade && credits && retry && controls) }
+  '
+}
+
 # fm_busy_rovo_tail_busy: the Rovo-only temporary rendered-tail fallback.
 # Consumes the tail on stdin; 0 when Rovo's verified animated busy line
 # matches (the "Rovo is thinking..." text rendered while a turn is running,
@@ -1246,7 +1263,9 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
           return 0
         fi
       fi
-      if printf '%s' "$tail40" | fm_busy_grok_tail_busy; then
+      if fm_busy_grok_tail_quota_exhausted "$tail40"; then
+        printf 'blocked grok-quota-exhausted'
+      elif printf '%s' "$tail40" | fm_busy_grok_tail_busy; then
         printf 'busy grok-regex'
       else
         printf 'idle grok-regex'

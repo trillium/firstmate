@@ -545,6 +545,17 @@ Ctrl+c:cancel')
   pass "the grok fallback is regex-scoped to grok and classifies only grok tasks"
 }
 
+test_grok_weekly_limit_is_blocked() {
+  local state out screen
+  state=$(new_state_dir grok-weekly-limit)
+  screen=$'  ┃  You hit your weekly limit.\n  ┃  1 (○) Upgrade tier      Upgrade to a higher tier for more usage\n  ┃  2 (○) Buy more credits  Purchase credits to keep using Grok Build\n  ┃  3 (○) Try Again         Resubmit the last prompt once you have usage again\n  ┃  ↑/↓ navigate · y copy                                                                              Enter:submit\n'
+  out=$(fm_busy_classify tmux w1 grok t1 "$state" "$screen")
+  [ "$out" = "blocked grok-quota-exhausted" ] || fail "weekly-limit dialog must classify blocked, got '$out'"
+  out=$(fm_busy_classify tmux w1 grok t1 "$state" 'You hit your weekly limit.')
+  [ "$out" = "idle grok-regex" ] || fail "a quoted quota heading must not classify blocked, got '$out'"
+  pass "the full Grok weekly-limit dialog is a harness-scoped blocked state"
+}
+
 # --- kimi verification gate -----------------------------------------------------
 
 test_codex_unverified_gate() {
@@ -882,6 +893,7 @@ test_launch_prompt_scoped_to_armed_harnesses
 test_launch_prompt_never_reclassifies_an_advanced_record
 test_launch_prompt_requires_a_captured_tail
 test_grok_regex_isolated
+test_grok_weekly_limit_is_blocked
 test_codex_unverified_gate
 test_kimi_unverified_gate
 test_pi_stream_version_floor_accepts_verified_rejects_unverified

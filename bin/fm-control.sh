@@ -474,6 +474,23 @@ refuse_blocking_prompt() {  # <dialog-name>
   die "task $ID is blocked on a prompt: $1. Refusing to type Enter into it."
 }
 
+# Grok's quota modal has no safe Enter path: every choice purchases, upgrades,
+# or retries the exhausted prompt. Relaunch alone may dismiss it with the
+# recorded Shift+x key, then prove the returned composer is empty before /exit.
+dismiss_grok_quota_for_relaunch() {
+  [ "$VERB" = relaunch ] && [ "$HARNESS" = grok ] || return 1
+  fm_control_backend_supports_key "$BACKEND" S-x \
+    || die "task $ID shows Grok's weekly-limit dialog, but $BACKEND cannot deliver its verified Shift+x dismissal; refusing to select an option"
+  fm_backend_send_key "$BACKEND" "$T" S-x "$LABEL" \
+    || die "task $ID shows Grok's weekly-limit dialog and its verified Shift+x dismissal was not delivered; refusing to select an option"
+  sleep "$POLL"
+  if [ "$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null)" = empty ] \
+     || fm_control_composer_structurally_empty "$BACKEND" "$T"; then
+    return 0
+  fi
+  die "task $ID's Grok weekly-limit dialog did not return to a proven empty composer after Shift+x; refusing to type the exit command"
+}
+
 # confirm_exit_picker: answer the Claude background-task picker that THIS exit
 # request opened. The picker is Claude's own confirmation of the /exit that
 # do_exit just typed, and its selected row is Exit and stop tasks, so one Enter
@@ -835,7 +852,12 @@ do_exit() {
   # rather than a function that subshell sourced.
   if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
-    refuse_blocking_prompt "$dialog"
+    if [ "$dialog" = 'Grok weekly limit' ]; then
+      dismiss_grok_quota_for_relaunch
+      composer_state=empty
+    else
+      refuse_blocking_prompt "$dialog"
+    fi
   fi
   # If relaunching and the composer holds only firstmate's own doorbell text,
   # clear it through the adapter's supported clear mechanism (Ctrl+U repeatedly)
