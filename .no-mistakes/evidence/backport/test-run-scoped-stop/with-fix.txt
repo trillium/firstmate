@@ -1,0 +1,3 @@
+ok - --stop kills children that ignore TERM before the run exits
+ok - a repeated --stop during the grace period still kills TERM-ignoring children
+bash tests/zz-sel.test.sh  1.07s user 1.40s system 13% cpu 17.994 total
