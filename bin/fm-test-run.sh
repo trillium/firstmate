@@ -45,7 +45,24 @@
 #                   parallel hints, falling back to serial weights if missing.
 #                   Every other selection uses serial weights alone.
 #                   Equal weights are ordered by path under LC_ALL=C.
-#   --base <ref>    with --changed, compare against this ref (default: origin/main)
+#   --base <ref>    with --changed or --affected, compare against this ref
+#                   (default: origin/main)
+#   --affected      filter the chosen selection down to tests the files
+#                   changed since --base can affect. The mapping is derived
+#                   from the tree on each run, never from a hand-maintained
+#                   list. A test is kept when that test file changed, when it
+#                   references a changed bin/ script, or when it references a
+#                   script that transitively sources a changed *-lib.sh.
+#                   The whole selection is kept when any changed file cannot
+#                   be mapped, when the diff touches shared test infrastructure
+#                   (bin/fm-test-run.sh, anything under .github/workflows/, or
+#                   anything under tests/ that is not a top-level *.test.sh),
+#                   when a changed *-lib.sh is sourced by at least
+#                   AFFECTED_WIDE_LIB_CONSUMERS bin scripts, or when the
+#                   changed-file list cannot be read. An empty intersection
+#                   exits 0 without running a script, so a lane with nothing
+#                   to run still reports success. Omitting the flag leaves
+#                   the selection unchanged.
 #   --exclude-family <name>
 #                   drop scripts whose primary family matches <name> after selection
 #                   (repeatable; portable CI lanes exclude real-herdr-gated so the
@@ -190,6 +207,7 @@ JOBS_EXPLICIT=0
 JOBS_MAX=8
 MAX_WALL_MS=
 PER_SCRIPT_TIMEOUT_SECS=0
+AFFECTED=0
 # Bound applied automatically on the automatic --changed path, derived from
 # measured healthy runtimes with margin rather than picked: the slowest measured
 # script is tests/fm-watch-triage.test.sh at about 593s under CI load (the hint
@@ -214,6 +232,15 @@ PORTABLE_SERIAL_DEFAULT_WEIGHT_MS=45000
 # normal CI tier for setup and runtime variance. --check-coverage refuses a
 # modeled serial shard above this target; refresh hints or rebalance instead.
 PORTABLE_SERIAL_MAX_WEIGHT_MS=1200000
+
+# Transitive bin-script consumers at or above this count make a *-lib.sh
+# shared infrastructure for --affected: the static source graph is no longer
+# a sound proof that every affected test was named, so the filter keeps the
+# whole selection. The cutoff sits under the central libs (timeout, wake,
+# session lock, classify, pr) and above a domain lib only a handful of
+# scripts source. Membership is computed from source lines on each run; this
+# number is the cutoff, not a list of library names.
+AFFECTED_WIDE_LIB_CONSUMERS=40
 
 # Largest share of the serial lane allowed to run on the default weight above.
 # Hints are what keep the shards balanced, so once too much of the lane is
@@ -1989,6 +2016,230 @@ families_for_changed_path() {
   esac
 }
 
+# Direct source edges among bin shell scripts: "consumer<TAB>lib".
+# A source edge is a command-position "." or "source" whose line names a
+# *-lib.sh. Comment text is not an edge. Dynamic names that never appear as
+# a literal basename produce no edge; a lib with no resolvable consumer and
+# no test reference is unmapped and --affected keeps the whole selection.
+affected_write_source_edges() {
+  local out=$1 listing
+  listing=$(mktemp "${TMPDIR:-/tmp}/fm-affected-sources.XXXXXX")
+  find "$ROOT/bin" -type f -name '*.sh' -print0 >"$listing"
+  if [ ! -s "$listing" ]; then
+    : >"$out"
+    rm -f "$listing"
+    return 0
+  fi
+  # shellcheck disable=SC2016 # The awk program is literal; the shell must not expand it.
+  if ! xargs -0 awk '
+    FNR == 1 {
+      base = FILENAME
+      sub(/^.*\//, "", base)
+    }
+    {
+      line = $0
+      sub(/#.*/, "", line)
+      if (line ~ /(^|[[:space:];&|(])(\.|source)[[:space:]]/) {
+        n = split(line, parts, /[^A-Za-z0-9_.+-]/)
+        for (i = 1; i <= n; i++) {
+          if (parts[i] ~ /-lib\.sh$/ && parts[i] != base)
+            print base "\t" parts[i]
+        }
+      }
+    }
+  ' <"$listing" >"$out"; then
+    rm -f "$listing"
+    return 1
+  fi
+  rm -f "$listing"
+}
+
+# Scripts that source <lib> directly or by sourcing another lib that does.
+affected_consumers_of() {
+  local lib=$1 edges=$2
+  awk -F '\t' -v start="$lib" '
+    NF >= 2 { users[$2] = users[$2] " " $1 }
+    END {
+      queue[start] = 1
+      seen[start] = 1
+      changed = 1
+      while (changed) {
+        changed = 0
+        for (name in queue) {
+          if (expanded[name]) continue
+          expanded[name] = 1
+          n = split(users[name], arr, " ")
+          for (i = 1; i <= n; i++) {
+            user = arr[i]
+            if (user == "") continue
+            if (!seen[user]) {
+              seen[user] = 1
+              consumers[++count] = user
+              changed = 1
+            }
+            if (user ~ /-lib\.sh$/ && !queue[user]) {
+              queue[user] = 1
+              changed = 1
+            }
+          }
+        }
+      }
+      for (i = 1; i <= count; i++) print consumers[i]
+    }
+  ' "$edges" | LC_ALL=C sort -u
+}
+
+# Append tests/*.test.sh files that name any needle to <out>.
+affected_tests_naming() {
+  local needle_file=$1 out=$2 needle f
+  : >"$out"
+  for f in tests/*.test.sh; do
+    [ -f "$f" ] || return 0
+    break
+  done
+  while IFS= read -r needle; do
+    [ -n "$needle" ] || continue
+    grep -l -F -- "$needle" tests/*.test.sh || true
+  done <"$needle_file" >>"$out"
+}
+
+# Map one changed path. Appends selected tests to <work>/affected.
+# Prints a full-suite reason when the path cannot be narrowed safely.
+affected_classify_path() {
+  local path=$1 work=$2 base consumers count
+  case "$path" in
+    bin/fm-test-run.sh)
+      printf '%s\n' "shared-test-runner:${path}"
+      return 0
+      ;;
+    # A case pattern's * matches slashes, so one pattern covers nested paths.
+    .github/workflows|.github/workflows/*)
+      printf '%s\n' "workflow:${path}"
+      return 0
+      ;;
+    tests/*.test.sh)
+      # * matches slashes, so a nested tests/a/b.test.sh is shared infrastructure.
+      case "$path" in
+        tests/*/*)
+          printf '%s\n' "shared-test-infrastructure:${path}"
+          ;;
+        *)
+          if [ -f "$path" ]; then
+            printf '%s\n' "$path" >>"$work/affected"
+          fi
+          ;;
+      esac
+      return 0
+      ;;
+    tests|tests/*)
+      printf '%s\n' "shared-test-infrastructure:${path}"
+      return 0
+      ;;
+    bin/*-lib.sh)
+      base=$(basename "$path")
+      consumers=$(affected_consumers_of "$base" "$work/edges")
+      count=0
+      if [ -n "$consumers" ]; then
+        count=$(printf '%s\n' "$consumers" | wc -l | tr -d ' ')
+      fi
+      if [ "$count" -ge "$AFFECTED_WIDE_LIB_CONSUMERS" ]; then
+        printf '%s\n' "widely-sourced:${path}"
+        return 0
+      fi
+      {
+        printf '%s\n' "$base"
+        if [ -n "$consumers" ]; then
+          printf '%s\n' "$consumers"
+        fi
+      } >"$work/needles"
+      affected_tests_naming "$work/needles" "$work/refs"
+      if [ -s "$work/refs" ]; then
+        cat "$work/refs" >>"$work/affected"
+        return 0
+      fi
+      printf '%s\n' "unmapped:${path}"
+      return 0
+      ;;
+    bin/*)
+      base=$(basename "$path")
+      printf '%s\n' "$base" >"$work/needles"
+      affected_tests_naming "$work/needles" "$work/refs"
+      if [ -s "$work/refs" ]; then
+        cat "$work/refs" >>"$work/affected"
+        return 0
+      fi
+      printf '%s\n' "unmapped:${path}"
+      return 0
+      ;;
+    *)
+      printf '%s\n' "unmapped:${path}"
+      return 0
+      ;;
+  esac
+}
+
+affected_log() {
+  local mode_token
+  mode_token=${1%% *}
+  log "FM_TEST_AFFECTED $*"
+  SELECTION_DESC="${SELECTION_DESC};affected=${mode_token#mode=}"
+}
+
+# Intersect the current selection with tests affected by changes since <base>.
+# Any uncertainty keeps the selection intact and says why on stderr.
+apply_affected_filter() {
+  local base=$1 work path reason changed_n s
+  local -a kept=()
+  work=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-affected.XXXXXX")
+  : >"$work/affected"
+  : >"$work/edges"
+  if ! git -C "$ROOT" rev-parse --verify "${base}^{commit}" >/dev/null 2>&1 \
+    || ! git -C "$ROOT" diff --name-only "${base}...HEAD" >"$work/diff1" 2>"$work/diff.err" \
+    || ! git -C "$ROOT" diff --name-only HEAD >"$work/diff2" 2>>"$work/diff.err" \
+    || ! git -C "$ROOT" ls-files --others --exclude-standard >"$work/diff3" 2>>"$work/diff.err"; then
+    affected_log "mode=full reason=changed-file-list-unavailable changed=0 tests=${#SCRIPTS[@]}"
+    rm -rf "$work"
+    return 0
+  fi
+  sed '/^$/d' "$work/diff1" "$work/diff2" "$work/diff3" | LC_ALL=C sort -u >"$work/changed"
+  changed_n=$(wc -l <"$work/changed" | tr -d ' ')
+  if [ "$changed_n" -eq 0 ]; then
+    SCRIPTS=()
+    affected_log "mode=selected reason=mapped changed=0 affected=0 tests=0"
+    rm -rf "$work"
+    return 0
+  fi
+  if grep -qE '(^|/)[^/]*-lib\.sh$' "$work/changed"; then
+    if ! affected_write_source_edges "$work/edges"; then
+      affected_log "mode=full reason=changed-file-list-unavailable changed=${changed_n} tests=${#SCRIPTS[@]}"
+      rm -rf "$work"
+      return 0
+    fi
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    reason=$(affected_classify_path "$path" "$work")
+    if [ -n "$reason" ]; then
+      affected_log "mode=full reason=${reason} changed=${changed_n} tests=${#SCRIPTS[@]}"
+      rm -rf "$work"
+      return 0
+    fi
+  done <"$work/changed"
+  if [ -s "$work/affected" ]; then
+    LC_ALL=C sort -u "$work/affected" >"$work/affected.sorted"
+  else
+    : >"$work/affected.sorted"
+  fi
+  for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
+    if grep -qxF "$s" "$work/affected.sorted"; then
+      kept+=("$s")
+    fi
+  done
+  SCRIPTS=("${kept[@]+"${kept[@]}"}")
+  affected_log "mode=selected reason=mapped changed=${changed_n} affected=$(wc -l <"$work/affected.sorted" | tr -d ' ') tests=${#SCRIPTS[@]}"
+  rm -rf "$work"
+}
+
 select_changed() {
   local base=$1 path entry fam script_name s
   local -a wanted_families=()
@@ -2210,6 +2461,10 @@ while [ "$#" -gt 0 ]; do
     --changed)
       [ -z "$MODE" ] || die "only one selection mode is allowed"
       MODE=changed
+      shift
+      ;;
+    --affected)
+      AFFECTED=1
       shift
       ;;
     --base)
@@ -2452,6 +2707,9 @@ if [ "${#EXCLUDE_FAMILIES[@]}" -gt 0 ]; then
 fi
 if [ -n "$FAIL_ON_GATE_SKIP" ]; then
   SELECTION_DESC="${SELECTION_DESC};fail-on-gate-skip=$FAIL_ON_GATE_SKIP"
+fi
+if [ "$AFFECTED" -eq 1 ]; then
+  apply_affected_filter "$BASE_REF"
 fi
 if [ "$LIST_ONLY" -eq 1 ] || [ "$LIST_SCHEDULED" -eq 1 ]; then
   if [ "$LIST_SCHEDULED" -eq 1 ]; then

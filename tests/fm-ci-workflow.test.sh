@@ -20,6 +20,10 @@
 # FM_CI_SKIP_MACOS let a fork skip the push run and the macOS job through a
 # job-level condition, while with neither set every job runs exactly as before.
 #
+# They also hold pull-request affected selection: an in-repo or write-access
+# pull request asks each behavior lane for the tests its diff affects, while
+# a push to main and an outside pull request keep every test in the lane.
+#
 # The workflow is parsed as YAML and its concurrency and job-level `if`
 # expressions are resolved against simulated pull_request and push contexts,
 # so the assertions describe what GitHub would do, not how the file happens
@@ -607,8 +611,8 @@ test_heavy_tier_keeps_a_step_tripwire_under_a_job_backstop() {
   [ "$heavy" -ge 60 ] && [ "$heavy" -le 75 ] \
     || fail "heavy tier backstop must stay a 60-75 minute last resort, got $heavy"
   # Each heavy lane's family-run step owns the same 20-minute tripwire shape:
-  # its own timeout, an always() cleanup step that must come after it, and a
-  # bound below the shared job backstop.
+  # its own timeout, a cleanup step that still runs after a hang when the lane
+  # installed Herdr or herdr-core, and a bound below the shared job backstop.
   while read -r lane run_step cleanup_step; do
     step=$(ruby -ryaml -e '
 steps = YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("steps")
@@ -617,7 +621,9 @@ raise "no #{ARGV[2]} step" unless index
 teardown = steps.index { |s| s["id"] == ARGV[3] }
 raise "no #{ARGV[3]} step" unless teardown
 raise "teardown must follow the family-run step" unless teardown > index
-raise "teardown must run under always()" unless steps[teardown]["if"].to_s.strip == "always()"
+condition = steps[teardown]["if"].to_s.strip
+raise "teardown must still run after a failed family step" unless condition.include?("always()")
+raise "teardown must stay idle when the lane installed nothing" unless condition.include?("steps.affected.outputs.run == '\''yes'\''")
 puts steps[index].fetch("timeout-minutes", "none")
 ' "$CI_WORKFLOW" "$lane" "$run_step" "$cleanup_step") || fail "could not read the $lane family-run step"
     case "$step" in ''|*[!0-9]*) fail "the $lane family-run step needs its own timeout-minutes, got $step" ;; esac
@@ -630,6 +636,64 @@ tests-herdr run-real-herdr-family cleanup-herdr-lab-sessions
 tests-hc run-real-hc-family cleanup-hc-lab-sessions
 LANES
   pass "each heavy lane keeps a 20 minute step tripwire under a $heavy minute job backstop"
+}
+
+# Pull-request affected selection. In-repo and write-access pull requests ask
+# each behavior lane for the tests its diff affects. A push to main and an
+# outside pull request, including one that carries full-ci, keep every test
+# in the lane. The job still starts either way, so a lane with nothing to run
+# reports success instead of disappearing.
+test_in_repo_pull_requests_select_affected_tests() {
+  local context actual got
+  while read -r actual context; do
+    # shellcheck disable=SC2086  # context is a deliberate word list of KEY=VALUE
+    got=$(affected_enabled $context) || fail "could not resolve FM_CI_AFFECTED for $context"
+    [ "$got" = "$actual" ] \
+      || fail "FM_CI_AFFECTED for $context must be $actual, got $got"
+  done <<'TABLE'
+false event=push
+true head=kunchenguid/firstmate
+true association=OWNER
+true association=MEMBER
+true association=COLLABORATOR
+false association=CONTRIBUTOR
+false association=NONE
+false association=CONTRIBUTOR labels=full-ci
+false association=NONE labels=full-ci
+TABLE
+  ruby -ryaml -e '
+jobs = YAML.load_file(ARGV[0]).fetch("jobs")
+behavior = %w[
+  tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial
+  tests-herdr tests-hc macos-stock-bash
+]
+full = %w[lint test-coverage invariants full-suite tests-timing-aggregate]
+behavior.each do |id|
+  runs = jobs.fetch(id).fetch("steps").map { |step| step["run"].to_s }
+  joined = runs.join("\n")
+  raise "#{id} must ask the runner for affected tests" unless joined.include?("FM_CI_AFFECTED") && joined.include?("--affected")
+  raise "#{id} job condition must stay independent of affected selection" if jobs.fetch(id)["if"].to_s.include?("FM_CI_AFFECTED")
+end
+%w[tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial tests-herdr tests-hc].each do |id|
+  decide = jobs.fetch(id).fetch("steps").find { |step| step["id"] == "affected" }
+  raise "#{id} needs a decide step" unless decide
+  raise "#{id} decide step must keep the lane when selection is off" unless decide.fetch("run").include?("FM_CI_AFFECTED")
+end
+full.each do |id|
+  joined = jobs.fetch(id).fetch("steps").map { |step| step["run"].to_s }.join("\n")
+  raise "#{id} must keep running its whole check" if joined.include?("--affected")
+end
+' "$CI_WORKFLOW" || fail "affected selection is not wired through the behavior lanes"
+  pass "in-repo and write-access pull requests select affected tests; main and outside pull requests keep the whole lane"
+}
+
+# Print true or false for the workflow env that asks a lane to narrow.
+affected_enabled() {  # [KEY=VALUE]...
+  ruby -ryaml -e "$EXPRESSION_RUBY" -e "$CONTEXT_RUBY" -e '
+doc = YAML.load_file(ARGV.shift)
+context = simulated_context(doc.fetch("name"), ARGV)
+puts interpolate(doc.fetch("env").fetch("FM_CI_AFFECTED"), context)
+' "$CI_WORKFLOW" "$@"
 }
 
 # The fork opt-out is opt-in: with neither variable set every job runs on both
@@ -734,6 +798,7 @@ test_trusted_runs_are_unchanged
 test_unrelated_label_starts_no_job
 test_late_unrelated_label_run_never_masks_a_full_ci_pass
 test_unrelated_label_never_masks_an_earlier_failure
+test_in_repo_pull_requests_select_affected_tests
 test_fork_skip_variables_are_opt_in
 test_timing_aggregate_still_runs_after_a_failed_lane
 test_every_job_has_a_finite_timeout
