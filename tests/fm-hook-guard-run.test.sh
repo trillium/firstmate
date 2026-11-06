@@ -10,6 +10,9 @@ set -u
 TMP_ROOT=$(fm_test_tmproot fm-hook-guard-run-tests)
 OUT="$TMP_ROOT/out"
 ERR="$TMP_ROOT/err"
+MARKER="$TMP_ROOT/marker"
+QUIET_HOME="$TMP_ROOT/quiet-home"
+PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"true"}}'
 GUARDS='fm-arm-pretool-check.sh fm-cd-pretool-check.sh fm-subagent-pretool-check.sh fm-question-tool-pretool-check.sh fm-turnend-guard.sh'
 TRACKED_SETTINGS="$ROOT/.claude/settings.json"
 
@@ -74,6 +77,111 @@ test_genuine_deny_still_denies() {
   pass "a guard that runs and denies still denies, with args and stdin intact"
 }
 
+# Every tracked harness hook command, not only the Claude guards above.
+# A command that never reaches fm-hook-guard-run.sh fails this test.
+tracked_hook_commands() {
+  jq -r '.hooks[][]?.hooks[]?.command // empty' "$ROOT/.claude/settings.json"
+  jq -r '.hooks[][]?.hooks[]?.command // empty' "$ROOT/.codex/hooks.json"
+  jq -r '.hooks[][]?.command // empty' "$ROOT/.cursor/hooks.json"
+  jq -r '.[] | (.SessionStart // empty)[]?.command, (.Stop // empty)[]?.command, (.PreToolUse // empty)[]?.hooks[]?.command' \
+    "$ROOT/.agents/hooks.json"
+  local grok
+  for grok in "$ROOT"/.grok/hooks/*.json; do
+    jq -r '.hooks[][]?.hooks[]?.command // empty' "$grok"
+  done
+}
+
+hook_target() {  # <command> -> basename the command actually execs when only that file exists
+  printf '%s\n' "$1" | sed -n 's/.*fm-hook-guard-run\.sh["\\ ]*\([a-zA-Z0-9_.-]*\.sh\).*/\1/p' | tail -n 1
+}
+
+# Antigravity's registration ends in `|| cd .`, so a refusing script's exit 2
+# becomes 0 at the hook command. The script still ran; that is the block signal
+# those hooks already use (a decision on stdout, exit 0).
+expect_refusal_status() {  # <command> <actual>
+  if printf '%s\n' "$1" | grep -q '|| cd \.'; then
+    [ "$2" -eq 0 ]
+  else
+    [ "$2" -eq 2 ]
+  fi
+}
+
+run_hook_command() {  # <worktree> <command>
+  local wt=$1 cmd=$2 rc=0
+  if printf '%s\n' "$cmd" | grep -q 'CLAUDE_PROJECT_DIR'; then
+    printf '%s' "$PAYLOAD" | env -u GROK_AGENT -u GROK_HOOK_EVENT -u GROK_HOOK_NAME \
+      -u GROK_SESSION_ID -u GROK_WORKSPACE_ROOT \
+      HOME="$QUIET_HOME" BASH_ENV='' ENV='' CLAUDE_PROJECT_DIR="$wt" MARKER="$MARKER" \
+      bash -c "$cmd" >"$OUT" 2>"$ERR" || rc=$?
+  elif printf '%s\n' "$cmd" | grep -q 'CURSOR_PROJECT_DIR'; then
+    printf '%s' "$PAYLOAD" | env HOME="$QUIET_HOME" BASH_ENV='' ENV='' \
+      CURSOR_PROJECT_DIR="$wt" MARKER="$MARKER" \
+      bash -c "$cmd" >"$OUT" 2>"$ERR" || rc=$?
+  elif printf '%s\n' "$cmd" | grep -q 'GROK_WORKSPACE_ROOT'; then
+    printf '%s' "$PAYLOAD" | env HOME="$QUIET_HOME" BASH_ENV='' ENV='' \
+      GROK_WORKSPACE_ROOT="$wt" MARKER="$MARKER" \
+      bash -c "$cmd" >"$OUT" 2>"$ERR" || rc=$?
+  else
+    printf '%s' "$PAYLOAD" | (
+      cd "$wt" || exit 99
+      env HOME="$QUIET_HOME" BASH_ENV='' ENV='' MARKER="$MARKER" bash -c "$cmd"
+    ) >"$OUT" 2>"$ERR" || rc=$?
+  fi
+  printf '%s\n' "$rc"
+}
+
+prepare_hook_root() {  # <worktree>
+  local wt=$1
+  rm -rf "${wt:?}/bin"
+  mkdir -p "$wt/bin" "$wt/.codex"
+  cp "$ROOT/bin/fm-hook-guard-run.sh" "$wt/bin/fm-hook-guard-run.sh"
+  chmod +x "$wt/bin/fm-hook-guard-run.sh"
+  cp "$ROOT/.codex/hooks.json" "$wt/.codex/hooks.json"
+  printf '# fixture\n' > "$wt/AGENTS.md"
+}
+
+test_every_tracked_hook_command_steps_aside_or_preserves_refusal() {
+  local wt="$TMP_ROOT/all-hooks" cmd target rc n=0
+  command -v jq >/dev/null 2>&1 || fail "test host must provide jq"
+  mkdir -p "$wt" "$QUIET_HOME"
+  prepare_hook_root "$wt"
+  while IFS= read -r cmd; do
+    [ -n "$cmd" ] || continue
+    target=$(hook_target "$cmd")
+    [ -n "$target" ] || fail "tracked hook command does not run through fm-hook-guard-run.sh: $cmd"
+    n=$((n + 1))
+
+    conflicted_guard "$wt/bin/$target"
+    chmod +x "$wt/bin/$target"
+    ! bash -n "$wt/bin/$target" 2>/dev/null || fail "fixture for $target must not parse"
+    rm -f "$MARKER"
+    rc=$(run_hook_command "$wt" "$cmd")
+    [ "$rc" -eq 0 ] || fail "$target with conflict markers must not block, got exit $rc stderr=$(cat "$ERR") cmd=$cmd"
+    [ ! -e "$MARKER" ] || fail "$target with conflict markers must not run"
+    assert_contains "$(cat "$ERR")" "$target" "$target conflict warning must name the script"
+    assert_contains "$(cat "$ERR")" "does not parse" "$target conflict warning must say it does not parse"
+
+    # shellcheck disable=SC2016 # the guard body is a literal script, expanded when it runs
+    cat > "$wt/bin/$target" <<'EOF'
+#!/usr/bin/env bash
+cat > "${MARKER:?}"
+printf 'denied\n' >&2
+exit 2
+EOF
+    chmod +x "$wt/bin/$target"
+    rm -f "$MARKER"
+    rc=$(run_hook_command "$wt" "$cmd")
+    expect_refusal_status "$cmd" "$rc" || fail "$target refusal was swallowed: exit $rc stderr=$(cat "$ERR") cmd=$cmd"
+    [ -e "$MARKER" ] || fail "$target that parses must still run: stderr=$(cat "$ERR") cmd=$cmd"
+    assert_equals "$PAYLOAD" "$(cat "$MARKER")" "$target must see the hook payload on stdin"
+    assert_contains "$(cat "$ERR")" "denied" "$target refusal text must reach the hook"
+    rm -f "$wt/bin/$target"
+  done < <(tracked_hook_commands)
+  [ "$n" -ge 20 ] || fail "expected every tracked hook config, saw $n commands"
+  pass "every tracked hook command steps aside on conflict markers and still runs a refusing script ($n commands)"
+}
+
 test_conflict_markers_pass_through_for_every_tracked_guard
 test_missing_guard_passes_through
 test_genuine_deny_still_denies
+test_every_tracked_hook_command_steps_aside_or_preserves_refusal

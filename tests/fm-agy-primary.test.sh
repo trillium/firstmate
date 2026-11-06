@@ -54,7 +54,7 @@ run_under_agy() {
 install_scripts() {
   local dir=$1 f
   mkdir -p "$dir/bin" "$dir/docs" "$dir/.agents"
-  for f in fm-sessionstart-agy.sh fm-turnend-guard-agy.sh \
+  for f in fm-hook-guard-run.sh fm-sessionstart-agy.sh fm-turnend-guard-agy.sh \
            fm-turnend-guard.sh fm-sessionstart-run.sh fm-sessionstart-nudge.sh \
            fm-arm-pretool-check.sh fm-cd-pretool-check.sh fm-subagent-pretool-check.sh \
            fm-claude-stop-autoarm.sh fm-hook-host-lib.sh \

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Entry point the tracked .claude/settings.json guard hooks run through, so a
-# guard script that cannot be loaded never wedges the session.
+# Entry point the tracked harness hook configs run bin/ scripts through, so a
+# hook script that cannot be loaded never wedges the session.
 #
-# A merge or rebase inside a worktree can leave conflict markers in a guard
-# script under bin/. Claude runs the hook from that worktree, bash exits 2 on the
-# syntax error, and a PreToolUse exit 2 blocks every tool call (a Stop guard
-# loops to its block cap), so the worker cannot even repair the file.
+# A merge or rebase inside a worktree can leave conflict markers in a hook
+# script under bin/. The harness runs that script from the worktree, bash exits
+# 2 on the syntax error, and a blocking hook (Claude and Codex PreToolUse exit
+# 2, and the same exit from the other tracked hook configs) refuses the tool
+# call, so the worker cannot even repair the file.
 #
 # Usage: bin/fm-hook-guard-run.sh <guard-script-basename> [guard args...]
 #
