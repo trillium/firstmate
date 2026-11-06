@@ -1894,7 +1894,7 @@ test_dialog_heading_and_footer_must_be_the_recorded_lines() {
 
 test_agy_feedback_survey_is_named_only_when_complete() {
   local screen out rc
-  screen=$(cat "$ROOT/tests/fixtures/agy-quota-survey-screen.txt")
+  screen=$(cat "$ROOT/tests/fixtures/agy-quota-survey.screen")
   out=$(fm_composer_blocking_dialog "$screen"); rc=$?
   [ "$rc" -eq 0 ] || fail "the recorded agy survey should match"
   [ "$out" = 'agy feedback survey' ] || fail "agy survey name was '$out'"

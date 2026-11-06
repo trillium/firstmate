@@ -827,7 +827,7 @@ test_agy_feedback_survey_is_dismissed_before_exit() {
     dir=$(new_case "agy-survey-$verb")
     add_task "$dir" t1 agy
     alive_as "$dir" agy
-    cp "$ROOT/tests/fixtures/agy-quota-survey-screen.txt" "$dir/fake/pane"
+    cp "$ROOT/tests/fixtures/agy-quota-survey.screen" "$dir/fake/pane"
     printf '%s' "$idle" > "$dir/fake/dismiss-on-zero"
     if [ "$verb" = exit ]; then
       out=$(run_control "$dir" t1 exit); rc=$?
@@ -857,7 +857,7 @@ test_agy_unknown_screen_and_stuck_survey_still_refuse() {
   dir=$(new_case agy-stuck-survey)
   add_task "$dir" t1 agy
   alive_as "$dir" agy
-  cp "$ROOT/tests/fixtures/agy-quota-survey-screen.txt" "$dir/fake/pane"
+  cp "$ROOT/tests/fixtures/agy-quota-survey.screen" "$dir/fake/pane"
   out=$(run_control "$dir" t1 exit); rc=$?
   expect_code 1 "$rc" "a survey that survives Skip must refuse: $out"
   case "$out" in *'agy feedback survey'*) ;; *) fail "the refusal must name the survey: $out" ;; esac
