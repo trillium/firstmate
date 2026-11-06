@@ -2749,7 +2749,9 @@ fm_wake_append_locked() {
   recovery_marker="$STATE/.watcher-down"
   status=0
 
-  _fm_recovery_marker_publish "$recovery_marker" downtime "" append "$guard" "$@" || status=$?
+  # FM_WAKE_APPEND_MARKER_WAIT_SECS bounds the marker-lock wait for callers
+  # that must not wait forever on another holder (bin/fm-inbox.sh note).
+  _fm_recovery_marker_publish "$recovery_marker" downtime "${FM_WAKE_APPEND_MARKER_WAIT_SECS:-}" append "$guard" "$@" || status=$?
   if [ "$status" -eq 0 ]; then
     seq=$(cat "$seq_file" 2>/dev/null || echo 0)
     case "$seq" in
