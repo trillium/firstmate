@@ -356,6 +356,10 @@
 #   itself a linked worktree of the project repository still launches. A pane
 #   that never reaches an isolated worktree refuses at the end of that wait,
 #   naming the last path seen and why it was rejected.
+#   The same check refuses a worktree (or home) that another task of this home
+#   still records with a positively alive agent endpoint, naming the owning task;
+#   only a positively alive endpoint vetoes, and the calling task's own record
+#   (relaunch) never counts.
 #   That placement is proven only at launch. Every ship or scout therefore
 #   receives `FM_TASK_ID=<task-id>` before launch, on the same backend-specific
 #   environment channel as GOTMPDIR, and bin/fm-test-run.sh refuses to execute the
@@ -4824,7 +4828,10 @@ validate_spawn_worktree() { # <source> <inspect-target>
   local source=$1 inspect_target=$2 wt_real owner
   wt_real=$(cd "$WT" 2>/dev/null && pwd -P) || wt_real=
   if [ -n "$wt_real" ] && owner=$(spawn_worktree_sibling_owner "$wt_real"); then
-    echo "error: $source yielded $owner (resolved '$WT'); refusing to launch into a worktree held by a live sibling task. Inspect target $inspect_target" >&2
+    # The live sibling owns this worktree and its terminal, so the abort trap
+    # must not close or remove either (Orca removes with --force).
+    ORCA_ABORT_CLEANUP=0
+    echo "error: $source yielded $owner (resolved '$WT'); refusing to launch into a worktree held by a live sibling task; it belongs to that task, so do not return or remove it" >&2
     exit 1
   fi
   if ! spawn_worktree_isolated "$WT"; then
