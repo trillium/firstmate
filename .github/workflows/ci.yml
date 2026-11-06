@@ -30,6 +30,11 @@ permissions:
 env:
   FM_PI_PACKAGE_VERSION: '0.87.1'
   FM_TYPESCRIPT_VERSION: '5.9.3'
+  # True only for pull requests that already run the suite without the
+  # outside full-ci gate. The runner owns the mapping and the full-lane
+  # fallback; this value only decides which runs ask for it.
+  FM_CI_AFFECTED: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR') }}
+  FM_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
 # Supersession: a new push to the same PR replaces that PR's in-flight CI
 # instead of letting superseded heads keep the full hosted-runner fan-out, and
@@ -62,7 +67,11 @@ concurrency:
 # the timing aggregate) runs on main pushes, PRs from this repository's own
 # branches, PRs whose author has write access (OWNER, MEMBER, COLLABORATOR),
 # and PRs carrying the full-ci label, which the maintainer or their fleet adds
-# when a PR is picked up for review. Any other PR runs only the coverage guard
+# when a PR is picked up for review. In-repo and write-access pull requests
+# still start every one of those jobs; each behavior lane then runs only the
+# tests its diff affects, while a push to main and an outside pull request
+# with the full-ci label run every test in the lane. bin/fm-test-run.sh owns
+# that selection. Any other PR runs only the coverage guard
 # and the invariants, and the Full suite job fails naming the label, so no
 # outside PR looks fully tested before the go-ahead. A label event for any
 # other label runs nothing: a PR still waiting for the go-ahead already carries
@@ -142,26 +151,58 @@ jobs:
     if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && !(github.event.action == 'labeled' && github.event.label.name != 'full-ci') && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
+    env:
+      FM_AFFECTED_ARGS: --lane portable-parallel-1
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Decide whether this lane has affected tests
+        id: affected
+        run: |
+          set -eu
+          if [ "${FM_CI_AFFECTED:-}" != true ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          # FM_AFFECTED_ARGS is --lane or --family plus its name, authored here.
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          if ! bin/fm-test-run.sh --list --affected --base "$FM_CI_BASE_SHA" \
+            "${selector[@]}" \
+            >"$RUNNER_TEMP/fm-test/affected-list.txt" \
+            2>"$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+          if grep -q 'FM_TEST_AFFECTED mode=full' "$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          elif [ -s "$RUNNER_TEMP/fm-test/affected-list.txt" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=empty" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install pinned ShellCheck
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned actionlint
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
       - name: Install the pinned Pi package for the Pi extension tests
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           npm install -g "@earendil-works/pi-coding-agent@${FM_PI_PACKAGE_VERSION}" "typescript@${FM_TYPESCRIPT_VERSION}"
@@ -171,7 +212,13 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
-          bin/fm-test-run.sh --lane portable-parallel-1 \
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          extra=()
+          if [ "${FM_CI_AFFECTED:-}" = true ]; then
+            extra=(--affected --base "$FM_CI_BASE_SHA")
+          fi
+          bin/fm-test-run.sh "${selector[@]}" \
+            ${extra[@]+"${extra[@]}"} \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel-1.json"
       - name: Upload shard 1 timing artifact
@@ -188,21 +235,52 @@ jobs:
     if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && !(github.event.action == 'labeled' && github.event.label.name != 'full-ci') && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
+    env:
+      FM_AFFECTED_ARGS: --lane portable-parallel-2
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Decide whether this lane has affected tests
+        id: affected
+        run: |
+          set -eu
+          if [ "${FM_CI_AFFECTED:-}" != true ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          # FM_AFFECTED_ARGS is --lane or --family plus its name, authored here.
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          if ! bin/fm-test-run.sh --list --affected --base "$FM_CI_BASE_SHA" \
+            "${selector[@]}" \
+            >"$RUNNER_TEMP/fm-test/affected-list.txt" \
+            2>"$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+          if grep -q 'FM_TEST_AFFECTED mode=full' "$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          elif [ -s "$RUNNER_TEMP/fm-test/affected-list.txt" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=empty" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install pinned ShellCheck
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned actionlint
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install tasks-axi
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           npm install -g tasks-axi
@@ -211,7 +289,13 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
-          bin/fm-test-run.sh --lane portable-parallel-2 \
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          extra=()
+          if [ "${FM_CI_AFFECTED:-}" = true ]; then
+            extra=(--affected --base "$FM_CI_BASE_SHA")
+          fi
+          bin/fm-test-run.sh "${selector[@]}" \
+            ${extra[@]+"${extra[@]}"} \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel-2.json"
       - name: Upload shard 2 timing artifact
         if: always()
@@ -233,6 +317,11 @@ jobs:
     if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && !(github.event.action == 'labeled' && github.event.label.name != 'full-ci') && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
+    env:
+      # job-total rather than a literal, so shrinking or growing the matrix
+      # without matching bin/fm-test-run.sh is refused instead of quietly
+      # leaving a shard of the required lane unrun.
+      FM_AFFECTED_ARGS: --lane portable-serial-${{ matrix.shard }}of${{ strategy.job-total }}
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
@@ -242,17 +331,46 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Decide whether this lane has affected tests
+        id: affected
+        run: |
+          set -eu
+          if [ "${FM_CI_AFFECTED:-}" != true ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          # FM_AFFECTED_ARGS is --lane or --family plus its name, authored here.
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          if ! bin/fm-test-run.sh --list --affected --base "$FM_CI_BASE_SHA" \
+            "${selector[@]}" \
+            >"$RUNNER_TEMP/fm-test/affected-list.txt" \
+            2>"$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+          if grep -q 'FM_TEST_AFFECTED mode=full' "$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          elif [ -s "$RUNNER_TEMP/fm-test/affected-list.txt" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=empty" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install pinned ShellCheck
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned actionlint
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Require tmux for e2e tests
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           command -v tmux >/dev/null || {
@@ -261,6 +379,7 @@ jobs:
           }
           tmux -V
       - name: Install tasks-axi for backlog-handoff delegation
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           npm install -g tasks-axi
@@ -271,6 +390,7 @@ jobs:
       # exact version the top-level FM_PI_PACKAGE_VERSION pins.
       # tests/fm-pi-primary-types.test.sh owns its separate compiler dependencies.
       - name: Install the pinned Pi package for the Pi extension tests
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           npm install -g "@earendil-works/pi-coding-agent@${FM_PI_PACKAGE_VERSION}" "typescript@${FM_TYPESCRIPT_VERSION}"
@@ -278,15 +398,17 @@ jobs:
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable serial shard ${{ matrix.shard }}
         env:
-          # job-total rather than a literal, so shrinking or growing the matrix
-          # without matching bin/fm-test-run.sh is refused instead of quietly
-          # leaving a shard of the required lane unrun.
-          FM_SERIAL_LANE: portable-serial-${{ matrix.shard }}of${{ strategy.job-total }}
           FM_SERIAL_SHARD: ${{ matrix.shard }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
-          bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          extra=()
+          if [ "${FM_CI_AFFECTED:-}" = true ]; then
+            extra=(--affected --base "$FM_CI_BASE_SHA")
+          fi
+          bin/fm-test-run.sh "${selector[@]}" \
+            ${extra[@]+"${extra[@]}"} \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
       - name: Upload portable serial shard ${{ matrix.shard }} timing artifact
@@ -307,13 +429,43 @@ jobs:
     if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && !(github.event.action == 'labeled' && github.event.label.name != 'full-ci') && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # Heavy tier (see the timeout policy above): the last-resort job backstop.
     # The family-run step below owns the hang tripwire, so a wedged suite fails
-    # there with the always() cleanup and timing upload still running.
+    # there with cleanup and the timing upload still running. Cleanup stays
+    # idle when this lane installed nothing.
     timeout-minutes: 75
+    env:
+      FM_AFFECTED_ARGS: --family real-herdr-gated
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Decide whether this lane has affected tests
+        id: affected
+        run: |
+          set -eu
+          if [ "${FM_CI_AFFECTED:-}" != true ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          # FM_AFFECTED_ARGS is --lane or --family plus its name, authored here.
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          if ! bin/fm-test-run.sh --list --affected --base "$FM_CI_BASE_SHA" \
+            "${selector[@]}" \
+            >"$RUNNER_TEMP/fm-test/affected-list.txt" \
+            2>"$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+          if grep -q 'FM_TEST_AFFECTED mode=full' "$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          elif [ -s "$RUNNER_TEMP/fm-test/affected-list.txt" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=empty" >> "$GITHUB_OUTPUT"
+          fi
       - name: Require tools for real Herdr
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           command -v jq >/dev/null || { echo "::error::jq is required"; exit 1; }
@@ -323,11 +475,13 @@ jobs:
           jq --version
           python3 --version
       - name: Install pinned Herdr
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-herdr.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned Treehouse
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           # Several real-herdr-gated E2E scripts require treehouse for spawn
@@ -335,6 +489,7 @@ jobs:
           bin/fm-install-treehouse.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Assert Herdr pin and protocol floor
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           command -v herdr >/dev/null || { echo "::error::herdr not on PATH after install"; exit 1; }
@@ -357,6 +512,7 @@ jobs:
             exit 1
           }
       - name: Start default Herdr session for fleet-state tripwire
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           # Lab provision requires exactly one running default session so the
@@ -383,6 +539,7 @@ jobs:
           cat "$RUNNER_TEMP/fm-herdr/default-server.log" || true
           exit 1
       - name: Snapshot pre-suite Herdr sessions
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-herdr"
@@ -397,12 +554,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fm-test"
           # Serial only. Fail if any script reports herdr not found. Live
           # harness credential tests stay outside this family (opt-in env only).
-          bin/fm-test-run.sh --family real-herdr-gated \
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          extra=()
+          if [ "${FM_CI_AFFECTED:-}" = true ]; then
+            extra=(--affected --base "$FM_CI_BASE_SHA")
+          fi
+          bin/fm-test-run.sh "${selector[@]}" \
+            ${extra[@]+"${extra[@]}"} \
             --fail-on-gate-skip 'herdr not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-herdr.json"
       - name: Cleanup job-owned Herdr lab sessions
         id: cleanup-herdr-lab-sessions
-        if: always()
+        if: always() && steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-herdr-ci-cleanup.sh teardown "$RUNNER_TEMP/fm-herdr/sessions-before.json" || {
@@ -432,13 +595,43 @@ jobs:
     if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && !(github.event.action == 'labeled' && github.event.label.name != 'full-ci') && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # Heavy tier (see the timeout policy above): the last-resort job backstop.
     # The family-run step below owns the hang tripwire, so a wedged suite fails
-    # there with the always() cleanup and timing upload still running.
+    # there with cleanup and the timing upload still running. Cleanup stays
+    # idle when this lane installed nothing.
     timeout-minutes: 75
+    env:
+      FM_AFFECTED_ARGS: --family hc
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Decide whether this lane has affected tests
+        id: affected
+        run: |
+          set -eu
+          if [ "${FM_CI_AFFECTED:-}" != true ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/fm-test"
+          # FM_AFFECTED_ARGS is --lane or --family plus its name, authored here.
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          if ! bin/fm-test-run.sh --list --affected --base "$FM_CI_BASE_SHA" \
+            "${selector[@]}" \
+            >"$RUNNER_TEMP/fm-test/affected-list.txt" \
+            2>"$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+          if grep -q 'FM_TEST_AFFECTED mode=full' "$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          elif [ -s "$RUNNER_TEMP/fm-test/affected-list.txt" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=empty" >> "$GITHUB_OUTPUT"
+          fi
       - name: Require tools for real herdr-core
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           command -v jq >/dev/null || { echo "::error::jq is required"; exit 1; }
@@ -447,16 +640,19 @@ jobs:
           command -v sha256sum >/dev/null || { echo "::error::sha256sum is required"; exit 1; }
           jq --version
       - name: Install pinned herdr-core
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-hc.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned Treehouse
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           bin/fm-install-treehouse.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Assert herdr-core pin and Treehouse presence
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           command -v herdr-core >/dev/null || { echo "::error::herdr-core not on PATH after install"; exit 1; }
@@ -469,6 +665,7 @@ jobs:
             exit 1
           }
       - name: Snapshot pre-suite hc lab sessions
+        if: steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-hc"
@@ -482,16 +679,26 @@ jobs:
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
           # Pin the same resolved binary for the adapter, lab, and cleanup.
-          export FM_HC_BIN
-          FM_HC_BIN=$(command -v herdr-core)
+          # An empty affected lane never installed herdr-core; the runner then
+          # exits before any hc script, so a missing binary is not a failure.
+          if command -v herdr-core >/dev/null; then
+            export FM_HC_BIN
+            FM_HC_BIN=$(command -v herdr-core)
+          fi
           # Serial only. Fail if any script reports hc not found. Live
           # harness credential tests stay outside this family (opt-in env only).
-          bin/fm-test-run.sh --family hc \
+          read -r -a selector <<< "${FM_AFFECTED_ARGS}"
+          extra=()
+          if [ "${FM_CI_AFFECTED:-}" = true ]; then
+            extra=(--affected --base "$FM_CI_BASE_SHA")
+          fi
+          bin/fm-test-run.sh "${selector[@]}" \
+            ${extra[@]+"${extra[@]}"} \
             --fail-on-gate-skip 'hc not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-hc.json"
       - name: Cleanup job-owned hc lab sessions
         id: cleanup-hc-lab-sessions
-        if: always()
+        if: always() && steps.affected.outputs.run == 'yes'
         run: |
           set -eu
           export FM_HC_BIN
@@ -560,6 +767,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Run snapshot consumers with stock Bash
         shell: /bin/bash {0}
         env:
@@ -590,26 +799,63 @@ jobs:
           # Each suite declares its own TAP plan; the helper fails an early
           # exit 0 that does not reach FM_TEST_COMPLETE or whose ok count
           # disagrees with the plan. Per-suite totals live in the test files.
-          /bin/bash bin/fm-test-tap-verify.sh tests/fm-fleet-snapshot-view.test.sh
-          /bin/bash bin/fm-test-tap-verify.sh tests/fm-bearings-snapshot.test.sh
+          # Stock Bash 3.2 has no arrays, so the affected list stays in a file.
+          # The parse sweep above always runs. A snapshot runs when this push
+          # is not an in-repo pull request, when the runner keeps the whole
+          # selection, or when that snapshot is in the affected list.
+          affected_mode=full
+          if [ "${FM_CI_AFFECTED:-}" = true ]; then
+            mkdir -p "$RUNNER_TEMP/fm-test"
+            if ! /bin/bash bin/fm-test-run.sh --list --affected --base "$FM_CI_BASE_SHA" \
+              tests/fm-fleet-snapshot-view.test.sh \
+              tests/fm-bearings-snapshot.test.sh \
+              tests/fm-public-followup.test.sh \
+              tests/fm-watch-triage.test.sh \
+              tests/fm-fork-free-helpers.test.sh \
+              tests/fm-backend.test.sh \
+              >"$RUNNER_TEMP/fm-test/affected-list.txt" \
+              2>"$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+              cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/fm-test/affected-mode.txt"
+            if ! grep -q 'FM_TEST_AFFECTED mode=full' "$RUNNER_TEMP/fm-test/affected-mode.txt"; then
+              affected_mode=selected
+            fi
+          fi
+          run_affected_snapshot() {
+            script=$1
+            shift
+            if [ "$affected_mode" = full ] || grep -qxF "$script" "$RUNNER_TEMP/fm-test/affected-list.txt"; then
+              "$@"
+            else
+              echo "snapshot $script is not affected; leaving it unrun"
+            fi
+          }
+          run_affected_snapshot tests/fm-fleet-snapshot-view.test.sh \
+            /bin/bash bin/fm-test-tap-verify.sh tests/fm-fleet-snapshot-view.test.sh
+          run_affected_snapshot tests/fm-bearings-snapshot.test.sh \
+            /bin/bash bin/fm-test-tap-verify.sh tests/fm-bearings-snapshot.test.sh
 
           # The full public-followup suite is not a stock-bash snapshot; run only
           # the empty-lock register regression under real /bin/bash 3.2.
-          FM_TEST_STOCK_BASH=1 /bin/bash bin/fm-test-tap-verify.sh \
-            tests/fm-public-followup.test.sh
+          FM_TEST_STOCK_BASH=1 run_affected_snapshot tests/fm-public-followup.test.sh \
+            /bin/bash bin/fm-test-tap-verify.sh tests/fm-public-followup.test.sh
 
           # Same shape for the watcher's churn-deferral regression: an already-
           # marked churn window expands an empty array that only stock Bash
           # treats as an unbound variable under set -u.
-          FM_TEST_STOCK_BASH=1 /bin/bash bin/fm-test-tap-verify.sh \
-            tests/fm-watch-triage.test.sh
+          FM_TEST_STOCK_BASH=1 run_affected_snapshot tests/fm-watch-triage.test.sh \
+            /bin/bash bin/fm-test-tap-verify.sh tests/fm-watch-triage.test.sh
 
           # The fork-free hot-path helpers must stay byte-identical to the
           # commands they replace under stock Bash 3.2, which lacks the
           # printf %(...)T clock and falls back to date.
-          /bin/bash bin/fm-test-tap-verify.sh tests/fm-fork-free-helpers.test.sh
+          run_affected_snapshot tests/fm-fork-free-helpers.test.sh \
+            /bin/bash bin/fm-test-tap-verify.sh tests/fm-fork-free-helpers.test.sh
 
           FM_TEST_STOCK_BASH=1 FM_TEST_BASH=/bin/bash \
+            run_affected_snapshot tests/fm-backend.test.sh \
             /bin/bash bin/fm-test-tap-verify.sh tests/fm-backend.test.sh
 
   invariants:

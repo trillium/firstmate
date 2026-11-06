@@ -37,7 +37,10 @@ Lint and the behavior suites wait for a maintainer, or the maintainer's fleet, t
 Until then the `Full suite` check fails with a message naming the label; that is expected and needs no action from you.
 Adding the label runs the full suite, and every later push to that pull request runs it again.
 This keeps the repository's public CI within GitHub's limit on jobs running at once, while no-mistakes already reviews, tests, and lints your change locally.
-Pull requests from this repository's own branches or from authors with write access run the full suite without the label.
+Pull requests from this repository's own branches or from authors with write access start the same jobs without the label, and each behavior lane runs the tests its diff affects.
+That lane runs every test it owns when a changed file cannot be mapped, when the diff touches shared test infrastructure, or when the changed-file list cannot be read.
+`bin/fm-test-run.sh --help` owns the selection.
+Pushes to `main` still run every test in the lane.
 
 See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/start-here/quick-start/) for the full first-run walkthrough.
 
@@ -138,13 +141,14 @@ tmp=$(mktemp -d) && printf 'done: smoke\n' > "$tmp/smoke.status" && FM_STATE_OVE
 ```
 
 `bin/fm-test-run.sh` is the single owner of behavior-suite selection, portable CI lane composition, bounded concurrency admission, per-script timing markers, family totals, the coverage guard, and the optional JSON timing artifact.
-Its header and `--help` own the flags, family labels, lanes, and changed-file map; this section only documents the entry points.
+Its header and `--help` own the flags, family labels, lanes, the changed-file map, and the pull-request affected filter; this section only documents the entry points.
 `bin/fm-test-isolation-proof.sh` remains the single owner of the portable candidate proof and reusable family proof harness; see `docs/fm-test-isolation-proof.md`.
 Portable shard balance evidence lives in `docs/fm-test-portable-shards.md`.
 `bin/fm-test-linux.sh` is optional and never part of CI: on macOS, run it before publishing a branch whose tests depend on `stat`, `date`, or process behavior, because BSD and GNU tools differ.
 Its header owns selection, runtime detection, and exit codes.
 Family selection is the ordinary local path; `--all` is deliberate full regression only.
 CI owns broad regression across required portable parallel shards, the portable serial lane's separate-runner shards, the Herdr lane, lint, invariants, the coverage guard, and stock macOS Bash compatibility in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+On a pull request from this repository or a write-access author, those behavior lanes run the affected tests and still report their check when a lane has none; main pushes and the outside `full-ci` gate run every test in the lane.
 Pushing a new head to a pull request cancels that pull request's still-running CI so only the current head is validated, and a newer push to `main` cancels the older `main` run so only the newest merge's run finishes; the workflow owns that contract, the `full-ci` gate described under [The `full-ci` label](#the-full-ci-label), and their rationale.
 A fork can set the repository variable `FM_CI_SKIP_PUSH` to `1` to skip the push run of `CI`, and `FM_CI_SKIP_MACOS` to `1` to skip the stock macOS Bash job, without a tracked edit that drifts from upstream.
 A repository can set the variable `FM_MACOS_RUNNER` to a JSON runner label list, such as `["self-hosted","macOS","ARM64","firstmate"]`, to run the stock macOS Bash job on its own runner; unset, the job uses `macos-latest`.

@@ -1953,6 +1953,203 @@ assert len(doc["scripts"])==3
   pass "aggregate-json merges lane timing artifacts"
 }
 
+# --affected is the pull-request filter. It narrows from references and source
+# lines, and it keeps the whole selection when a changed file is shared
+# infrastructure, widely sourced, unmapped, or the diff cannot be read.
+test_affected_filter_narrows_and_falls_back_to_the_whole_selection() {
+  local tmp repo listed err i
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-affected.XXXXXX")
+  repo="$tmp/repo"
+  err="$tmp/err"
+  mkdir -p "$repo/bin" "$repo/tests" "$repo/.github/workflows" "$repo/docs"
+  cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  cp "$ROOT/tests/git-config-helpers.sh" "$repo/tests/git-config-helpers.sh"
+  chmod +x "$repo/bin/fm-test-run.sh"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo fm-alpha.sh' >"$repo/tests/fm-alpha.test.sh"
+  cat >"$repo/tests/fm-beta.test.sh" <<EOF
+#!/usr/bin/env bash
+: >"$repo/beta-ran"
+echo fm-beta.sh
+EOF
+  cat >"$repo/tests/fm-gamma.test.sh" <<EOF
+#!/usr/bin/env bash
+: >"$repo/gamma-ran"
+echo untouched-gamma
+EOF
+  printf '%s\n' '#!/usr/bin/env bash' 'echo fm-top.sh' >"$repo/tests/fm-top.test.sh"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo fm-wide-lib.sh' >"$repo/tests/fm-wide-reader.test.sh"
+  chmod +x "$repo"/tests/*.test.sh
+  # Literal source lines. The scanner must see the basename, not an expanded path.
+  # shellcheck disable=SC2016
+  narrow_source='. "$ROOT/bin/fm-narrow-lib.sh"'
+  # shellcheck disable=SC2016
+  mid_source='. "$ROOT/bin/fm-mid-lib.sh"'
+  # shellcheck disable=SC2016
+  wide_source='. "$ROOT/bin/fm-wide-lib.sh"'
+  printf '%s\n' "$narrow_source" >"$repo/bin/fm-alpha.sh"
+  printf '%s\n' 'echo beta' >"$repo/bin/fm-beta.sh"
+  printf '%s\n' 'echo narrow' >"$repo/bin/fm-narrow-lib.sh"
+  printf '%s\n' "$narrow_source" >"$repo/bin/fm-mid-lib.sh"
+  printf '%s\n' "$mid_source" >"$repo/bin/fm-top.sh"
+  printf '%s\n' 'echo wide' >"$repo/bin/fm-wide-lib.sh"
+  printf '%s\n' 'echo orphan' >"$repo/bin/fm-orphan.sh"
+  i=0
+  while [ "$i" -lt 39 ]; do
+    printf '%s\n' "$wide_source" >"$repo/bin/fm-wide-user-$i.sh"
+    i=$((i + 1))
+  done
+  printf '%s\n' '# workflow' >"$repo/.github/workflows/ci.yml"
+  printf '%s\n' '# helper' >"$repo/tests/lib.sh"
+  printf '%s\n' '# readme' >"$repo/docs/readme-only.md"
+  git -C "$repo" init -q
+  git -C "$repo" add .
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm baseline
+
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base no-such-ref \
+    tests/fm-beta.test.sh tests/fm-gamma.test.sh 2>"$err") \
+    || fail "--affected with an unreadable base must keep the selection and exit 0: $(cat "$err")"
+  [ "$listed" = $'tests/fm-beta.test.sh\ntests/fm-gamma.test.sh' ] \
+    || fail "unreadable base did not keep the whole selection: $listed"
+  assert_contains "$(cat "$err")" "FM_TEST_AFFECTED mode=full reason=changed-file-list-unavailable" \
+    "unreadable base did not say why it kept the whole selection"
+
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-beta.test.sh tests/fm-gamma.test.sh 2>"$err") \
+    || fail "a clean tree must exit 0: $(cat "$err")"
+  [ -z "$listed" ] || fail "a clean tree selected tests: $listed"
+  assert_contains "$(cat "$err")" "FM_TEST_AFFECTED mode=selected" \
+    "a clean tree did not report a mapped empty selection"
+
+  printf '\n' >>"$repo/bin/fm-beta.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-alpha.test.sh tests/fm-beta.test.sh tests/fm-gamma.test.sh \
+    tests/fm-top.test.sh tests/fm-wide-reader.test.sh 2>"$err") \
+    || fail "one-script selection failed: $(cat "$err")"
+  [ "$listed" = "tests/fm-beta.test.sh" ] \
+    || fail "a one-script change must select only the test that names it, got: $listed"
+  assert_contains "$(cat "$err")" "mode=selected" "one-script change was not a mapped selection"
+  rm -f "$repo/beta-ran" "$repo/gamma-ran"
+  (cd "$repo" && bin/fm-test-run.sh --affected --base HEAD tests/fm-gamma.test.sh >"$tmp/gamma.out" 2>"$err") \
+    || fail "a lane with no affected test must exit 0: $(cat "$err")"
+  assert_contains "$(cat "$tmp/gamma.out")" "FM_TEST_SUMMARY total=0 failed=0" \
+    "an empty affected lane did not report success"
+  assert_contains "$(cat "$err")" "mode=selected" "an empty affected lane fell back to the whole selection"
+  assert_absent "$repo/gamma-ran" "an unaffected test ran"
+  (cd "$repo" && bin/fm-test-run.sh --affected --base HEAD tests/fm-beta.test.sh >"$tmp/beta.out" 2>"$err") \
+    || fail "the affected test did not run: $(cat "$err")"
+  assert_present "$repo/beta-ran" "the test that names the changed script did not run"
+  rm -f "$repo/beta-ran"
+  git -C "$repo" add bin/fm-beta.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm beta
+
+  printf '\n' >>"$repo/bin/fm-narrow-lib.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-alpha.test.sh tests/fm-beta.test.sh tests/fm-gamma.test.sh \
+    tests/fm-top.test.sh tests/fm-wide-reader.test.sh 2>"$err") \
+    || fail "lib selection failed: $(cat "$err")"
+  [ "$listed" = $'tests/fm-alpha.test.sh\ntests/fm-top.test.sh' ] \
+    || fail "a narrow lib must select tests that name its transitive consumers, got: $listed"
+  git -C "$repo" add bin/fm-narrow-lib.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm narrow
+
+  printf '\n' >>"$repo/tests/fm-gamma.test.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-alpha.test.sh tests/fm-beta.test.sh tests/fm-gamma.test.sh 2>"$err") \
+    || fail "test-file selection failed: $(cat "$err")"
+  [ "$listed" = "tests/fm-gamma.test.sh" ] \
+    || fail "a changed test file must select itself, got: $listed"
+  git -C "$repo" add tests/fm-gamma.test.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm gamma
+
+  printf '\n' >>"$repo/.github/workflows/ci.yml"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-alpha.test.sh tests/fm-beta.test.sh tests/fm-gamma.test.sh 2>"$err") \
+    || fail "workflow fallback failed: $(cat "$err")"
+  [ "$listed" = $'tests/fm-alpha.test.sh\ntests/fm-beta.test.sh\ntests/fm-gamma.test.sh' ] \
+    || fail "a workflow change must keep every selected test, got: $listed"
+  assert_contains "$(cat "$err")" "mode=full reason=workflow:.github/workflows/ci.yml" \
+    "a workflow change did not name its fallback"
+  git -C "$repo" add .github/workflows/ci.yml
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm workflow
+
+  printf '\n' >>"$repo/tests/lib.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-beta.test.sh 2>"$err") \
+    || fail "helper fallback failed: $(cat "$err")"
+  [ "$listed" = "tests/fm-beta.test.sh" ] \
+    || fail "a shared test helper must keep the selection, got: $listed"
+  assert_contains "$(cat "$err")" "mode=full reason=shared-test-infrastructure:tests/lib.sh" \
+    "a shared test helper did not name its fallback"
+  git -C "$repo" add tests/lib.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm helper
+
+  printf '\n' >>"$repo/bin/fm-test-run.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-beta.test.sh 2>"$err") \
+    || fail "runner fallback failed: $(cat "$err")"
+  [ "$listed" = "tests/fm-beta.test.sh" ] \
+    || fail "a runner change must keep the selection, got: $listed"
+  assert_contains "$(cat "$err")" "mode=full reason=shared-test-runner:bin/fm-test-run.sh" \
+    "a runner change did not name its fallback"
+  git -C "$repo" add bin/fm-test-run.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm runner
+
+  printf '\n' >>"$repo/docs/readme-only.md"
+  printf '\n' >>"$repo/bin/fm-beta.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-beta.test.sh 2>"$err") \
+    || fail "mixed mapped and unmapped fallback failed: $(cat "$err")"
+  [ "$listed" = "tests/fm-beta.test.sh" ] \
+    || fail "one unmapped file must keep the whole selection, got: $listed"
+  assert_contains "$(cat "$err")" "mode=full reason=unmapped:docs/readme-only.md" \
+    "an unmapped file beside a mapped script did not fall back"
+  git -C "$repo" add docs/readme-only.md bin/fm-beta.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm mixed
+
+  printf '\n' >>"$repo/bin/fm-orphan.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-beta.test.sh 2>"$err") \
+    || fail "orphan fallback failed: $(cat "$err")"
+  [ "$listed" = "tests/fm-beta.test.sh" ] \
+    || fail "a bin script no test names must keep the selection, got: $listed"
+  assert_contains "$(cat "$err")" "mode=full reason=unmapped:bin/fm-orphan.sh" \
+    "an unreferenced bin script did not fall back"
+  git -C "$repo" add bin/fm-orphan.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm orphan
+
+  printf '\n' >>"$repo/bin/fm-wide-lib.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-gamma.test.sh tests/fm-wide-reader.test.sh 2>"$err") \
+    || fail "below-cutoff lib selection failed: $(cat "$err")"
+  [ "$listed" = "tests/fm-wide-reader.test.sh" ] \
+    || fail "a lib below the wide cutoff must select the test that names it, got: $listed"
+  assert_contains "$(cat "$err")" "mode=selected" "a below-cutoff lib fell back to the whole selection"
+  git -C "$repo" add bin/fm-wide-lib.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm wide-narrow
+  printf '%s\n' "$wide_source" >"$repo/bin/fm-wide-user-39.sh"
+  git -C "$repo" add bin/fm-wide-user-39.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm wide-user
+  printf '\n' >>"$repo/bin/fm-wide-lib.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-gamma.test.sh tests/fm-wide-reader.test.sh 2>"$err") \
+    || fail "wide lib fallback failed: $(cat "$err")"
+  [ "$listed" = $'tests/fm-gamma.test.sh\ntests/fm-wide-reader.test.sh' ] \
+    || fail "a widely sourced lib must keep every selected test, got: $listed"
+  assert_contains "$(cat "$err")" "mode=full reason=widely-sourced:bin/fm-wide-lib.sh" \
+    "a widely sourced lib did not name its fallback"
+  git -C "$repo" checkout -- bin/fm-wide-lib.sh
+
+  rm -f "$repo/tests/fm-gamma.test.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --affected --base HEAD \
+    tests/fm-beta.test.sh tests/fm-wide-reader.test.sh 2>"$err") \
+    || fail "deleted-test selection failed: $(cat "$err")"
+  [ -z "$listed" ] || fail "deleting one test must not select the others, got: $listed"
+  assert_contains "$(cat "$err")" "mode=selected" "deleting a test file was treated as unmapped"
+
+  rm -rf "$tmp"
+  pass "affected selection follows references and source lines, and keeps the whole selection when it cannot"
+}
+
 test_case_progress_and_selector() {
   local out
   out=$(FM_TEST_SELECTOR=test_single_script_selection bash "$SELF" 2>&1) \
@@ -2047,6 +2244,7 @@ TESTS=(
   test_jobs_parallel_scheduler_and_failure_propagation
   test_herdr_ci_family_run_has_a_step_timeout
   test_aggregate_json
+  test_affected_filter_narrows_and_falls_back_to_the_whole_selection
   test_case_progress_and_selector
 )
 
