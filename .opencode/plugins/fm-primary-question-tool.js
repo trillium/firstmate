@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -35,6 +35,13 @@ function runProcess(command, args) {
   });
 }
 
+function hookCommand(root, script, args) {
+  const runner = `${root}/bin/fm-hook-guard-run.sh`;
+  return existsSync(runner)
+    ? [runner, [script, ...args]]
+    : [`${root}/bin/${script}`, args];
+}
+
 async function resolveRoot(anchor) {
   if (!anchor) return "";
   const result = await runProcess("git", ["-C", anchor, "rev-parse", "--show-toplevel"]);
@@ -60,10 +67,11 @@ export const FmPrimaryQuestionTool = async ({ directory, worktree }) => {
     "tool.execute.before": async (input) => {
       if (!root || !PICKER.has(normalize(input?.tool))) return;
 
-      const result = await runProcess(`${root}/bin/fm-question-tool-pretool-check.sh`, [
+      const [runner, args] = hookCommand(root, "fm-question-tool-pretool-check.sh", [
         "--tool",
         String(input.tool),
       ]);
+      const result = await runProcess(runner, args);
       if (result.code !== 2) return;
 
       const reason = result.stderr.trim() || "denied by the question-picker PreToolUse seatbelt";

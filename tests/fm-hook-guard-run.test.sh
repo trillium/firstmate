@@ -181,7 +181,112 @@ EOF
   pass "every tracked hook command steps aside on conflict markers and still runs a refusing script ($n commands)"
 }
 
+# The remaining primary harnesses invoke their guards from plugin and extension
+# code rather than a JSON hook command. Exercise their public hook callbacks
+# against a broken and then a refusing turn-end guard.
+test_plugin_and_extension_turnend_guards_step_aside_or_preserve_refusal() {
+  local harness repo home ext out status
+  for harness in opencode pi omp; do
+    repo="$TMP_ROOT/$harness-hook-root"
+    home="$TMP_ROOT/$harness-hook-home"
+    mkdir -p "$repo/bin" "$home/state"
+    cp "$ROOT/bin/fm-hook-guard-run.sh" "$ROOT/bin/fm-operational-input.sh" "$repo/bin/"
+    chmod +x "$repo/bin/"*.sh
+    case "$harness" in
+      opencode)
+        mkdir -p "$repo/.opencode"
+        cp -R "$ROOT/.opencode/plugins" "$repo/.opencode/"
+        ext="$repo/.opencode/plugins/fm-primary-turnend-guard.js"
+        ;;
+      pi)
+        mkdir -p "$repo/.pi/extensions/lib"
+        cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$repo/.pi/extensions/"
+        cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/"
+        ext="$repo/.pi/extensions/fm-primary-turnend-guard.ts"
+        ;;
+      omp)
+        mkdir -p "$repo/.omp/extensions" "$repo/.pi/extensions/lib"
+        cp "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$repo/.omp/extensions/"
+        cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/"
+        ext="$repo/.omp/extensions/fm-primary-turnend-guard.ts"
+        ;;
+    esac
+
+    conflicted_guard "$repo/bin/fm-turnend-guard.sh"
+    chmod +x "$repo/bin/fm-turnend-guard.sh"
+    out=$(HARNESS="$harness" EXT="$ext" FM_HOME="$home" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+let prompts = 0;
+const api = {
+  on(name, handler) { handlers.set(name, handler); },
+  sendUserMessage() { prompts += 1; },
+};
+const harness = process.env.HARNESS;
+if (harness === "opencode") {
+  const mod = await import(pathToFileURL(process.env.EXT).href);
+  const hooks = await mod.FmPrimaryTurnendGuard({
+    directory: process.env.FM_HOME,
+    worktree: process.env.FM_HOME.replace(/-home$/, "-root"),
+    client: { session: { promptAsync: async () => { prompts += 1; } } },
+  });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s" } } });
+} else {
+  const mod = await import(pathToFileURL(process.env.EXT).href);
+  mod.default(api);
+  if (harness === "pi") await handlers.get("agent_settled")({}, {});
+  else {
+    const result = await handlers.get("session_stop")({ stop_hook_active: false }, {});
+    if (result !== undefined) throw new Error("broken omp guard blocked the hook");
+  }
+}
+if (prompts !== 0) throw new Error(`broken ${harness} guard prompted ${prompts} times`);
+EOF
+)
+    status=$?
+    expect_code 0 "$status" "$harness syntax-broken turn-end guard must step aside: $out"
+
+    printf '#!/usr/bin/env bash\ncat >/dev/null\nprintf "denied\\n" >&2\nexit 2\n' > "$repo/bin/fm-turnend-guard.sh"
+    chmod +x "$repo/bin/fm-turnend-guard.sh"
+    out=$(HARNESS="$harness" EXT="$ext" FM_HOME="$home" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+let prompts = 0;
+const api = {
+  on(name, handler) { handlers.set(name, handler); },
+  sendUserMessage() { prompts += 1; },
+};
+const harness = process.env.HARNESS;
+if (harness === "opencode") {
+  const mod = await import(pathToFileURL(process.env.EXT).href);
+  const hooks = await mod.FmPrimaryTurnendGuard({
+    directory: process.env.FM_HOME,
+    worktree: process.env.FM_HOME.replace(/-home$/, "-root"),
+    client: { session: { promptAsync: async () => { prompts += 1; } } },
+  });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s" } } });
+  if (prompts !== 1) throw new Error(`refusing opencode guard prompted ${prompts} times`);
+} else {
+  const mod = await import(pathToFileURL(process.env.EXT).href);
+  mod.default(api);
+  if (harness === "pi") {
+    await handlers.get("agent_settled")({}, {});
+    if (prompts !== 1) throw new Error(`refusing pi guard prompted ${prompts} times`);
+  } else {
+    const result = await handlers.get("session_stop")({ stop_hook_active: false }, {});
+    if (result?.continue !== true) throw new Error(`refusing omp guard did not block: ${JSON.stringify(result)}`);
+  }
+}
+EOF
+)
+    status=$?
+    expect_code 0 "$status" "$harness parsing refusing turn-end guard must still block: $out"
+  done
+  pass "OpenCode, Pi, and omp turn-end hooks step aside only for broken guards"
+}
+
 test_conflict_markers_pass_through_for_every_tracked_guard
 test_missing_guard_passes_through
 test_genuine_deny_still_denies
 test_every_tracked_hook_command_steps_aside_or_preserves_refusal
+test_plugin_and_extension_turnend_guards_step_aside_or_preserve_refusal

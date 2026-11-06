@@ -484,7 +484,11 @@ async function claimSessionstartMessage(
 
 function runGuard(): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const invocation = firstmateShellInvocation(`${root}/bin/fm-turnend-guard.sh`, ["--pi"]);
+    const runner = `${root}/bin/fm-hook-guard-run.sh`;
+    const invocation = firstmateShellInvocation(
+      existsSync(runner) ? runner : `${root}/bin/fm-turnend-guard.sh`,
+      existsSync(runner) ? ["fm-turnend-guard.sh", "--pi"] : ["--pi"],
+    );
     let child: ChildProcess;
     try {
       child = spawn(invocation.command, invocation.args, {
@@ -514,9 +518,10 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
 // script owns its own decision and is inert outside the real primary checkout.
 function runChecker(script: string, command: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
+    const runner = `${root}/bin/fm-hook-guard-run.sh`;
     const invocation = firstmateShellInvocation(
-      `${root}/bin/${script}`,
-      ["--command", command],
+      existsSync(runner) ? runner : `${root}/bin/${script}`,
+      existsSync(runner) ? [script, "--command", command] : ["--command", command],
     );
     let child: ChildProcess;
     try {
