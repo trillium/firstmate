@@ -2817,6 +2817,26 @@ test_no_run_grok_uses_isolated_fallback() {
   pass "grok still reads working through its isolated rendered-tail fallback"
 }
 
+test_no_run_grok_weekly_limit_surfaces_blocked() {
+  reset_fakes
+  local d screen
+  d=$(new_case grok-weekly-limit)
+  make_repo_on_branch "$d/wt" fm/feat-grok-limit
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-grok-limit.meta" "window=fm:fm-feat-grok-limit" "worktree=$d/wt" "kind=ship" "harness=grok"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=1
+  screen=$'  ┃  You hit your weekly limit.\n  ┃  1 (○) Upgrade tier      Upgrade to a higher tier for more usage\n  ┃  2 (○) Buy more credits  Purchase credits to keep using Grok Build\n  ┃  3 (○) Try Again         Resubmit the last prompt once you have usage again\n  ┃  ↑/↓ navigate · y copy                                                                              Enter:submit\n'
+  FM_FAKE_BUSY_TEXT=$screen
+  export FM_FAKE_BUSY_TEXT
+  local out; out=$(run_crew_state "$d" feat-grok-limit)
+  assert_contains "$out" "state: blocked" "Grok's weekly limit must surface as blocked"
+  assert_contains "$out" "Grok weekly quota exhausted" "the supervisor-facing detail must name the quota block"
+  assert_contains "$out" "grok-quota-exhausted" "the classifier source must be inspectable"
+  pass "Grok's weekly-limit dialog reaches supervision as a blocked state"
+}
+
 test_no_run_herdr_unknown_uses_backend_capture() {
   command -v jq >/dev/null 2>&1 || { pass "herdr pane fallback skipped without jq"; return; }
   reset_fakes
@@ -6876,6 +6896,7 @@ test_no_run_overview_zero_branch_falls_through
 test_no_run_launch_prompt_parked_is_not_working
 test_no_run_footer_text_alone_is_not_working
 test_no_run_grok_uses_isolated_fallback
+test_no_run_grok_weekly_limit_surfaces_blocked
 test_no_run_herdr_unknown_uses_backend_capture
 test_no_run_herdr_cli_failure_reads_unreachable_not_gone
 test_no_run_herdr_alive_with_failed_read_stays_live

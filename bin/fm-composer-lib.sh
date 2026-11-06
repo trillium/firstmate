@@ -2223,6 +2223,9 @@ EOF
 # and prints nothing.
 # Recorded 2026-10-05 on Claude Code 2.1.289: /exit while a background shell
 # is still running opens this picker, and its selected row is Exit and stop tasks.
+# Grok's weekly-limit modal is separately named because it blocks a worker
+# without being a composer draft, and relaunch may dismiss it only with Grok's
+# documented Shift+x action - never by selecting one of its purchase options.
 fm_composer_blocking_dialog() {  # <screen> -> dialog name
   local screen=${1-}
   [ -n "$screen" ] || return 1
@@ -2233,6 +2236,17 @@ fm_composer_blocking_dialog() {  # <screen> -> dialog name
     END { exit !(selected && last ~ /^[ \t]*Enter to confirm · Esc to cancel[ \t\r]*$/) }
   '; then
     printf '%s' 'Claude background-task exit picker'
+    return 0
+  fi
+  if printf '%s\n' "$screen" | fm_composer_strip_ansi | LC_ALL=C awk '
+    /^[ \t]*┃[ \t]*You hit your weekly limit\.[ \t]*$/ { heading = 1 }
+    heading && /^[ \t]*┃[ \t]*1 \(○\) Upgrade tier[ \t]/ { upgrade = 1 }
+    heading && /^[ \t]*┃[ \t]*2 \(○\) Buy more credits[ \t]/ { credits = 1 }
+    heading && /^[ \t]*┃[ \t]*3 \(○\) Try Again[ \t]/ { retry = 1 }
+    heading && /^[ \t]*┃[ \t]*↑\/↓ navigate · y copy[ \t]+Enter:submit[ \t]*$/ { controls = 1 }
+    END { exit !(heading && upgrade && credits && retry && controls) }
+  '; then
+    printf '%s' 'Grok weekly limit'
     return 0
   fi
   return 1

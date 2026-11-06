@@ -343,7 +343,7 @@ fm_control_backend_supports_key() {  # <backend> <key>
   local backend=${1-} key=${2-}
   case "$backend" in
     tmux|herdr|zellij|cmux|paseo|rex|tern|hc)
-      case "$key" in Escape|Enter|C-c|C-u) return 0 ;; esac
+      case "$key" in Escape|Enter|C-c|C-u|S-x) return 0 ;; esac
       ;;
     orca)
       case "$key" in Enter|C-c) return 0 ;; esac

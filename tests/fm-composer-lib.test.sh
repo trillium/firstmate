@@ -1892,6 +1892,22 @@ test_dialog_heading_and_footer_must_be_the_recorded_lines() {
   pass "a buried heading or a different last line is not the exit picker"
 }
 
+test_grok_weekly_limit_dialog_is_named_only_when_complete() {
+  local screen out rc
+  screen=$(printf '%s\n' \
+    '  ┃  You hit your weekly limit.' \
+    '  ┃  1 (○) Upgrade tier      Upgrade to a higher tier for more usage' \
+    '  ┃  2 (○) Buy more credits  Purchase credits to keep using Grok Build' \
+    '  ┃  3 (○) Try Again         Resubmit the last prompt once you have usage again' \
+    '  ┃  ↑/↓ navigate · y copy                                                                              Enter:submit')
+  out=$(fm_composer_blocking_dialog "$screen"); rc=$?
+  [ "$rc" -eq 0 ] || fail "the recorded Grok weekly-limit dialog should match"
+  [ "$out" = 'Grok weekly limit' ] || fail "Grok dialog name was '$out'"
+  out=$(fm_composer_blocking_dialog "${screen/Buy more credits/Buy credits}"); rc=$?
+  [ "$rc" -eq 1 ] || fail "a partial weekly-limit dialog must not match"
+  pass "the complete Grok weekly-limit dialog is named without matching partial text"
+}
+
 test_dialog_note_skips_the_match_when_no_sink_is_set() {
   local screen out rc before after
   screen=$(exit_picker_screen)
@@ -1946,6 +1962,7 @@ test_quoted_exit_picker_text_is_not_a_dialog() {
 
 test_background_exit_picker_stays_pending_and_blocks_retry
 test_dialog_heading_and_footer_must_be_the_recorded_lines
+test_grok_weekly_limit_dialog_is_named_only_when_complete
 test_dialog_note_skips_the_match_when_no_sink_is_set
 test_quoted_exit_picker_text_is_not_a_dialog
 test_kiro_near_gray_ghost_is_stripped_and_real_text_survives
