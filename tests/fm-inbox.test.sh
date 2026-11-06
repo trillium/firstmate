@@ -606,6 +606,47 @@ repaired=$(run_inbox "$home" announce --json "$wedged_id") \
 assert_equals "True" "$(printf '%s' "$repaired" | json_get announced)" "announce repairs the held-lock note"
 pass "a wedged wake-queue lock holder cannot hang the note writer"
 
+# --- a foreign watcher-down marker lock cannot hang a note, even with TERM ignored
+# A live process holds .watcher-down.lock while the note runs with SIGTERM
+# ignored (nohup-style launchers). The hold bound's TERM is then a no-op, so
+# only the KILL escalation and the bounded marker wait keep the writer from
+# spinning for minutes inside the wake-queue lock.
+
+home=$(make_home marker-wedged)
+holder_ready="$home/holder.ready"
+(
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$STATE/.watcher-down.lock" || exit 1
+    : > "$2"
+    sleep 60
+  ' _ "$ROOT" "$holder_ready"
+) >/dev/null 2>&1 &
+holder_pid=$!
+i=0
+while [ ! -e "$holder_ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+[ -e "$holder_ready" ] || { kill "$holder_pid" 2>/dev/null || true; fail "the holder never took the watcher-down lock"; }
+start=$SECONDS
+set +e
+marker_out=$(FM_BIN="$INBOX_BIN" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+  FM_CONFIG_OVERRIDE="$home/config" FM_INBOX_LOCK_HOLD_SECS=2 FM_INBOX_LOCK_WAIT_SECS=2 \
+  python3 -c '
+import signal, os
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+os.execv(os.environ["FM_BIN"], [os.environ["FM_BIN"], "note", "--request-id", "marker-1", "--json", "x"])' \
+  2>/dev/null </dev/null)
+marker_code=$?
+set -e
+elapsed=$((SECONDS - start))
+kill "$holder_pid" 2>/dev/null || true
+pkill -P "$holder_pid" 2>/dev/null || true
+wait "$holder_pid" 2>/dev/null || true
+expect_code 3 "$marker_code" "a note behind a held watcher-down lock exits saved-but-unannounced"
+[ "$elapsed" -le 15 ] || fail "the note writer ran ${elapsed}s behind a held watcher-down lock, expected the 2s bound"
+assert_equals "1" "$(count_notes "$home")" "the note is saved even though the marker lock was held"
+assert_equals "False" "$(printf '%s' "$marker_out" | json_get announced)" "nothing claims a wake that was never appended"
+pass "a held watcher-down lock cannot hang the note writer, even with TERM ignored"
+
 # --- a slow announcer cannot hold the wake-queue lock past its bound ---------
 # Under heavy host load every command the announce runs inside the queue lock
 # is slow, so the holder is live but takes minutes. Slow shims for the commands

@@ -387,10 +387,14 @@ announce_note() {  # <id> <summary>
   # killed and the lock released here; the note stays saved but unannounced and
   # `announce <id>` repairs it. A kill between the append and the marker write
   # leaves a wake row without its marker, so the repair can queue a second wake for the same note; a duplicate wake is harmless.
-  ( fm_wake_append_locked check "inbox:$id" "check: captain inbox note $id - $summary" \
+  ( FM_WAKE_APPEND_MARKER_WAIT_SECS=$LOCK_WAIT_SECS fm_wake_append_locked check "inbox:$id" "check: captain inbox note $id - $summary" \
     && mark_announced "$id" ) &
   local work=$! watchdog
-  ( sleep "$LOCK_HOLD_SECS"; kill -TERM "$work" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+  # A caller that started this writer with SIGTERM ignored (nohup, some launchd
+  # jobs) would shrug off the TERM and spin in the marker-lock wait forever
+  # while holding the queue lock, so an overrun is escalated to KILL after a
+  # short grace. The dead subshell's lock records are reclaimed as stale.
+  ( sleep "$LOCK_HOLD_SECS"; kill -TERM "$work" 2>/dev/null; sleep 1; kill -KILL "$work" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
   watchdog=$!
   wait "$work" 2>/dev/null || status=$?
   kill "$watchdog" 2>/dev/null || true
