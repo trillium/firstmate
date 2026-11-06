@@ -1892,6 +1892,19 @@ test_dialog_heading_and_footer_must_be_the_recorded_lines() {
   pass "a buried heading or a different last line is not the exit picker"
 }
 
+test_agy_feedback_survey_is_named_only_when_complete() {
+  local screen out rc
+  screen=$(cat "$ROOT/tests/fixtures/agy-quota-survey-screen.txt")
+  out=$(fm_composer_blocking_dialog "$screen"); rc=$?
+  [ "$rc" -eq 0 ] || fail "the recorded agy survey should match"
+  [ "$out" = 'agy feedback survey' ] || fail "agy survey name was '$out'"
+  out=$(fm_composer_blocking_dialog "${screen/Skip/Next}"); rc=$?
+  [ "$rc" -eq 1 ] || fail "a partial survey must not match"
+  out=$(fm_composer_blocking_dialog "${screen/How\'s the CLI experience/How is the CLI}"); rc=$?
+  [ "$rc" -eq 1 ] || fail "options without the heading must not match"
+  pass "the agy feedback survey is named only when heading and options are both present"
+}
+
 test_grok_weekly_limit_dialog_is_named_only_when_complete() {
   local screen out rc
   screen=$(printf '%s\n' \
@@ -1963,6 +1976,7 @@ test_quoted_exit_picker_text_is_not_a_dialog() {
 test_background_exit_picker_stays_pending_and_blocks_retry
 test_dialog_heading_and_footer_must_be_the_recorded_lines
 test_grok_weekly_limit_dialog_is_named_only_when_complete
+test_agy_feedback_survey_is_named_only_when_complete
 test_dialog_note_skips_the_match_when_no_sink_is_set
 test_quoted_exit_picker_text_is_not_a_dialog
 test_kiro_near_gray_ghost_is_stripped_and_real_text_survives

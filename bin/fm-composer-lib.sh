@@ -2226,6 +2226,9 @@ EOF
 # Grok's weekly-limit modal is separately named because it blocks a worker
 # without being a composer draft, and relaunch may dismiss it only with Grok's
 # documented Shift+x action - never by selecting one of its purchase options.
+# agy's feedback survey (recorded 2026-11-06, agy 1.4.x) follows its quota
+# message and has no composer; its Skip choice (0) dismisses it without
+# answering, so exit and relaunch may send it on an agy endpoint only.
 fm_composer_blocking_dialog() {  # <screen> -> dialog name
   local screen=${1-}
   [ -n "$screen" ] || return 1
@@ -2247,6 +2250,14 @@ fm_composer_blocking_dialog() {  # <screen> -> dialog name
     END { exit !(heading && upgrade && credits && retry && controls) }
   '; then
     printf '%s' 'Grok weekly limit'
+    return 0
+  fi
+  if printf '%s\n' "$screen" | fm_composer_strip_ansi | LC_ALL=C awk '
+    /^[ \t]*How.s the CLI experience so far\? Help us improve:[ \t\r]*$/ { heading = 1; next }
+    heading && /^[ \t]*\[1\] Good[ \t]+\[2\] Fine[ \t]+\[3\] Bad[ \t]+\[0\] Skip[ \t\r]*$/ { options = 1 }
+    END { exit !(heading && options) }
+  '; then
+    printf '%s' 'agy feedback survey'
     return 0
   fi
   return 1
