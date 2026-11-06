@@ -484,8 +484,11 @@ dismiss_grok_quota_for_relaunch() {
   fm_backend_send_key "$BACKEND" "$T" S-x "$LABEL" \
     || die "task $ID shows Grok's weekly-limit dialog and its verified Shift+x dismissal was not delivered; refusing to select an option"
   sleep "$POLL"
-  fm_control_composer_structurally_empty "$BACKEND" "$T" \
-    || die "task $ID's Grok weekly-limit dialog did not return to a proven empty composer after Shift+x; refusing to type the exit command"
+  if [ "$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null)" = empty ] \
+     || fm_control_composer_structurally_empty "$BACKEND" "$T"; then
+    return 0
+  fi
+  die "task $ID's Grok weekly-limit dialog did not return to a proven empty composer after Shift+x; refusing to type the exit command"
 }
 
 # confirm_exit_picker: answer the Claude background-task picker that THIS exit
