@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.js";
 import { contextDirectory, createTurnEndLatch, promptSession, setupEventSubscription } from "./lib/fm-opencode2.js";
@@ -46,7 +46,10 @@ function resolvePath(anchor) {
 
 function runGuard(root) {
   if (!root) return Promise.resolve({ code: 0, stderr: "" });
-  return runProcess(`${root}/bin/fm-hook-guard-run.sh`, ["fm-turnend-guard.sh"], '{"stop_hook_active":false}');
+  const runner = `${root}/bin/fm-hook-guard-run.sh`;
+  return existsSync(runner)
+    ? runProcess(runner, ["fm-turnend-guard.sh"], '{"stop_hook_active":false}')
+    : runProcess(`${root}/bin/fm-turnend-guard.sh`, [], '{"stop_hook_active":false}');
 }
 
 async function letWatchArmRun(sessionID, client) {

@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { contextDirectory, shellCommand, setupToolExecuteBefore } from "./lib/fm-opencode2.js";
@@ -28,6 +28,13 @@ function runProcess(command, args) {
   });
 }
 
+function hookCommand(root, script, args) {
+  const runner = `${root}/bin/fm-hook-guard-run.sh`;
+  return existsSync(runner)
+    ? [runner, [script, ...args]]
+    : [`${root}/bin/${script}`, args];
+}
+
 async function resolveRoot(anchor) {
   if (!anchor) return "";
   const result = await runProcess("git", ["-C", anchor, "rev-parse", "--show-toplevel"]);
@@ -55,7 +62,8 @@ export const FmPrimaryPretoolCheck = async ({ directory, worktree }) => {
       const command = output?.args?.command;
       if (!command || typeof command !== "string") return;
 
-      const result = await runProcess(`${root}/bin/fm-hook-guard-run.sh`, ["fm-arm-pretool-check.sh", "--command", command]);
+      const [runner, args] = hookCommand(root, "fm-arm-pretool-check.sh", ["--command", command]);
+      const result = await runProcess(runner, args);
       if (result.code !== 2) return;
 
       const reason = result.stderr.trim() || "denied by the watcher-arm PreToolUse seatbelt";
@@ -74,7 +82,8 @@ function installPretoolCheck(ctx) {
     const root = await getRoot();
     if (!root) return;
 
-    const result = await runProcess(`${root}/bin/fm-hook-guard-run.sh`, ["fm-arm-pretool-check.sh", "--command", command]);
+    const [runner, args] = hookCommand(root, "fm-arm-pretool-check.sh", ["--command", command]);
+    const result = await runProcess(runner, args);
     if (result.code !== 2) return;
 
     const reason = result.stderr.trim() || "denied by the watcher-arm PreToolUse seatbelt";
