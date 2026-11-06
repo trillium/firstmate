@@ -4459,29 +4459,6 @@ delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task 
   esac
 }
 
-# Return the canonical PR link recorded on this task's structured backlog row.
-# A task can be re-raised against an upstream repository while its project clone
-# still points origin at a fork.  That target must be checked before a
-# no-mistakes launch, since the pipeline rebases against origin's default branch.
-spawn_backlog_pr_link() { # <data-dir> <task-id>
-  local data=$1 id=$2 row links link
-  row=$(fm_backlog_row_show "$data" "$id" --full 2>/dev/null) || return 1
-  links=$(printf '%s\n' "$row" | sed -n 's/^  links: "\(.*\)"$/\1/p' | head -n 1)
-  [ -n "$links" ] || return 1
-  while IFS= read -r link; do
-    case "$link" in
-      pr:*)
-        fm_pr_url_parse "${link#pr:}" || return 1
-        printf '%s\n' "$FM_PR_URL"
-        return 0
-        ;;
-    esac
-  done <<EOF
-$(printf '%s' "$links" | tr ',' '\n')
-EOF
-  return 1
-}
-
 # Brief/spawn delivery agreement, checked before any endpoint exists.
 # fm-brief.sh records a ship brief's mode as a fixed "Delivery contract: mode=<mode>"
 # line, with " forge=<forge>" appended on a bound forge. A spawn that disagrees
@@ -4635,21 +4612,6 @@ if [ "$KIND" = ship ]; then
     if [ -n "$origin_id" ] && [ "$origin_id" != "$UPSTREAM_CONSENT" ]; then
       echo "error: no-mistakes ship refused for $ID: the task targets $UPSTREAM_CONSENT but this clone's origin is $origin_id; the pipeline would rebase the branch onto the fork's default branch and open the PR against the fork. Ship it direct-PR (push the existing branch directly to the upstream) instead" >&2
       exit 1
-    fi
-  fi
-  # The same refusal applies when the task's linked PR, rather than a
-  # firstmate-self-repository consent, identifies an upstream target.
-  if [ "$MODE" = no-mistakes ]; then
-    linked_pr=$(spawn_backlog_pr_link "$DATA" "$ID" || true)
-    if [ -n "$linked_pr" ]; then
-      fm_pr_url_parse "$linked_pr" || exit 1
-      linked_target=$(fm_role_scope_norm "$FM_PR_HOST/$FM_PR_PATH" 2>/dev/null || true)
-      origin_url=$(git -C "$PROJ_ABS" remote get-url origin 2>/dev/null || true)
-      origin_id=$(fm_role_remote_identity "$origin_url" "$PROJ_ABS" 2>/dev/null || true)
-      if [ -n "$linked_target" ] && [ -n "$origin_id" ] && [ "$linked_target" != "$origin_id" ]; then
-        echo "error: no-mistakes ship refused for $ID: linked PR $linked_pr targets $linked_target but this clone's origin is $origin_id; the pipeline would rebase the branch onto the fork's default branch and open a PR against the fork. Ship it direct-PR from a branch based on $linked_target's default branch instead" >&2
-        exit 1
-      fi
     fi
   fi
   # The registry holds the captain's standing posture, so dropping below it is
@@ -5116,7 +5078,7 @@ BACKLOG_TRANSITION=0
 BACKLOG_ROW_STATE=
 if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   BACKLOG_TRANSITION=1
-  if fm_backlog_row_probe "$DATA" "$ID"; then
+  if fm_backlog_row_probe "$DATA" "$ID" --full; then
     BACKLOG_ROW_STATE=$FM_BACKLOG_ROW_STATE
   elif [ "$FM_BACKLOG_ROW_RESULT" = not_found ]; then
     echo "error: task $ID has no backlog item in this home, so dispatching it would leave a worker no record owns; add it first (bin/fm-tasks-axi.sh add $ID '<title>' --kind $KIND) and re-run" >&2
@@ -5147,6 +5109,19 @@ if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
       fi
     elif [ "$FM_BACKLOG_ROW_REPO" != "$SPAWN_TARGET_REPO" ]; then
       echo "error: project mismatch for $ID: its backlog item records repo $FM_BACKLOG_ROW_REPO but the spawn targets project $SPAWN_TARGET_REPO ($PROJ_ABS); pass the $FM_BACKLOG_ROW_REPO project directory, or correct the item's repo if the item is wrong" >&2
+      exit 1
+    fi
+  fi
+  # The linked PR was read with the dispatch preflight above, not through a
+  # second backlog read: that preserves the atomicity window between preflight
+  # and the later In-flight commit.
+  if [ "$MODE" = no-mistakes ] && [ -n "$FM_BACKLOG_ROW_PR" ]; then
+    fm_pr_url_parse "$FM_BACKLOG_ROW_PR" || exit 1
+    linked_target=$(fm_role_scope_norm "$FM_PR_HOST/$FM_PR_PATH" 2>/dev/null || true)
+    origin_url=$(git -C "$PROJ_ABS" remote get-url origin 2>/dev/null || true)
+    origin_id=$(fm_role_remote_identity "$origin_url" "$PROJ_ABS" 2>/dev/null || true)
+    if [ -n "$linked_target" ] && [ -n "$origin_id" ] && [ "$linked_target" != "$origin_id" ]; then
+      echo "error: no-mistakes ship refused for $ID: linked PR $FM_BACKLOG_ROW_PR targets $linked_target but this clone's origin is $origin_id; the pipeline would rebase the branch onto the fork's default branch and open a PR against the fork. Ship it direct-PR from a branch based on $linked_target's default branch instead" >&2
       exit 1
     fi
   fi
