@@ -240,15 +240,24 @@
 #   captain has explicitly said to discard the work.
 #   --legacy-record accepts a task record that predates the spawn_gen field:
 #   teardown then proceeds only when the recorded endpoint is confirmed dead or
-#   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
-#   --force the worktree still passes the ordinary landed-work checks. The
-#   accepted legacy incarnation is stamped into the record before its close is
-#   recorded and named in the teardown line; the flag never relaxes the
-#   unlanded-work refusal, which --force alone can authorize. A legacy- stamp
-#   an abandoned attempt left behind never counts as a published incarnation:
-#   the record still reads as a legacy record, so a recorded endpoint runs the
-#   endpoint gate again and the retry still needs --legacy-record. The safe
-#   windowless exception below retries its retained stamp without the flag.
+#   agent-less (bin/fm-backend.sh's recovery-grade classifier), or alive and
+#   still sitting in the recorded worktree, and without --force the worktree
+#   still passes the ordinary landed-work checks. The same missing generation
+#   is treated as that legacy record without the flag when the recorded
+#   endpoint is provably this task's: the classifier reads it dead (the
+#   endpoint is there and holds no agent) or alive, and that endpoint's current
+#   path is the recorded worktree. A live or idle endpoint whose path is not
+#   the recorded worktree still refuses, so a reused window is not cleaned up
+#   under the old record. An endpoint that only reads missing, unreadable,
+#   ambiguous, or unverified is not that proof; it still needs --legacy-record
+#   and a dead or agent-less reading. The accepted legacy incarnation is
+#   stamped into the record before its close is recorded and named in the
+#   teardown line; neither path relaxes the unlanded-work refusal, which
+#   --force alone can authorize. A legacy- stamp an abandoned attempt left
+#   behind never counts as a published incarnation: the record still reads as
+#   a legacy record, so a recorded endpoint runs the endpoint gate again and
+#   the retry still needs --legacy-record. The safe windowless exception below
+#   retries its retained stamp without the flag.
 #   A tmux record with no window names no live endpoint, so there is nothing
 #   for that classifier to inspect and nothing to kill. Combined with a
 #   missing spawn_gen, that leftover would otherwise deadlock: automatic
@@ -735,6 +744,7 @@ TEARDOWN_CLEANUP_RECOVERY=$(fm_meta_get "$META" cleanup_recovery)
 TEARDOWN_META_SPAWN_GEN=
 TEARDOWN_LEGACY_PENDING=0
 TEARDOWN_LEGACY_ACCEPTED=0
+TEARDOWN_LEGACY_DEFER=0
 TEARDOWN_LEGACY_ENDPOINT=
 TEARDOWN_LEGACY_RETAINED_STAMP=
 TEARDOWN_LEGACY_PRESTAMP_SIZE=0
@@ -778,6 +788,72 @@ if [ "$TEARDOWN_CLEANUP_RECOVERY" != orca ]; then
     TEARDOWN_BACKLOG_SKIP_REASON=$FM_BACKLOG_TRANSITION_SKIP
   fi
 fi
+
+# A pre-spawn_gen record can be adopted once its endpoint is known. Only a
+# single tmux, Herdr, or Rex window can prove that, so every other shape keeps
+# the immediate refusal below.
+teardown_legacy_record_can_defer() {
+  local backend
+  case "$TEARDOWN_WINDOW_COUNT:$(fm_meta_get "$META" window)" in
+    1:?*) ;;
+    *) return 1 ;;
+  esac
+  case "$TEARDOWN_BACKEND_COUNT" in
+    0) backend=tmux ;;
+    1) backend=$(fm_meta_get "$META" backend) ;;
+    *) return 1 ;;
+  esac
+  case "$backend" in
+    tmux|herdr|rex) return 0 ;;
+  esac
+  return 1
+}
+
+teardown_refuse_missing_spawn_gen() {
+  echo "error: task $ID's record has no spawn_gen that identifies one exact incarnation ($FM_BACKLOG_TRANSITION_ERROR); refusing automatic teardown - relaunch the task to publish an unambiguous incarnation, then retry teardown, or pass --legacy-record once its recorded endpoint is confirmed dead or agent-less" >&2
+  exit 1
+}
+
+teardown_refuse_legacy_endpoint() {
+  echo "REFUSED: task $ID's record predates spawn_gen and its recorded endpoint reads '$TEARDOWN_LEGACY_ENDPOINT', not confidently dead or agent-less; --legacy-record teardown is refused while an agent may still be bound to it. Nothing was changed." >&2
+  echo "Reconcile the endpoint first (bin/fm-crew-state.sh $ID), or relaunch the task to publish an unambiguous incarnation, then retry teardown." >&2
+  exit 1
+}
+
+teardown_legacy_endpoint_current_path() {
+  case "$BACKEND" in
+    tmux) fm_backend_tmux_current_path "$T" ;;
+    herdr) fm_backend_herdr_current_path "$T" ;;
+    rex) fm_backend_rex_current_path "$T" ;;
+    *) return 1 ;;
+  esac
+}
+
+# True when the recorded endpoint is this task's worktree: the classifier has
+# already read it dead or alive, and its current path canonicalizes to the
+# recorded worktree. A missing or unreadable endpoint cannot match.
+teardown_legacy_endpoint_matches_worktree() {
+  local seen canonical seen_canonical
+  [ -n "${WT:-}" ] && [ -d "$WT" ] || return 1
+  [ -n "${T:-}" ] || return 1
+  seen=$(teardown_legacy_endpoint_current_path) || return 1
+  [ -n "$seen" ] || return 1
+  canonical=$(CDPATH='' cd -- "$WT" && pwd -P) || return 1
+  seen_canonical=$(CDPATH='' cd -- "$seen" && pwd -P) || return 1
+  [ "$seen_canonical" = "$canonical" ]
+}
+
+teardown_legacy_endpoint_adoptable() {
+  local state
+  [ -n "${T:-}" ] || return 1
+  state=$(fm_backend_agent_state "$BACKEND" "$T") || return 1
+  case "$state" in
+    dead|alive) ;;
+    *) return 1 ;;
+  esac
+  teardown_legacy_endpoint_matches_worktree
+}
+
 if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
   if ! fm_backlog_meta_spawn_gen "$META" "$STATE"; then
     TEARDOWN_LEGACY_GEN_COUNT=$(LC_ALL=C awk -F= '$1 == "spawn_gen" { count++ } END { print count + 0 }' "$META" 2>/dev/null || printf '0\n')
@@ -791,12 +867,17 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
       TEARDOWN_LEGACY_PENDING=1
     elif [ "$TEARDOWN_LEGACY_GEN_COUNT" = 0 ] && [ "$LEGACY_RECORD_GIVEN" = 1 ]; then
       # A record that predates the incarnation field: acceptance is gated later,
-      # once the recorded endpoint is known, so its state can be confirmed dead
-      # or agent-less before any cleanup decision is made.
+      # once the recorded endpoint is known, so its state can be confirmed dead,
+      # agent-less, or still in the recorded worktree before any cleanup
+      # decision is made.
       TEARDOWN_LEGACY_PENDING=1
+    elif [ "$TEARDOWN_LEGACY_GEN_COUNT" = 0 ] && teardown_legacy_record_can_defer; then
+      # The endpoint is not known yet. Decide after it is read: a dead or live
+      # endpoint whose current path is the recorded worktree is this task, and
+      # every other reading keeps the refusal below.
+      TEARDOWN_LEGACY_DEFER=1
     elif [ "$TEARDOWN_LEGACY_GEN_COUNT" = 0 ]; then
-      echo "error: task $ID's record has no spawn_gen that identifies one exact incarnation ($FM_BACKLOG_TRANSITION_ERROR); refusing automatic teardown - relaunch the task to publish an unambiguous incarnation, then retry teardown, or pass --legacy-record once its recorded endpoint is confirmed dead or agent-less" >&2
-      exit 1
+      teardown_refuse_missing_spawn_gen
     else
       echo "error: task $ID's record has an unreadable spawn_gen that identifies one exact incarnation ($FM_BACKLOG_TRANSITION_ERROR); refusing automatic teardown - fix the record, then retry teardown" >&2
       exit 1
@@ -1336,6 +1417,16 @@ fi
 # be readable before the first destructive step. --force does not override
 # this. A forced descendant is proved in validate_firstmate_home_children_removal.
 teardown_require_backend_prerequisites "$BACKEND" "$ID" || exit 1
+# A deferred legacy record is adopted only when this read shows the endpoint
+# still belongs to the recorded worktree. Every other reading refuses here,
+# before fm-guard or any cleanup, with the record untouched.
+if [ "$TEARDOWN_LEGACY_DEFER" = 1 ]; then
+  if teardown_legacy_endpoint_adoptable; then
+    TEARDOWN_LEGACY_PENDING=1
+  else
+    teardown_refuse_missing_spawn_gen
+  fi
+fi
 # The T3 capability and identity gate must pass before local teardown mutation,
 # even under --force.
 if [ "$BACKEND" = t3code ]; then
@@ -1381,15 +1472,17 @@ MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 BASE_BRANCH=$(grep '^base_branch=' "$META" | cut -d= -f2- || true)
 
 # A record accepted as a legacy incarnation (no spawn_gen, and either
-# --legacy-record given or the record is windowless) may be torn down only
-# when its recorded endpoint is confidently gone or agent-less. Windowless
-# leftovers name no endpoint and are treated as missing. For a recorded
-# window, only the recovery-grade classifier's dead and missing license
-# that, and every ambiguous, unreadable, or unverified endpoint state refuses
-# while the record is still intact. Acceptance resolves the incarnation token
-# here; the record itself is stamped only once every landed-work refusal has
-# passed, immediately before the close marker binds to it, so any refusal
-# leaves the record byte-identical.
+# --legacy-record given, the endpoint matches the recorded worktree, or the
+# record is windowless) may be torn down only when its recorded endpoint is
+# confidently gone or agent-less, or alive and still in the recorded worktree.
+# Windowless leftovers name no endpoint and are treated as missing. For a
+# recorded window, only the recovery-grade classifier's dead and missing
+# license an endpoint that was not already proved to be the recorded worktree,
+# and every ambiguous, unreadable, or unverified endpoint state refuses while
+# the record is still intact. Acceptance resolves the incarnation token here;
+# the record itself is stamped only once every landed-work refusal has passed,
+# immediately before the close marker binds to it, so any refusal leaves the
+# record byte-identical.
 if [ "$TEARDOWN_LEGACY_PENDING" = 1 ]; then
   if [ "$TEARDOWN_WINDOWLESS" = 1 ]; then
     TEARDOWN_LEGACY_ENDPOINT=missing
@@ -1397,10 +1490,11 @@ if [ "$TEARDOWN_LEGACY_PENDING" = 1 ]; then
     TEARDOWN_LEGACY_ENDPOINT=$(fm_backend_agent_state "$BACKEND" "$T")
     case "$TEARDOWN_LEGACY_ENDPOINT" in
       dead|missing) ;;
+      alive)
+        teardown_legacy_endpoint_matches_worktree || teardown_refuse_legacy_endpoint
+        ;;
       *)
-        echo "REFUSED: task $ID's record predates spawn_gen and its recorded endpoint reads '$TEARDOWN_LEGACY_ENDPOINT', not confidently dead or agent-less; --legacy-record teardown is refused while an agent may still be bound to it. Nothing was changed." >&2
-        echo "Reconcile the endpoint first (bin/fm-crew-state.sh $ID), or relaunch the task to publish an unambiguous incarnation, then retry teardown." >&2
-        exit 1
+        teardown_refuse_legacy_endpoint
         ;;
     esac
   fi
