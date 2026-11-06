@@ -71,6 +71,7 @@ FM_BACKLOG_ROW_HOLD_KIND=
 # Set by fm_backlog_row_probe on a found row: the recorded repo, empty when none.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
 FM_BACKLOG_ROW_REPO=
+FM_BACKLOG_ROW_PR=
 # Set by fm_backlog_close_marker_replay: closed | closed_incomplete | retained |
 # retained_incomplete | answered | stale | noop.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
@@ -426,8 +427,8 @@ fm_backlog_row_list() {  # <resolved-data-dir> [flag...]
   fi
 }
 
-fm_backlog_row_probe() {  # <data-dir> <id>
-  local data authorized_data=$1 id=$2 out state held blocked hold_kind repo command_status source_status
+fm_backlog_row_probe() {  # <data-dir> <id> [--full]
+  local data authorized_data=$1 id=$2 detail=${3:-} full=0 out state held blocked hold_kind repo links link command_status source_status
   if ! data=$(fm_backlog_data_absolute "$1"); then
     FM_BACKLOG_ROW_RESULT=error
     FM_BACKLOG_ROW_STATE=
@@ -438,6 +439,7 @@ fm_backlog_row_probe() {  # <data-dir> <id>
   FM_BACKLOG_ROW_STATE=
   FM_BACKLOG_ROW_HOLD_KIND=
   FM_BACKLOG_ROW_REPO=
+  FM_BACKLOG_ROW_PR=
   FM_BACKLOG_ROW_ERROR=
   fm_backlog_source_present "$data" "$authorized_data"
   source_status=$?
@@ -445,7 +447,14 @@ fm_backlog_row_probe() {  # <data-dir> <id>
     FM_BACKLOG_ROW_ERROR=$FM_BACKLOG_TRANSITION_ERROR
     return "$source_status"
   fi
-  out=$(fm_backlog_row_show "$data" "$id")
+  # The markdown adapter exposes a linked PR through --full.  Other adapters
+  # have their own structured show contracts, so keep their established probe.
+  if [ "$detail" = --full ] && [ -f "$data/backlog.md" ] && [ ! -L "$data/backlog.md" ]; then
+    full=1
+    out=$(fm_backlog_row_show "$data" "$id" --full)
+  else
+    out=$(fm_backlog_row_show "$data" "$id")
+  fi
   command_status=$?
   [ "$command_status" -ne 124 ] || FM_BACKLOG_ROW_SHOW_WEDGED=1
   if [ "$command_status" -ne 0 ]; then
@@ -484,6 +493,14 @@ fm_backlog_row_probe() {  # <data-dir> <id>
     -) FM_BACKLOG_ROW_REPO= ;;
     *) FM_BACKLOG_ROW_REPO=$repo ;;
   esac
+  if [ "$full" = 1 ]; then
+    links=$(printf '%s\n' "$out" | sed -n 's/^  links: "\(.*\)"$/\1/p' | head -n 1)
+    while IFS= read -r link; do
+      case "$link" in pr:*) FM_BACKLOG_ROW_PR=${link#pr:}; break ;; esac
+    done <<EOF
+$(printf '%s' "$links" | tr ',' '\n')
+EOF
+  fi
   return 0
 }
 

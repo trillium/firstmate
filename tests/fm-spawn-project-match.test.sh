@@ -14,7 +14,8 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-project-match)
 # make_match_case <name> <id> [repo] builds a home with a real backlog carrying
 # <id> (recording <repo> when given), a project named alpha, and its worktree.
 make_match_case() {
-  local name=$1 id=$2 repo=${3-} case_dir file
+  local name=$1 id=$2 repo=${3-} pr=${4-} case_dir file
+  local -a args
   case_dir="$TMP_ROOT/$name"
   CASE_HOME="$case_dir/home"
   CASE_PROJ="$case_dir/alpha"
@@ -27,11 +28,10 @@ make_match_case() {
   fm_test_spawn_brief "$CASE_HOME" "$id" "Exercise the project match for $id."
   file="$CASE_HOME/data/backlog.md"
   printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' > "$file"
-  if [ -n "$repo" ]; then
-    tasks-axi add "$id" "project match fixture" --kind ship --repo "$repo" --file "$file" >/dev/null
-  else
-    tasks-axi add "$id" "project match fixture" --kind ship --file "$file" >/dev/null
-  fi
+  args=(add "$id" "project match fixture" --kind ship --file "$file")
+  [ -z "$repo" ] || args+=(--repo "$repo")
+  [ -z "$pr" ] || args+=(--pr "$pr")
+  tasks-axi "${args[@]}" >/dev/null
 }
 
 run_match_spawn() { # <id> <project-dir> [extra args...]
@@ -91,9 +91,48 @@ test_acknowledgement_does_not_waive_a_mismatch() {
   pass "--repo-unrecorded-ok does not waive a recorded repo mismatch"
 }
 
+test_linked_upstream_pr_refuses_no_mistakes() {
+  local id=linked-upstream-z5 out status
+  make_match_case linked-upstream "$id" alpha https://github.com/upstream/alpha/pull/7
+  git -C "$CASE_PROJ" remote set-url origin https://github.com/fork/alpha.git
+  out=$(run_match_spawn "$id" "$CASE_PROJ")
+  status=$?
+  expect_code 1 "$status" "a linked upstream PR must refuse no-mistakes"$'\n'"$out"
+  assert_contains "$out" "linked PR https://github.com/upstream/alpha/pull/7" "refusal did not name the linked PR"
+  assert_contains "$out" "origin is github.com/fork/alpha" "refusal did not name the origin mismatch"
+  assert_contains "$out" "direct-PR" "refusal did not name the safe remedy"
+  assert_absent "$CASE_HOME/state/$id.meta" "the refused spawn must not publish a task record"
+  pass "a linked upstream PR refuses no-mistakes before launch"
+}
+
+test_linked_same_repo_pr_allows_no_mistakes_and_upstream_direct_pr() {
+  local id=linked-same-z6 out status
+  make_match_case linked-same "$id" alpha https://github.com/fork/alpha/pull/8
+  git -C "$CASE_PROJ" remote set-url origin https://github.com/fork/alpha.git
+  out=$(run_match_spawn "$id" "$CASE_PROJ")
+  status=$?
+  expect_code 1 "$status" "the fixture's inaccessible remote should fail after the guard"$'\n'"$out"
+  assert_not_contains "$out" "linked PR https://github.com/fork/alpha/pull/8 targets" \
+    "a same-repository linked PR must pass the upstream-target guard"
+  assert_contains "$out" "could not fetch origin" "a same-repository linked PR must reach the later spawn path"
+
+  id=linked-direct-z7
+  make_match_case linked-direct "$id" alpha https://github.com/upstream/alpha/pull/9
+  git -C "$CASE_PROJ" remote set-url origin https://github.com/fork/alpha.git
+  out=$(fm_test_run_spawn "$CASE_HOME" "$CASE_WT" "$CASE_FAKEBIN" "$id" "$CASE_PROJ" --mode direct-PR --yolo off)
+  status=$?
+  expect_code 1 "$status" "the fixture's inaccessible remote should fail after direct-PR passes the guard"$'\n'"$out"
+  assert_not_contains "$out" "linked PR https://github.com/upstream/alpha/pull/9 targets" \
+    "a linked upstream PR must pass the guard in direct-PR mode"
+  assert_contains "$out" "could not fetch origin" "a direct-PR linked upstream PR must reach the later spawn path"
+  pass "same-repository no-mistakes and upstream direct-PR both proceed"
+}
+
 test_matching_repo_spawns
 test_mismatched_repo_is_refused_naming_both
 test_unrecorded_repo_requires_acknowledgement
 test_acknowledgement_does_not_waive_a_mismatch
+test_linked_upstream_pr_refuses_no_mistakes
+test_linked_same_repo_pr_allows_no_mistakes_and_upstream_direct_pr
 
 echo "# all fm-spawn-project-match tests passed"
