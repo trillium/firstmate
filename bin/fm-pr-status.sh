@@ -4,6 +4,10 @@
 #
 # Usage: fm-pr-status.sh [--json]
 #
+# Structured reads use the plain GitHub CLI (gh) with --json/--jq; gh-axi emits
+# its own text format and is not parseable here. Non-JSON output is reported as
+# a per-repository error rather than parsed.
+#
 # The command is read-only. It discovers only the existing origin remote and
 # the publication upstream selected by fm-role-lib.sh; it never guesses a
 # repository. Each reachable repository is queried independently, so an API
@@ -31,7 +35,7 @@ case "${1:-}" in
 esac
 
 command -v jq >/dev/null 2>&1 || { printf 'fm-pr-status: jq is required\n' >&2; exit 1; }
-command -v gh-axi >/dev/null 2>&1 || { printf 'fm-pr-status: gh-axi is required\n' >&2; exit 1; }
+command -v gh >/dev/null 2>&1 || { printf 'fm-pr-status: gh is required\n' >&2; exit 1; }
 
 # shellcheck source=bin/fm-role-lib.sh
 . "$SCRIPT_DIR/fm-role-lib.sh"
@@ -51,7 +55,7 @@ upstream=$(fm_role_publication_target "$FM_ROOT")
 case "$upstream" in github.com/*/*) upstream=${upstream#github.com/} ;; *) upstream= ;; esac
 printf '%s\n%s\n' "$origin" "$upstream" | awk 'NF && !seen[$0]++' > "$TMP/repos"
 
-operator=$(gh-axi api user --jq .login 2>"$TMP/operator.err") || {
+operator=$(gh api user --jq .login 2>"$TMP/operator.err") || {
   printf 'fm-pr-status: could not identify authenticated operator: %s\n' "$(sed -n '/[^[:space:]]/{s/[[:cntrl:]]//g;p;q;}' "$TMP/operator.err")" >&2
   exit 1
 }
@@ -72,7 +76,7 @@ jq -s '.' "$TMP/links.jsonl" > "$TMP/links.json"
 while IFS= read -r repo; do
   repo_key=$(printf '%s' "$repo" | tr '/' '_')
   out="$TMP/$repo_key.json"; err="$TMP/$repo_key.err"
-  if ! gh-axi pr list --repo "$repo" --author "$operator" --state open --limit 100 \
+  if ! gh pr list --repo "$repo" --author "$operator" --state open --limit 100 \
       --json number,title,url,updatedAt,createdAt,mergeStateStatus,isDraft,author > "$out" 2>"$err"; then
     message=$(sed -n '/[^[:space:]]/{s/[[:cntrl:]]//g;p;q;}' "$err")
     jq -cn --arg repo "$repo" --arg message "${message:-GitHub query failed}" '{repo:$repo,message:$message}' >> "$TMP/errors.jsonl"
@@ -86,7 +90,7 @@ while IFS= read -r repo; do
     number=$(jq -r '.number' <<<"$pr")
     url=$(jq -r '.url' <<<"$pr")
     comments="$TMP/comments-$repo_key-$number.json"
-    if ! gh-axi api "repos/$repo/issues/$number/comments?per_page=100" > "$comments" 2>/dev/null; then
+    if ! gh api "repos/$repo/issues/$number/comments?per_page=100" > "$comments" 2>/dev/null || ! jq -e 'type == "array"' "$comments" >/dev/null 2>&1; then
       printf '[]\n' > "$comments"
     fi
     jq -c --arg repo "$repo" --arg url "$url" --arg operator "$operator" --arg now "$NOW" --argjson links "$(cat "$TMP/links.json")" --slurpfile comments "$comments" '
@@ -101,8 +105,8 @@ done < "$TMP/repos"
 # A linked current task can point at a PR no longer in the open listings.
 while IFS= read -r link; do
   url=$(jq -r '.url' <<<"$link"); task=$(jq -r '.task' <<<"$link")
-  if ! gh-axi pr view "$url" --json state,mergedAt,isDraft,createdAt >/dev/null 2>&1; then continue; fi
-  record=$(gh-axi pr view "$url" --json state,mergedAt,isDraft,createdAt 2>/dev/null) || continue
+  record=$(gh pr view "$url" --json state,mergedAt,isDraft,createdAt 2>/dev/null) || continue
+  jq -e 'type == "object"' <<<"$record" >/dev/null 2>&1 || continue
   state=$(jq -r '.state' <<<"$record")
   if [ "$state" = CLOSED ] || [ "$state" = MERGED ]; then
     jq -cn --arg type closed_task --arg task "$task" --arg url "$url" --arg state "$state" '{type:$type,task:$task,url:$url,state:$state}' >> "$TMP/flags.jsonl"
