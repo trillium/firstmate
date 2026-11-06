@@ -388,6 +388,11 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# Record export owns its root boundary independently of the lock context below.
+# In a state-override test or recovery context, the derived lock home is only a
+# safe location for Treehouse's shared lock; it must not make sibling export
+# storage appear inside the record-export home.
+RECORD_EXPORT_HOME=$FM_HOME
 # A state override is a complete home-shaped test or recovery context.  When
 # its caller did not also set FM_HOME, keep Treehouse's shared project lock in
 # that same context instead of accidentally anchoring it under FM_ROOT/state.
@@ -568,7 +573,7 @@ teardown_export_records() {  # <state> <task-id>
       return 1
     fi
   fi
-  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$state" FM_CONFIG_OVERRIDE="$CONFIG" \
+  FM_HOME="$RECORD_EXPORT_HOME" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
     FM_RECORD_EXPORT_META_LOCK_HELD=1 \
     "$SCRIPT_DIR/fm-record-export.sh" archive-task "$task" || {
       echo "error: record export archive failed for $task; retaining task records for retry" >&2
