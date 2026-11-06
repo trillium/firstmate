@@ -68,7 +68,23 @@ case "${1:-}" in
   kill-window) : > "$window_file"; exit 0 ;;
   has-session|new-session) exit 0 ;;
   capture-pane) printf '%s\n' "${FM_FAKE_CAPTURE_TEXT:-}"; exit 0 ;;
-  send-keys) exit 0 ;;
+  send-keys)
+    # A refused interactive get returns to the pane's parent shell.  Mirror the
+    # per-task stderr and exit-marker protocol fm-spawn sends to that shell.
+    if [ -n "${FM_FAKE_TREEHOUSE_GET_STDERR:-}" ]; then
+      text=
+      for arg in "$@"; do
+        case "$arg" in 'treehouse get 2>'*) text=$arg; break ;; esac
+      done
+      if [ -n "$text" ]; then
+        stderr_path=$(printf '%s\n' "$text" | sed -n "s/.*2> '\\([^']*\\)'.*/\\1/p")
+        status_path=$(printf '%s\n' "$text" | sed -n "s/.*> '\\([^']*\\)'.*/\\1/p")
+        printf '%s' "$FM_FAKE_TREEHOUSE_GET_STDERR" > "$stderr_path"
+        printf '%s\n' 1 > "$status_path"
+      fi
+    fi
+    exit 0
+    ;;
 esac
 exit 0
 SH
@@ -294,8 +310,31 @@ test_shared_pool_refusal_names_the_cause() {
   pass "a shared-pool treehouse refusal is named in the spawn error"
 }
 
+# A non-zero interactive get writes its stderr and returns to the pane's parent
+# shell.  fm-spawn must see that marker immediately, carry Treehouse's exact
+# refusal into its own error, and not spend the ordinary 60-poll settle window.
+test_nonzero_treehouse_get_reports_verbatim_refusal_without_polling() {
+  local rec id out status reads refusal
+  id=settle-treehouse-refusal-z7
+  rec=$(make_primary_case settle-treehouse-refusal "$id" 100000)
+  read_settle_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+  refusal="treehouse: pool is full (max_trees = 5); no reusable worktree is available"
+
+  out=$(FM_FAKE_TREEHOUSE_GET_STDERR="$refusal" run_settle_spawn "$id")
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a refused treehouse get"
+  assert_contains "$out" "$refusal" "spawn did not include Treehouse's refusal verbatim"
+  reads=0
+  [ ! -f "$COUNTFILE" ] || reads=$(cat "$COUNTFILE")
+  [ "$reads" -eq 0 ] || fail "spawn polled the pane $reads times after treehouse refused"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused spawn published task metadata"
+  pass "a non-zero treehouse get reports its verbatim refusal without polling"
+}
+
 test_single_stale_first_read_is_not_accepted
 test_shared_pool_refusal_names_the_cause
+test_nonzero_treehouse_get_reports_verbatim_refusal_without_polling
 test_spawn_polling_ignores_a_path_sleep_shim
 test_already_settled_pane_costs_one_confirm_read
 test_transient_primary_checkout_is_not_accepted
