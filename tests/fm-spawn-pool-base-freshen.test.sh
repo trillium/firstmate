@@ -837,7 +837,7 @@ case "$cmd" in
     rm -f "$world/$w.id" "$world/$w.path"
     ;;
   send-keys)
-    if [ "$text" = "treehouse get Enter" ]; then
+    if [[ "$text" == "treehouse get 2>"* ]]; then
       w=$(window_name "$target")
       for slot in "$slots"/*/project; do
         grep -qxF -- "$slot" "$world"/*.path 2>/dev/null && continue

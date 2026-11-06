@@ -1770,6 +1770,8 @@ GIT_HOOKS_DIR=
 SPAWN_LAUNCH_SENT=0
 SPAWN_ENDPOINT_CLOSED=0
 SPAWN_STAGED_LAUNCH_FILE=
+SPAWN_TREEHOUSE_GET_STDERR=
+SPAWN_TREEHOUSE_GET_STATUS=
 
 spawn_fresh_commit_rollback() {
   if fm_backlog_atomic_transition rollback "$STATE/$ID.meta" \
@@ -2067,6 +2069,8 @@ spawn_abort_cleanup() {
     fm_lock_release "$SPAWN_CONTROL_LOCK" || true
   fi
   [ -z "$SPAWN_META_TMP" ] || rm -f "$SPAWN_META_TMP" 2>/dev/null || true
+  [ -z "$SPAWN_TREEHOUSE_GET_STDERR" ] || rm -f -- "$SPAWN_TREEHOUSE_GET_STDERR" 2>/dev/null || true
+  [ -z "$SPAWN_TREEHOUSE_GET_STATUS" ] || rm -f -- "$SPAWN_TREEHOUSE_GET_STATUS" 2>/dev/null || true
   if [ "$status" -ne 0 ] && [ "${ORCA_LAUNCH_ENV_ENABLED:-0}" = 1 ] && [ -n "$SPAWN_STAGED_LAUNCH_FILE" ]; then
     if [ "$SPAWN_LAUNCH_SENT" = 0 ] || [ "$SPAWN_ENDPOINT_CLOSED" = 1 ]; then
       rm -f -- "$SPAWN_STAGED_LAUNCH_FILE" 2>/dev/null || true
@@ -6295,7 +6299,23 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   elif [ "$BACKEND" = herdr ]; then
     spawn_lease_herdr_slot
   else
-    spawn_send_text_line "$WT_TARGET" 'treehouse get'
+    # The interactive command normally holds the pane in its worktree shell,
+    # so its status is unavailable until that shell exits.  On a refusal it
+    # returns immediately, however.  Leave a per-task marker in that case so
+    # this process can report Treehouse's stderr instead of mistaking the
+    # unchanged pane cwd for a transient that warrants a full polling window.
+    if [ "$BACKEND" = hc ]; then
+      # hc's terminal protocol owns submission as one app-level operation.
+      # Keep its interactive command unchanged; its foreground shell is the
+      # lease and cannot run a follow-up status marker without breaking that
+      # protocol.
+      spawn_send_text_line "$WT_TARGET" 'treehouse get'
+    else
+      SPAWN_TREEHOUSE_GET_STDERR="$STATE/.${ID}.treehouse-get.stderr"
+      SPAWN_TREEHOUSE_GET_STATUS="$STATE/.${ID}.treehouse-get.status"
+      rm -f -- "$SPAWN_TREEHOUSE_GET_STDERR" "$SPAWN_TREEHOUSE_GET_STATUS"
+      spawn_send_text_line "$WT_TARGET" "treehouse get 2> $(shell_quote "$SPAWN_TREEHOUSE_GET_STDERR"); _fm_treehouse_get_status=\$?; if [ \"\$_fm_treehouse_get_status\" -ne 0 ]; then printf '%s\\n' \"\$_fm_treehouse_get_status\" > $(shell_quote "$SPAWN_TREEHOUSE_GET_STATUS"); fi"
+    fi
 
     # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
     # Target the stable window id, not the name: if the name is ever lost (e.g. an
@@ -6335,6 +6355,13 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     wt_polls=${FM_SPAWN_WT_POLLS:-60}
     wt_poll_interval=${FM_SPAWN_WT_POLL_INTERVAL:-1}
     for _ in $(seq 1 "$wt_polls"); do
+      if [ -e "$SPAWN_TREEHOUSE_GET_STATUS" ]; then
+        echo "error: treehouse get failed to allocate a worktree for $ID from $PROJ_ABS; Treehouse refusal follows:" >&2
+        if [ -f "$SPAWN_TREEHOUSE_GET_STDERR" ]; then
+          cat "$SPAWN_TREEHOUSE_GET_STDERR" >&2
+        fi
+        exit 1
+      fi
       p=$(spawn_current_path "$WT_TARGET" || true)
       [ -z "$p" ] || last_seen="$p"
       if [ -n "$p" ] && spawn_worktree_isolated "$p"; then
@@ -6366,6 +6393,9 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
       echo "error: treehouse get did not enter an isolated worktree within ${wt_polls} polls of ${wt_poll_interval}s (last seen '${last_seen:-none}': $last_reason; spawning project '$PROJ_ABS')${pool_cause}; $(spawn_endpoint_hint)" >&2
       exit 1
     fi
+    rm -f -- "$SPAWN_TREEHOUSE_GET_STDERR" "$SPAWN_TREEHOUSE_GET_STATUS"
+    SPAWN_TREEHOUSE_GET_STDERR=
+    SPAWN_TREEHOUSE_GET_STATUS=
 
     if spawn_endpoint_closes_on_abort; then
       validate_spawn_worktree "treehouse get" "$WT ($(spawn_endpoint_hint))"
