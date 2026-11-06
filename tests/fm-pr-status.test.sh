@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -u
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SCRIPT="$ROOT/bin/fm-pr-status.sh"
