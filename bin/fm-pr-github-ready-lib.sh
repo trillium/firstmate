@@ -38,7 +38,7 @@
 # unnamed checks must not be treated as one.
 github_checks_not_green() {
   local json=$1
-  printf '%s' "$json" | jq -r '
+  printf '%s' "$json" | jq -r --argjson settled_only "${2:-false}" '
     def settled_at:
       if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
       then . else null end;
@@ -47,6 +47,9 @@ github_checks_not_green() {
         | to_entries[]
         | .key as $i
         | .value
+        | select($settled_only == false or
+            (if .__typename == "CheckRun" then .status == "COMPLETED"
+             else .state != "PENDING" and .state != "EXPECTED" end))
         | if .__typename == "CheckRun" then
             {
               kind: "check_run",
@@ -199,9 +202,15 @@ github_required_checks_missing() {
 # the usual 1, when mergeable=UNKNOWN is the only failing condition, so the
 # caller can retry a still-computing mergeability read instead of refusing.
 github_verify_mergeable() {
-  local json fields line red name covered missing unreported producers runs
+  local json fields line red failed name covered missing unreported producers runs pending
   local total=0 named=0 refusals='' mergeable_refusal=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
+  FM_PR_GITHUB_BEHIND=false
+  FM_PR_GITHUB_CHECKS_PENDING=false
+  FM_PR_GITHUB_CHECKS_FAILED=false
+  FM_PR_GITHUB_OTHER_REFUSAL=false
+  FM_PR_GITHUB_UNREPORTED=false
+  FM_PR_GITHUB_LIVE_HEAD=
 
   if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
     || [ -z "$json" ]; then
@@ -245,27 +254,53 @@ FIELDS
     echo "error: could not read the GitHub pull request head commit before merging" >&2
     return 1
   fi
+  FM_PR_GITHUB_LIVE_HEAD=$live_head
+  [ "$merge_state" != BEHIND ] || FM_PR_GITHUB_BEHIND=true
   if ! red=$(github_checks_not_green "$json"); then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
   fi
+  # Reuse current-run supersession when separating settled failures from waits.
+  if ! failed=$(github_checks_not_green "$json" true); then
+    echo "error: could not read the GitHub pull request checks before merging" >&2
+    return 1
+  fi
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    [ "${#ALLOW_RED[@]}" -eq 0 ] || [ "${ALLOW_RED[0]}" != "$name" ] || continue
+    FM_PR_GITHUB_CHECKS_FAILED=true
+  done <<EOF
+$failed
+EOF
+  pending=$(printf '%s' "$json" | jq -r '.statusCheckRollup[] |
+    if .__typename == "CheckRun" and .status != "COMPLETED" then .name // "(unnamed check)"
+    elif .__typename == "StatusContext" and (.state == "PENDING" or .state == "EXPECTED") then .context // "(unnamed check)"
+    else empty end' 2>/dev/null) || pending=''
+  [ -z "$pending" ] || FM_PR_GITHUB_CHECKS_PENDING=true
 
   case "$state" in
     [oO][pP][eE][nN]) ;;
     *)
+      FM_PR_GITHUB_OTHER_REFUSAL=true
       refusals="$refusals  - state is \"${state:-unreadable}\", not open
 "
       ;;
   esac
-  [ "$draft" = false ] \
-    || refusals="$refusals  - the pull request is a draft
+  if [ "$draft" != false ]; then
+    FM_PR_GITHUB_OTHER_REFUSAL=true
+    refusals="$refusals  - the pull request is a draft
 "
-  [ "$mergeable" = MERGEABLE ] \
-    || mergeable_refusal="  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
+  fi
+  if [ "$mergeable" != MERGEABLE ]; then
+    mergeable_refusal="  - mergeable is \"${mergeable:-unreadable}\", not MERGEABLE
 "
-  [ "$merge_state" != DIRTY ] \
-    || refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
+    [ "$mergeable" = UNKNOWN ] || FM_PR_GITHUB_OTHER_REFUSAL=true
+  fi
+  if [ "$merge_state" = DIRTY ]; then
+    FM_PR_GITHUB_OTHER_REFUSAL=true
+    refusals="$refusals  - mergeStateStatus is DIRTY (conflicts)
 "
+  fi
 
   uncovered=''
   while IFS= read -r name; do
@@ -287,6 +322,7 @@ EOF
 
   unreported=''
   if ! github_read_required_contexts "$base"; then
+    FM_PR_GITHUB_OTHER_REFUSAL=true
     while IFS= read -r line; do
       refusals="$refusals  - $line, so a required check that has not reported cannot be ruled out
 "
@@ -303,11 +339,13 @@ EOF
           | if (.name | type) == "string" and (.app.id | type) == "number" and .head_sha == $head
             then . else error("invalid check producer") end ]' 2>/dev/null); then
       producers='[]'
+      FM_PR_GITHUB_OTHER_REFUSAL=true
       refusals="$refusals  - required check producers at head $live_head could not be read
 "
     fi
   fi
   if ! missing=$(github_required_checks_missing "$json" "$FM_PR_GITHUB_REQUIRED" "$producers"); then
+    FM_PR_GITHUB_OTHER_REFUSAL=true
     refusals="$refusals  - the GitHub pull request check rollup could not be read
 "
   else
@@ -316,6 +354,7 @@ EOF
       [ "${#ALLOW_MISSING[@]}" -gt 0 ] && [ "${ALLOW_MISSING[0]}" = "$name" ] && continue
       refusals="$refusals  - required check '$name' has not reported at head $live_head
 "
+      FM_PR_GITHUB_UNREPORTED=true
       unreported="${unreported:+$unreported, }$name"
     done <<EOF
 $missing
@@ -327,6 +366,7 @@ EOF
   if command -v note_expected_head >/dev/null 2>&1; then
     note_expected_head "$live_head"
     if [ -n "${FM_PR_EXPECTED_HEAD_REFUSAL:-}" ]; then
+      FM_PR_GITHUB_OTHER_REFUSAL=true
       refusals="$refusals$FM_PR_EXPECTED_HEAD_REFUSAL
 "
     fi

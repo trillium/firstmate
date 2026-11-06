@@ -13,7 +13,8 @@
 # parse below owns why.
 #
 # Usage:
-#   fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--expected-head <full-sha>]
+#   fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--update-branch]
+#     [--expected-head <full-sha>]
 #     [--allow-red <check>] [--allow-missing <check>] [--allow-no-pipeline]
 #     [-- <forge merge flags>]
 #   fm-pr-merge.sh -h | --help
@@ -55,8 +56,8 @@
 # fails the merge instead of landing commits nothing verified.
 # An optional --expected-head <full-sha> pins the commit the caller already
 # reviewed. It must be one full lowercase hex commit of 40 or 64 characters,
-# given once as its own argument. The live head must equal it or the merge is
-# refused before any forge write. The forge head match receives that same
+# given once as its own argument. The initial live head must equal it or the
+# request is refused before any forge write. The forge head match receives that same
 # supplied value on GitHub, GitLab, and Forgejo. A later preflight in this run
 # does not replace it with a newly read head. Omitting the flag keeps the
 # previous behavior: the live head read at verification is the matched value.
@@ -80,6 +81,33 @@
 # own view still proves a landed merge, and every outcome it cannot prove
 # refuses, reporting the failed gh read and naming both failed reads when the
 # gh-axi view could not prove the outcome either.
+# A source-branch update is only a substep of an already-authorized merge
+# request: fm-pr-merge resolves the merge authority, passes the captain-hold
+# check and full live preflight, then re-resolves authority under the merge
+# locks before it updates. This helper has no standalone branch-update path;
+# any refused pre-update guard stops before the update.
+# Updating a green BEHIND GitHub PR requires explicit --update-branch consent on the
+# authorized merge request; without it, refusal leaves the source branch alone.
+# Consent includes retaining the update if checks on the new head later fail.
+# With that opt-in, any merge method may update the branch.
+# A supplied --expected-head remains pinned through the update: the source
+# branch may advance under explicit consent, but merging that new head needs
+# a new authorized request naming it as the expected head.
+# The REST update is bound to the verified old head with expected_head_sha;
+# a concurrent push refuses the update without changing that replacement head,
+# and this request never retries against the newly observed head.
+# An accepted update uses GitHub's merge-commit default. Under the merge and
+# away locks, a shared polling budget (15 seconds by default) covers waiting for
+# the new head to appear, recording it, and waiting for its checks and a transient
+# UNKNOWN mergeable state to settle. Every poll repeats the full preflight,
+# even before the updated head appears. A draft, closed PR, conflict, unreadable
+# required-check source or producer, or any other non-transient refusal stops
+# the wait immediately, even while checks are pending or missing. Any unwaived
+# failed check also refuses immediately. These refusals release both locks and
+# report the actual reason without advice to retry once checks pass. Only an
+# unseen updated head, unsettled checks, or UNKNOWN mergeability are awaited.
+# If that budget expires, the helper stops without merging and says to run
+# the merge again once checks pass.
 # If the pull request remains open and the base branch has an effective
 # merge_queue rule, an attended refusal names the queue's configured merge
 # method and exact --attended-override -- --auto --<method> retry flags. While
@@ -190,7 +218,7 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
-# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--expected-head <full-sha>] [--allow-red <check-name>] [--allow-missing <check-name>] [--allow-no-pipeline] [-- <extra forge merge args>]
+# Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--update-branch] [--expected-head <full-sha>] [--allow-red <check-name>] [--allow-missing <check-name>] [--allow-no-pipeline] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
 # an auto-merge-queued or unconfirmed request leaves the poll armed and records
@@ -273,6 +301,7 @@ if [ "$PROVIDER" = gerrit ]; then
 fi
 shift 2
 ATTENDED_OVERRIDE=false
+UPDATE_BRANCH=false
 ALLOW_NO_PIPELINE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
@@ -282,6 +311,14 @@ while [ "$#" -gt 0 ]; do
     --attended-override)
       ATTENDED_OVERRIDE=true
       shift
+      ;;
+    --update-branch)
+      UPDATE_BRANCH=true
+      shift
+      ;;
+    --update-branch=*)
+      echo "error: --update-branch takes no value" >&2
+      exit 2
       ;;
     --attended-override=*)
       echo "error: --attended-override takes no value" >&2
@@ -337,6 +374,10 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
+if [ "$UPDATE_BRANCH" = true ] && [ "$PROVIDER" != github ]; then
+  echo "error: --update-branch applies only to GitHub" >&2
+  exit 2
+fi
 if [ -n "$EXPECTED_HEAD" ] && ! fm_pr_head_valid "$EXPECTED_HEAD"; then
   echo "error: --expected-head requires a full lowercase commit sha" >&2
   exit 2
@@ -924,6 +965,69 @@ forgejo_default_merge_style() {
       ;;
   esac
 }
+
+github_update_behind_branch() {
+  local old_head=$FM_PR_MERGE_HEAD new_head='' attempt_error status
+  local poll=${mergeable_retry_delay:-3} deadline
+  deadline=$((SECONDS + poll * 5))
+  attempt_error=$(mktemp "${TMPDIR:-/tmp}/fm-pr-merge-update.XXXXXX") || return 1
+  if ! gh api --method PUT "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER/update-branch" \
+    -f "expected_head_sha=$old_head"; then
+    rm -f "$attempt_error"
+    return 1
+  fi
+  while :; do
+    status=0
+    github_verify_mergeable 2> "$attempt_error" || status=$?
+    if [ -z "$FM_PR_GITHUB_LIVE_HEAD" ]; then
+      cat "$attempt_error" >&2
+      rm -f "$attempt_error"
+      return 1
+    fi
+    if [ -z "$new_head" ] && [ "$FM_PR_GITHUB_LIVE_HEAD" != "$old_head" ]; then
+      new_head=$FM_PR_GITHUB_LIVE_HEAD
+      if ! record_pr_metadata || ! grep -qxF "pr_head=$new_head" "$META"; then
+        echo "error: could not record the updated GitHub head $new_head" >&2
+        rm -f "$attempt_error"
+        return 1
+      fi
+    fi
+    if [ -n "$new_head" ] && [ "$FM_PR_GITHUB_LIVE_HEAD" != "$new_head" ]; then
+      echo "error: the GitHub pull request head moved again after its branch update" >&2
+      rm -f "$attempt_error"
+      return 1
+    fi
+    if [ "$status" -ne 0 ] && [ "$status" -ne 3 ] && { [ "$FM_PR_GITHUB_CHECKS_FAILED" = true ] \
+      || [ "$FM_PR_GITHUB_OTHER_REFUSAL" = true ] || {
+      [ "$FM_PR_GITHUB_CHECKS_PENDING" != true ] \
+      && [ "$FM_PR_GITHUB_UNREPORTED" != true ]; }; }; then
+      cat "$attempt_error" >&2
+      rm -f "$attempt_error"
+      return 1
+    fi
+    if [ "$status" -eq 0 ] && [ -n "$new_head" ]; then
+      if [ "$FM_PR_GITHUB_BEHIND" = false ]; then
+        cat "$attempt_error" >&2
+        rm -f "$attempt_error"
+        return 0
+      fi
+      echo "error: the GitHub pull request head or base moved again after its branch update" >&2
+      rm -f "$attempt_error"
+      return 1
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      cat "$attempt_error" >&2
+      if [ -z "$new_head" ]; then
+        echo "error: $URL was updated but its new head is not visible yet; run the merge again once its checks pass" >&2
+      else
+        echo "error: $URL was updated to $new_head but its checks are not ready; run the merge again once its checks pass" >&2
+      fi
+      rm -f "$attempt_error"
+      return 1
+    fi
+    sleep "$poll"
+  done
+}
 # Read one live GitHub pull request view after gh returns. The selected
 # fields distinguish a landed pull request from a merge-queue entry and retain
 # the concrete state needed for a refusal. gh supplies the complete queue-aware
@@ -1438,6 +1542,13 @@ case "$PROVIDER" in
     require_current_away_authority || away_status=$?
     [ "$away_status" -eq 0 ] || exit "$away_status"
     refuse_github_queue_while_away || exit 2
+    if [ "$FM_PR_GITHUB_BEHIND" = true ]; then
+      if [ "$UPDATE_BRANCH" != true ]; then
+        echo "error: $URL is behind its base; updating its source branch requires explicit --update-branch consent on this authorized merge request (the update remains if new checks prevent merging)" >&2
+        exit 1
+      fi
+      github_update_behind_branch || exit 1
+    fi
     merge_status=0
     merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
       --match-head-commit "$FM_PR_MERGE_HEAD" \
