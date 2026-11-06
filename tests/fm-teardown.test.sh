@@ -2494,6 +2494,108 @@ test_legacy_record_never_accepts_a_corrupt_spawn_gen() {
   pass "a corrupt spawn_gen is never accepted as a legacy record"
 }
 
+# Point fake tmux at one recorded window with a fixed foreground command and
+# current path, so the recovery classifier and the worktree match can be
+# driven independently. Args: case_dir command path
+add_endpoint_tmux() {
+  local case_dir=$1 command=$2 path=$3 qcommand qpath
+  qcommand=$(printf '%q' "$command")
+  qpath=$(printf '%q' "$path")
+  cat > "$case_dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *list-windows*) printf '%s\n' fm-task-x1 ;;
+  *'#{pane_current_command}'*) printf '%s\n' $qcommand ;;
+  *'#{pane_current_path}'*) printf '%s\n' $qpath ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/tmux"
+}
+
+test_legacy_record_matching_endpoint_with_landed_work_cleans_up() {
+  local case_dir command rc out
+  for command in bash codex; do
+    case_dir=$(make_case "legacy-match-$command")
+    write_legacy_meta "$case_dir" no-mistakes ship
+    seed_backlog_in_flight "$case_dir"
+    wt_commit "$case_dir" "landed legacy work"
+    add_fork_with_pushed_branch "$case_dir"
+    add_endpoint_tmux "$case_dir" "$command" "$case_dir/wt"
+
+    set +e
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+
+    expect_code 0 "$rc" \
+      "legacy-match-$command: a landed legacy record whose endpoint is the recorded worktree must clean up: $(cat "$case_dir/stderr")"
+    out=$(cat "$case_dir/stdout")
+    printf '%s\n' "$out" | grep -Fq 'legacy record accepted without spawn_gen: endpoint ' \
+      || fail "legacy-match-$command: the teardown line did not log the accepted legacy record: $out"
+    [ "$(backlog_row_state "$case_dir")" = "done" ] \
+      || fail "legacy-match-$command: teardown returned success with its backlog item still open"
+    assert_absent "$case_dir/state/task-x1.meta" \
+      "legacy-match-$command: teardown left the task record behind"
+  done
+  pass "a legacy record whose endpoint is the recorded worktree cleans up once its work has landed"
+}
+
+test_legacy_record_matching_endpoint_with_unlanded_work_refuses() {
+  local case_dir rc before
+  case_dir=$(make_case legacy-match-unlanded)
+  write_legacy_meta "$case_dir" no-mistakes ship
+  seed_backlog_in_flight "$case_dir"
+  wt_commit_file "$case_dir" feature.txt unique-match-content "real unlanded work"
+  add_endpoint_tmux "$case_dir" codex "$case_dir/wt"
+  before=$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" \
+    "legacy-match-unlanded: a matching endpoint must not relax the unlanded-work refusal"
+  grep -q REFUSED "$case_dir/stderr" \
+    || fail "legacy-match-unlanded: no REFUSED line for unlanded legacy work: $(cat "$case_dir/stderr")"
+  [ "$(legacy_meta_gen_count "$case_dir")" = 0 ] \
+    || fail "legacy-match-unlanded: the unlanded refusal stamped a spawn generation into the record"
+  [ "$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')" = "$before" ] \
+    || fail "legacy-match-unlanded: the unlanded refusal modified the task record"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "legacy-match-unlanded: the unlanded refusal closed the backlog item anyway"
+  pass "a legacy record whose endpoint matches the worktree still refuses while that work is unlanded"
+}
+
+test_legacy_record_endpoint_outside_the_worktree_still_refuses() {
+  local case_dir rc before
+  case_dir=$(make_case legacy-match-outside)
+  write_legacy_meta "$case_dir" no-mistakes ship
+  seed_backlog_in_flight "$case_dir"
+  wt_commit "$case_dir" "landed legacy work"
+  add_fork_with_pushed_branch "$case_dir"
+  add_endpoint_tmux "$case_dir" bash "$case_dir/project"
+  before=$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" \
+    "legacy-match-outside: an endpoint outside the recorded worktree must still refuse"
+  grep -q -- '--legacy-record' "$case_dir/stderr" \
+    || fail "legacy-match-outside: the refusal did not name the --legacy-record path: $(cat "$case_dir/stderr")"
+  [ "$(legacy_meta_gen_count "$case_dir")" = 0 ] \
+    || fail "legacy-match-outside: the refusal stamped a spawn generation into the record"
+  [ "$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')" = "$before" ] \
+    || fail "legacy-match-outside: the refusal modified the task record"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "legacy-match-outside: the refusal closed the backlog item anyway"
+  pass "a legacy endpoint that is not the recorded worktree still refuses without --legacy-record"
+}
+
 test_stale_index_lock_cleared_and_teardown_succeeds() {
   local case_dir rc lock
   case_dir=$(make_case stale-index-lock)
@@ -6444,6 +6546,9 @@ test_legacy_record_teardown_refuses_an_ambiguous_endpoint
 test_legacy_record_rolls_the_stamp_back_when_the_marker_write_fails
 test_retained_legacy_stamp_still_faces_the_endpoint_gate
 test_legacy_record_never_accepts_a_corrupt_spawn_gen
+test_legacy_record_matching_endpoint_with_landed_work_cleans_up
+test_legacy_record_matching_endpoint_with_unlanded_work_refuses
+test_legacy_record_endpoint_outside_the_worktree_still_refuses
 test_stale_index_lock_cleared_and_teardown_succeeds
 test_live_index_lock_is_never_removed_and_teardown_refuses
 test_lsof_error_never_clears_index_lock
