@@ -11,6 +11,7 @@
 #   fm-contributions.sh arm [--if-owned]
 #   fm-contributions.sh owned
 #   fm-contributions.sh enroll <task> <pr-url>
+#   fm-contributions.sh integrity accept <pr-url> <head-sha>
 #
 # snapshot is read-only and never contacts a forge. Its input is the canonical
 # fleet snapshot's backlog/tasks pair; --all adds rows for supervisor inspection.
@@ -179,6 +180,10 @@
 # by fm-contribution-integrity-lib.sh (header there): conflicting head, commit
 # growth, wrong-base rebase and workflow-file rules, a check wake plus one
 # robots item per PR and head.
+# integrity accept records one reviewed head as known-good with its workflow
+# change accepted as intended, so later pushes are judged against it instead of
+# re-filing the workflows rule; it refuses a head other than the PR's last
+# recorded head, and the other rules still fire (contract in the lib header).
 # All mutations serialize on this home's .contributions.lock. Writes refuse
 # symlinks and publish by rename. No forge writes are performed.
 #
@@ -912,6 +917,14 @@ case "${1:-}" in
       jq -n --arg url "$url" '{url:$url,kind:"pr",checked_at:null,error:null,observation:null,verdict:null,seen:[],pending:[],notified:[]}' > "$TMP/row.json"
       write_record "$task" "$TMP/row.json"
     fi
+    ;;
+  integrity)
+    [ "$#" -eq 4 ] && [ "$2" = accept ] || fail 'usage: integrity accept <pr-url> <head-sha>'
+    jq -ne --arg url "$3" '$url | test("^https://github\\.com/[^/]+/[^/]+/pull/[0-9]+$")' > /dev/null \
+      || fail 'integrity accept needs a canonical github.com PR URL'
+    fm_pr_head_valid "$4" || fail 'an exact head commit is required'
+    acquire
+    contribution_integrity_accept "$3" "$4" || exit 1
     ;;
   pending)
     read_saved

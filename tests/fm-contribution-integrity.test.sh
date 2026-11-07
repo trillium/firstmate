@@ -141,9 +141,63 @@ test_dedupe_and_good_head_kept() {
   pass 'one incident per PR and head, and a flagged head never becomes known-good'
 }
 
+accept() { # home head [url]
+  local home=$1
+  PATH="$home/fakebin:$PATH" FORGE="$home/forge" FM_HOME="$home" FM_ROOT_OVERRIDE="$home/root" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_CONTRIBUTIONS_NOW="$NOW" "$ROOT/bin/fm-contributions.sh" integrity accept "${3:-$URL}" "$2"
+}
+
+test_accept_stops_workflow_refiring() {
+  local home out
+  home=$(new_home accept)
+  baseline "$home"
+  push "$home" "$H2" 4 true
+  printf '{"filename":".github/workflows/ci.yml"}\n' > "$home/forge/files.json"
+  poll "$home" > /dev/null || fail 'poll failed'
+  [ "$(incident_count "$home")" = 1 ] || fail 'workflow head should file one item'
+  accept "$home" "$H2" > /dev/null || fail 'accept of the flagged head failed'
+  push "$home" "$H3" 5 true
+  out=$(poll "$home") || fail 'poll failed'
+  [ -z "$out" ] && [ "$(incident_count "$home")" = 1 ] || fail "later push re-alerted after accept: $out"
+  pass 'an accepted workflow head stops later pushes re-filing the workflows rule'
+}
+
+test_accept_refuses_other_head() {
+  local home
+  home=$(new_home acceptrefuse)
+  baseline "$home"
+  push "$home" "$H2" 4 true
+  printf '{"filename":".github/workflows/ci.yml"}\n' > "$home/forge/files.json"
+  poll "$home" > /dev/null || fail 'poll failed'
+  accept "$home" "$H3" 2> /dev/null && fail 'accept of a head other than the recorded one succeeded'
+  accept "$home" "$H2" "https://github.com/up/r/pull/99" 2> /dev/null && fail 'accept of an unobserved PR succeeded'
+  accept "$home" notasha 2> /dev/null && fail 'accept of a malformed head succeeded'
+  push "$home" "$H3" 5 true
+  poll "$home" | grep -Fq "rules=workflows bad=$H3" || fail 'refused accept still silenced the workflows rule'
+  pass 'accept refuses a head that is not the recorded last head'
+}
+
+test_accept_keeps_other_rules() {
+  local home out
+  home=$(new_home acceptrules)
+  baseline "$home"
+  push "$home" "$H2" 4 true
+  printf '{"filename":".github/workflows/ci.yml"}\n' > "$home/forge/files.json"
+  poll "$home" > /dev/null || fail 'poll failed'
+  accept "$home" "$H2" > /dev/null || fail 'accept failed'
+  push "$home" "$H3" 5 false
+  out=$(poll "$home") || fail 'poll failed'
+  printf '%s\n' "$out" | grep -Fq "rules=conflicting bad=$H3 last-good=$H2" || fail "conflicting did not fire after accept: $out"
+  push "$home" "$H1" 120 true
+  out=$(poll "$home") || fail 'poll failed'
+  printf '%s\n' "$out" | grep -Fq "rules=commit-growth" || fail "commit-growth did not fire after accept: $out"
+  pass 'other rules still fire after an accept'
+}
+
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   failures=0
-  for test_name in test_clean_push_is_silent test_conflicting_head test_commit_growth test_wrong_base test_workflow_files test_dedupe_and_good_head_kept; do
+  for test_name in test_clean_push_is_silent test_conflicting_head test_commit_growth test_wrong_base test_workflow_files test_dedupe_and_good_head_kept test_accept_stops_workflow_refiring test_accept_refuses_other_head test_accept_keeps_other_rules; do
     ( "$test_name" ) || failures=$((failures + 1))
   done
   [ "$failures" -eq 0 ] || exit 1

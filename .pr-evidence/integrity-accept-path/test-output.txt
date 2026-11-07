@@ -1,0 +1,9 @@
+ok - a clean push raises no wake and no incident
+ok - conflicting head wakes and files one robots item
+ok - a push adding about 100 commits is flagged
+ok - fork-main commits in a fork PR are flagged; a PR of only its own commits is not
+ok - workflow files appearing in the diff are flagged
+ok - one incident per PR and head, and a flagged head never becomes known-good
+ok - an accepted workflow head stops later pushes re-filing the workflows rule
+ok - accept refuses a head that is not the recorded last head
+ok - other rules still fire after an accept
