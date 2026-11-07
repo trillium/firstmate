@@ -297,6 +297,20 @@ test_replaced_cancelled_run_is_not_failing() {
   pass 'each check is judged by its newest run'
 }
 
+test_cancelled_required_check_wakes_without_a_rerun() {
+  local home
+  home=$(new_home cancelled)
+  task "$home" ship1 pr=https://github.com/o/r/pull/10
+  pr "$home" 10 "$HEAD_A" "$BASE_1" true false
+  # A self-hosted job hitting its job cap concludes CANCELLED with no rerun behind it.
+  set_pr "$home" 10 '.checks = [{name:"CI Status",conclusion:"CANCELLED",required:true,at:"2026-10-21T01:00:00Z"}]'
+  arm "$home"
+  expect_one "$home" 'pull/10 has failing required checks at latest commit aaaaaaa: CI Status \(task ship1\)$' \
+    'a cancelled required check with no rerun must wake'
+  expect_silent "$home" 'the same cancelled check at the same commit must not wake again'
+  pass 'a cancelled required check wakes once instead of waiting silently'
+}
+
 test_latest_commit_moving_between_reads_waits() {
   local home
   home=$(new_home moving-head)
@@ -967,7 +981,7 @@ for test_name in test_maintainer_author_and_approval_states_are_distinct \
   test_unknown_then_dirty_wakes_once test_dirty_again_at_same_commits_is_silent \
   test_conflict_once_per_latest_commit test_adopted_draft_red_required_check_after_pause_wakes_once \
   test_reported_failure_does_not_hide_a_later_required_failure \
-  test_replaced_cancelled_run_is_not_failing test_latest_commit_moving_between_reads_waits \
+  test_replaced_cancelled_run_is_not_failing test_cancelled_required_check_wakes_without_a_rerun test_latest_commit_moving_between_reads_waits \
   test_other_homes_red_check_is_silent test_enrolled_before_ready_and_after_cleanup_still_wake \
   test_open_pr_replacing_a_closed_one_on_the_same_branch_is_discovered \
   test_green_without_reviewer_is_silent test_base_without_required_checks_counts_any_failing_check \
