@@ -1,0 +1,4 @@
+1..30
+ok - all four required captain-hold tests fail when tasks-axi is unavailable
+ok - a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)
+not ok - stale suppressor not advanced on paused absorb

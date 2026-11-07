@@ -1,0 +1,6 @@
+$ fm-pr-merge.sh t1 <gitlab MR> --update-branch
+error: --update-branch applies only to GitHub
+exit=2
+$ fm-pr-merge.sh t1 <github PR> --update-branch=x
+error: --update-branch takes no value
+exit=2

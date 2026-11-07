@@ -1,0 +1,32 @@
+ok - unknown extension conformance section selectors fail before setup
+ok - the section coordinator propagates ordered failures and bounded cleanup
+not-autohandled: example-file (left for the handler; still unacknowledged)
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 261: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-backend.sh: No such file or directory
+not-autohandled: flow-source (left for the handler; still unacknowledged)
+ok - the shipped file-signal package is a runnable end-to-end external adapter
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 261: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-backend.sh: No such file or directory
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 261: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-backend.sh: No such file or directory
+ok - one external adapter registers, invokes, captures unhandled evidence, classifies, and terminally retires end to end
+ok - register-extension and reconcile of an unhandled extension result take their locks in one order
+
+all extension-binding tests passed
+not-autohandled: remote-source (left for the handler; still unacknowledged)
+not-autohandled: example-symlinked (left for the handler; still unacknowledged)
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 261: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-backend.sh: No such file or directory
+ok - a home reached through a symlinked ancestor captures external evidence normally
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 259: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-task-inbox-lib.sh: No such file or directory
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-procevent.sh: line 261: /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-extension-binding.aUdnbd/remote-root/bin/fm-backend.sh: No such file or directory
+ok - serialized remote binding crosses fm-on through addressed-home capture and retirement
+
+all extension-binding tests passed
+ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry
+ok - handshake execution rejects and reaps foreground descendants
+
+all extension-binding tests passed
+ok - local binding retirement requires its exact identity and disables invocation
+ok - ownerless readiness recovers only dead exact-token groups and refuses unsafe or unproved ownership
+not ok - an isolated extension conformance section failed
