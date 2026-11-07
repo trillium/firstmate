@@ -14,7 +14,8 @@ Layers:
 Usage:
   bin/fm-pane-triage.py            # table to stdout, writes data/pane-triage/latest.{md,json}
   bin/fm-pane-triage.py --json     # JSON only
-  bin/fm-pane-triage.py --file-beads   # also create one `task` bead per NEW rule-confirmed blocked pane
+  bin/fm-pane-triage.py --file-beads   # also file a `task` bead per NEW rule-confirmed blocked pane
+                                   # (comments on the open one for that pane+state instead of duplicating)
   bin/fm-pane-triage.py --no-laya  # rules only
 Exit 0 when nothing is blocked, 3 when at least one pane is blocked.
 
@@ -29,6 +30,7 @@ OUT = os.path.join(ROOT, "data", "pane-triage")
 SEEN = os.path.join(ROOT, "state", "pane-triage.seen.json")
 LAYA_URL = os.environ.get("LAYA_URL", "http://lnx.hippo-tilapia.ts.net:11435/api/decide")
 TAIL_LINES = 60
+LOOKUP_TIMEOUT = 10
 
 # (state, regex, why) -- first match wins; ordered most specific first.
 RULES = [
@@ -95,6 +97,20 @@ def laya(tail):
         return None, 0.0
 
 
+def find_open_task(pane, state):
+    """Id of an open task already filed for this pane+state, None when there is none.
+
+    Raises when the lookup itself fails so the caller can fall back to creating.
+    """
+    prefix = f"Pane {pane} blocked ({state})"
+    out = sh("task", "list", "--json", "--status", "open", "--limit", "0",
+             "--title-contains", prefix, timeout=LOOKUP_TIMEOUT)
+    for t in json.loads(out):
+        if t.get("title", "").startswith(prefix) and t.get("status") == "open":
+            return t["id"]
+    return None
+
+
 def fingerprint(p, state, tail):
     key = f"{p['pane_id']}|{state}|{tail[-200:]}"
     return hashlib.sha1(key.encode()).hexdigest()[:12]
@@ -149,6 +165,13 @@ def main():
         for r in new:
             t = f"Pane {r['pane']} blocked ({r['state']}): {r['why']}"[:140]
             body = f"cwd {r['cwd']}; agent {r['agent']}; last lines: " + " / ".join(r["tail"])[:500]
+            try:
+                existing = find_open_task(r["pane"], r["state"])
+            except Exception:
+                existing = None  # lookup failed: fall back to filing a new task
+            if existing:
+                sh("task", "comment", existing, body)
+                continue
             out = sh("task", "create", t)
             m = re.search(r"task-[a-z0-9]+", out)
             if m:
