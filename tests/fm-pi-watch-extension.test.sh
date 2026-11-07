@@ -3328,7 +3328,7 @@ async function replaceSession(previous, reason) {
     const arm = currentArm();
     return arm.pid && arm.marker && arm.marker !== previousArm.marker && existsSync(arm.marker) && pidAlive(arm.pid) && liveArmPids().includes(arm.pid);
   }, `${reason} replacement child and arm record`);
-  await waitFor(() => !existsSync(previousArm.marker), `${reason} previous child exit after successor claim`);
+  await waitFor(() => !existsSync(previousArm.marker), `${reason} previous child exit after successor claim`, 3000);
   const nextOwner = extensionOwner();
   const nextGeneration = /^generation=([1-9][0-9]*) phase=active$/.exec(nextOwner)?.[1];
   if (!nextGeneration || nextGeneration === previousGeneration) {
