@@ -1,4 +1,12 @@
 == tests/fm-backend-tmux-smoke.test.sh
+@4
+ok - real tmux: fm_backend_tmux_create_task creates a window and refuses a duplicate
+ok - real tmux: fm_backend_tmux_send_text_line sends literal text and submits with Enter
+ok - real tmux: fm_backend_tmux_send_literal + fm_backend_tmux_send_key Enter submit as two separate steps
+ok - real tmux: fm_backend_tmux_capture's -S -N bound trims old history for a small window and reaches it for a large one
+ok - real tmux: fm_backend_tmux_resolve_bare_selector (list-live) finds the created window by name
+ok - real tmux: fm_backend_tmux_resolve_bare_selector fails for a window that does not exist
+ok - real tmux: fm_backend_target_exists finds an existing window
 ok - real tmux: fm_backend_target_exists finds an existing pane
 ok - real tmux: fm_backend_target_exists accepts bare and session-scoped window ids
 ok - real tmux: fm_backend_target_exists accepts window indexes including firstmate:0
@@ -14,8 +22,18 @@ ok - real tmux: kill removes the window and the readable session inventory autho
 ok - real tmux: container_ensure names the pane's own session, not a more recent grouped session
 ok - real tmux: container_ensure falls back to the pane's surviving session when the $TMUX session id is stale
 ok - real tmux: a dotted task id's sanitized window is targetable and killable
-rc=
+exit 
 == tests/fm-teardown-endpoint-safety.test.sh
+ok - fm-teardown: destructive cleanup serializes with metadata writers
+ok - cleanup identity: valid tmux, Herdr, Zellij, Orca, cmux, Paseo, Rex, and tern records validate, inconsistent Rex records refuse, and every empty backend target refuses
+ok - cleanup identity: an Orca record's real composite worktree id validates while a separatorless or newline-carrying id refuses
+ok - tmux backend: direct empty target returns nonzero without invoking tmux
+ok - process cleanup: creation-time PID identity removes only the exact child and preserves the control child
+ok - fm-teardown: exact tmux cleanup preserves invalid and prefix-matched neighbors while removing only the recorded target
+ok - fm-teardown: a close that genuinely failed refuses and keeps the record naming the surviving endpoint, and the same teardown finishes once the close works
+ok - fm-teardown: --force continues past a close it could not make while still reporting it, and the same case refuses without --force
+ok - fm-teardown: a close re-read that could not run refuses, while a definitively absent session or server still completes silently
+ok - fm-teardown: forced secondmate cleanup still refuses on a child endpoint close that failed
 ok - fm-teardown: an Orca close its missing CLI never attempted refuses even under --force, keeping the record naming the terminal
 ok - fm-teardown: an already-exited endpoint, and a server that is already gone, still complete cleanup silently
 ok - Treehouse locking resolves a bare local origin against its source project, matching the provisioned clone
@@ -31,4 +49,4 @@ ok - Treehouse project locking anchors at the local root for main-home, local-se
 ok - fm-teardown: a remote-seeded secondmate home returns its own uncontested pool slot
 ok - fm-teardown: slot ownership across a remote-seeded home and its local child still refuses
 ok - Treehouse project locking still serializes two homes across the remote-seeded boundary
-rc=
+exit 
