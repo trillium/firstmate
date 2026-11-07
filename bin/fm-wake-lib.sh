@@ -2726,6 +2726,83 @@ fm_wake_append_guarded() {
   return "$status"
 }
 
+
+# Stale-wake provenance (robots-q90ti): one TSV row per stale wake queued, so a
+# later reader can tell from live data which path raised it and whether a task
+# record owned the pane. Columns: epoch, seq, window, source (push|poll|other),
+# owner (yes|no), task. The source is FM_WAKE_SOURCE, set by the watcher around
+# its push-transition handler; an unset value records `other`. Best-effort: a
+# failed write never changes the append's outcome. Read it with
+# `bin/fm-watch.sh explain-wake`.
+FM_WAKE_PROVENANCE_MAX_LINES=${FM_WAKE_PROVENANCE_MAX_LINES:-5000}
+case "$FM_WAKE_PROVENANCE_MAX_LINES" in ''|*[!0-9]*|0) FM_WAKE_PROVENANCE_MAX_LINES=5000 ;; esac
+
+# Print the owning task of <window> (a meta window/terminal/thread match) and
+# return 0, or return 1 when no task record owns it. Read-only.
+fm_wake_window_owner() {  # <window> [<state>]
+  local win=$1 state=${2:-$STATE} meta line
+  [ -n "$win" ] || return 1
+  for meta in "$state"/*.meta; do
+    [ -f "$meta" ] || continue
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [ "$line" = "window=$win" ] || [ "$line" = "terminal=$win" ] || [ "$line" = "thread=$win" ]; then
+        meta=${meta##*/}; printf '%s' "${meta%.meta}"; return 0
+      fi
+    done < "$meta"
+  done
+  return 1
+}
+
+_fm_wake_provenance_record() {  # <epoch> <seq> <window> 
+  local prov_file="$STATE/.wake-provenance.tsv" task owner=no n tmp
+  if task=$(fm_wake_window_owner "$3"); then owner=yes; else task=none; fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${FM_WAKE_SOURCE:-other}" "$owner" "$task" >> "$prov_file" 2>/dev/null || return 0
+  n=$(wc -l < "$prov_file" 2>/dev/null | tr -d '[:space:]')
+  case "$n" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$n" -gt "$FM_WAKE_PROVENANCE_MAX_LINES" ] || return 0
+  tmp="$prov_file.tmp.$$"
+  tail -n "$FM_WAKE_PROVENANCE_MAX_LINES" "$prov_file" > "$tmp" 2>/dev/null && mv -f "$tmp" "$prov_file" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null || true
+  return 0
+}
+
+# fm_wake_explain <seq|window> - read-only lookup of recorded stale-wake
+# provenance by queue sequence number or by window/pane (exact match, else
+# substring). Prints one `key=value` block per wake, newest last; for a window
+# it also states whether a task record owns it right now. Returns 1 when
+# nothing was recorded.
+fm_wake_explain() {
+  local arg=${1-} prov_file="$STATE/.wake-provenance.tsv" rows queued task found=1
+  if [ -z "$arg" ]; then echo "usage: fm-watch.sh explain-wake <seq|window|pane>" >&2; return 2; fi
+  if [ -s "$prov_file" ]; then
+    case "$arg" in
+      *[!0-9]*) rows=$(awk -F'\t' -v w="$arg" '$3 == w' "$prov_file")
+        [ -n "$rows" ] || rows=$(awk -F'\t' -v w="$arg" 'index($3, w)' "$prov_file") ;;
+      *) rows=$(awk -F'\t' -v s="$arg" '$2 == s' "$prov_file") ;;
+    esac
+    if [ -n "$rows" ]; then
+      found=0
+      printf '%s\n' "$rows" | while IFS=$'\t' read -r e sq w src own tk; do
+        queued=no
+        awk -F'\t' -v s="$sq" '$2 == s { f = 1 } END { exit !f }' "$FM_WAKE_QUEUE" 2>/dev/null && queued=yes
+        printf 'seq=%s\nwindow=%s\nkind=stale\nepoch=%s\nsource=%s\nowning_task_record=%s\ntask=%s\nstill_queued=%s\n\n' \
+          "$sq" "$w" "$e" "$src" "$own" "$tk" "$queued"
+      done
+    fi
+  fi
+  case "$arg" in
+    *[!0-9]*)
+      if task=$(fm_wake_window_owner "$arg"); then
+        printf 'live: window %s is owned by task %s now\n' "$arg" "$task"
+      else
+        printf 'live: no task record owns window %s now\n' "$arg"
+      fi ;;
+  esac
+  [ "$found" -eq 0 ] || echo "no stale-wake provenance recorded for: $arg" >&2
+  return "$found"
+}
+
+
 # fm_wake_append_locked <kind> <key> <payload> [predicate [predicate args...]]
 # Locked core of fm_wake_append: appends the wake row under an already-held
 # FM_WAKE_QUEUE_LOCK. Callers that must commit another durable record atomically
@@ -2774,6 +2851,9 @@ fm_wake_append_locked() {
   fi
   if [ "$status" -eq 0 ]; then
     printf '%s\t%s\t%s\t%s\t%s\n' "$epoch" "$seq" "$kind" "$clean_key" "$clean_payload" >> "$FM_WAKE_QUEUE" || status=$?
+  fi
+  if [ "$status" -eq 0 ] && [ "$kind" = stale ]; then
+    _fm_wake_provenance_record "$epoch" "$seq" "$clean_key"
   fi
   if [ "$status" -ne 0 ]; then
     _fm_wake_append_recovery_restore_locked || true

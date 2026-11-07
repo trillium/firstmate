@@ -238,6 +238,16 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# Read-only provenance lookup: which path (push or poll) raised a stale wake and
+# whether a task record owned the pane. Runs before any state is created.
+if [ "${1-}" = explain-wake ]; then
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  fm_wake_explain "${2-}"
+  exit $?
+fi
+FM_WAKE_SOURCE=poll  # read by fm_wake_append_locked in fm-wake-lib.sh
+export FM_WAKE_SOURCE
 mkdir -p "$STATE"
 # Hold this state directory open for the main loop's teardown check: a
 # directory recreated at the same path is then a different directory, and the
@@ -3704,7 +3714,9 @@ event_wait_or_sleep() {
   case "$rc" in
     0)
       _event_cap_fails=0
+      FM_WAKE_SOURCE=push
       handle_push_transition "$first_backend" "$first_session" "$rec"
+      FM_WAKE_SOURCE=poll
       ;;
     2)
       # Event path unusable this cycle (connect/subscribe failure). Sleep the

@@ -1,0 +1,9 @@
+$ fm-watch.sh explain-wake test:fm-prov
+seq=1
+window=test:fm-prov
+kind=stale
+epoch=...
+source=poll
+owning_task_record=yes
+task=prov
+still_queued=yes
