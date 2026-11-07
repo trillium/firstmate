@@ -398,6 +398,30 @@ test_visual_evidence_contract() {
   pass "fm-brief.sh: visual evidence contract rendered per delivery form"
 }
 
+# A publishing ship brief is the explicit instruction to commit, push, and run
+# the delivery path, so a project's conservative do-not-commit default cannot
+# stop the worker. local-only publishes nothing and scouts have no such block.
+test_git_authority_line() {
+  local home id mode brief needle='explicit orchestrator instruction to commit, push, and run the selected delivery path'
+  home="$TMP_ROOT/authority-home"
+  write_registry "$home"
+  for mode in no-mistakes direct-PR; do
+    id="authority-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1 \
+      || fail "fm-brief.sh $id should exit 0"
+    brief="$home/data/$id/brief.md"
+    assert_grep "$needle" "$brief" "$mode: brief lost the git authority sentence"
+    assert_grep 'only a task-specific instruction in this brief not to push outranks it' "$brief" "$mode: brief lost the task-specific carve-out"
+  done
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" authority-local some-proj --mode local-only >/dev/null 2>&1 \
+    || fail "fm-brief.sh local-only should exit 0"
+  if grep -q "$needle" "$home/data/authority-local/brief.md"; then fail "local-only brief must not carry the git authority sentence"; fi
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" authority-scout some-proj --scout >/dev/null 2>&1 \
+    || fail "fm-brief.sh --scout should exit 0"
+  if grep -q "$needle" "$home/data/authority-scout/brief.md"; then fail "scout brief must not carry the git authority sentence"; fi
+  pass "fm-brief.sh: git authority sentence only in no-mistakes and direct-PR briefs"
+}
+
 test_ship_mode_is_required_and_closed_set() {
   local home id out status label flag expect
   home="$TMP_ROOT/mode-required-home"
@@ -1830,4 +1854,5 @@ test_branch_prefix_value_is_validated
 test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
 test_visual_evidence_contract
+test_git_authority_line
 test_ship_brief_pins_the_pr_base_repository
