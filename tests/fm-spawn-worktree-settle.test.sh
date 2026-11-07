@@ -66,7 +66,6 @@ case "${1:-}" in
     printf '%s\n' "$name" > "$window_file"
     exit 0 ;;
   kill-window) : > "$window_file"; printf 'killed\n' >> "$window_file.kills"; exit 0 ;;
-  capture-pane) [ -z "${FM_FAKE_PANE_TEXT:-}" ] || printf '%s\n' "$FM_FAKE_PANE_TEXT"; exit 0 ;;
   has-session|new-session) exit 0 ;;
   capture-pane) printf '%s\n' "${FM_FAKE_CAPTURE_TEXT:-}"; exit 0 ;;
   send-keys)
@@ -364,7 +363,7 @@ test_full_pool_defers_and_closes_the_window() {
 
   out=$(FM_SPAWN_WT_POLLS=5 FM_SPAWN_WT_POLL_INTERVAL=0.05 \
     FM_FAKE_PANE_STALE="$PROJ_DIR" \
-    FM_FAKE_PANE_TEXT="treehouse get
+    FM_FAKE_CAPTURE_TEXT="treehouse get
 error: all 16 worktrees are in use, dirty, or not provably this clone's (6 belong to another clone)" \
     run_settle_spawn "$id")
   status=$?
@@ -388,7 +387,7 @@ test_quiet_pane_keeps_the_ordinary_deadline() {
   read_settle_record "$rec"
 
   out=$(FM_SPAWN_WT_POLLS=3 FM_SPAWN_WT_POLL_INTERVAL=0.05 \
-    FM_FAKE_PANE_STALE="$PROJ_DIR" FM_FAKE_PANE_TEXT="treehouse get" \
+    FM_FAKE_PANE_STALE="$PROJ_DIR" FM_FAKE_CAPTURE_TEXT="treehouse get" \
     run_settle_spawn "$id")
   status=$?
   expect_code 1 "$status" "a pane that never moves and shows no refusal should fail"

@@ -1916,7 +1916,7 @@ fm_backend_herdr_workspace_find() {  # <session>
 #       endpoint rather than degrading to a label search.
 fm_backend_herdr_launcher_identity() {  # <session>
   local session=$1 pane=${HERDR_PANE_ID:-} claimed_session claimed_socket session_socket
-  local pane_out tab_out list tab workspace pane_list here match cur_pane cur_tab cur_workspace
+  local pane_out tab_out list tab workspace pane_list here match cur_pane cur_tab cur_workspace pane_read_failed
   FM_BACKEND_HERDR_LAUNCHER_PANE_ID=""
   FM_BACKEND_HERDR_LAUNCHER_TAB_ID=""
   FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID=""
@@ -1950,7 +1950,8 @@ fm_backend_herdr_launcher_identity() {  # <session>
     return 1
   fi
 
-  pane_out=$(fm_backend_herdr_cli "$session" pane get "$pane" 2>/dev/null) || pane_out=""
+  pane_read_failed=0
+  pane_out=$(fm_backend_herdr_cli "$session" pane get "$pane" 2>/dev/null) || { pane_out=""; pane_read_failed=1; }
   tab=$(printf '%s' "$pane_out" | jq -r --arg pane "$pane" '
     select(.result.pane.pane_id == $pane)
     | select((.result.pane.tab_id | type) == "string" and (.result.pane.tab_id | length) > 0)
@@ -2018,14 +2019,18 @@ fm_backend_herdr_launcher_identity() {  # <session>
     fi
   fi
   if [ -z "$tab" ] || [ -z "$workspace" ]; then
-    # Not an ambiguous identity. A destroyed pane id never reaches here: herdr
-    # 0.9.3 answers `pane get` for it with pane_not_found and the "could not
-    # be read" refusal above fires. This branch covers an id herdr resolves to
-    # a different pane (a legacy id form such as `1-1` answers as `w1:p1`), so
-    # the exact-id filter keeps nothing, or a record naming no tab or
-    # workspace. Call the id stale and name the three injected values a live
-    # shell has to refresh, instead of blaming an ambiguity that does not exist.
-    echo "error: herdr launcher pane '$pane' is stale - in session '$session' that pane no longer exists or names no tab or workspace; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace" >&2
+    # Not an ambiguous identity. A pane herdr cannot read at all (a destroyed
+    # pane answers `pane get` with pane_not_found) that no live pane resolves
+    # either is reported as unreadable. Otherwise herdr resolved the id to a
+    # different pane (a legacy id form such as `1-1` answers as `w1:p1`), so
+    # the exact-id filter kept nothing, or the record named no tab or workspace:
+    # call the id stale and name the three injected values a live shell has to
+    # refresh, instead of blaming an ambiguity that does not exist.
+    if [ "$pane_read_failed" -eq 1 ]; then
+      echo "error: herdr launcher pane '$pane' could not be read in session '$session' and no live pane matches this shell's working directory; refusing to place a worker without its exact parent workspace" >&2
+    else
+      echo "error: herdr launcher pane '$pane' is stale - in session '$session' that pane no longer exists or names no tab or workspace; refresh HERDR_PANE_ID, HERDR_TAB_ID and HERDR_WORKSPACE_ID in this shell to the current pane's values; refusing to place a worker without its exact parent workspace" >&2
+    fi
     return 1
   fi
 
