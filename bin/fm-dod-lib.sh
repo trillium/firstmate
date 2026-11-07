@@ -610,6 +610,7 @@ fm_dod_manual_pr_block() {  # <branch> <forge-cli> <draft-check> <contract-suffi
 # Definition of done
 Delivery contract: mode=no-mistakes$suffix pr=manual
 Ship branch: $branch
+$(fm_dod_git_authority_line)
 This project's pull-request text is written by hand: the pipeline's \`pr\` step would rewrite the title and body you write on every validated push, so **no-mistakes runs here as a validation pass that pushes the branch**, and you then open the PR yourself.
 Pass \`--skip pr,ci\` on every \`no-mistakes axi run\` for this task, and skip nothing else: \`review\`, \`test\`, \`document\`, \`lint\`, and \`push\` still run, and \`ci\` has no pipeline-opened PR to watch.
 The task is complete only when committed on your branch.
@@ -632,6 +633,13 @@ Then append \`done [at=<epoch>]: PR {url} checks green\` and stop. You are finis
 That CI-ready \`done:\` is accepted only when this copy's HEAD - your latest commit - is one the /no-mistakes run pushed, so commit nothing after the last run; the check tests that commit, not merely that a branch moved.
 If you deliberately keep the PR a draft, append \`paused [at=<epoch>]: {why the draft is held}\` instead of done.
 EOF
+}
+
+# The one sentence telling a publishing ship worker that this brief outranks a
+# project's conservative default git policy. The direct-PR and no-mistakes
+# blocks render it; local-only publishes nothing and a scout has no such block.
+fm_dod_git_authority_line() {
+  printf '%s\n' "This brief is the explicit orchestrator instruction to commit, push, and run the selected delivery path, and it overrides a project's default or conservative do-not-commit/do-not-push guidance; only a task-specific instruction in this brief not to push outranks it."
 }
 
 fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<pr>] [<origin-repo>]
@@ -762,6 +770,7 @@ EOF
 Delivery contract: mode=direct-PR$contract_forge$contract_consent
 Ship branch: $branch
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+$(fm_dod_git_authority_line)
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.${pr_repo_rule:+ $pr_repo_rule}
 Before you report done, read the PR back from the forge and confirm it is not a draft $draft_check
@@ -799,6 +808,7 @@ EOF
 # Definition of done
 Delivery contract: mode=no-mistakes$contract_forge$contract_consent
 Ship branch: $branch
+$(fm_dod_git_authority_line)
 The task is complete only when committed on your branch.
 When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
