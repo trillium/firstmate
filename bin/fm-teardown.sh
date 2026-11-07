@@ -60,8 +60,11 @@
 # the PR head. A diverged copy is not treated as landed: path-set coverage, git
 # cherry, and merge-tree containment each fail to prove content landed without also
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
-# whose head contains the current local work (ancestor or whitespace-exact patch ids),
-# or a clean content-in-default tree match. Teardown also accepts a clean
+# whose head or (when pr= is recorded) default branch contains the current local
+# work (ancestor, merge-tree containment, or whitespace-exact commit or
+# branch-range patch ids, including context-shifted rebases whose -U0 verbatim
+# patch id and -U1 hunk anchors match), or a clean content-in-default tree
+# match. Teardown also accepts a clean
 # worktree whose every unpushed commit is a single-parent, non-empty commit with a
 # whitespace-exact patch id (git patch-id --verbatim) on the worker's own pushed
 # remote-tracking branch of the same name, which covers a remote rebase that left
@@ -1856,13 +1859,193 @@ patch_id_for_commit() {
     | awk 'NR == 1 { print $1 }'
 }
 
+patch_id_for_commit_u0() {
+  local commit=$1
+  git -C "$WT" show --pretty=medium --no-ext-diff -U0 "$commit" 2>/dev/null \
+    | git patch-id --verbatim 2>/dev/null \
+    | awk 'NR == 1 { print $1 }'
+}
+
+patch_id_for_range() {
+  local base=$1 tip=$2
+  git -C "$WT" diff --no-ext-diff "$base..$tip" 2>/dev/null \
+    | git patch-id --verbatim 2>/dev/null \
+    | awk 'NR == 1 { print $1 }'
+}
+
+patch_id_for_range_u0() {
+  local base=$1 tip=$2
+  git -C "$WT" diff --no-ext-diff -U0 "$base..$tip" 2>/dev/null \
+    | git patch-id --verbatim 2>/dev/null \
+    | awk 'NR == 1 { print $1 }'
+}
+
+# When two commits or ranges have the same -U0 verbatim patch id (identical file
+# list and added/removed lines with exact whitespace), verify that each change
+# block in -U1 is anchored: blocks with removed lines are already anchored by
+# their exact -U0 deletions, and pure-insertion blocks must either create a new
+# file or share at least one adjacent context line (immediately before or after
+# the insertion) so an unanchored insertion into a diverged file still refuses.
+u1_diffs_anchor_match() {
+  local left_u1=$1 right_u1=$2
+  [ -n "$left_u1" ] && [ -n "$right_u1" ] || return 1
+  {
+    printf '%s\n' "$left_u1"
+    printf '===FM_U1_SPLIT===\n'
+    printf '%s\n' "$right_u1"
+  } | awk '
+    function flush_block() {
+      if (!in_block) return
+      if (!in_right) {
+        left_count++
+        left_file[left_count] = file
+        left_del[left_count] = has_del
+        left_pre[left_count] = pre
+        left_post[left_count] = post
+      } else {
+        right_count++
+        right_file[right_count] = file
+        right_del[right_count] = has_del
+        right_pre[right_count] = pre
+        right_post[right_count] = post
+      }
+      in_block = 0
+      has_del = 0
+      pre = ""
+      post = ""
+    }
+    $0 == "===FM_U1_SPLIT===" {
+      flush_block()
+      in_right = 1
+      file = ""
+      last_ctx = ""
+      next
+    }
+    /^diff --git / {
+      flush_block()
+      file = $0
+      last_ctx = ""
+      next
+    }
+    /^(index |--- |\+\+\+ )/ { next }
+    /^@@ / {
+      flush_block()
+      last_ctx = ""
+      next
+    }
+    /^ / {
+      if (in_block) {
+        post = $0
+        flush_block()
+      }
+      last_ctx = $0
+      next
+    }
+    /^-/ {
+      if (!in_block) {
+        in_block = 1
+        pre = last_ctx
+        post = ""
+      }
+      has_del = 1
+      next
+    }
+    /^\+/ {
+      if (!in_block) {
+        in_block = 1
+        pre = last_ctx
+        post = ""
+      }
+      next
+    }
+    END {
+      flush_block()
+      if (left_count == 0 || left_count != right_count) exit 1
+      for (i = 1; i <= left_count; i++) {
+        if (left_file[i] != right_file[i]) exit 1
+        if (left_del[i] != right_del[i]) exit 1
+        if (left_del[i] == 0) {
+          if (left_pre[i] == "" && left_post[i] == "" && right_pre[i] == "" && right_post[i] == "") continue
+          if ((left_pre[i] != "" && left_pre[i] == right_pre[i]) || (left_post[i] != "" && left_post[i] == right_post[i])) continue
+          exit 1
+        }
+      }
+    }
+  '
+}
+
+commit_matches_any_commit_u1() {
+  local commit=$1 candidates=$2 left_u0 left_u1 candidate right_u0 right_u1
+  [ "$(git -C "$WT" rev-list --parents -n 1 "$commit" 2>/dev/null | wc -w | tr -d ' ')" = 2 ] || return 1
+  left_u0=$(patch_id_for_commit_u0 "$commit") || return 1
+  [ -n "$left_u0" ] || return 1
+  left_u1=$(git -C "$WT" show --pretty=format: --no-ext-diff -U1 "$commit" 2>/dev/null) || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    [ "$(git -C "$WT" rev-list --parents -n 1 "$candidate" 2>/dev/null | wc -w | tr -d ' ')" = 2 ] || continue
+    right_u0=$(patch_id_for_commit_u0 "$candidate") || continue
+    [ "$left_u0" = "$right_u0" ] || continue
+    right_u1=$(git -C "$WT" show --pretty=format: --no-ext-diff -U1 "$candidate" 2>/dev/null) || continue
+    u1_diffs_anchor_match "$left_u1" "$right_u1" && return 0
+  done <<EOF
+$candidates
+EOF
+  return 1
+}
+
+range_patches_match() {
+  local left_base=$1 left_tip=$2 right_base=$3 right_tip=$4 left_id right_id left_u0 right_u0 left_u1 right_u1
+  left_id=$(patch_id_for_range "$left_base" "$left_tip") || return 1
+  [ -n "$left_id" ] || return 1
+  right_id=$(patch_id_for_range "$right_base" "$right_tip") || return 1
+  [ -n "$right_id" ] || return 1
+  [ "$left_id" = "$right_id" ] && return 0
+  left_u0=$(patch_id_for_range_u0 "$left_base" "$left_tip") || return 1
+  [ -n "$left_u0" ] || return 1
+  right_u0=$(patch_id_for_range_u0 "$right_base" "$right_tip") || return 1
+  [ -n "$right_u0" ] && [ "$left_u0" = "$right_u0" ] || return 1
+  left_u1=$(git -C "$WT" diff --no-ext-diff -U1 "$left_base..$left_tip" 2>/dev/null) || return 1
+  right_u1=$(git -C "$WT" diff --no-ext-diff -U1 "$right_base..$right_tip" 2>/dev/null) || return 1
+  u1_diffs_anchor_match "$left_u1" "$right_u1"
+}
+
+range_matches_any_commit() {
+  local base=$1 current=$2 commits=$3 left_id left_u0='' left_u1='' commit right_id right_u0 right_u1
+  left_id=$(patch_id_for_range "$base" "$current") || return 1
+  [ -n "$left_id" ] || return 1
+  while IFS= read -r commit; do
+    [ -n "$commit" ] || continue
+    [ "$(git -C "$WT" rev-list --parents -n 1 "$commit" 2>/dev/null | wc -w | tr -d ' ')" = 2 ] || continue
+    right_id=$(patch_id_for_commit "$commit") || continue
+    [ -n "$right_id" ] || continue
+    [ "$left_id" = "$right_id" ] && return 0
+    if [ -z "$left_u0" ]; then
+      left_u0=$(patch_id_for_range_u0 "$base" "$current") || return 1
+      [ -n "$left_u0" ] || return 1
+    fi
+    right_u0=$(patch_id_for_commit_u0 "$commit") || continue
+    [ "$left_u0" = "$right_u0" ] || continue
+    if [ -z "$left_u1" ]; then
+      left_u1=$(git -C "$WT" diff --no-ext-diff -U1 "$base..$current" 2>/dev/null) || return 1
+    fi
+    right_u1=$(git -C "$WT" show --pretty=format: --no-ext-diff -U1 "$commit" 2>/dev/null) || continue
+    u1_diffs_anchor_match "$left_u1" "$right_u1" && return 0
+  done <<EOF
+$commits
+EOF
+  return 1
+}
+
 unpushed_patches_are_in_pr_head() {
-  local pr_head=$1 current base pr_patch_ids commit patch_id unpushed
+  local pr_head=$1 current base pr_commits pr_patch_ids commit patch_id unpushed all_matched=1 pr_branch_base
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   base=$(git -C "$WT" merge-base "$current" "$pr_head" 2>/dev/null) || return 1
+  pr_commits=$(git -C "$WT" log --format=%H "$base..$pr_head" -- 2>/dev/null) || return 1
+  [ -n "$pr_commits" ] || return 1
   pr_patch_ids=$(
-    git -C "$WT" log --format=%H "$base..$pr_head" -- 2>/dev/null \
+    printf '%s\n' "$pr_commits" \
       | while IFS= read -r commit; do
+          [ -n "$commit" ] || continue
           patch_id_for_commit "$commit"
         done \
       | sed '/^$/d' \
@@ -1875,10 +2058,25 @@ unpushed_patches_are_in_pr_head() {
     [ -n "$commit" ] || continue
     patch_id=$(patch_id_for_commit "$commit") || return 1
     [ -n "$patch_id" ] || return 1
-    printf '%s\n' "$pr_patch_ids" | grep -qxF "$patch_id" || return 1
+    if printf '%s\n' "$pr_patch_ids" | grep -qxF "$patch_id"; then
+      continue
+    fi
+    if commit_matches_any_commit_u1 "$commit" "$pr_commits"; then
+      continue
+    fi
+    all_matched=0
   done <<EOF
 $unpushed
 EOF
+  [ "$all_matched" = 1 ] && return 0
+  range_patches_match "$base" "$current" "$base" "$pr_head" && return 0
+  if git -C "$WT" rev-parse --quiet --verify "$pr_head^2^{commit}" >/dev/null 2>&1; then
+    pr_branch_base=$(git -C "$WT" merge-base "$pr_head^1" "$pr_head^2" 2>/dev/null || true)
+    if [ -n "$pr_branch_base" ] && range_patches_match "$base" "$current" "$pr_branch_base" "$pr_head^1"; then
+      return 0
+    fi
+  fi
+  range_matches_any_commit "$base" "$current" "$pr_commits"
 }
 
 # Are all of the worktree's unpushed commits already on the worker's own pushed
@@ -1890,7 +2088,7 @@ EOF
 # same branch name. Merge commits, empty diffs, a missing id, or any miss return
 # non-zero. Plain git cherry is not used: its patch id ignores whitespace.
 unpushed_patches_are_on_pushed_branch() {
-  local branch=$1 remote ref current base commit patch_id unpushed remote_ids='' ids remotes
+  local branch=$1 remote ref current base commit patch_id unpushed remote_ids='' remote_commits='' commits ids remotes
   [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   remotes=$(git -C "$WT" remote 2>/dev/null) || return 1
@@ -1899,9 +2097,12 @@ unpushed_patches_are_on_pushed_branch() {
     ref="refs/remotes/$remote/$branch"
     git -C "$WT" rev-parse --quiet --verify "$ref^{commit}" >/dev/null 2>&1 || continue
     base=$(git -C "$WT" merge-base "$current" "$ref" 2>/dev/null) || continue
+    commits=$(git -C "$WT" rev-list --no-merges "$base..$ref" -- 2>/dev/null) || return 1
+    [ -z "$commits" ] || remote_commits=$(printf '%s\n%s\n' "$remote_commits" "$commits")
     ids=$(
-      git -C "$WT" rev-list --no-merges "$base..$ref" -- 2>/dev/null \
+      printf '%s\n' "$commits" \
         | while IFS= read -r commit; do
+            [ -n "$commit" ] || continue
             patch_id_for_commit "$commit"
           done \
         | sed '/^$/d'
@@ -1918,10 +2119,56 @@ EOF
     [ "$(git -C "$WT" rev-list --parents -n 1 "$commit" 2>/dev/null | wc -w | tr -d ' ')" = 2 ] || return 1
     patch_id=$(patch_id_for_commit "$commit") || return 1
     [ -n "$patch_id" ] || return 1
-    printf '%s\n' "$remote_ids" | grep -qxF "$patch_id" || return 1
+    if printf '%s\n' "$remote_ids" | grep -qxF "$patch_id"; then
+      continue
+    fi
+    commit_matches_any_commit_u1 "$commit" "$remote_commits" || return 1
   done <<EOF
 $unpushed
 EOF
+}
+
+DEFAULT_BRANCH_REF_CACHE=
+default_branch_ref() {
+  local name=${BASE_BRANCH:-}
+  if [ -n "${DEFAULT_BRANCH_REF_CACHE:-}" ]; then
+    printf '%s\n' "$DEFAULT_BRANCH_REF_CACHE"
+    return 0
+  fi
+  [ -n "$name" ] || name=$(default_branch) || return 1
+  if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
+    git -C "$WT" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
+    DEFAULT_BRANCH_REF_CACHE="refs/remotes/origin/$name"
+  elif git -C "$WT" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
+    DEFAULT_BRANCH_REF_CACHE="refs/heads/$name"
+  else
+    return 1
+  fi
+  printf '%s\n' "$DEFAULT_BRANCH_REF_CACHE"
+}
+
+tree_contained_in_ref() {
+  local target_ref=$1 source_ref=${2:-HEAD} target_tree merged_tree merge_status
+  target_tree=$(git -C "$WT" rev-parse --quiet --verify "$target_ref^{tree}" 2>/dev/null) || return 1
+  [ -n "$target_tree" ] || return 1
+  merged_tree=$(git -C "$WT" merge-tree --write-tree "$target_ref" "$source_ref" 2>/dev/null) || {
+    merge_status=$?
+    case "$merge_status" in
+      1) ;; # Git completed the merge and found conflicts.
+      129) CONTENT_LANDED_PROOF_ERROR='git merge-tree --write-tree was rejected (Git 2.38 or newer required)' ;;
+      *) CONTENT_LANDED_PROOF_ERROR="git merge-tree --write-tree failed (Git exit $merge_status)" ;;
+    esac
+    return 1
+  }
+  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
+  [ "$merged_tree" = "$target_tree" ]
+}
+
+merged_pr_content_in_default() {
+  local current=$1 ref
+  ref=$(default_branch_ref) || return 1
+  tree_contained_in_ref "$ref" "$current" && return 0
+  unpushed_patches_are_in_pr_head "$ref"
 }
 
 # Is the worktree's PR merged for local work contained in that PR? Resolves the
@@ -1929,8 +2176,8 @@ EOF
 # forge for both the PR state and head: a recorded Forgejo URL is read through
 # tea (fm_pr_forgejo_read_record), and everything else through GitHub. Returns
 # non-zero when the PR is not merged, the current work is not contained in the
-# PR head, no PR is found, or any forge read error occurs - the caller then
-# falls back to the content check.
+# PR head or (for a recorded PR) the default branch, no PR is found, or any
+# forge read error occurs - the caller then falls back to the content check.
 pr_is_merged() {
   local branch=$1 target view state remainder head resolved_url current landed=0
   if [ -n "$PR_URL" ]; then
@@ -1959,11 +2206,17 @@ pr_is_merged() {
     esac
   fi
   [ -n "$head" ] || return 1
-  ensure_commit_object "$target" "$head" || return 1
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
-    landed=1
-  elif unpushed_patches_are_in_pr_head "$head"; then
+  if ensure_commit_object "$target" "$head"; then
+    if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
+      landed=1
+    elif unpushed_patches_are_in_pr_head "$head"; then
+      landed=1
+    elif tree_contained_in_ref "$head" "$current"; then
+      landed=1
+    fi
+  fi
+  if [ "$landed" != 1 ] && [ -n "$PR_URL" ] && merged_pr_content_in_default "$current"; then
     landed=1
   fi
   [ "$landed" = 1 ] || return 1
@@ -1984,39 +2237,22 @@ pr_is_merged() {
 # CONTENT_LANDED_PROOF_ERROR names a merge-tree option or execution failure
 # separately from a conflict or differing tree.
 content_in_default() {
-  local name=${BASE_BRANCH:-} ref default_tree merged_tree merge_status
+  local ref
   CONTENT_LANDED_PROOF_ERROR=
-  [ -n "$name" ] || name=$(default_branch) || return 1
-  if git -C "$WT" remote get-url origin >/dev/null 2>&1; then
-    git -C "$WT" fetch --quiet origin "+refs/heads/$name:refs/remotes/origin/$name" >/dev/null 2>&1 || return 1
-    ref="refs/remotes/origin/$name"
-  elif git -C "$WT" rev-parse --quiet --verify "refs/heads/$name" >/dev/null 2>&1; then
-    ref="refs/heads/$name"
-  else
-    return 1
-  fi
-  default_tree=$(git -C "$WT" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
-  [ -n "$default_tree" ] || return 1
-  merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || {
-    merge_status=$?
-    case "$merge_status" in
-      1) ;; # Git completed the merge and found conflicts.
-      129) CONTENT_LANDED_PROOF_ERROR='git merge-tree --write-tree was rejected (Git 2.38 or newer required)' ;;
-      *) CONTENT_LANDED_PROOF_ERROR="git merge-tree --write-tree failed (Git exit $merge_status)" ;;
-    esac
-    return 1
-  }
-  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
-  [ "$merged_tree" = "$default_tree" ]
+  ref=$(default_branch_ref) || return 1
+  tree_contained_in_ref "$ref" HEAD
 }
 
 # Has the worktree's committed work actually LANDED, though its commits are not
 # reachable from any remote-tracking branch? True when a merged PR proves the
-# current local work is contained in the PR head, OR the content is already in the
-# default branch (fallback, which also covers the no-PR and gh-error paths). False
-# when neither proof establishes that the work landed.
+# current local work is contained in the PR head or (for a recorded PR) the
+# default branch, OR the content is already in the default branch (fallback,
+# which also covers the no-PR and gh-error paths). False when neither proof
+# establishes that the work landed.
 work_is_landed() {
   local branch=$1
+  DEFAULT_BRANCH_REF_CACHE=
+  CONTENT_LANDED_PROOF_ERROR=
   unpushed_patches_are_on_pushed_branch "$branch" && return 0
   pr_is_merged "$branch" && return 0
   content_in_default
