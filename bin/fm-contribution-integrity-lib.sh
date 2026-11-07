@@ -22,6 +22,14 @@
 # A PR whose core read lacks a commit count is skipped, and a failed extra read
 # leaves the head unrecorded so the next poll retries. Detection only: it never
 # touches the forge or the PR, and the pre-push half is a follow-up.
+#
+# contribution_integrity_accept <pr-url> <head-sha> (reached as
+# "fm-contributions.sh integrity accept <pr-url> <head-sha>") records that exact
+# head as known-good with workflows=true, so a PR whose reviewed workflow change
+# is intended stops re-filing the workflows rule on later pushes, which are then
+# judged against it. It is explicit only: nothing accepts from a title, branch
+# or path. It refuses unless <head-sha> equals the head last recorded for the PR
+# and that head's commit count is known. The other rules still fire afterwards.
 
 integrity_read() { # outfile gh-args... : bounded best-effort forge read
   local out=$1 left
@@ -44,7 +52,7 @@ contribution_integrity_check() { # canonical-pr-url
     prior=$(jq -c . "$file" 2>/dev/null) || prior='{}'
   fi
   head=$(jq -r '.head.sha' "$TMP/core.json")
-  jq -e --arg head "$head" '.last_head == $head and .mergeable_known == true' <<< "$prior" >/dev/null 2>&1 && return 0
+  jq -e --arg head "$head" '.last_head == $head and .mergeable_known == true and (.last_commits | type == "number")' <<< "$prior" >/dev/null 2>&1 && return 0
   number=${url##*/}
   base_repo=$(jq -r '.base.repo.full_name // empty' "$TMP/core.json")
   [ -n "$base_repo" ] || { part=${url#https://github.com/}; base_repo=${part%/pull/*}; }
@@ -99,8 +107,27 @@ contribution_integrity_check() { # canonical-pr-url
   jq -n --argjson prior "$prior" --slurpfile core "$TMP/core.json" --argjson workflows "$workflows" \
     --arg rules "$rules" --arg url "$url" --argjson known "$mergeable_known" '
     $core[0] as $c
-    | $prior + {url:$url, last_head:$c.head.sha, mergeable_known:$known}
+    | $prior + {url:$url, last_head:$c.head.sha, last_commits:$c.commits, mergeable_known:$known}
     | if $rules == "" and $known then .good = {head:$c.head.sha, commits:$c.commits, workflows:$workflows} else . end
     | if $rules != "" then .incidents = (((.incidents // []) + [$c.head.sha]) | unique) else . end' > "$staged" \
     && mv -f -- "$staged" "$file"
+}
+
+contribution_integrity_accept() { # canonical-pr-url head-sha ; caller holds the contributions lock
+  local url=$1 head=$2 file prior staged
+  file="$STATE/contribution-integrity/$(printf '%s' "$url" | shasum -a 256 | awk '{print $1}').json"
+  [ -f "$file" ] && [ ! -L "$file" ] || { printf 'fm-contributions: no integrity record for %s; let a poll observe it first\n' "$url" >&2; return 1; }
+  prior=$(jq -c . "$file" 2> /dev/null) || { printf 'fm-contributions: unreadable integrity record for %s\n' "$url" >&2; return 1; }
+  if ! jq -e --arg head "$head" '.last_head == $head' <<< "$prior" > /dev/null; then
+    printf 'fm-contributions: %s is not the last recorded head of %s (recorded: %s)\n' "$head" "$url" "$(jq -r '.last_head // "none"' <<< "$prior")" >&2
+    return 1
+  fi
+  jq -e '.last_commits | type == "number"' <<< "$prior" > /dev/null \
+    || { printf 'fm-contributions: commit count of %s not recorded yet; let a poll re-observe it first\n' "$head" >&2; return 1; }
+  staged=$(umask 077; mktemp "$STATE/contribution-integrity/.integrity.XXXXXX")
+  if ! { jq --arg head "$head" '.good = {head:$head, commits:.last_commits, workflows:true}' <<< "$prior" > "$staged" && mv -f -- "$staged" "$file"; }; then
+    rm -f -- "$staged"
+    return 1
+  fi
+  printf 'contributions: accepted %s as known-good for %s\n' "$head" "$url"
 }
