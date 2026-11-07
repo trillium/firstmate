@@ -422,6 +422,38 @@ test_ring_submits_its_own_stuck_doorbell() {
   pass "inbox: the ring submits its own stuck doorbell, skips other pending text, and retries a lost Enter once on both paths"
 }
 
+# The busy-mate stall: a secondmate whose Stop hook keeps feeding it turns is
+# always busy, so a ring that skipped a composer holding our own doorbell never
+# submitted it. The doorbell is submitted with Enter even when busy, and other
+# pending text is still left untouched.
+test_ring_submits_own_doorbell_while_busy() {
+  local dir state rec doorbell log composer drops rc
+  dir="$TMP_ROOT/ring-busy"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_composer_stub "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  log="$dir/send.log"; composer="$dir/composer"; drops="$dir/drops"
+  busy_ring() {
+    PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_DROP_ENTERS="$drops" FM_STATE_OVERRIDE="$state" bash -c '
+        . "$1"
+        fm_backend_busy_state() { printf busy; }
+        fm_task_inbox_ring tmux sess:fm-t1 "$2" fm-t1
+      ' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$rec"
+  }
+  : > "$log"; printf '%s' "$doorbell" > "$composer"
+  rc=0; busy_ring || rc=$?
+  [ "$rc" = 0 ] || fail "a busy agent's stuck own doorbell should be submitted, got rc $rc"
+  [ "$(cat "$log")" = "SUBMIT: $doorbell" ] || fail "busy stuck doorbell not submitted once:"$'\n'"$(cat "$log")"
+  : > "$log"; printf '%s' 'a half-typed draft' > "$composer"
+  rc=0; busy_ring || rc=$?
+  [ "$rc" = 1 ] || fail "other pending text should still skip while busy, got rc $rc"
+  [ ! -s "$log" ] || fail "other pending text was submitted while busy"
+  pass "inbox: the ring submits its own stuck doorbell even while the agent is busy, still skips other text"
+}
+
 # Real claude 2.1.316 composer frames captured through herdr: the doorbell sits
 # in the composer wrapped under a two-space indent, and each ring whose Enter
 # never landed stacks another copy with no separator. One or many copies are
@@ -1467,6 +1499,7 @@ test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
 test_ring_submits_its_own_stuck_doorbell
+test_ring_submits_own_doorbell_while_busy
 test_composer_holds_recognises_captured_stacked_doorbells
 test_composer_holds_uses_visible_capture_on_herdr
 test_ring_fails_and_never_stacks_when_enter_does_not_clear
