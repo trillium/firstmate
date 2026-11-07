@@ -1,0 +1,4 @@
+$ classify the captured screen (B❯ ──── prompt rows)
+before: pending
+after (no cursor): empty
+after (cursor on prompt row): empty
