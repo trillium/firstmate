@@ -1340,6 +1340,190 @@ test_squash_merged_stale_local_refuses_when_forge_unreachable() {
   pass "squash-merged stale local still refuses when the forge is unreachable"
 }
 
+# Set up a multi-commit local branch (pushed only to the local no-mistakes
+# mirror, not origin) whose recorded PR was rebased onto a moved main, merged
+# with main, and squash-merged into origin/main (reproducing PR #326).
+# Echoes: <pr_head>
+setup_squash_merged_multi_commit_history() {
+  local case_dir=$1 tmp pr_head
+  tmp="$case_dir/_base_shards"
+  git clone -q "$case_dir/origin.git" "$tmp"
+  printf '%s\n' \
+    "line-1" \
+    "line-2" \
+    "old-entry" \
+    "middle-anchor" \
+    "after-anchor" \
+    "line-6" > "$tmp/shards.md"
+  git -C "$tmp" add -- shards.md
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "seed shards"
+  git -C "$tmp" push -q origin main
+  git -C "$case_dir/wt" fetch -q origin
+  git -C "$case_dir/wt" reset -q --hard origin/main
+  rm -rf "$tmp"
+
+  # 4 local commits in the worktree (and on no-mistakes mirror only).
+  printf '%s\n' \
+    "line-1" \
+    "line-2" \
+    "middle-anchor" \
+    "new-entry" \
+    "after-anchor" \
+    "line-6" > "$case_dir/wt/shards.md"
+  git -C "$case_dir/wt" add -- shards.md
+  git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m "commit 1: update shards"
+  wt_commit_file "$case_dir" one.txt "step-one" "commit 2: add one"
+  wt_commit_file "$case_dir" two.txt "step-two" "commit 3: add two"
+  wt_commit_file "$case_dir" three.txt "step-three" "commit 4: add three"
+
+  git init -q --bare "$case_dir/mirror.git"
+  git -C "$case_dir/project" remote add no-mistakes "$case_dir/mirror.git"
+  git -C "$case_dir/wt" push -q no-mistakes fm/task-x1
+  git -C "$case_dir/project" fetch -q no-mistakes
+
+  # Upstream main advances with lines inserted around the shards.md hunks,
+  # shifting -U3 context while keeping the -U0 changes and -U1 hunk anchors.
+  tmp="$case_dir/_main_advance"
+  git clone -q "$case_dir/origin.git" "$tmp"
+  printf '%s\n' \
+    "line-1" \
+    "line-2" \
+    "upstream-before" \
+    "old-entry" \
+    "middle-anchor" \
+    "upstream-between-1" \
+    "upstream-between-2" \
+    "after-anchor" \
+    "line-6" > "$tmp/shards.md"
+  git -C "$tmp" add -- shards.md
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "main updates shards"
+  git -C "$tmp" push -q origin main
+  rm -rf "$tmp"
+
+  # Pipeline rebases the 4 commits onto main, merges another main commit, and
+  # squash-merges the PR into origin/main.
+  tmp="$case_dir/_pipeline_squash"
+  git clone -q "$case_dir/origin.git" "$tmp"
+  git -C "$tmp" checkout -q -b fm/task-x1-rebased
+  printf '%s\n' \
+    "line-1" \
+    "line-2" \
+    "upstream-before" \
+    "middle-anchor" \
+    "upstream-between-1" \
+    "upstream-between-2" \
+    "new-entry" \
+    "after-anchor" \
+    "line-6" > "$tmp/shards.md"
+  git -C "$tmp" add -- shards.md
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "commit 1: update shards"
+  printf '%s\n' "step-one" > "$tmp/one.txt"
+  git -C "$tmp" add -- one.txt
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "commit 2: add one"
+  printf '%s\n' "step-two" > "$tmp/two.txt"
+  git -C "$tmp" add -- two.txt
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "commit 3: add two"
+  printf '%s\n' "step-three" > "$tmp/three.txt"
+  git -C "$tmp" add -- three.txt
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "commit 4: add three"
+
+  git -C "$tmp" checkout -q main
+  printf '%s\n' "unrelated" > "$tmp/unrelated.txt"
+  git -C "$tmp" add -- unrelated.txt
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "main adds unrelated"
+  git -C "$tmp" push -q origin main
+
+  git -C "$tmp" checkout -q fm/task-x1-rebased
+  git -C "$tmp" -c user.email=t@t -c user.name=t merge -q --no-ff main -m "Merge main into fm/task-x1-rebased"
+  pr_head=$(git -C "$tmp" rev-parse HEAD)
+  git -C "$tmp" push -q origin "HEAD:refs/pull/7/head"
+
+  git -C "$tmp" checkout -q main
+  git -C "$tmp" merge -q --squash fm/task-x1-rebased >/dev/null
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m "feat: squash merge (#7)"
+  git -C "$tmp" push -q origin main
+  rm -rf "$tmp"
+
+  git -C "$case_dir/project" fetch -q origin
+  printf '%s\n' "$pr_head"
+}
+
+test_squash_merged_pr_with_content_on_default_allows() {
+  local case_dir mode rc pr_head squash_head
+  for mode in rebased-pr-head squashed-default-head; do
+    case_dir=$(make_case "squash-default-$mode")
+    write_meta "$case_dir" no-mistakes ship
+    pr_head=$(setup_squash_merged_multi_commit_history "$case_dir")
+    squash_head=$(git -C "$case_dir/project" rev-parse refs/remotes/origin/main)
+    printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+    if [ "$mode" = rebased-pr-head ]; then
+      add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+    else
+      add_gh_pr_merged_for_head "$case_dir" "$squash_head"
+    fi
+
+    set +e
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+
+    expect_code 0 "$rc" "squash-default-$mode: teardown should succeed when recorded PR is merged and content is on default"$'\n'"$(cat "$case_dir/stderr")"
+    ! grep -q REFUSED "$case_dir/stderr" || fail "squash-default-$mode: teardown printed a REFUSED line"
+    assert_absent "$case_dir/state/task-x1.meta" "squash-default-$mode: task record survived teardown"
+  done
+  pass "squash-merged PR with multi-commit worktree content on default branch is torn down"
+}
+
+test_squash_merged_pr_with_extra_commits_beyond_merge_refuses() {
+  local case_dir rc pr_head local_head
+  case_dir=$(make_case squash-default-extra-commit)
+  write_meta "$case_dir" no-mistakes ship
+  pr_head=$(setup_squash_merged_multi_commit_history "$case_dir")
+  wt_commit_file "$case_dir" beyond.txt "unlanded-extra" "commit 5: unlanded work beyond merge"
+  git -C "$case_dir/wt" push -q no-mistakes fm/task-x1
+  git -C "$case_dir/project" fetch -q no-mistakes
+  local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "squash-default-extra-commit: teardown should refuse extra local commits beyond the squash merge"$'\n'"$(cat "$case_dir/stderr")"
+  grep -q REFUSED "$case_dir/stderr" || fail "squash-default-extra-commit: no REFUSED line in stderr"
+  assert_refusal_retained_task_state "$case_dir" squash-default-extra-commit "$local_head"
+  pass "squash-merged PR still refuses when worktree has extra commits beyond the merge"
+}
+
+test_squash_merged_pr_with_uncommitted_changes_refuses() {
+  local case_dir mode rc pr_head local_head
+  for mode in tracked untracked; do
+    case_dir=$(make_case "squash-default-dirty-$mode")
+    write_meta "$case_dir" no-mistakes ship
+    pr_head=$(setup_squash_merged_multi_commit_history "$case_dir")
+    local_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+    add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+    if [ "$mode" = tracked ]; then
+      printf '%s\n' "dirty-tracked-edit" >> "$case_dir/wt/one.txt"
+    else
+      printf '%s\n' "dirty-untracked-file" > "$case_dir/wt/untracked-leftover.txt"
+    fi
+
+    set +e
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+
+    expect_code 1 "$rc" "squash-default-dirty-$mode: teardown should refuse uncommitted changes even when PR is squash-merged"$'\n'"$(cat "$case_dir/stderr")"
+    grep -q REFUSED "$case_dir/stderr" || fail "squash-default-dirty-$mode: no REFUSED line in stderr"
+    assert_refusal_retained_task_state "$case_dir" "squash-default-dirty-$mode" "$local_head"
+  done
+  pass "squash-merged PR still refuses when worktree has uncommitted changes"
+}
+
 test_pr_check_does_not_refresh_stale_pr_head() {
   local case_dir rc pr_head new_head count
   case_dir=$(make_case pr-check-stale)
@@ -6516,6 +6700,9 @@ test_squash_merged_forgejo_pr_allows_when_main_moved_on
 test_squash_merged_same_file_different_content_refuses
 test_squash_merged_rebased_local_with_unlanded_commit_refuses
 test_squash_merged_stale_local_refuses_when_forge_unreachable
+test_squash_merged_pr_with_content_on_default_allows
+test_squash_merged_pr_with_extra_commits_beyond_merge_refuses
+test_squash_merged_pr_with_uncommitted_changes_refuses
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
