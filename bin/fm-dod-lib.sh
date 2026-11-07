@@ -1195,7 +1195,8 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     return 1
   fi
   if fm_dod_named_head_reachable_outside_worktree "$wt" "$project" "$mode" "$sha"; then
-    if [ "$mode" = local-only ] && fm_dod_head_within_base "$project" "$meta" "$sha"; then
+    if [ "$mode" = local-only ] && ! grep -q '^local_done_head=' "${meta:-/dev/null}" 2>/dev/null \
+      && fm_dod_head_within_base "$project" "$meta" "$sha"; then
       printf '%s\n' "the worker copy's HEAD $sha has no commits beyond the base branch, so the done line is premature"
       return 1
     fi
