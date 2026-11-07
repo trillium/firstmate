@@ -60,6 +60,40 @@ _FM_CLASSIFY_UNAME_S=${_FM_UNAME:-$(uname -s 2>/dev/null)}
 # or no-mistakes install; absent, it points at the real sibling script.
 FM_CREW_STATE_BIN="${FM_CREW_STATE_BIN:-$_FM_CLASSIFY_LIB_DIR/fm-crew-state.sh}"
 
+# The one enumeration of every resolved state bin/fm-crew-state.sh can emit,
+# grouped by how consumers treat it. fm-crew-state.sh refuses to emit a state
+# outside FM_CREW_STATES, and the consumers that branch on states (the fleet
+# snapshot, the AFK spend count) read these groups instead of spelling values,
+# so tests/fm-crew-state-enum.test.sh fails until a new value is placed in
+# exactly one group.
+FM_CREW_STATES_WORKING="working"
+FM_CREW_STATES_HOLD="parked paused blocked"
+FM_CREW_STATES_TERMINAL="done failed"
+# The hold states that keep a keyed open decision surfacing (paused is a declared wait, not a decision).
+FM_CREW_STATES_DECISION_OPEN="parked blocked"
+FM_CREW_STATES_QUIESCENT="idle"
+FM_CREW_STATES_UNKNOWN="unknown"
+FM_CREW_STATES="$FM_CREW_STATES_WORKING $FM_CREW_STATES_HOLD $FM_CREW_STATES_TERMINAL $FM_CREW_STATES_QUIESCENT $FM_CREW_STATES_UNKNOWN"
+
+# 0 if <state> is in the enumeration above.
+fm_crew_state_known() {  # <state>
+  case " $FM_CREW_STATES " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# 0 if <state> is in the space-separated <group> of states.
+fm_crew_state_in() {  # <state> <group>
+  case " $2 " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# A group as a JSON string array, for jq consumers.
+fm_crew_states_json() {  # <group>
+  local s out='' sep=''
+  for s in $1; do out="$out$sep\"$s\""; sep=,; done
+  printf '[%s]' "$out"
+}
+
 # fm_run_timed, the shared hard bound the worktree write probe below puts around
 # its one filesystem walk. bin/fm-timeout-lib.sh owns bounded execution for this
 # repo, so nothing here re-derives the coreutils/BSD/perl selection. That library

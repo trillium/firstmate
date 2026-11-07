@@ -1,0 +1,4 @@
+ok - every state is in exactly one group
+ok - jq helper matches the groups
+ok - fm-crew-state.sh refuses a state outside the enumeration
+all fm-crew-state-enum tests passed
