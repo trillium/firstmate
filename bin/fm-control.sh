@@ -491,6 +491,17 @@ dismiss_grok_quota_for_relaunch() {
   die "task $ID's Grok weekly-limit dialog did not return to a proven empty composer after Shift+x; refusing to type the exit command"
 }
 
+# agy shows a feedback survey after its quota message and has no composer
+# while it is up. Its Skip choice (0) dismisses it without answering, so exit
+# and relaunch send exactly that one key on an agy endpoint, then re-read the
+# composer; a screen that is still the survey or still unproven refuses as before.
+dismiss_agy_survey() {
+  [ "$HARNESS" = agy ] || return 1
+  fm_backend_send_key "$BACKEND" "$T" 0 "$LABEL" \
+    || die "task $ID shows agy's feedback survey and its Skip key (0) was not delivered; refusing to type the exit command"
+  sleep "$POLL"
+}
+
 # confirm_exit_picker: answer the Claude background-task picker that THIS exit
 # request opened. The picker is Claude's own confirmation of the /exit that
 # do_exit just typed, and its selected row is Exit and stop tasks, so one Enter
@@ -855,6 +866,15 @@ do_exit() {
     if [ "$dialog" = 'Grok weekly limit' ]; then
       dismiss_grok_quota_for_relaunch
       composer_state=empty
+    elif [ "$dialog" = 'agy feedback survey' ] && dismiss_agy_survey; then
+      : > "$FM_COMPOSER_DIALOG_SINK" \
+        || die "task $ID's dialog check could not be recorded"
+      : > "$FM_COMPOSER_SCREEN_SINK" || true
+      composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
+        || composer_state=unknown
+      if [ -s "$FM_COMPOSER_DIALOG_SINK" ]; then
+        refuse_blocking_prompt "$(cat "$FM_COMPOSER_DIALOG_SINK") (still shown after its Skip key)"
+      fi
     else
       refuse_blocking_prompt "$dialog"
     fi
@@ -882,7 +902,7 @@ do_exit() {
       die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'$(composer_refusal_note "$VERB")"
       ;;
     *)
-      if fm_control_composer_structurally_empty "$BACKEND" "$T"; then
+      if fm_control_composer_structurally_empty "$BACKEND" "$T" "$HARNESS"; then
         :
       else
         die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'$(composer_refusal_note "$VERB")"

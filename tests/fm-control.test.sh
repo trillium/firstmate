@@ -149,6 +149,9 @@ case "${1:-}" in
       if [ "$payload" = C-u ] && [ -f "$D/clear-on-ctrl-u" ]; then
         cat "$D/clear-on-ctrl-u" > "$D/pane"
       fi
+      if [ "$payload" = 0 ] && [ -f "$D/dismiss-on-zero" ]; then
+        cat "$D/dismiss-on-zero" > "$D/pane"
+      fi
       if [ "$payload" = S-x ] && [ -f "$D/dismiss-on-shift-x" ]; then
         cat "$D/dismiss-on-shift-x" > "$D/pane"
       fi
@@ -811,6 +814,55 @@ test_relaunch_dismisses_grok_weekly_limit_without_selecting_an_option() {
   grep -qx "phase=failed:launching" "$dir/home/state/t1.control-relaunch" \
     || fail "relaunch should reach launch after safely replacing the quota-limited worker"
   pass "fm-control relaunch: dismisses Grok's weekly limit with Shift+x and never selects an option"
+}
+
+# agy shows a feedback survey (screen recorded from a real quota-reached worker)
+# with no composer. Exit and relaunch dismiss it with its Skip key, 0, re-read
+# the composer, and only then type the exit command.
+test_agy_feedback_survey_is_dismissed_before_exit() {
+  local dir out rc rule idle verb
+  rule='──────────────────────────────────────────────────────────────────────────────'
+  idle=$'  Quota cleared.\n\n'"$rule"$'\n>\n'"$rule"$'\n? for shortcuts                                    Gemini 3.8 Flash · low\n'
+  for verb in exit relaunch; do
+    dir=$(new_case "agy-survey-$verb")
+    add_task "$dir" t1 agy
+    alive_as "$dir" agy
+    cp "$ROOT/tests/fixtures/agy-quota-survey.screen" "$dir/fake/pane"
+    printf '%s' "$idle" > "$dir/fake/dismiss-on-zero"
+    if [ "$verb" = exit ]; then
+      out=$(run_control "$dir" t1 exit); rc=$?
+      expect_code 0 "$rc" "exit should proceed once the survey is dismissed: $out"
+    else
+      out=$(run_control "$dir" t1 relaunch --harness codex --note 'move off quota'); rc=$?
+      expect_code 1 "$rc" "the fake replacement launch should stop after the old agy agent exited: $out"
+    fi
+    [ "$(sed -n '1p' "$dir/fake/keys")" = 0 ] || fail "$verb must dismiss the survey with 0 first"
+    [ "$(literals "$dir")" = /quit ] || fail "$verb must type /quit after the dismissal, got: $(literals "$dir")"
+    [ "$(grep -cx '[123]' "$dir/fake/keys" || true)" -eq 0 ] || fail "$verb must never answer the survey"
+  done
+  pass "fm-control: agy's feedback survey is dismissed with Skip before exit and relaunch type /quit"
+}
+
+# An unrelated unknown screen, and a survey that survives its Skip key, still refuse.
+test_agy_unknown_screen_and_stuck_survey_still_refuse() {
+  local dir out rc
+  dir=$(new_case agy-unknown-screen)
+  add_task "$dir" t1 agy
+  alive_as "$dir" agy
+  printf '%s' $'  Some unrelated output\n  with no composer at all\n' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "an unknown screen must still refuse: $out"
+  [ -z "$(literals "$dir")" ] || fail "nothing may be typed into an unknown agy screen"
+  [ -z "$(cat "$dir/fake/keys")" ] || fail "no key may be sent to an unknown agy screen"
+  dir=$(new_case agy-stuck-survey)
+  add_task "$dir" t1 agy
+  alive_as "$dir" agy
+  cp "$ROOT/tests/fixtures/agy-quota-survey.screen" "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a survey that survives Skip must refuse: $out"
+  case "$out" in *'agy feedback survey'*) ;; *) fail "the refusal must name the survey: $out" ;; esac
+  [ -z "$(literals "$dir")" ] || fail "nothing may be typed while the survey persists"
+  pass "fm-control: an unknown agy screen and a survey that survives Skip still refuse"
 }
 
 test_hermes_profile_refusals_preserve_running_worker() {
@@ -1658,6 +1710,8 @@ test_unverified_state_backends_refuse_stop_verbs
 test_commandcode_relaunch_off_tmux_and_herdr_refuses_before_stopping
 test_relaunch_clears_own_doorbell_before_exit
 test_relaunch_dismisses_grok_weekly_limit_without_selecting_an_option
+test_agy_feedback_survey_is_dismissed_before_exit
+test_agy_unknown_screen_and_stuck_survey_still_refuse
 test_hermes_profile_refusals_preserve_running_worker
 test_state_verified_backends_are_exactly_tmux_herdr_and_rex
 test_window_label_is_refused_with_the_exact_id

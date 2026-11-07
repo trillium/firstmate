@@ -680,8 +680,8 @@ fm_control_harness_turnend_auth_path() {  # <harness> <token>
 # cannot tell its dim placeholder from typed text; both are proven here from
 # the plain screen shape instead (fm_control_agy_composer_empty and
 # fm_control_grok_composer_empty), so exit and relaunch can reach them.
-fm_control_composer_structurally_empty() {  # <backend> <target>
-  local backend=$1 target=$2
+fm_control_composer_structurally_empty() {  # <backend> <target> [harness]
+  local backend=$1 target=$2 harness=${3-}
   # The caller reads the visual composer state inside a subshell, so the
   # backend is not loaded in this shell yet; a failed load is "not proven".
   fm_backend_source "$backend" || return 1
@@ -689,7 +689,10 @@ fm_control_composer_structurally_empty() {  # <backend> <target>
     tmux)
       local screen
       screen=$(fm_backend_visible_capture tmux "$target" 2>/dev/null) || return 1
-      fm_control_grok_composer_empty "$screen"
+      # agy's bare `>` composer is proven by its screen shape alone on tmux, and
+      # only when the caller names agy as the recorded harness.
+      fm_control_grok_composer_empty "$screen" \
+        || { [ "$harness" = agy ] && fm_control_agy_composer_empty "$screen"; }
       ;;
     herdr)
       fm_backend_herdr_parse_target "$target" || return 1
