@@ -103,6 +103,34 @@ SH
 }
 
 
+test_branch_grant_retire_waits_a_bounded_time_for_a_live_lock_holder() {
+  local dir state action start elapsed rc
+  local -a args
+  dir=$(make_case grant-retire-bound)
+  for action in release deactivate; do
+    state="$dir/$action"
+    mkdir -p "$state"
+    FM_STATE_OVERRIDE="$state" bash "$GRANT" activate "$$" existing \
+      || fail "could not seed $action owner"
+    case "$action" in
+      release) args=(release existing) ;;
+      deactivate) args=(deactivate "$$" existing) ;;
+    esac
+    # A live foreign holder never lets go: the bounded retire must still return.
+    mkdir "$state/.wake-queue.lock"
+    printf '%s\n' "$$" > "$state/.wake-queue.lock/pid"
+    start=$SECONDS
+    FM_STATE_OVERRIDE="$state" FM_WAKE_GRANT_LOCK_WAIT_MAX=1 bash "$GRANT" "${args[@]}"
+    rc=$?
+    elapsed=$((SECONDS - start))
+    [ "$rc" -eq 1 ] || fail "$action with a bounded wait returned $rc, not the lock refusal"
+    [ "$elapsed" -lt 10 ] || fail "$action waited ${elapsed}s for a live lock holder despite a 1s bound"
+    [ "$(cat "$state/.wake-queue.lock/pid")" = "$$" ] || fail "$action released another owner's lock"
+    [ -e "$state/.branch-eligible-owner" ] || fail "$action retired the grant without holding the lock"
+  done
+  pass "branch grant retire: a bounded wait gives up on a live lock holder instead of hanging"
+}
+
 test_concurrent_append_and_drain() {
   local dir state out1 out2 pids i pid count unique malformed sequence generation
   dir=$(make_case concurrent)
@@ -3793,6 +3821,7 @@ SH
 }
 
 test_branch_grant_requires_lock_acquisition
+test_branch_grant_retire_waits_a_bounded_time_for_a_live_lock_holder
 test_self_held_lock_reclaims_instead_of_deadlocking
 test_lock_wait_returns_when_its_directory_is_removed
 test_subshell_lock_ownership_without_bashpid

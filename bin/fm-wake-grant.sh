@@ -22,6 +22,18 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# release and deactivate retire a grant, and the supervision host runs them from
+# its stop path. FM_WAKE_GRANT_LOCK_WAIT_MAX (whole seconds) bounds their wait on
+# the queue lock so a live foreign holder cannot keep a TERMed host from exiting;
+# the grant row an unretired release leaves behind is reclaimed by main once its
+# owner has exited. Unset, they wait for the lock as before.
+acquire_for_retire() {
+  case "${FM_WAKE_GRANT_LOCK_WAIT_MAX:-}" in
+    ''|*[!0-9]*) fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" ;;
+    *) fm_lock_acquire_wait_max "$FM_WAKE_QUEUE_LOCK" "$FM_WAKE_GRANT_LOCK_WAIT_MAX" ;;
+  esac
+}
+
 # fm-wake-lib.sh owns both the grant row-list shape and the owner-record read.
 rows_valid() { fm_wake_grant_rows_valid "$1"; }
 
@@ -86,7 +98,7 @@ case "${1:-}" in
   release)
     generation=${2:-}
     [ "$#" -eq 2 ] || exit 2
-    fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
+    acquire_for_retire || exit 1
     LOCK_HELD=true
     owner_matches '' "$generation" || exit 1
     rm -f -- "$BRANCH_ROWS" || exit 1
@@ -95,7 +107,7 @@ case "${1:-}" in
     pid=${2:-}
     generation=${3:-}
     [ "$#" -eq 3 ] || exit 2
-    fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
+    acquire_for_retire || exit 1
     LOCK_HELD=true
     owner_matches "$pid" "$generation" || exit 1
     rm -f -- "$BRANCH_ROWS" "$BRANCH_OWNER" || exit 1
