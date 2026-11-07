@@ -383,9 +383,10 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # verdicts would starve a harness whose idle screen the classifier cannot
 # positively identify (that classifier is advisory here by design).
 # A composer holding only our own doorbell line, once or stacked, is a previous
-# ring whose Enter never landed, so on an agent not reported busy it is
-# submitted with Enter alone (never retyped) whatever verdict the classifier
-# gave; skipping it would block every later ring. A lost first Enter gets one
+# ring whose Enter never landed, so it is submitted with Enter alone (never
+# retyped) whatever verdict the classifier gave, busy or not: a busy agent
+# queues the submitted line for its next turn, while skipping on busy would
+# starve a mate whose Stop hook keeps it busy and block every later ring. A lost first Enter gets one
 # confirmed retry, and if still unsubmitted returns 2 (send failed) so
 # re-rings do not assume delivery. A skip sets FM_TASK_INBOX_RING_NOTE to the reason.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
@@ -403,10 +404,6 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   # `pending-unproven` over a composer that visibly holds our unsubmitted
   # doorbell (claude under herdr), and retyping there only stacks more lines.
   if fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label"; then
-    if [ "$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)" = busy ]; then
-      FM_TASK_INBOX_RING_NOTE="the composer holds this steer's own doorbell and the agent is busy"
-      return 1
-    fi
     fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
     sleep 0.3
     fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
