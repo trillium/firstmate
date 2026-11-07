@@ -754,6 +754,8 @@ test_relaunch_reuses_the_recorded_per_launch_account() {
   out=$( (
     # shellcheck source=bin/fm-worker-account-lib.sh
     . "$REPO_ROOT/bin/fm-worker-account-lib.sh"
+    # shellcheck disable=SC2030
+    # shellcheck disable=SC2030
     export HOME="$HOME_DIR/user-home"
     PATH="$FAKEBIN:$PATH" fm_worker_account_select claude "$HOME_DIR/config" "" claude "" "" ordinary
   ) 2>&1); rc=$?
@@ -1137,6 +1139,46 @@ test_autoswitch_overrides_and_refusals() {
   pass "explicit --account overrides automatic selection, and malformed pool or threshold files refuse before launch"
 }
 
+test_token_rotation_round_robins_and_pin_wins() {
+  local out rc i
+  new_case rotation claude
+  make_token_file "$CASE/tokens/a.token"
+  make_token_file "$CASE/tokens/b.token"
+  printf '# accounts\ntoken:%s\ntoken:%s\n' "$CASE/tokens/a.token" "$CASE/tokens/b.token" > "$HOME_DIR/config/claude-token-accounts"
+  out=$(spawn_ship rot-1 2>&1); rc=$?
+  expect_code 0 "$rc" "first rotated spawn: $out"
+  assert_grep "account=token:a.token" "$HOME_DIR/state/rot-1.meta" "first spawn takes the first listed account"
+  out=$(spawn_ship rot-2 2>&1); rc=$?
+  expect_code 0 "$rc" "second rotated spawn: $out"
+  assert_grep "account=token:b.token" "$HOME_DIR/state/rot-2.meta" "second spawn takes the next account"
+  out=$(spawn_ship rot-3 2>&1); rc=$?
+  assert_grep "account=token:a.token" "$HOME_DIR/state/rot-3.meta" "rotation wraps"
+  assert_no_token_anywhere rot-3 "$out"
+  out=$(spawn_ship rot-4 --account "token:$CASE/tokens/b.token" 2>&1)
+  assert_grep "account=token:b.token" "$HOME_DIR/state/rot-4.meta" "--account wins over rotation"
+  printf 'token:%s\n' "$CASE/tokens/a.token" > "$HOME_DIR/config/claude-account"
+  out=$(spawn_ship rot-5 2>&1)
+  assert_grep "account=token:a.token" "$HOME_DIR/state/rot-5.meta" "the pin wins over rotation"
+  [ "$(cat "$HOME_DIR/state/claude-account-cursor")" = 0 ] || fail "pinned/explicit spawns must not advance the cursor"
+  pass "token rotation round-robins across config/claude-token-accounts; --account and the pin win"
+}
+
+test_rotation_next_helper() {
+  local cfg="$TMP_ROOT/rotnext"
+  mkdir -p "$cfg"
+  # shellcheck source=bin/fm-worker-account-lib.sh
+  . "$REPO_ROOT/bin/fm-worker-account-lib.sh"
+  printf 'token:/x/a\ntoken:/x/b\ntoken:/x/c\n' > "$cfg/claude-token-accounts"
+  [ "$(fm_worker_account_rotation_next "$cfg" token:/x/a)" = token:/x/b ] || fail "a -> b"
+  [ "$(fm_worker_account_rotation_next "$cfg" token:/x/c)" = token:/x/a ] || fail "c wraps to a"
+  [ "$(fm_worker_account_rotation_next "$cfg" "")" = token:/x/a ] || fail "unknown -> first"
+  printf 'token:/x/a\n' > "$cfg/claude-token-accounts"
+  fm_worker_account_rotation_next "$cfg" token:/x/a >/dev/null 2>&1 && fail "single account cannot rotate"
+  printf 'token:rel\n' > "$cfg/claude-token-accounts"
+  fm_worker_account_rotation_list "$cfg" >/dev/null 2>&1 && fail "invalid entry must refuse"
+  pass "rotation-next wraps, refuses a single account and invalid entries"
+}
+
 test_secondmate_account_override
 test_secondmate_account_refusals
 test_per_launch_account_ordinary_overrides_a_token_pin
@@ -1173,5 +1215,7 @@ test_autoswitch_skips_low_account_and_honors_configurable_threshold
 test_autoswitch_both_low_warns_and_keeps_pinned_account
 test_autoswitch_unmeasured_account_stays_eligible_with_disclosed_uncertainty
 test_autoswitch_overrides_and_refusals
+test_token_rotation_round_robins_and_pin_wins
+test_rotation_next_helper
 
 echo "# all fm-worker-account tests passed"

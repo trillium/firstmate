@@ -1615,6 +1615,15 @@ Pi ranks a root's stored logins above environment variables, so a pinned Pi laun
 
 A home that authenticates Claude through environment credentials on purpose should leave the pin absent.
 
+### Setup-token rotation
+
+Setup tokens answer 403 on the usage endpoint, so their headroom cannot be measured; rotation is therefore round-robin at spawn and reactive on a limit.
+`config/claude-token-accounts` (local, gitignored) lists accounts one per line in the `config/claude-account` grammar, normally `token:<absolute path>`; blank lines and `#` comments are skipped.
+When a Claude ship or scout spawns with no `--account`, no recorded per-launch account, and no `config/claude-account` pin, `fm-spawn` takes the next listed account after the cursor in `state/claude-account-cursor` and records it like `--account`.
+An explicit `--account`, a `config/claude-account` pin, or a `config/claude-accounts` list always wins (rotation is skipped) and does not advance the cursor.
+When a worker hits a Claude usage or rate limit, `fm-control <id> relaunch --rotate-account --note <text>` moves it to the account after its current one (wrapping), and needs at least two listed accounts.
+Token contents are never printed.
+
 ### Setup-token pin
 
 `token:<absolute path>` runs Claude workers on a long-lived `claude setup-token` credential, for example a second account's extra inference bucket, without a second interactive login.

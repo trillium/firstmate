@@ -646,6 +646,59 @@ fm_worker_account_check() {
   return 0
 }
 
+# fm_worker_account_rotation_list <config-dir>
+# Prints the accounts listed in config/claude-token-accounts, one per line (blank
+# lines and # comments skipped). Prints nothing when the file is absent. An
+# invalid entry refuses (the entry is never echoed in full beyond its grammar
+# error, and token files are never read here).
+fm_worker_account_rotation_list() {
+  local file=$1/claude-token-accounts line
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    fm_worker_account_value_valid "$line" || {
+      echo "error: config/claude-token-accounts has an invalid entry; each line must be 'ordinary', an absolute path, or token:<absolute path>" >&2
+      return 1
+    }
+    printf '%s\n' "$line"
+  done < "$file"
+}
+
+# fm_worker_account_rotation_pick <config-dir> <state-dir>
+# Round-robin: prints the next listed account after the cursor in
+# state/claude-account-cursor and advances it. Prints nothing with no list.
+fm_worker_account_rotation_pick() {
+  local list n cur=-1 idx
+  list=$(fm_worker_account_rotation_list "$1") || return 1
+  [ -n "$list" ] || return 0
+  n=$(printf '%s\n' "$list" | wc -l | tr -d ' ')
+  [ -f "$2/claude-account-cursor" ] && cur=$(cat "$2/claude-account-cursor" 2>/dev/null)
+  case "$cur" in ''|*[!0-9]*) cur=-1 ;; esac
+  idx=$(( (cur + 1) % n ))
+  mkdir -p "$2" && printf '%s\n' "$idx" > "$2/claude-account-cursor"
+  printf '%s\n' "$list" | sed -n "$((idx + 1))p"
+}
+
+# fm_worker_account_rotation_next <config-dir> <current>
+# Prints the listed account after <current> (wrapping; the first when current
+# is not listed). Refuses when fewer than two accounts are listed.
+fm_worker_account_rotation_next() {
+  local list n i=0 pos=-1 line
+  list=$(fm_worker_account_rotation_list "$1") || return 1
+  n=$(printf '%s' "$list" | grep -c . || true)
+  if [ "$n" -lt 2 ]; then
+    echo "error: config/claude-token-accounts must list at least two accounts to rotate" >&2
+    return 1
+  fi
+  while IFS= read -r line; do
+    [ "$line" = "$2" ] && pos=$i
+    i=$((i + 1))
+  done <<EOF
+$list
+EOF
+  printf '%s\n' "$list" | sed -n "$(( (pos + 1) % n + 1 ))p"
+}
+
 # fm_worker_account_request_valid <account>
 # Refuses an --account value holding a control character. Declared entries
 # never hold one, and a newline would otherwise split the value before the
