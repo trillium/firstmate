@@ -2263,7 +2263,7 @@ test_terminal_stale_done_current_state_is_absorbed_but_working_still_surfaces() 
   printf 'window=%s\nkind=ship\n' "$window" > "$state/current-done.meta"
   printf 'done: PR https://example.test/pr/4\n' > "$state/current-done.status"
   sig=$(seen_sig "$state/current-done.status"); printf '%s' "$sig" > "$state/.seen-current-done_status"
-  key=$(printf '%s' "$window" | tr ':/. ' '____')
+  key=$(watch_window_key "$window")
   pane_hash=$(hash_text "finished, awaiting cleanup")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
@@ -2290,7 +2290,7 @@ test_terminal_stale_done_current_state_is_absorbed_but_working_still_surfaces() 
   printf 'window=%s\nkind=ship\n' "$window" > "$state/current-working.meta"
   printf 'done: earlier finish report\n' > "$state/current-working.status"
   sig=$(seen_sig "$state/current-working.status"); printf '%s' "$sig" > "$state/.seen-current-working_status"
-  key=$(printf '%s' "$window" | tr ':/. ' '____')
+  key=$(watch_window_key "$window")
   pane_hash=$(hash_text "quiet working pane")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
@@ -2318,7 +2318,7 @@ test_stale_wake_provenance_is_recorded_and_explained() {
   printf 'window=%s\nkind=ship\n' "$window" > "$state/prov.meta"
   printf 'done: PR https://example.test/pr/4\n' > "$state/prov.status"
   sig=$(seen_sig "$state/prov.status"); printf '%s' "$sig" > "$state/.seen-prov_status"
-  key=$(printf '%s' "$window" | tr ':/.' '___')
+  key=$(watch_window_key "$window")
   printf '%s' "$(hash_text "finished, awaiting review")" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \

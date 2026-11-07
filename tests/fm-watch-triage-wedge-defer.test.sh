@@ -759,7 +759,7 @@ test_wedge_threshold_caps_a_parked_decision_at_the_escalation_bound() {
   # the lane takes the plain non-terminal route into the wedge timer.
   local freeform='needs-decision [key=gitguardian-false-positive-pr43]: the ci gate raised an authority question
 working: still parked at that gate'
-  window="test:fm-wedge"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  window="test:fm-wedge"; key=$(watch_window_key "$window")
 
   dir=$(wedge_threshold_fixture parked-decision-capped "$freeform" 2000)
   state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; capture="$dir/pane.txt"

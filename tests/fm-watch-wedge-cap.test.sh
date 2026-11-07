@@ -1942,7 +1942,7 @@ wedge_alarm_case() {
   dir=$(make_case "wedge-cap-$name"); state="$dir/state"; capture_file="$dir/pane.txt"
   out="$dir/watch.out"
   window="test:fm-wedge-cap-$name"
-  key=$(printf '%s' "$window" | tr ':/.' '___')
+  key=$(watch_window_key "$window")
   printf 'idle frame content' > "$capture_file"
   printf 'window=%s\nkind=ship\n' "$window" > "$state/wedge-cap-$name.meta"
   if [ -n "$status_line" ]; then
