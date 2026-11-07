@@ -194,16 +194,16 @@ fm_afk_contract_present() {  # [state-dir]
 # This is the one implementation of that count, read by the entry default here
 # and by bin/fm-spawn.sh's refusal.
 fm_afk_contract_live_ordinary_workers() {  # [state-dir]
-  local state=${1:-$FM_AFK_CONTRACT_STATE} meta live=0 id
+  local state=${1:-$FM_AFK_CONTRACT_STATE} meta live=0 id line
   for meta in "$state"/*.meta; do
     [ -f "$meta" ] || continue
     [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
     id=${meta##*/}
     id=${id%.meta}
-    case "$(FM_CREW_STATE_NO_FORGE=1 FM_STATE_OVERRIDE="$state" "$FM_AFK_CONTRACT_DIR/fm-crew-state.sh" "$id" 2>/dev/null | head -1)" in
-    'state: working '*) ;;
-    *) continue ;;
-    esac
+    line=$(FM_CREW_STATE_NO_FORGE=1 FM_STATE_OVERRIDE="$state" "$FM_AFK_CONTRACT_DIR/fm-crew-state.sh" "$id" 2>/dev/null | head -1)
+    case "$line" in 'state: '*) ;; *) continue ;; esac
+    line=${line#state: }
+    fm_crew_state_in "${line%% *}" "$FM_CREW_STATES_WORKING" || continue
     live=$((live + 1))
   done
   printf '%s\n' "$live"

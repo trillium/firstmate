@@ -278,6 +278,7 @@ SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
 emit() {  # <state> <source> [detail]
+  fm_crew_state_known "$1" || { echo "fm-crew-state: refusing to emit state '$1' missing from FM_CREW_STATES (bin/fm-classify-lib.sh)" >&2; exit 1; }
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
   printf '%s\n' "$line"
