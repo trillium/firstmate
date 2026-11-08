@@ -126,15 +126,20 @@ home_summary_refresh_once() {
     return 1
   }
 
-  if env \
-    FM_ROOT_OVERRIDE="$FM_ROOT" \
-    FM_HOME="$FM_HOME" \
-    FM_STATE_OVERRIDE="$STATE" \
-    FM_DATA_OVERRIDE="$DATA" \
-    FM_CONFIG_OVERRIDE="$CONFIG" \
-    FM_PROJECTS_OVERRIDE="$PROJECTS" \
-    "$SCRIPT_DIR/fm-fleet-snapshot.sh" --secondmate-home-summary \
-      > "$HOME_SUMMARY_TMP" 2> "$HOME_SUMMARY_ERR_TMP"; then
+  # The group's own stderr is silenced so the shell cannot print its raw
+  # job-control line ("Terminated: 15 env ...") when the timeout owner kills
+  # the producer; the producer's diagnostics still land in the error file.
+  if {
+    env \
+      FM_ROOT_OVERRIDE="$FM_ROOT" \
+      FM_HOME="$FM_HOME" \
+      FM_STATE_OVERRIDE="$STATE" \
+      FM_DATA_OVERRIDE="$DATA" \
+      FM_CONFIG_OVERRIDE="$CONFIG" \
+      FM_PROJECTS_OVERRIDE="$PROJECTS" \
+      "$SCRIPT_DIR/fm-fleet-snapshot.sh" --secondmate-home-summary \
+        > "$HOME_SUMMARY_TMP" 2> "$HOME_SUMMARY_ERR_TMP"
+  } 2>/dev/null; then
     producer_rc=0
   else
     producer_rc=$?
