@@ -195,9 +195,34 @@ test_accept_keeps_other_rules() {
   pass 'other rules still fire after an accept'
 }
 
+test_slow_forge_and_filing_stay_inside_the_poll_budget() {
+  local home out start elapsed
+  home=$(new_home slow)
+  baseline "$home"
+  push "$home" "$H2" 103 true
+  mv "$home/fakebin/gh" "$home/fakebin/gh-fast"
+  printf '#!/bin/sh\nsleep 1\nexec "%s" "$@"\n' "$home/fakebin/gh-fast" > "$home/fakebin/gh"
+  printf '#!/bin/sh\nexec sleep 30\n' > "$home/fakebin/robots"
+  chmod +x "$home/fakebin/gh" "$home/fakebin/robots"
+  start=$(date +%s)
+  out=$(FM_CONTRIBUTIONS_BUDGET=7 FM_CHECK_TIMEOUT=10 poll "$home") || fail 'slow poll failed'
+  elapsed=$(( $(date +%s) - start ))
+  [ "$elapsed" -le 9 ] || fail "slow poll took ${elapsed}s with a 7s budget"
+  [ "$(incident_count "$home")" = 0 ] || fail 'a filing the budget cut short was recorded as filed'
+  jq -e --arg head "$H1" '.last_head == $head' "$home/state/contribution-integrity/"*.json >/dev/null \
+    || fail 'the unfinished head was recorded instead of retried'
+  jq -e '.records[0].checked_at != null and .records[0].observation.head != null' "$home/data/delivery/contributions.json" >/dev/null \
+    || fail 'the observation finished before the budget ran out was not recorded'
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$FORGE/robots.log"\nprintf "agent-fake\\n"\n' > "$home/fakebin/robots"
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$home/fakebin/gh-fast" > "$home/fakebin/gh"
+  out=$(poll "$home") || fail 'retry poll failed'
+  [ "$(incident_count "$home")" = 1 ] || fail "the deferred incident was not filed by the next poll: $out"
+  pass 'slow forge reads and a slow filing stay inside the poll budget and the next poll finishes the check'
+}
+
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   failures=0
-  for test_name in test_clean_push_is_silent test_conflicting_head test_commit_growth test_wrong_base test_workflow_files test_dedupe_and_good_head_kept test_accept_stops_workflow_refiring test_accept_refuses_other_head test_accept_keeps_other_rules; do
+  for test_name in test_clean_push_is_silent test_conflicting_head test_commit_growth test_wrong_base test_workflow_files test_dedupe_and_good_head_kept test_accept_stops_workflow_refiring test_accept_refuses_other_head test_accept_keeps_other_rules test_slow_forge_and_filing_stay_inside_the_poll_budget; do
     ( "$test_name" ) || failures=$((failures + 1))
   done
   [ "$failures" -eq 0 ] || exit 1
