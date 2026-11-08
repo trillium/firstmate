@@ -52,7 +52,9 @@ case "${1:-}" in
 esac
 exit 0
 SH
-  chmod +x "$fb/no-mistakes" "$fb/tmux"
+  # Keep every fleet view hermetic: quota reads never reach the real quota-axi.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fb/quota-axi"
+  chmod +x "$fb/no-mistakes" "$fb/tmux" "$fb/quota-axi"
   printf '%s\n' "$fb"
 }
 
@@ -1247,6 +1249,158 @@ EOF
   pass "fleet view enumerates each remote host and reports unreachable distinctly"
 }
 
+write_quota_fixture() {  # <fakebin> <claude-percent>
+  # A schema-6 quota-axi snapshot: claude known at <percent>, codex unknown.
+  cat > "$1/quota-axi" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  --version) echo 0.1.69; exit 0 ;;
+esac
+cat <<'JSON'
+{"schemaVersion":6,"providers":[
+ {"provider":"claude","accountKey":"default","quotaSemantics":{"status":"known","effectiveAvailability":[
+   {"scope":"all_models","status":"known","effectivePercentRemaining":$2,"runway":{"status":"through_reset"},"selection":{"status":"known","spendPriority":0.5}},
+   {"scope":"model:opus","status":"known","effectivePercentRemaining":90,"runway":{"status":"through_reset"}}]}},
+ {"provider":"codex","accountKey":"default","state":{"status":"error","error":"no login"},"quotaSemantics":{"status":"unknown","effectiveAvailability":[]}}]}
+JSON
+SH
+  chmod +x "$1/quota-axi"
+}
+
+test_task_rows_carry_agent_fields() {
+  local home fakebin out
+  home=$(make_home agent-fields)
+  fakebin=$(make_fakebin "$home")
+  fm_write_meta "$home/state/pinned.meta" "window=firstmate:fm-pinned" "harness=claude" "kind=ship" \
+    "model=opus" "effort=high" "account=work-a" "account_provider=claude" "account_request=work-a"
+  fm_write_meta "$home/state/unpinned.meta" "window=firstmate:fm-unpinned" "harness=codex" "kind=ship"
+  fm_write_meta "$home/state/odd.meta" "window=firstmate:fm-odd" "harness=mystery" "kind=scout"
+  fm_write_meta "$home/state/far.meta" "window=firstmate:fm-far" "harness=claude" "kind=ship" \
+    "remote_host=mini0" "remote_root=/r" "remote_backend=tmux"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_HOST=thishost "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.tasks[] | select(.id == "pinned")) as $p
+    | (.tasks[] | select(.id == "unpinned")) as $u
+    | (.tasks[] | select(.id == "odd")) as $o
+    | (.tasks[] | select(.id == "far")) as $f
+    | $p.model == "opus" and $p.effort == "high" and $p.host == "thishost"
+      and $p.inference == {provider:"claude",provider_source:"account-meta",account:"work-a",account_request:"work-a",account_reason:null}
+      and $u.model == null and $u.inference.account == null
+      and $u.inference.provider == "codex" and $u.inference.provider_source == "harness-table"
+      and $o.inference.provider == null and $o.inference.provider_source == null
+      and $f.host == "mini0"
+      and (.fleet_agents.agents | map(select(.home == null)) | length) == 4
+      and (.fleet_agents.hosts[0] | .host == "thishost" and .status == "local" and .count == 4)
+      and (has("quota") | not)
+  ' >/dev/null || fail "task rows or fleet_agents wrong: $(printf '%s' "$out" | jq -c '.fleet_agents')"
+  pass "task rows carry model, effort, host, and inference source; unknown stays null"
+}
+
+# A remote secondmate's own agents ride its home summary through the existing
+# ledger transport: one reachable host with agents, one whose producer predates
+# the field, and one that cannot be reached, which stays listed.
+test_fleet_agents_across_hosts() {
+  local home fakebin remote_a remote_b remote_c fake_ssh out view
+  home=$(make_home cross-host)
+  fakebin=$(make_fakebin "$home")
+  remote_a=$TMP_ROOT/cross-host-a; remote_b=$TMP_ROOT/cross-host-b; remote_c=$TMP_ROOT/cross-host-c
+  mkdir -p "$remote_a/state" "$remote_a/data" "$remote_a/config" "$remote_a/projects" "$remote_b/state" "$remote_c/state"
+  remote_a=$(cd "$remote_a" && pwd -P); remote_b=$(cd "$remote_b" && pwd -P); remote_c=$(cd "$remote_c" && pwd -P)
+  : > "$remote_a/data/backlog.md"
+  fm_write_meta "$remote_a/state/remote-worker.meta" "window=firstmate:fm-remote-worker" "harness=pi" "kind=ship" \
+    "model=codex-native/gpt-5" "effort=low" "account=codex-b"
+  PATH="$fakebin:$PATH" FM_HOME="$remote_a" FM_SNAPSHOT_HOST=minizero "$SNAPSHOT" --secondmate-home-summary \
+    > "$remote_a/state/home-summary.json" || fail "remote producer failed"
+  # Legacy producer: the same summary with the additive field removed.
+  jq 'del(.agents) | del(.counts.agents) | .home = $h' --arg h "$remote_b" "$remote_a/state/home-summary.json" \
+    > "$remote_b/state/home-summary.json"
+  fake_ssh="$fakebin/fake-ssh"
+  cat > "$fake_ssh" <<'SH'
+#!/usr/bin/env bash
+set -u
+while [ "$#" -gt 0 ]; do
+  case "$1" in -o) shift 2 ;; --) shift; break ;; *) exit 90 ;; esac
+done
+shift 2
+remote_home=$(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$3")
+[ -f "$remote_home/state/home-summary.json" ] || exit 1
+cat "$remote_home/state/home-summary.json"
+SH
+  chmod +x "$fake_ssh"
+  : > "$home/data/backlog.md"
+  cat > "$home/data/secondmates.md" <<EOF
+- mate-a - fixture (host: mini0; root: /r; home: $remote_a; scope: a; projects: alpha; added 2026-08-07)
+- mate-b - fixture (host: mini1; root: /r; home: $remote_b; scope: b; projects: alpha; added 2026-08-07)
+- mate-c - fixture (host: mini2; root: /r; home: $remote_c; scope: c; projects: alpha; added 2026-08-07)
+EOF
+  fm_write_meta "$home/state/mate-a.meta" "kind=secondmate" "mode=secondmate" "harness=claude" \
+    "remote_host=mini0" "remote_root=/r" "home=$remote_a" "account=main-acct"
+  fm_write_meta "$home/state/mate-b.meta" "kind=secondmate" "mode=secondmate" "harness=claude" \
+    "remote_host=mini1" "remote_root=/r" "home=$remote_b" "account=main-acct"
+  fm_write_meta "$home/state/mate-c.meta" "kind=secondmate" "mode=secondmate" "harness=claude" \
+    "remote_host=mini2" "remote_root=/r" "home=$remote_c" "account=main-acct"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SSH_BIN="$fake_ssh" FM_SNAPSHOT_HOST=thishost \
+    FM_SNAPSHOT_CACHE_DIR="$home/state/cache" FM_SNAPSHOT_BUDGET=15 "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.fleet_agents.agents[] | select(.id == "remote-worker")) as $w
+    | $w.home == "mate-a" and $w.host == "mini0" and $w.harness == "pi"
+      and $w.model == "codex-native/gpt-5" and $w.inference.account == "codex-b"
+      and $w.inference.provider == "pi" and $w.inference.provider_source == "harness-table"
+      and ([.fleet_agents.hosts[] | select(.home != null) | {(.home): .status}] | add)
+          == {"mate-a":"reported","mate-b":"not_reported","mate-c":"unreachable"}
+      and ([.fleet_agents.hosts[] | select(.home == "mate-c")][0] | .count == 0 and .host == "mini2")
+      and ([.fleet_agents.agents[] | select(.home == "mate-b")] | length) == 0
+  ' >/dev/null || fail "cross-host agents wrong: $(printf '%s' "$out" | jq -c '.fleet_agents')"
+  view=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SSH_BIN="$fake_ssh" FM_SNAPSHOT_CACHE_DIR="$home/state/cache" \
+    FM_SNAPSHOT_BUDGET=15 "$VIEW")
+  assert_contains "$view" "## Agents" "view must have an Agents section"
+  assert_contains "$view" "| remote-worker | mate-a | mini0 | ship | " "view must tag the remote agent with its home and host"
+  assert_contains "$view" "| mini2 | mate-c | unreachable (0) |" "unreachable host must stay visible"
+  assert_contains "$view" "| mini1 | mate-b | not_reported (0) |" "legacy producer must read as not reported, not empty"
+  pass "remote second mates' agents are tagged with host; legacy and unreachable homes stay visible"
+}
+
+test_quota_summary_is_opt_in_and_never_guessed() {
+  local home fakebin out view
+  home=$(make_home quota)
+  fakebin=$(make_fakebin "$home")
+  write_quota_fixture "$fakebin" 40
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e 'has("quota") | not' >/dev/null || fail "quota must be opt-in"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_HOST=thishost "$SNAPSHOT" --json --quota)
+  printf '%s' "$out" | jq -e '
+    .quota.collected == true and .quota.scope == "local" and .quota.host == "thishost"
+    and .quota.providers.status == "ok"
+    and ([.quota.providers.rows[] | select(.provider == "claude")][0]
+         | .status == "known" and .headroom_percent == 40 and (.scopes | length) == 2)
+    and ([.quota.providers.rows[] | select(.provider == "codex")][0]
+         | .status == "unknown" and .headroom_percent == null and .reason == "no login")
+    and .quota.accounts.status == "none_declared"
+  ' >/dev/null || fail "provider quota summary wrong: $(printf '%s' "$out" | jq -c '.quota')"
+  # Declared account whose token file is unusable reads unknown with a reason.
+  printf 'token:%s/missing-token\n' "$home" > "$home/config/claude-accounts"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json --quota)
+  printf '%s' "$out" | jq -e '
+    .quota.accounts.status == "ok"
+    and (.quota.accounts.rows | length) == 1
+    and (.quota.accounts.rows[0] | .status == "unknown" and .headroom_percent == null and (.reason | length) > 0)
+  ' >/dev/null || fail "unmeasured account must be unknown: $(printf '%s' "$out" | jq -c '.quota.accounts')"
+  # A failing quota-axi leaves every provider unknown rather than empty or guessed.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$fakebin/quota-axi"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json --quota)
+  printf '%s' "$out" | jq -e '
+    .quota.providers.status == "unknown" and (.quota.providers.reason | length) > 0 and (.quota.providers.rows | length) == 0
+  ' >/dev/null || fail "failed quota-axi must read unknown"
+  view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
+  assert_contains "$view" "## Quota" "view must have a Quota section"
+  assert_contains "$view" "| providers | unknown | unknown |" "view must print unknown for unreadable quota"
+  write_quota_fixture "$fakebin" 40
+  view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
+  assert_contains "$view" "| claude [default] | known | 40% |" "view must print known headroom"
+  assert_contains "$view" "| codex [default] | unknown | unknown | no login |" "view must print unknown headroom with reason"
+  pass "quota summary is opt-in, reduces known headroom, and reports unknown with a reason"
+}
+
 fm_test_run \
   test_empty_fleet_json \
   test_fixture_snapshot_json \
@@ -1268,4 +1422,7 @@ fm_test_run \
   test_view_renders_dead_secondmate_agent_status \
   test_fm_home_resolution_default_and_control_help \
   test_view_reports_no_secondmate_as_first_class_state \
-  test_view_reports_unreachable_remote_secondmate
+  test_view_reports_unreachable_remote_secondmate \
+  test_task_rows_carry_agent_fields \
+  test_fleet_agents_across_hosts \
+  test_quota_summary_is_opt_in_and_never_guessed

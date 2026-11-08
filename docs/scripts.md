@@ -18,7 +18,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
 | `fm-cloud.sh`            | Launch Claude Code cloud runs as dispatched tasks, check, land, and retire them ([guide](cloud-runs.md)) |
 | `fm-fleet-ledger.sh`     | Append the opt-in fleet activity ledger's records ([contract](fleet-ledger.md))      |
-| `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view                                   |
+| `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view, including per-agent host, harness, model, inference source, and quota headroom |
 | `fm-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment |
 | `fm-bearings-board.sh`   | Build and arm the stable interactive `/bearings lavish` fleet board                  |
 | `fm-secondmate-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
