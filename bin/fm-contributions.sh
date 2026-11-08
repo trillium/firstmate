@@ -70,8 +70,11 @@
 # runs it, and the authority to retire is the captain's.
 #
 # poll consumes fm-fleet-snapshot.sh --contribution-input, a local-only read,
-# and spends at most FM_CONTRIBUTIONS_BUDGET seconds on forge reads (default 20,
-# 1..25). A configured value rides the generated check shim into watcher runs
+# and spends at most FM_CONTRIBUTIONS_BUDGET seconds of wall clock from the poll's
+# start on forge reads (default 20, 1..25), counting repository discovery
+# (which stops early enough to leave the observation reserve below) and the
+# push-integrity reads and incident filing after each observation; an
+# integrity check the budget cannot finish is retried by the next poll. A configured value rides the generated check shim into watcher runs
 # and is cut down to the watcher's own per-check bound (FM_CHECK_TIMEOUT,
 # default 30, read from the poll's environment because the watcher runs it as
 # a direct child) with a three-second margin. Every read, including one retry,
@@ -258,6 +261,7 @@ review_bots() { # config/contribution-review-bots -> JSON array of logins
 }
 [ "$BUDGET_CAP" -ge 1 ] || BUDGET_CAP=1
 [ "$BUDGET" -le "$BUDGET_CAP" ] || BUDGET=$BUDGET_CAP
+OBSERVATION_RESERVE=$((BUDGET < 15 ? BUDGET : 15))
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-contributions.XXXXXX")
 LOCK_HELD=0
 cleanup() {
@@ -687,13 +691,18 @@ registered_github_repositories() { # stdout: unique owner/repo entries for regis
 }
 
 discover_authored_prs() { # enroll new authenticated-operator PRs without changing existing owners
-  local repo out err url rc task=contributions-auto
+  local repo out err url rc task=contributions-auto left
   while IFS= read -r repo; do
     [ -n "$repo" ] || continue
+    # Discovery shares the poll's wall-clock budget but leaves the observation
+    # reserve intact; a repository it cannot reach in time waits for the next poll.
+    left=$((POLL_START + BUDGET - OBSERVATION_RESERVE - $(date +%s)))
+    [ "$left" -ge 1 ] || break
+    [ "$left" -le 5 ] || left=5
     out=$(mktemp "$TMP/discovery-output.XXXXXX")
     err=$(mktemp "$TMP/discovery-error.XXXXXX")
     rc=0
-    fm_run_timed 5 env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
+    fm_run_timed "$left" env GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 \
       gh pr list --repo "$repo" --author @me --state open --json url --limit 100 > "$out" 2> "$err" || rc=$?
     if [ "$rc" -ne 0 ] || ! jq -e 'type == "array" and all(.[]; (.url | type) == "string")' "$out" >/dev/null 2>&1; then
       printf 'contributions: discovery unavailable for %s - %s\n' "$repo" \
@@ -721,6 +730,7 @@ discover_authored_prs() { # enroll new authenticated-operator PRs without changi
 poll() {
   local task url old kind error observed why
   local -a row
+  POLL_START=$(date +%s)
   acquire
   get_input
   read_saved
@@ -751,8 +761,9 @@ poll() {
   jq -Rnr --argjson bucket "$((EPOCH / 300))" '
     [inputs] | if length == 0 then . else ($bucket % length) as $offset | .[$offset:] + .[:$offset] end
     | .[]' < "$TMP/live.tsv" > "$TMP/known.tsv"
-  DEADLINE=$(( $(date +%s) + BUDGET ))
-  OBSERVATION_RESERVE=$((BUDGET < 15 ? BUDGET : 15))
+  # One wall-clock budget from the start of the poll covers discovery, every
+  # forge read and the push-integrity check that follows each observation.
+  DEADLINE=$((POLL_START + BUDGET))
   while IFS=$'\t' read -r -a row; do
     [ $((DEADLINE - $(date +%s))) -ge "$OBSERVATION_RESERVE" ] || break
     url=${row[0]}
