@@ -2200,4 +2200,27 @@ assert_absent "$LOG/argv" "malformed claude-accounts makes no network call"
 rm -f "$HOME_DIR/config/claude-accounts"
 pass "config/claude-accounts: per-account headroom feeds candidate and rule-floor evaluation, skips low accounts, and keeps unmeasured accounts eligible"
 
+# --- rejected or expired provider credential is concrete proof, not uncertainty ---
+reset_log
+write_response "$RESPONSE" rule_4 0.9
+CRED="$TMP_ROOT/cred.json"
+jq '(.providers[] | select(.provider == "kimi") | .state) = {"status":"auth_required","error":"provider_auth_rejected"}' "$QUOTA" > "$CRED"
+TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$CRED" run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "rejected credential still resolves"
+assert_contains "$out" 'candidate: kimi:kimi-code/k3  provider=kimi  -> not eligible: quota-axi reports provider kimi credential rejected (provider_auth_rejected, state auth_required)' "a provider-rejected credential makes the candidate not eligible and names the evidence"
+assert_not_contains "$out" 'eligible candidate(s) unranked (kimi)' "a rejected candidate is not counted as unranked uncertainty"
+
+jq '(.providers[] | select(.provider == "kimi") | .state) = {"status":"fresh","authStatus":"usable","degradedSources":[{"source":"kimi:oauth","error":"credentials_expired"}]}' "$QUOTA" > "$CRED"
+TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$CRED" run code out err "$BRIEF" --project pager
+assert_contains "$out" 'candidate: kimi:kimi-code/k3  provider=kimi  -> not eligible: quota-axi reports provider kimi credential expired (credentials_expired from source kimi:oauth)' "an expired credential makes the candidate not eligible and names the evidence"
+
+jq '(.providers[] | select(.provider == "kimi") | .state) = {"status":"fresh","degradedSources":[{"source":"pi:xai","error":"credentials_expired"}]}' "$QUOTA" > "$CRED"
+TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$CRED" run code out err "$BRIEF" --project pager
+assert_contains "$out" 'candidate: kimi:kimi-code/k3  provider=kimi  -> eligible, unranked' "an expired source belonging to another harness does not disqualify this candidate"
+
+jq '(.providers[] | select(.provider == "kimi") | .state) = {"status":"auth_required"}' "$QUOTA" > "$CRED"
+TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$CRED" run code out err "$BRIEF" --project pager
+assert_contains "$out" 'candidate: kimi:kimi-code/k3  provider=kimi  -> eligible, unranked: provider kimi unmeasured (unknown): disclosed uncertainty' "auth_required without a rejection stays disclosed uncertainty"
+pass "rejected or expired provider credentials make a candidate not eligible; plain unmeasured stays eligible"
+
 printf '# all fm-dispatch-resolve tests passed\n'
