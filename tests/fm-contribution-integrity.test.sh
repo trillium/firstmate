@@ -213,6 +213,7 @@ test_slow_forge_and_filing_stay_inside_the_poll_budget() {
     || fail 'the unfinished head was recorded instead of retried'
   jq -e '.records[0].checked_at != null and .records[0].observation.head != null' "$home/data/delivery/contributions.json" >/dev/null \
     || fail 'the observation finished before the budget ran out was not recorded'
+  # shellcheck disable=SC2016 # $* and $FORGE are meant to expand in the stub, not here
   printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$FORGE/robots.log"\nprintf "agent-fake\\n"\n' > "$home/fakebin/robots"
   printf '#!/bin/sh\nexec "%s" "$@"\n' "$home/fakebin/gh-fast" > "$home/fakebin/gh"
   out=$(poll "$home") || fail 'retry poll failed'
