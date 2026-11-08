@@ -61,6 +61,11 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# A failing subcommand that ends this leg under set -e must still say why on
+# stderr, because the parent only relays the exit status and this stderr.
+# shellcheck source=bin/fm-abort-reason-lib.sh
+. "$SCRIPT_DIR/fm-abort-reason-lib.sh"
+fm_abort_reason_install fm-remote-secondmate-control
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 # Same deployment choice bin/fm-remote-doctor.sh owns: FM_REMOTE_HERDR_SESSION
 # points the remote-secondmate session elsewhere without editing code, and

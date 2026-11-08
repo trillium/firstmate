@@ -672,6 +672,75 @@ test_remote_real_failure_still_fails() {
   pass "fm-send remote: a real remote failure still fails loudly with the remote diagnostics"
 }
 
+# Every nonzero exit of a remote send must say why on stderr (the caller only
+# sees the exit status). The remote leg exiting 1 with NO stderr of its own is
+# the case that used to leave the caller with nothing but the exit code.
+test_remote_silent_leg_failure_names_reason() {
+  local dir fb ssh_log home rhome rc err
+  dir="$TMP_ROOT/remote-silent"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); ssh_log="$dir/ssh.log"; : > "$ssh_log"
+  rhome=$(setup_remote_secondmate_home remote-silent)
+  home=$(setup_remote_parent_home remote-silent "$rhome")
+
+  rc=0
+  send_env "$fb" "$home" "$ssh_log" FM_FAKE_SSH_RC=1 \
+    "$SEND" rsm "please rename the metric" >"$dir/out" 2>"$dir/err" || rc=$?
+  err=$(cat "$dir/err")
+  expect_code 1 "$rc" "a remote leg that fails silently must still fail the send"
+  assert_contains "$err" "exited 1" \
+    "a silent remote leg failure must name the remote exit code on stderr"
+  assert_contains "$err" "not enqueued" \
+    "a silent remote leg failure must say the message was not enqueued"
+  assert_contains "$err" "fm-remote-secondmate-control.sh send-stdin" \
+    "a silent remote leg failure must name the remote command"
+  pass "fm-send remote: a remote leg that fails with no stderr still names its exit code and the missing enqueue"
+}
+
+# A set -e abort inside the remote leg (here: an unreadable identity marker)
+# used to exit nonzero with nothing on stderr; the leg now names the failing
+# command, and the parent relays it.
+test_remote_leg_set_e_abort_names_command() {
+  local dir fb ssh_log home rhome rc err
+  if [ "$(id -u)" = 0 ]; then pass "fm-send remote: set -e abort test skipped as root"; return 0; fi
+  dir="$TMP_ROOT/remote-abort"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); ssh_log="$dir/ssh.log"; : > "$ssh_log"
+  rhome=$(setup_remote_secondmate_home remote-abort)
+  home=$(setup_remote_parent_home remote-abort "$rhome")
+  chmod 000 "$rhome/.fm-secondmate-home"
+
+  rc=0
+  send_env "$fb" "$home" "$ssh_log" \
+    "$SEND" rsm "please rename the metric" >"$dir/out" 2>"$dir/err" || rc=$?
+  chmod 600 "$rhome/.fm-secondmate-home"
+  err=$(cat "$dir/err")
+  [ "$rc" -ne 0 ] || fail "a remote leg that aborts must fail the send"
+  assert_contains "$err" "fm-remote-secondmate-control aborted with exit" \
+    "a set -e abort in the remote leg must name itself on stderr"
+  assert_contains "$err" "failing command at line" \
+    "a set -e abort in the remote leg must name the failing command"
+  assert_contains "$err" "steer not sent to remote secondmate rsm" \
+    "the parent must still report the steer as not sent"
+  [ -z "$(remote_inbox_records "$rhome")" ] \
+    || fail "an aborted remote leg must leave no inbox record"
+  pass "fm-send remote: a set -e abort in the remote leg names the failing command"
+}
+
+# The shared abort-reason fallback fm-send installs: a set -e abort names the
+# failing command, a path that reported its own reason is not doubled, and a
+# clean exit stays silent.
+test_abort_reason_lib_contract() {
+  local dir out
+  dir="$TMP_ROOT/abort-lib"; mkdir -p "$dir"
+  out=$(bash -c 'set -eu; . "$1/bin/fm-abort-reason-lib.sh"; fm_abort_reason_install demo; x=$(false); echo unreachable' _ "$ROOT" 2>&1) && fail "an aborting script must exit nonzero"
+  assert_contains "$out" "demo aborted with exit 1" "a set -e abort must be named on stderr"
+  assert_contains "$out" "failing command at line" "a set -e abort must name the failing command"
+  out=$(bash -c 'set -eu; . "$1/bin/fm-abort-reason-lib.sh"; fm_abort_reason_install demo; false || { echo "error: own reason" >&2; exit 1; }' _ "$ROOT" 2>&1) && fail "a refusing script must exit nonzero"
+  assert_not_contains "$out" "aborted with exit" "a path that reported its own reason must not be doubled"
+  out=$(bash -c 'set -eu; . "$1/bin/fm-abort-reason-lib.sh"; fm_abort_reason_install demo; true' _ "$ROOT" 2>&1) || fail "a clean script must exit zero"
+  [ -z "$out" ] || fail "a clean exit must stay silent: $out"
+  pass "abort-reason lib: names a set -e abort, never doubles an explained exit, silent on success"
+}
+
 test_remote_exit3_no_longer_delivered() {
   local dir fb ssh_log home rhome rc err
   dir="$TMP_ROOT/remote-exit3"; mkdir -p "$dir"
@@ -901,6 +970,9 @@ test_remote_expected_host_revalidates_final_route
 test_remote_resolve_key_closes_at_enqueue
 test_remote_slash_rides_inbox
 test_remote_real_failure_still_fails
+test_remote_silent_leg_failure_names_reason
+test_remote_leg_set_e_abort_names_command
+test_abort_reason_lib_contract
 test_remote_exit3_no_longer_delivered
 test_remote_transport_loss_preserves_expectation
 test_remote_send_budget_bounds_busy_lane
