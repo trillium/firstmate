@@ -18,6 +18,9 @@
 # `herdr-core` before the `hc` alias, so the asset name is what gets installed.
 set -eu
 
+# shellcheck source=bin/fm-install-fetch-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fm-install-fetch-lib.sh"
+
 FM_HC_PIN_VERSION=0.1.14
 # Bounded download ceiling (bytes). The largest official 0.1.14 tarball is
 # under 3 MiB.
@@ -60,9 +63,7 @@ URL="${FM_HC_RELEASES}/${FM_HC_PIN_VERSION}/${ASSET}"
 TMP=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/fm-hc-install.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
-printf 'fm-install-hc.sh: downloading %s from %s\n' "$ASSET" "$URL" >&2
-# --fail: HTTP errors; --location: follow redirects; --max-filesize: bound.
-curl -fsSL --max-filesize "$FM_HC_MAX_BYTES" "$URL" -o "$TMP/$ASSET" \
+fm_install_fetch fm-install-hc.sh "$URL" "$TMP/$ASSET" "$SHA256" "$FM_HC_MAX_BYTES" \
   || die "download failed for $URL (bounded at $FM_HC_MAX_BYTES bytes)"
 
 if command -v sha256sum >/dev/null 2>&1; then

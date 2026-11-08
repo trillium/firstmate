@@ -15,6 +15,9 @@
 # at or above the required floor (16 for the real-Herdr family).
 set -eu
 
+# shellcheck source=bin/fm-install-fetch-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fm-install-fetch-lib.sh"
+
 # Exact pin - change only with a re-verified real-Herdr matrix.
 FM_HERDR_CI_VERSION=0.7.4
 FM_HERDR_CI_TAG="v${FM_HERDR_CI_VERSION}"
@@ -60,9 +63,7 @@ URL="https://github.com/${FM_HERDR_CI_REPO}/releases/download/${FM_HERDR_CI_TAG}
 TMP=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/fm-herdr.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
-printf 'fm-install-herdr.sh: downloading %s from %s\n' "$ASSET" "$URL" >&2
-# --fail: HTTP errors; --location: follow redirects; --max-filesize: bound.
-curl -fsSL --max-filesize "$FM_HERDR_CI_MAX_BYTES" "$URL" -o "$TMP/$ASSET" \
+fm_install_fetch fm-install-herdr.sh "$URL" "$TMP/$ASSET" "$SHA256" "$FM_HERDR_CI_MAX_BYTES" \
   || die "download failed for $URL (bounded at $FM_HERDR_CI_MAX_BYTES bytes)"
 
 if command -v sha256sum >/dev/null 2>&1; then
