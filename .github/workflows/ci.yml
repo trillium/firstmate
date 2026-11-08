@@ -94,12 +94,21 @@ jobs:
         partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v6
+      - name: Restore pinned tool downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fm-install-cache
+          key: fm-install-shellcheck-actionlint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/fm-install-shellcheck.sh', 'bin/fm-install-fetch-lib.sh', 'bin/fm-lint.sh', 'bin/fm-install-actionlint.sh', 'bin/fm-install-fetch-lib.sh', 'bin/fm-lint-workflows.sh') }}
       - name: Install pinned ShellCheck
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned actionlint
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
@@ -183,14 +192,24 @@ jobs:
           else
             echo "run=empty" >> "$GITHUB_OUTPUT"
           fi
+      - name: Restore pinned tool downloads
+        if: steps.affected.outputs.run == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fm-install-cache
+          key: fm-install-shellcheck-actionlint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/fm-install-shellcheck.sh', 'bin/fm-install-fetch-lib.sh', 'bin/fm-lint.sh', 'bin/fm-install-actionlint.sh', 'bin/fm-install-fetch-lib.sh', 'bin/fm-lint-workflows.sh') }}
       - name: Install pinned ShellCheck
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned actionlint
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
@@ -267,14 +286,24 @@ jobs:
           else
             echo "run=empty" >> "$GITHUB_OUTPUT"
           fi
+      - name: Restore pinned tool downloads
+        if: steps.affected.outputs.run == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fm-install-cache
+          key: fm-install-shellcheck-actionlint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/fm-install-shellcheck.sh', 'bin/fm-install-fetch-lib.sh', 'bin/fm-lint.sh', 'bin/fm-install-actionlint.sh', 'bin/fm-install-fetch-lib.sh', 'bin/fm-lint-workflows.sh') }}
       - name: Install pinned ShellCheck
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned actionlint
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
@@ -357,14 +386,24 @@ jobs:
           else
             echo "run=empty" >> "$GITHUB_OUTPUT"
           fi
+      - name: Restore pinned tool downloads
+        if: steps.affected.outputs.run == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fm-install-cache
+          key: fm-install-shellcheck-actionlint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/fm-install-shellcheck.sh', 'bin/fm-install-fetch-lib.sh', 'bin/fm-lint.sh', 'bin/fm-install-actionlint.sh', 'bin/fm-install-fetch-lib.sh', 'bin/fm-lint-workflows.sh') }}
       - name: Install pinned ShellCheck
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned actionlint
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
@@ -474,14 +513,24 @@ jobs:
           command -v tar >/dev/null || { echo "::error::tar is required"; exit 1; }
           jq --version
           python3 --version
+      - name: Restore pinned tool downloads
+        if: steps.affected.outputs.run == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fm-install-cache
+          key: fm-install-herdr-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/fm-install-herdr.sh', 'bin/fm-install-treehouse.sh', 'bin/fm-install-fetch-lib.sh') }}
       - name: Install pinned Herdr
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-herdr.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned Treehouse
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           # Several real-herdr-gated E2E scripts require treehouse for spawn
@@ -639,14 +688,24 @@ jobs:
           command -v tar >/dev/null || { echo "::error::tar is required"; exit 1; }
           command -v sha256sum >/dev/null || { echo "::error::sha256sum is required"; exit 1; }
           jq --version
+      - name: Restore pinned tool downloads
+        if: steps.affected.outputs.run == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fm-install-cache
+          key: fm-install-hc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/fm-install-hc.sh', 'bin/fm-install-treehouse.sh', 'bin/fm-install-fetch-lib.sh') }}
       - name: Install pinned herdr-core
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-hc.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned Treehouse
         if: steps.affected.outputs.run == 'yes'
+        env:
+          FM_INSTALL_CACHE_DIR: ${{ runner.temp }}/fm-install-cache
         run: |
           set -eu
           bin/fm-install-treehouse.sh "$RUNNER_TEMP/bin"

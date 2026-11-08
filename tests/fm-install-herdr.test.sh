@@ -16,6 +16,8 @@ done
 exit 22
 SH
 chmod +x "$FAKEBIN/curl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKEBIN/sleep"
+chmod +x "$FAKEBIN/sleep"
 
 code=0
 FM_CURL_URL_LOG="$TMP/url" PATH="$FAKEBIN:$PATH" RUNNER_TEMP="$TMP" \
