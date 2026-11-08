@@ -2085,7 +2085,7 @@ contribution_tasks_json() {
 # effectivePercentRemaining across the all_models / all_products scopes, and null
 # when none is known, so an unmeasured provider or account reads as unknown.
 snapshot_quota_json() {  # <output-file>
-  local out=$1 work providers_pid='' accounts_pid='' providers_rc=0 accounts_rc=0 accounts_declared=0
+  local out=$1 work providers_pid='' accounts_pid='' providers_rc=0 accounts_rc=0
   local providers_state=ok providers_reason='' accounts_state=ok accounts_reason=''
   work=$(mktemp -d "${TMPDIR:-/tmp}/fm-fleet-quota.XXXXXX") || return 1
   : > "$work/providers.json"
@@ -2099,7 +2099,6 @@ snapshot_quota_json() {  # <output-file>
     providers_reason="quota-axi not installed"
   fi
   if [ -f "$CONFIG/claude-accounts" ]; then
-    accounts_declared=1
     ( fm_run_timed "$FM_SNAPSHOT_QUOTA_TIMEOUT" env FM_HOME="$FM_HOME" FM_CONFIG_OVERRIDE="$CONFIG" \
         FM_STATE_OVERRIDE="$STATE" FM_CLAUDE_ACCOUNT_QUOTA_SECONDS="$FM_SNAPSHOT_QUOTA_TIMEOUT" \
         "$SCRIPT_DIR/fm-claude-account-quota.sh" --json \
