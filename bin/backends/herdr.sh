@@ -1190,6 +1190,79 @@ fm_backend_herdr_workspace_move_capable() {  # <session>
   ' >/dev/null 2>&1 || return 5
 }
 
+# fm_backend_herdr_tab_move_capable: verify that one guarded raw tab.move
+# request is possible in <session>: python3 for the transport, a readable
+# protocol, and the exact whitelisted method and parameter schema. Silent;
+# the caller owns the warning wording.
+# Return codes: 1 python3 missing, 2 protocol unreadable, 4 schema unreadable,
+# 5 method or parameter schema unsupported (an older Herdr without tab.move).
+fm_backend_herdr_tab_move_capable() {  # <session>
+  local session=$1 protocol schema
+  command -v python3 >/dev/null 2>&1 || return 1
+  protocol=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.client.protocol // empty' 2>/dev/null)
+  case "$protocol" in
+    ''|*[!0-9]*) return 2 ;;
+  esac
+  schema=$(fm_backend_herdr_cli "$session" api schema --json 2>/dev/null) || return 4
+  printf '%s' "$schema" | jq -e '
+    any(.schemas.request.oneOf[]?; .properties.method.const == "tab.move")
+    and .schemas.request["$defs"].TabMoveParams.required == ["tab_id", "insert_index"]
+    and .schemas.request["$defs"].TabMoveParams.properties.insert_index.type == "integer"
+  ' >/dev/null 2>&1 || return 5
+}
+
+# fm_backend_herdr_tab_pin_first: move one labeled secondmate tab to index 0 of
+# its workspace so herdr's creation-order listing no longer buries it behind
+# worker tabs. Display order is cosmetic, so this NEVER fails the caller: a
+# Herdr without tab.move skips quietly, and every other problem warns and
+# returns 0. The caller passes only a tab it just created or adopted for a
+# secondmate, never the primary session's own tab. The move is verified against
+# the server's returned tab list, and the exact prior active workspace and tab
+# are restored when the move changed focus.
+fm_backend_herdr_tab_pin_first() {  # <session> <tab_id>
+  local session=$1 tab_id=$2 capable socket mover focus_before response move_status
+  [ -n "$session" ] && [ -n "$tab_id" ] || return 0
+  if fm_backend_herdr_tab_move_capable "$session"; then
+    capable=0
+  else
+    capable=$?
+  fi
+  case "$capable" in
+    0) ;;
+    5) return 0 ;;
+    *)
+      echo "warning: herdr tab pinning could not verify tab.move support; leaving tab $tab_id in Herdr's current order" >&2
+      return 0
+      ;;
+  esac
+  socket=$(fm_backend_herdr_presentation_session_socket_path "$session") || {
+    echo "warning: herdr tab pinning found an ambiguous named session socket; leaving tab $tab_id in Herdr's current order" >&2
+    return 0
+  }
+  mover=${FM_BACKEND_HERDR_TAB_MOVER:-$FM_BACKEND_HERDR_ROOT/bin/backends/herdr-tab-move.py}
+  focus_before=$(fm_backend_herdr_projection_focus_snapshot "$session") || focus_before=
+  if response=$("$mover" "$socket" "$tab_id" 0 2>/dev/null); then
+    move_status=0
+  else
+    move_status=$?
+  fi
+  [ -z "$focus_before" ] || fm_backend_herdr_projection_focus_restore "$session" "$focus_before" "tab move" || true
+  if [ "$move_status" -ne 0 ]; then
+    echo "warning: herdr tab pinning failed or had an ambiguous response; leaving tab $tab_id in Herdr's current order" >&2
+    return 0
+  fi
+  printf '%s' "$response" | jq -e --arg tab "$tab_id" '
+    .result.type == "tab_list"
+    and ([.result.tabs[] | select(.tab_id == $tab)] | length) == 1
+    and (
+      [.result.tabs[] | select(.tab_id == $tab)][0].workspace_id as $ws
+      | [.result.tabs[] | select(.workspace_id == $ws)][0].tab_id == $tab
+    )
+  ' >/dev/null 2>&1 \
+    || echo "warning: herdr tab pinning returned an unverifiable order for tab $tab_id" >&2
+  return 0
+}
+
 # fm_backend_herdr_emptying_close_plan: choose the focus-safe removal for one
 # exact pane. The LAST echoed line is the plan: "plain" (use the ordinary
 # explicit close; below the presentation version floor the exact-tab restore

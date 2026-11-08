@@ -12,6 +12,7 @@
 #   fm-remote-secondmate-control.sh capture <id> [lines]
 #   fm-remote-secondmate-control.sh observe <id>
 #   fm-remote-secondmate-control.sh tab-rename <id> <label>
+#   fm-remote-secondmate-control.sh tab-pin <id>
 #   fm-remote-secondmate-control.sh sync <id> [<parent-commit>]
 #   fm-remote-secondmate-control.sh update <id>
 #   fm-remote-secondmate-control.sh retire <id> [--force]
@@ -479,6 +480,19 @@ cmd_tab_rename() {
     || die "could not rename the Herdr tab for remote secondmate $id"
 }
 
+# Pin the secondmate's confirmed tab first in its workspace. Display order is
+# cosmetic, so a Herdr without tab.move or any move problem never fails this.
+cmd_tab_pin() {
+  local id=$1 tab_id
+  validate_id "$id"
+  validate_home "$id"
+  remote_endpoint_require "$id"
+  tab_id=$(fm_meta_get "$REMOTE_ENDPOINT_META" herdr_tab_id)
+  [ -n "$tab_id" ] || die "remote secondmate $id endpoint records no Herdr tab id"
+  fm_backend_source herdr
+  fm_backend_herdr_tab_pin_first "$REMOTE_HERDR_SESSION" "$tab_id"
+}
+
 cmd_observe() {
   local id=$1 harness
   validate_id "$id"
@@ -590,7 +604,7 @@ cmd_retire() {
 # they run without FM_HOME; every real command resolves TARGET_HOME first.
 case "${1:-}" in
   ''|-h|--help|help) usage ;;
-  launch|relaunch|state|route|send|send-stdin|key|capture|observe|tab-rename|sync|update|retire) require_home ;;
+  launch|relaunch|state|route|send|send-stdin|key|capture|observe|tab-rename|tab-pin|sync|update|retire) require_home ;;
   *) die "unknown command: ${1:-}" ;;
 esac
 
@@ -605,6 +619,7 @@ case "${1:-}" in
   capture) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_capture "$@" ;;
   observe) shift; [ "$#" -eq 1 ] || usage; cmd_observe "$@" ;;
   tab-rename) shift; [ "$#" -eq 2 ] || usage; cmd_tab_rename "$@" ;;
+  tab-pin) shift; [ "$#" -eq 1 ] || usage; cmd_tab_pin "$@" ;;
   sync) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_sync "$@" ;;
   update) shift; [ "$#" -eq 1 ] || usage; cmd_update "$@" ;;
   retire) shift; [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_retire "$@" ;;
