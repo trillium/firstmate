@@ -684,7 +684,12 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
       (applicable_in_row($p_row; $p; ($c.model // ""); ($c.quota_scope // null))) as $rows |
       (evidence($rows)) as $bounds |
       (floor_state_row($c.floor; $p_row)) as $profile_floor_state |
-      if any($rows[]; (.runway.status // "") == "exhausted_now") then
+      ([($p_row.state.degradedSources // [])[] | select(.error == "credentials_expired" and ((.source // "") | (contains(":") | not) or startswith($c.harness + ":")))] | first) as $expired |
+      if $p_row.state.error == "provider_auth_rejected" then
+        {profile: $c, provider: $p, bounds: $bounds, eligible: false, reason: "quota-axi reports provider \($p) credential rejected (provider_auth_rejected, state \($p_row.state.status // "unknown"))"}
+      elif $expired != null then
+        {profile: $c, provider: $p, bounds: $bounds, eligible: false, reason: "quota-axi reports provider \($p) credential expired (credentials_expired from source \($expired.source // "unknown"))"}
+      elif any($rows[]; (.runway.status // "") == "exhausted_now") then
         ($rows | map(select((.runway.status // "") == "exhausted_now")) | first) as $bad |
         {profile: $c, provider: $p, bounds: $bounds, scope: $bad.scope, pct: ($bad.effectivePercentRemaining // null), runway: $bad.runway.status, eligible: false, reason: "runway exhausted_now at \($bad.scope)"}
       elif any($rows[]; .status == "known" and (.effectivePercentRemaining | type) == "number" and .effectivePercentRemaining <= 0) then
