@@ -5211,6 +5211,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
       fm_backend_source herdr && fm_backend_herdr_tab_rename "$SES" "$HERDR_TAB_ID" "$TAB_LABEL" \
         || echo "warning: could not apply tab label '$TAB_LABEL' to the adopted herdr tab for $ID" >&2
     fi
+    if [ "$KIND" = secondmate ] && [ -n "$TAB_LABEL" ] && [ -n "$HERDR_TAB_ID" ]; then
+      fm_backend_source herdr && fm_backend_herdr_tab_pin_first "$SES" "$HERDR_TAB_ID" || true
+    fi
   elif [ "$BACKEND" = rex ]; then
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -5333,6 +5336,10 @@ EOF
     if [ -z "$HERDR_TAB_ID" ] || [ -z "$HERDR_PANE_ID" ]; then
       echo "error: herdr did not return a tab/pane id for $W" >&2
       exit 1
+    fi
+    # A labeled secondmate tab is pinned first in its workspace (docs/configuration.md "Tab labels").
+    if [ "$KIND" = secondmate ] && [ -n "$TAB_LABEL" ]; then
+      fm_backend_herdr_tab_pin_first "$HERDR_SES" "$HERDR_TAB_ID" || true
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
     SES=$HERDR_SES
@@ -5533,6 +5540,10 @@ EOF
     if [ -z "$HERDR_TAB_ID" ] || [ -z "$HERDR_PANE_ID" ]; then
       echo "error: herdr did not return a tab/pane id for $W" >&2
       exit 1
+    fi
+    # A labeled secondmate tab is pinned first in its workspace (docs/configuration.md "Tab labels").
+    if [ "$KIND" = secondmate ] && [ -n "$TAB_LABEL" ]; then
+      fm_backend_herdr_tab_pin_first "$HERDR_SES" "$HERDR_TAB_ID" || true
     fi
     T="$HERDR_SES:$HERDR_PANE_ID"
     ;;

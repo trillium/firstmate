@@ -609,6 +609,10 @@ Firstmate applies the label when it creates the tab at launch or respawn, and re
 A remote secondmate's tab is renamed over SSH from this home's file after a confirmed launch or relaunch, since the remote host has no copy.
 Without the file, or for an id it does not list, the tab keeps the default `fm-<id>` name, and other backends ignore the file.
 Herdr addresses panes by id, so the label is display only.
+A labeled secondmate tab is also pinned first in its workspace, because Herdr lists tabs in creation order and a worker tab created earlier would otherwise sit ahead of it.
+The pin runs after a fresh secondmate launch and after a relaunch (including the remote host's tab, over SSH), using Herdr's socket `tab.move` through `bin/backends/herdr-tab-move.py`.
+It moves only the secondmate's own tab, never the primary session's tab, never reorders tabs that already exist, and restores the prior focus if the move changes it.
+A Herdr without `tab.move` skips the pin quietly, and any other pin problem only warns, so ordering never fails a launch.
 Firstmate never writes a name for the primary session's own tab; that stays whatever the captain set.
 
 ### Liveness classification

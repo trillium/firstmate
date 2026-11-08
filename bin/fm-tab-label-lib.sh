@@ -28,11 +28,15 @@ fm_tab_label_lookup() {
 # secondmate's confirmed herdr tab to its label from THIS home's config/tab-labels
 # (the remote host's own home has none). No label means no call; a failed rename
 # only warns, because the tab name is display-only and the launch already stands.
+# A labeled tab is then pinned first in its workspace (best effort).
 fm_tab_label_apply_remote() {
   local fm_on=$1 config=$2 id=$3 label
   label=$(fm_tab_label_lookup "$config/tab-labels" "$id")
   [ -n "$label" ] || return 0
   "$fm_on" "$id" fm-remote-secondmate-control.sh tab-rename "$id" "$label" </dev/null >/dev/null 2>&1 \
     || echo "warning: could not apply tab label '$label' to remote secondmate $id's herdr tab" >&2
+  # A labeled secondmate tab is also pinned first in its workspace on the remote
+  # host. Pinning is cosmetic, so an older remote without tab-pin stays silent.
+  "$fm_on" "$id" fm-remote-secondmate-control.sh tab-pin "$id" </dev/null >/dev/null 2>&1 || true
   return 0
 }

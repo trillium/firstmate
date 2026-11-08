@@ -76,6 +76,10 @@ if [ "$action" = tab-rename ]; then
   printf 'tab-rename id=%s label=[%s]\n' "$id" "$harness" >> "$FM_FAKE_RENAME_LOG"
   exit 0
 fi
+if [ "$action" = tab-pin ]; then
+  printf 'tab-pin id=%s\n' "$id" >> "$FM_FAKE_RENAME_LOG"
+  exit 0
+fi
 [ "$action" = relaunch ] || exit 94
 case "$FM_FAKE_RELAUNCH_MODE" in
   refuse)
@@ -202,7 +206,8 @@ OUT=$(run_relaunch ios claude claude-opus-5-5 medium); RC=$?
 expect_code 0 "$RC" "a relaunch with a tab label should succeed"$'\n'"$OUT"
 assert_grep 'tab-rename id=ios label=[💎2️⃣ iOS  delivery]' "$TMP/rename.log" \
   "the remote tab was not renamed to the emoji/space label, delivered as one argv element"
-[ "$(wc -l < "$TMP/rename.log" | tr -d ' ')" = 1 ] || fail "exactly one rename should be issued"
+assert_grep 'tab-pin id=ios' "$TMP/rename.log" "the labeled remote tab was not pinned first"
+[ "$(grep -c '^tab-rename' "$TMP/rename.log")" = 1 ] || fail "exactly one rename should be issued"
 pass "a configured tab label is applied to the remote tab over SSH"
 
 # --- no label for the id -> no rename; a refused relaunch -> no rename ------

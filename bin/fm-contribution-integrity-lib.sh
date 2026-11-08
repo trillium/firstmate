@@ -19,6 +19,8 @@
 # head wakes firstmate ("check: contributions integrity <url> rules=<r,..>
 # bad=<head> last-good=<head|none>") and files one robots item; the head is
 # recorded as an incident only after both succeed, so a failed filing retries.
+# Its forge reads and the robots filing share the poll's DEADLINE; with under
+# three seconds left a flagged head waits, unrecorded, for the next poll.
 # A PR whose core read lacks a commit count is skipped, and a failed extra read
 # leaves the head unrecorded so the next poll retries. Detection only: it never
 # touches the forge or the PR, and the pre-push half is a follow-up.
@@ -42,7 +44,7 @@ integrity_read() { # outfile gh-args... : bounded best-effort forge read
 
 contribution_integrity_check() { # canonical-pr-url
   local url=$1 key dir file prior number base_repo head_repo default_branch head_ref head
-  local part ahead=null workflows=false rules incident key_incident reason title body status=0
+  local part ahead=null workflows=false rules incident key_incident reason title body status=0 left
   jq -e '.state == "open" and (.commits | type == "number") and (.head.sha | type == "string")' "$TMP/core.json" >/dev/null 2>&1 || return 0
   key=$(printf '%s' "$url" | shasum -a 256 | awk '{print $1}')
   dir="$STATE/contribution-integrity"
@@ -78,6 +80,9 @@ contribution_integrity_check() { # canonical-pr-url
   rules=$(jq -r 'join(",")' "$TMP/integrity-rules.json")
 
   incident=false
+  # Filing the incident is the one step with side effects outside the forge
+  # reads; without budget left it waits, unrecorded, for the next poll.
+  if [ -n "$rules" ] && [ $((DEADLINE - $(date +%s))) -lt 3 ]; then return 0; fi
   if [ -n "$rules" ]; then
     if ! jq -e --arg head "$head" '(.incidents // []) | index($head) != null' <<< "$prior" >/dev/null; then
       incident=true
@@ -97,7 +102,9 @@ contribution_integrity_check() { # canonical-pr-url
     [ "$status" -eq 0 ] || return 0
     title="Contribution push integrity: $url head ${head:0:12} ($rules)"
     body="Rule(s) fired: $rules. Bad head: $head. Last known-good head: $good_head. PR: $url. Found by fm-contributions integrity check; fix or revert the push, then re-observe."
-    "$SCRIPT_DIR/fm-note.sh" robots "$title" --body "$body" >/dev/null 2>&1 || return 0
+    left=$((DEADLINE - $(date +%s)))
+    [ "$left" -ge 1 ] || return 0
+    fm_run_timed "$left" "$SCRIPT_DIR/fm-note.sh" robots "$title" --body "$body" >/dev/null 2>&1 || return 0
   fi
 
   mkdir -p "$dir"
