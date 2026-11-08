@@ -2,7 +2,7 @@
 
 The xAI `grok` TUI is Claude-Code-compatible.
 Verified initially on 2026-06-29 with 0.2.73, slash submission on 2026-07-03 with 0.2.82, effort on 2026-07-13 with 0.2.99, exit on 2026-07-19 with 0.2.103, and folder trust, the training opt-in, and unsent composer delivery on 2026-09-24 with 1.0.41.
-The directory-trust wording below was read from the Grok Build 1.0.70 binary on 2026-10-29, not from a launched session.
+The directory-trust wording below was read from the Grok Build 1.0.70 binary on 2026-10-29, not from a launched session, and confirmed against a live Grok Build 1.0.77 session on 2026-11-08.
 Launch shape: `grok --always-approve "$(cat <brief>)"`.
 
 ## Operating facts
@@ -44,12 +44,13 @@ The project picker and the directory-trust dialog are separate.
 On 2026-09-24, on the first dispatches after Grok was added to this fleet, Grok 1.0.41 rendered a folder-trust gate in a linked git worktree, and the dialog printed the primary checkout path.
 A linked worktree's git root resolves to the main one, so that text reads exactly like a worktree-isolation violation when isolation is intact.
 Check the worker's real location with `/proc/<pid>/cwd`, never the path the dialog prints.
-Grok Build 1.0.70 asks `Do you trust the contents of this directory?`, with `Yes, proceed` and `No, quit`.
-`../../../bin/fm-grok-trust-lib.sh` owns the complete-dialog predicate, matched on the visible pane only.
+Grok Build 1.0.70 and 1.0.77 ask `Do you trust the contents of this directory?`, with `Yes, proceed` and `No, quit`.
+1.0.70 prints an `Enter or y to trust` hint; 1.0.77 drops that hint and prints each option's key after its label (`Yes, proceed    y` / `No, quit    n`).
+`../../../bin/fm-grok-trust-lib.sh` owns the complete-dialog predicate, matched on the visible pane only, and accepts either complete rendering.
 `../../../bin/fm-spawn.sh` sends `y` on every poll that predicate matches, then requires a later visible capture with the dialog gone and two consecutive ready, dialog-free captures before it reports success.
 An already trusted directory never shows the dialog, and the same gate accepts an empty composer or the idle `Shift+Tab:mode` footer.
 `../../../bin/fm-send.sh` carries only Escape, Enter, and C-c, so `y` is the launch gate's backend key send and not an `fm-send` key.
-On 2026-09-24 Grok 1.0.41 persisted the answer to `~/.grok/trusted_folders.toml`, keyed by the path the dialog prints, and answering `y` on 1.0.70 writes that same store.
+On 2026-09-24 Grok 1.0.41 persisted the answer to `~/.grok/trusted_folders.toml`, keyed by the path the dialog prints, and answering `y` on 1.0.70 or 1.0.77 writes that same store.
 That is the store `../../../bin/fm-spawn.sh` deliberately does not write itself and calls a high-blast-radius write.
 In a linked worktree the trust therefore lands on the primary checkout, not the disposable copy, and it persists for every later Grok run there.
 This enables Grok project hooks for that checkout.

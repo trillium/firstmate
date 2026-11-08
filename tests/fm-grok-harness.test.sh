@@ -70,6 +70,16 @@ wrapped_screen() {
     'y  Yes, proceed' \
     'n  No, quit'
 }
+trust_screen_177() {
+  printf '%s\n' \
+    'Do you trust the contents of this directory?' \
+    '/some/project/dir' \
+    'Grok Build may run or modify contents in this directory,' \
+    'posing security risks.' \
+    '' \
+    'Yes, proceed                 y' \
+    'No, quit                     n'
+}
 ready_screen() {
   case "${FM_FAKE_GROK_READY_SCREEN:-composer}" in
     footer) printf 'Shift+Tab:mode\n' ;;
@@ -81,6 +91,7 @@ fake_screen() {
     ready) ready_screen ;;
     trust) trust_screen ;;
     trust-wrapped) wrapped_screen ;;
+    trust-177) trust_screen_177 ;;
     trust-partial)
       printf '%s\n' 'Do you trust the contents of this directory?' 'Yes, proceed'
       ;;
@@ -99,7 +110,7 @@ fake_screen() {
 note_answer() {
   printf 'y\n' >> "$y_log"
   case "$state" in
-    trust|trust-wrapped)
+    trust|trust-wrapped|trust-177)
       answers=$(wc -l < "$y_log" | tr -d ' ')
       case "${FM_FAKE_GROK_TRUST_CLEARS:-yes}" in
         yes) printf 'ready\n' > "$state_file" ;;
@@ -159,6 +170,7 @@ case "${1:-}" in
             case "${FM_FAKE_GROK_TRUST:-remembered}" in
               fresh) printf 'trust\n' > "$state_file" ;;
               wrapped) printf 'trust-wrapped\n' > "$state_file" ;;
+              v177) printf 'trust-177\n' > "$state_file" ;;
               partial) printf 'trust-partial\n' > "$state_file" ;;
               decoy) printf 'trust-decoy\n' > "$state_file" ;;
               old) printf 'trust-old\n' > "$state_file" ;;
@@ -355,6 +367,20 @@ test_grok_wrapped_trust_hint_is_answered() {
   [ "$(y_count "$CASE_DIR/y.log")" = 1 ] \
     || fail "Grok did not answer a wrapped-hint trust dialog exactly once"
   pass "fm-spawn: a Grok trust dialog with its hint wrapped across rows is answered normally"
+}
+
+test_grok_1_0_77_dialog_is_answered() {
+  local out rc
+  prepare_grok_trust trust-177
+  rc=0
+  out=$(FM_FAKE_GROK_TRUST=v177 run_grok_trust_spawn \
+    "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$GROK_HOME_DIR" "$TASK_ID" "$CASE_DIR") || rc=$?
+  expect_code 0 "$rc" "a Grok 1.0.77 trust dialog (no hint, keyed options) should be answered"
+  assert_contains "$out" "spawned $TASK_ID harness=grok" \
+    "Grok spawn did not continue after the 1.0.77 trust dialog cleared"
+  [ "$(y_count "$CASE_DIR/y.log")" = 1 ] \
+    || fail "Grok did not answer the 1.0.77 trust dialog exactly once"
+  pass "fm-spawn: a Grok 1.0.77 trust dialog without the hint is answered and verified cleared"
 }
 
 test_grok_already_trusted_composer_sends_no_y() {
@@ -565,6 +591,7 @@ test_fm_lock_recognizes_grok_holder
 test_grok_fresh_directory_trust_is_answered_once
 test_grok_swallowed_trust_y_is_retried_until_the_dialog_clears
 test_grok_wrapped_trust_hint_is_answered
+test_grok_1_0_77_dialog_is_answered
 test_grok_already_trusted_composer_sends_no_y
 test_grok_already_trusted_footer_sends_no_y
 test_grok_late_dialog_does_not_pass_on_the_banner

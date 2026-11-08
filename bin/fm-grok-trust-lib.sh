@@ -4,12 +4,14 @@
 #
 # Every function takes one plain pane capture as $1 and prints nothing.
 # The wording recognized here was read from the Grok Build 1.0.70 binary
-# (grok-1.0.70-linux-x86_64), not from a launched session:
+# (grok-1.0.70-linux-x86_64) and confirmed against a live 1.0.77 session:
 #   question: Do you trust the contents of this directory?
 #   warning:  posing security risks.
-#   hint:     Enter or y to trust
-#             (matched as two tokens, so a hint wrapped in a narrow pane
-#             still counts)
+#   1.0.70 hint: Enter or y to trust
+#                (matched as two tokens, so a hint wrapped in a narrow pane
+#                still counts)
+#   1.0.77 hint: none; each option carries its key on its own line
+#                (Yes, proceed    y / No, quit    n)
 #   options:  Yes, proceed, then No, quit
 # The older "Trust this folder?" / "No, cancel" prompt is a different dialog.
 # It is not answered here.
@@ -18,18 +20,25 @@
 # dialect.
 
 # grok_trust_dialog_is_visible <plain-pane-capture>
-# True only for the complete 1.0.70 directory dialog. On success
+# True only for the complete directory dialog (1.0.70 or 1.0.77). On success
 # GROK_TRUST_AFFIRMATIVE and GROK_TRUST_NEGATIVE name the options, so a
 # diagnostic can quote the wording the pane actually showed.
 # shellcheck disable=SC2034 # Output globals read by the sourcing caller.
 grok_trust_dialog_is_visible() {
-  local pane=$1
+  local pane=$1 hint70=0 keyed77=0
   GROK_TRUST_AFFIRMATIVE=''
   GROK_TRUST_NEGATIVE=''
   case "$pane" in *'Do you trust the contents of this directory?'*) ;; *) return 1 ;; esac
   case "$pane" in *'posing security risks.'*) ;; *) return 1 ;; esac
-  case "$pane" in *'Enter or y'*) ;; *) return 1 ;; esac
-  case "$pane" in *'to trust'*) ;; *) return 1 ;; esac
+  # A complete dialog carries both options with their keys. 1.0.70 printed a
+  # separate "Enter or y to trust" hint; 1.0.77 dropped it and prints each
+  # option's key after its label. Accept either, so a partial paint that stops
+  # at the labels without keys still does not read as complete.
+  case "$pane" in *'Enter or y'*) case "$pane" in *'to trust'*) hint70=1 ;; esac ;; esac
+  case "$pane" in *'Yes, proceed'*'y'*'No, quit'*'n'*) keyed77=1 ;; esac
+  if [ "$hint70" -eq 0 ] && [ "$keyed77" -eq 0 ]; then
+    return 1
+  fi
   case "$pane" in
     *'Yes, proceed'*'No, quit'*)
       GROK_TRUST_AFFIRMATIVE='Yes, proceed'
