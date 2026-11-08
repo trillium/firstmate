@@ -12,6 +12,9 @@
 # Pins Treehouse v2.0.1, the version exercised by the local real-Herdr suite.
 set -eu
 
+# shellcheck source=bin/fm-install-fetch-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fm-install-fetch-lib.sh"
+
 FM_TREEHOUSE_CI_VERSION=2.0.1
 FM_TREEHOUSE_CI_TAG="v${FM_TREEHOUSE_CI_VERSION}"
 # Bounded download ceiling (bytes). Official 2.0.1 archives are under 8 MiB.
@@ -53,8 +56,7 @@ URL="https://github.com/${FM_TREEHOUSE_CI_REPO}/releases/download/${FM_TREEHOUSE
 TMP=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/fm-treehouse.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
-printf 'fm-install-treehouse.sh: downloading %s from %s\n' "$ARCHIVE" "$URL" >&2
-curl -fsSL --max-filesize "$FM_TREEHOUSE_CI_MAX_BYTES" "$URL" -o "$TMP/$ARCHIVE" \
+fm_install_fetch fm-install-treehouse.sh "$URL" "$TMP/$ARCHIVE" "$SHA256" "$FM_TREEHOUSE_CI_MAX_BYTES" \
   || die "download failed for $URL (bounded at $FM_TREEHOUSE_CI_MAX_BYTES bytes)"
 
 if command -v sha256sum >/dev/null 2>&1; then
