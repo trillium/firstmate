@@ -1,0 +1,7 @@
+ok - preferred provider: work-account
+ok - mapping: a declared macos-keychain service and optional account become the lookup, and the key rides the fd header
+ok - native Codex binds to codex-home before default, independently of Pi accounts and row order
+ok - schema 6: each candidate binds to its account row; schema 5 is unchanged
+ok - account: a claude profile passes its account to the profile line; malformed or non-claude accounts are refused
+# all fm-dispatch-resolve tests passed
+# all fm-worker-account tests passed

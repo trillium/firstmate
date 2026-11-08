@@ -1,0 +1,3 @@
+fm-dispatch-resolve exit=0
+fm-bootstrap exit=0
+fm-spawn-dispatch-profile exit=124
