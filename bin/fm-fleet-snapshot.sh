@@ -113,6 +113,25 @@
 #     Which closed rows a home contributes is bin/fm-landed-lib.sh's rule, shared
 #     with the bearings projection so one Recently Landed section has one owner.
 #   contributions: cached owned-contribution coverage; fm-contributions.sh owns it.
+#   fleet_agents: {host,agents[],hosts[]} - one row per agent across every
+#     reachable home, read only from task meta already recorded by fm-spawn.
+#     Each agent carries id, kind, state, host, home (null for this home's own
+#     tasks, else the secondmate id whose home reported it), harness, model,
+#     effort, and inference {provider,provider_source,account,account_request,
+#     account_reason}. Absent meta is null, never a guess: model/effort/account
+#     are null when the task record lacks them, and provider is the pinned
+#     account_provider when recorded, else the harness's single provider family
+#     from fm-quota-axi-lib.sh (provider_source "harness-table"), else null.
+#     Task rows carry the same model, effort, inference, and host fields.
+#     Remote and local secondmate agents ride the existing per-home summary
+#     (state/home-summary.json `agents`, additive to
+#     fm-secondmate-home-summary.v1) over the existing remote ledger transport
+#     and cache; no extra ssh is made. hosts[] has one row per home with
+#     status "local" | "reported" | "not_reported" (the home answered with a
+#     summary from a producer that predates `agents`) | "unreachable" (remote,
+#     no summary or cache) | "unavailable" (local, no summary), plus freshness.
+#     An unreachable home stays listed with zero agents rather than dropped.
+#   quota: present only with --quota; see QUOTA below.
 #   secondmate_guidance: return-channel action note for renderers and bearings.
 #
 # --contribution-input prints only the canonical backlog/tasks ownership pair,
@@ -175,6 +194,8 @@ FM_SNAPSHOT_REGISTRY_LINES=${FM_SNAPSHOT_REGISTRY_LINES:-256}
 FM_SNAPSHOT_REGISTRY_BYTES=${FM_SNAPSHOT_REGISTRY_BYTES:-65536}
 FM_SNAPSHOT_REGISTRY_RECORDS=${FM_SNAPSHOT_REGISTRY_RECORDS:-40}
 FM_SNAPSHOT_REGISTRY_TIMEOUT=${FM_SNAPSHOT_REGISTRY_TIMEOUT:-2}
+FM_SNAPSHOT_QUOTA_TIMEOUT=${FM_SNAPSHOT_QUOTA_TIMEOUT:-5}
+SNAPSHOT_HOST=${FM_SNAPSHOT_HOST:-$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo local)}
 validate_positive_bound() {  # <name> <value>
   case "$2" in
     ''|*[!0-9]*|0)
@@ -207,6 +228,7 @@ validate_positive_bound FM_SNAPSHOT_REGISTRY_LINES "$FM_SNAPSHOT_REGISTRY_LINES"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_BYTES "$FM_SNAPSHOT_REGISTRY_BYTES"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_RECORDS "$FM_SNAPSHOT_REGISTRY_RECORDS"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_TIMEOUT "$FM_SNAPSHOT_REGISTRY_TIMEOUT"
+validate_positive_bound FM_SNAPSHOT_QUOTA_TIMEOUT "$FM_SNAPSHOT_QUOTA_TIMEOUT"
 FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=${FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS:-14}
 case "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" in
   ''|*[!0-9]*)
@@ -232,15 +254,26 @@ esac
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-hold-reason-lib.sh
 . "$SCRIPT_DIR/fm-hold-reason-lib.sh"
+# shellcheck source=bin/fm-quota-axi-lib.sh
+. "$SCRIPT_DIR/fm-quota-axi-lib.sh"  # fm_quota_provider_for_harness, fm_quota_json_valid
 
 usage() {
   cat <<'EOF'
-usage: fm-fleet-snapshot.sh --json
+usage: fm-fleet-snapshot.sh --json [--quota]
        fm-fleet-snapshot.sh --secondmate-home-summary
 
 Print a structured snapshot of the firstmate fleet.
 JSON is the stable machine-readable output contract. The default snapshot
 refreshes only its parent-side remote-summary cache as an observational side effect.
+
+--quota adds a bounded quota headroom summary to --json: one row per quota-axi
+provider and one row per Claude account in config/claude-accounts
+(bin/fm-claude-account-quota.sh, which keeps its own token-probe cache).
+Both reads run concurrently under FM_SNAPSHOT_QUOTA_TIMEOUT (default 5 seconds);
+a missing quota-axi, a timed-out or invalid read, or an unmeasured scope is
+reported as status "unknown" with its reason and a null headroom, never a guess.
+Quota is local to this machine; remote homes report agents, not quota.
+Without --quota the snapshot makes no quota call and carries no quota field.
 
 --contribution-input emits the canonical local backlog/tasks ownership pair only,
 without worker observations or cross-home collection.
@@ -290,6 +323,12 @@ EOF
 }
 
 OUTPUT_MODE=json
+WITH_QUOTA=0
+case "${2:-}" in
+  '') ;;
+  --quota) [ "${1:-}" = --json ] || { usage >&2; exit 2; }; WITH_QUOTA=1 ;;
+  *) usage >&2; exit 2 ;;
+esac
 case "${1:---json}" in
   --json) ;;
   --secondmate-home-summary) OUTPUT_MODE=secondmate-home-summary ;;
@@ -745,6 +784,7 @@ prefetch_task_current_states() {
 }
 
 task_json_lines() {
+  local model effort account account_provider account_request account_reason provider provider_source
   local meta original_meta id kind harness mode yolo project worktree home projects spawn_gen backend target status_log report_path
   local remote_host remote_root current_file endpoint_file observation_line index=0
   local pr pr_source event_json current_json endpoint_exists agent_alive meta_json status_json report_json worktree_json home_json
@@ -759,6 +799,21 @@ task_json_lines() {
     kind=$(meta_value "$meta" kind)
     [ -n "$kind" ] || kind=ship
     harness=$(meta_value "$meta" harness)
+    model=$(meta_value "$meta" model)
+    effort=$(meta_value "$meta" effort)
+    account=$(meta_value "$meta" account)
+    account_provider=$(meta_value "$meta" account_provider)
+    account_request=$(meta_value "$meta" account_request)
+    account_reason=$(meta_value "$meta" account_reason)
+    provider=$account_provider
+    provider_source=null
+    if [ -n "$provider" ]; then
+      provider_source='account-meta'
+    elif provider=$(fm_quota_provider_for_harness "$harness" "$model" 2>/dev/null); then
+      provider_source='harness-table'
+    else
+      provider=
+    fi
     mode=$(meta_value "$meta" mode)
     yolo=$(meta_value "$meta" yolo)
     project=$(meta_value "$meta" project)
@@ -861,6 +916,14 @@ task_json_lines() {
       --arg id "$id" \
       --arg kind "$kind" \
       --arg harness "$harness" \
+      --arg model "$model" \
+      --arg effort "$effort" \
+      --arg account "$account" \
+      --arg account_provider_value "$provider" \
+      --arg provider_source "$provider_source" \
+      --arg account_request "$account_request" \
+      --arg account_reason "$account_reason" \
+      --arg snapshot_host "$SNAPSHOT_HOST" \
       --arg mode "$mode" \
       --arg yolo "$yolo" \
       --arg branch "$branch" \
@@ -894,6 +957,15 @@ task_json_lines() {
         id:$id,
         kind:$kind,
         harness:($harness // ""),
+        model:($model | if . == "" then null else . end),
+        effort:($effort | if . == "" then null else . end),
+        host:(if $remote_host == "" then $snapshot_host else $remote_host end),
+        inference:{
+          provider:($account_provider_value | if . == "" then null else . end),
+          provider_source:($provider_source | if . == "null" then null else . end),
+          account:($account | if . == "" then null else . end),
+          account_request:($account_request | if . == "" then null else . end),
+          account_reason:($account_reason | if . == "" then null else . end)},
         mode:($mode // ""),
         yolo:($yolo // ""),
         branch:($branch | if . == "" then null else . end),
@@ -1142,19 +1214,22 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
         landed:(if $landed_n == 0 then $landed_all else $landed_all[:$landed_n] end),
         endpoints:([$tasks[] | {id,state:.current_state.state,source:.current_state.source,
           endpoint:(.endpoint + {target:((.endpoint.target // null) | if . == null then null else trunc(240) end)})}][:$child_n]),
+        agents:([$tasks[] | {id,kind,state:.current_state.state,host,harness,model,effort,inference}][:$child_n]),
         counts:{
           active_children:($active_all | length),
           decisions_open:($decisions_all | length),
           holds:($holds_all | length),
           queued:($queued_all | length),
           landed:($landed_all | length),
-          endpoints:($tasks | length)
+          endpoints:($tasks | length),
+          agents:($tasks | length)
         },
         omitted:[
           (if ($active_all | length) > $child_n then {surface:"active_children",count:(($active_all | length) - $child_n)} else empty end),
           (if ($decisions_all | length) > $decisions_n then {surface:"decisions_open",count:(($decisions_all | length) - $decisions_n)} else empty end),
           (if ($queued_all | length) > $queued_n then {surface:"queued",count:(($queued_all | length) - $queued_n)} else empty end),
           (if ($tasks | length) > $child_n then {surface:"endpoints",count:(($tasks | length) - $child_n)} else empty end),
+          (if ($tasks | length) > $child_n then {surface:"agents",count:(($tasks | length) - $child_n)} else empty end),
           (if $landed_n > 0 and ($landed_all | length) > $landed_n then {surface:"landed",count:(($landed_all | length) - $landed_n)} else empty end)
         ]
       }'
@@ -1900,6 +1975,8 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
          decisions_open:$summary.decisions_open,holds:$summary.holds,queued:$summary.queued,
          contributions:($summary.contributions // null),
          landed:$summary.landed,endpoints:$summary.endpoints,counts:$summary.counts,omitted:$summary.omitted,
+         agents:($summary.agents // []),
+         agents_status:(if ($summary.agents | type) == "array" then "reported" else "not_reported" end),
          parent_event:{raw:$event_raw,note:$event_note,age_seconds:$event_age,open_activities:$activities,open_decisions:$decisions,activity_scan:$activity_scan,reconciliation:$reconciliation},
          terminal_evidence:$terminal,contradiction:$contradiction}' >> "$records_file" || return 1
     else
@@ -1931,6 +2008,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
          provenance:{selected:$provenance,structured_home:($home | if . == "" then null else . end),parent_event_role:"fallback-only-not-current"},
          freshness:{status:$freshness,observed_at:$observed,age_seconds:$observed_age},
          active_children:[],decisions_open:[],holds:[],queued:[],landed:[],endpoints:[],counts:{active_children:0,decisions_open:0,holds:0,queued:0,landed:0,endpoints:0},omitted:[],
+         agents:[],agents_status:(if $remote then "unreachable" else "unavailable" end),
          parent_event:{raw:$event_raw,note:$event_note,age_seconds:$event_age,open_activities:$activities,open_decisions:$decisions,activity_scan:$activity_scan},
          terminal_evidence:$terminal,contradiction:false}' >> "$records_file" || return 1
     fi
@@ -1999,6 +2077,97 @@ contribution_tasks_json() {
   done | jq -s .
 }
 
+# QUOTA: bounded, read-only headroom summary for --quota. quota-axi owns the
+# readings; this only reduces them. Provider rows come from one `quota-axi --json`
+# and per-account rows from bin/fm-claude-account-quota.sh --json (it keeps its
+# own token-probe cache), both started together so the whole collection costs one
+# FM_SNAPSHOT_QUOTA_TIMEOUT. headroom_percent is the smallest known
+# effectivePercentRemaining across the all_models / all_products scopes, and null
+# when none is known, so an unmeasured provider or account reads as unknown.
+snapshot_quota_json() {  # <output-file>
+  local out=$1 work providers_pid='' accounts_pid='' providers_rc=0 accounts_rc=0 accounts_declared=0
+  local providers_state=ok providers_reason='' accounts_state=ok accounts_reason=''
+  work=$(mktemp -d "${TMPDIR:-/tmp}/fm-fleet-quota.XXXXXX") || return 1
+  : > "$work/providers.json"
+  : > "$work/accounts.json"
+  if command -v quota-axi >/dev/null 2>&1; then
+    ( fm_run_timed "$FM_SNAPSHOT_QUOTA_TIMEOUT" quota-axi --json \
+        > "$work/providers.json" 2>/dev/null </dev/null ) &
+    providers_pid=$!
+  else
+    providers_state=unknown
+    providers_reason="quota-axi not installed"
+  fi
+  if [ -f "$CONFIG/claude-accounts" ]; then
+    accounts_declared=1
+    ( fm_run_timed "$FM_SNAPSHOT_QUOTA_TIMEOUT" env FM_HOME="$FM_HOME" FM_CONFIG_OVERRIDE="$CONFIG" \
+        FM_STATE_OVERRIDE="$STATE" FM_CLAUDE_ACCOUNT_QUOTA_SECONDS="$FM_SNAPSHOT_QUOTA_TIMEOUT" \
+        "$SCRIPT_DIR/fm-claude-account-quota.sh" --json \
+        > "$work/accounts.json" 2>/dev/null </dev/null ) &
+    accounts_pid=$!
+  else
+    accounts_state=none_declared
+    accounts_reason="this home declares no config/claude-accounts"
+  fi
+  [ -z "$providers_pid" ] || wait "$providers_pid" || providers_rc=$?
+  [ -z "$accounts_pid" ] || wait "$accounts_pid" || accounts_rc=$?
+  if [ -n "$providers_pid" ]; then
+    if [ "$providers_rc" -eq 124 ]; then
+      providers_state=unknown; providers_reason="quota-axi timed out after ${FM_SNAPSHOT_QUOTA_TIMEOUT}s"
+    elif ! fm_quota_json_valid < "$work/providers.json"; then
+      providers_state=unknown; providers_reason="quota-axi returned no valid snapshot"
+    fi
+  fi
+  if [ -n "$accounts_pid" ]; then
+    if [ "$accounts_rc" -eq 124 ]; then
+      accounts_state=unknown; accounts_reason="account quota read timed out after ${FM_SNAPSHOT_QUOTA_TIMEOUT}s"
+    elif ! jq -e '(.accounts | type) == "array"' "$work/accounts.json" >/dev/null 2>&1; then
+      accounts_state=unknown; accounts_reason="account quota read returned no valid result"
+    fi
+  fi
+  [ "$providers_state" = ok ] || printf '{"providers":[]}\n' > "$work/providers.json"
+  [ "$accounts_state" = ok ] || printf '{"accounts":[]}\n' > "$work/accounts.json"
+  jq -n \
+    --arg host "$SNAPSHOT_HOST" --arg observed "$SNAPSHOT_NOW" --argjson timeout "$FM_SNAPSHOT_QUOTA_TIMEOUT" \
+    --arg providers_state "$providers_state" --arg providers_reason "$providers_reason" \
+    --arg accounts_state "$accounts_state" --arg accounts_reason "$accounts_reason" \
+    --slurpfile providers "$work/providers.json" --slurpfile accounts "$work/accounts.json" '
+    def headroom($row):
+      [ $row.quotaSemantics.effectiveAvailability[]?
+        | select(.status == "known" and (.scope == "all_models" or .scope == "all_products"))
+        | .effectivePercentRemaining ] | if length == 0 then null else min end;
+    def scopes($row):
+      [ $row.quotaSemantics.effectiveAvailability[]?
+        | {scope, status, percent_remaining:(.effectivePercentRemaining // null),
+           runway:(.runway.status // null), spend_priority:(.selection.spendPriority // null)} ];
+    def reduce_row($row; $extra):
+      $extra + {
+        status:($row.quotaSemantics.status // "unknown"),
+        headroom_percent:headroom($row),
+        scopes:scopes($row),
+        reason:(if ($row.quotaSemantics.status // "unknown") == "known" then null
+                else ($row.state.error // $row.state.status // "quota not fully measured") end)};
+    {
+      quota:{
+        collected:true, host:$host, scope:"local", observed_at:$observed, timeout_seconds:$timeout,
+        providers:{status:$providers_state, reason:($providers_reason | if . == "" then null else . end),
+          rows:[ $providers[0].providers[]? | reduce_row(.; {provider, account_key:(.accountKey // null)}) ]},
+        accounts:{status:$accounts_state, reason:($accounts_reason | if . == "" then null else . end),
+          rows:[ $accounts[0].accounts[]?
+                 | . as $a
+                 | if $a.error != null then
+                     {account:$a.declared, provider:"claude", status:"unknown", headroom_percent:null, scopes:[], reason:$a.error}
+                   else
+                     ([ $a.snapshot.providers[]? | select(.provider == "claude") ] | first) as $row
+                     | if $row == null then
+                         {account:$a.declared, provider:"claude", status:"unknown", headroom_percent:null, scopes:[], reason:"no claude quota row"}
+                       else reduce_row($row; {account:$a.declared, provider:"claude"}) end
+                   end ]}}} ' > "$out"
+  local rc=$?
+  rm -rf -- "$work"
+  return "$rc"
+}
+
 if [ "$OUTPUT_MODE" = contribution-input ]; then
   # Reuse the canonical backlog parser, without observing workers or other homes.
   # The backlog JSON can exceed Linux MAX_ARG_STRLEN (128 KiB) as one --argjson
@@ -2053,6 +2222,14 @@ secondmate_current_json "$TASKS_JSON_FILE" "$SECONDMATE_CURRENT_JSON_FILE" \
   || { echo "fm-fleet-snapshot: registered secondmate aggregation failed" >&2; exit 1; }
 secondmate_landed_from_current_json "$SECONDMATE_CURRENT_JSON_FILE" "$SECONDMATE_LANDED_JSON_FILE" \
   || { echo "fm-fleet-snapshot: secondmate landed projection failed" >&2; exit 1; }
+QUOTA_JSON_FILE="$JSON_TRANSPORT_DIR/quota.json"
+if [ "$WITH_QUOTA" -eq 1 ]; then
+  snapshot_quota_json "$QUOTA_JSON_FILE" \
+    || { echo "fm-fleet-snapshot: quota summary failed" >&2; exit 1; }
+else
+  printf '{}\n' > "$QUOTA_JSON_FILE" \
+    || { echo "fm-fleet-snapshot: temporary quota file write failed" >&2; exit 1; }
+fi
 
 jq -n \
   --arg generated "$SNAPSHOT_NOW" \
@@ -2069,6 +2246,8 @@ jq -n \
   --slurpfile scout_reports "$SCOUT_REPORTS_JSON_FILE" \
   --slurpfile secondmate_current "$SECONDMATE_CURRENT_JSON_FILE" \
   --slurpfile secondmate_landed "$SECONDMATE_LANDED_JSON_FILE" \
+  --slurpfile quota "$QUOTA_JSON_FILE" \
+  --arg snapshot_host "$SNAPSHOT_HOST" \
   '($backlog[0]) as $backlog
    | ($tasks[0]) as $tasks
    | ($main_inventory[0]) as $main_inventory
@@ -2090,7 +2269,19 @@ jq -n \
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),
      secondmate_current:$secondmate_current,
      secondmate_landed:$secondmate_landed,
+     fleet_agents:{
+       host:$snapshot_host,
+       agents:(
+         ($tasks | map({id,kind,state:.current_state.state,host,home:null,harness,model,effort,inference}))
+         + [ $secondmate_current.records[] as $m | $m.agents[]?
+             | . + {home:$m.id,host:($m.host // .host)} ]),
+       hosts:(
+         [{host:$snapshot_host,home:null,status:"local",count:($tasks | length),freshness:"fresh",observed_at:$generated}]
+         + [ $secondmate_current.records[] as $m
+             | {host:($m.host // $snapshot_host),home:$m.id,status:$m.agents_status,count:($m.agents | length),
+                freshness:$m.freshness.status,observed_at:$m.freshness.observed_at} ])
+     },
      secondmate_guidance:{
        note:"For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
      }
-   }'
+   } + $quota[0]'

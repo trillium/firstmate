@@ -16,7 +16,10 @@ usage() {
 usage: fm-fleet-view.sh [--json]
 
 Render a human fleet view from fm-fleet-snapshot.sh.
-Use --json to print the underlying snapshot.
+Besides tasks and secondmates it lists every agent with its host, harness,
+model, and inference source, and a quota headroom summary; anything not
+recorded or not measurable prints as unknown.
+Use --json to print the underlying snapshot (with its quota summary).
 EOF
 }
 
@@ -29,7 +32,7 @@ case "${1:-}" in
   --json)
     FM_HOME=$(fm_resolve_home) || exit 1
     export FM_HOME
-    "$SCRIPT_DIR/fm-fleet-snapshot.sh" --json; exit $? ;;
+    "$SCRIPT_DIR/fm-fleet-snapshot.sh" --json --quota; exit $? ;;
   "")
     FM_HOME=$(fm_resolve_home) || exit 1
     export FM_HOME ;;
@@ -38,7 +41,7 @@ esac
 
 command -v jq >/dev/null 2>&1 || { echo "fm-fleet-view: jq not found" >&2; exit 1; }
 
-SNAPSHOT=$("$SCRIPT_DIR/fm-fleet-snapshot.sh" --json) || exit $?
+SNAPSHOT=$("$SCRIPT_DIR/fm-fleet-snapshot.sh" --json --quota) || exit $?
 
 printf '%s\n' "$SNAPSHOT" | jq -r '
   def dash($v): if $v == null or $v == "" then "-" else $v end;
@@ -77,6 +80,16 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
     else "unknown" end;
   def mate_row($r):
     "| \($r.id) | \(mate_host($r)) | \(mate_status($r)) | \($r.current.state // "unknown") | \(dash($r.current.reason)) |";
+  def unk($v): if $v == null or $v == "" then "unknown" else $v end;
+  def source_of($a):
+    if $a.inference.account != null then "account \($a.inference.account)"
+    elif $a.inference.provider != null then "\($a.inference.provider) (\($a.inference.provider_source))"
+    else "unknown" end;
+  def agent_row($a):
+    "| \($a.id) | \(dash($a.home // "main")) | \(unk($a.host)) | \($a.kind) | \(unk($a.state)) | \(unk($a.harness)) | \(unk($a.model)) | \(source_of($a)) |";
+  def headroom($r): if $r.headroom_percent == null then "unknown" else "\($r.headroom_percent)%" end;
+  def quota_row($label; $r):
+    "| \($label) | \($r.status) | \(headroom($r)) | \(dash($r.reason)) |";
 
   "# Fleet View",
   "",
@@ -121,6 +134,36 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
   (if (.secondmate_current.truncated // 0) > 0 then
     "_\(.secondmate_current.truncated) more secondmate(s) not shown._"
    else empty end),
+  "",
+  "## Agents",
+  (if (.fleet_agents.agents | length) == 0 then
+    "No agents reported."
+   else
+    "| ID | Home | Host | Kind | State | Harness | Model | Inference source |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    (.fleet_agents.agents[] | agent_row(.))
+   end),
+  "",
+  "| Host | Home | Agents | Freshness |",
+  "| --- | --- | --- | --- |",
+  (.fleet_agents.hosts[] | "| \(.host) | \(dash(.home // "main")) | \(.status) (\(.count)) | \(dash(.freshness)) |"),
+  "",
+  "## Quota",
+  (if .quota == null then
+    "Quota not collected."
+   else
+    "Host: \(.quota.host) (local only; remote homes report agents, not quota).",
+    "",
+    "| Provider / account | Status | Headroom | Reason |",
+    "| --- | --- | --- | --- |",
+    (if .quota.providers.status != "ok" then
+       "| providers | unknown | unknown | \(dash(.quota.providers.reason)) |"
+     else (.quota.providers.rows[] | quota_row("\(.provider) [\(dash(.account_key))]"; .)) end),
+    (if .quota.accounts.status == "none_declared" then empty
+     elif .quota.accounts.status != "ok" then
+       "| claude accounts | unknown | unknown | \(dash(.quota.accounts.reason)) |"
+     else (.quota.accounts.rows[] | quota_row("claude account \(.account)"; .)) end)
+   end),
   "",
   .secondmate_guidance.note
 '

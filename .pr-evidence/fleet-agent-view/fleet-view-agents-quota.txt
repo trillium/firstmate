@@ -1,0 +1,17 @@
+$ bin/fm-fleet-view.sh   # fixture home, one local ship, quota-axi unavailable
+## Agents
+| ID | Home | Host | Kind | State | Harness | Model | Inference source |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| demo-ship | main | macbookpro | ship | unknown | claude | claude-opus-4 | account work |
+
+| Host | Home | Agents | Freshness |
+| --- | --- | --- | --- |
+| macbookpro | main | local (1) | fresh |
+
+## Quota
+Host: macbookpro (local only; remote homes report agents, not quota).
+
+| Provider / account | Status | Headroom | Reason |
+| --- | --- | --- | --- |
+| providers | unknown | unknown | quota-axi returned no valid snapshot |
+
