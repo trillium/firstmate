@@ -532,6 +532,59 @@ test_ring_fails_and_never_stacks_when_enter_does_not_clear() {
   pass "inbox: ring reports send-failed and never stacks when Enter does not clear the doorbell"
 }
 
+test_ring_submits_pending_doorbell_and_retries_dropped_enters() {
+  local dir state rec doorbell other log composer drops rc
+  dir="$TMP_ROOT/ring-submit-pending"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_composer_stub "$dir"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  other=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$state/older-name.inbox/001.msg")
+  log="$dir/send.log"; composer="$dir/composer"; drops="$dir/drops"
+  ring() {
+    PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" FM_FAKE_COMPOSER="$composer" \
+      FM_FAKE_DROP_ENTERS="$drops" inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1
+  }
+  # Two dropped Enters still land within the bounded submit attempts.
+  : > "$log"; printf '%s' "$doorbell" > "$composer"; echo 2 > "$drops"
+  rc=0; ring || rc=$?
+  [ "$rc" = 0 ] || fail "a pending doorbell whose first Enters drop should still be submitted, got $rc"
+  [ "$(grep -c '^SUBMIT:' "$log")" = 1 ] || fail "the doorbell should be submitted exactly once:"$'\n'"$(cat "$log")"
+  # A pending doorbell carrying another inbox name is submitted, not stacked behind.
+  : > "$log"; printf '%s%s' "$other" "$other" > "$composer"; echo 0 > "$drops"
+  rc=0; ring || rc=$?
+  [ "$rc" = 0 ] || fail "a pending doorbell for another inbox name should be submitted, got $rc"
+  grep -q '^SUBMIT:' "$log" || fail "the other-name doorbell was never submitted"
+  [ "$(grep -c 'Firstmate instruction waiting' "$log")" = 1 ] && [ "$(grep -o 'Firstmate instruction waiting' "$log" | wc -l | tr -d ' ')" = 2 ] \
+    || fail "no new doorbell copy may be typed behind the pending ones:"$'\n'"$(cat "$log")"
+  # Typed words around a doorbell stay foreign pending text: skipped, untouched.
+  : > "$log"; printf '%s and my draft' "$other" > "$composer"
+  rc=0; ring || rc=$?
+  [ "$rc" = 1 ] || fail "doorbell mixed with typed words must be skipped as foreign text, got $rc"
+  [ "$(cat "$composer")" = "$other and my draft" ] || fail "foreign pending text must be left untouched"
+  pass "inbox: ring submits a pending doorbell (any inbox name), retries dropped Enters, and skips foreign text"
+}
+
+test_any_doorbell_reads_captured_claude_screen() {
+  local fx probe
+  fx="$ROOT/tests/fixtures/claude-2.1.316-stacked-doorbells"
+  # shellcheck disable=SC2016 # the probe body expands in the child shell
+  probe='
+    . "$1"; . "${1%/*}/fm-composer-lib.sh"
+    fm_backend_source() { return 0; }
+    fm_backend_capture() { cat "$FIXTURE"; }
+    fm_task_inbox_composer_holds_any_doorbell herdr w:p'
+  for n in one two four; do
+    FIXTURE="$fx/$n.screen" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" \
+      || fail "the captured $n-doorbell Claude composer should read as a pending doorbell of any name"
+  done
+  sed 's/handled\/\.$/handled\/. plus a typed draft/' "$fx/two.screen" > "$TMP_ROOT/any-mixed.txt"
+  FIXTURE="$TMP_ROOT/any-mixed.txt" bash -c "$probe" _ "$ROOT/bin/fm-task-inbox-lib.sh" \
+    && fail "doorbells followed by typed text must not read as ours"
+  pass "inbox: captured claude screens with a pending doorbell read as any-name doorbell, mixed text does not"
+}
+
 test_idempotent_write_dedups_exact_body() {
   local state r1 r2 r3 r4 count text
   state="$TMP_ROOT/idem/state"; mkdir -p "$state"
@@ -1503,6 +1556,8 @@ test_ring_submits_own_doorbell_while_busy
 test_composer_holds_recognises_captured_stacked_doorbells
 test_composer_holds_uses_visible_capture_on_herdr
 test_ring_fails_and_never_stacks_when_enter_does_not_clear
+test_ring_submits_pending_doorbell_and_retries_dropped_enters
+test_any_doorbell_reads_captured_claude_screen
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_prefilters_history
 test_idempotent_write_prefilter_preserves_exact_bodies

@@ -368,6 +368,27 @@ fm_task_inbox_doorbell_line() {  # <record-path>
     "$quoted"
 }
 
+# Whether the composer holds only firstmate's own doorbell: this record's line,
+# or a steering doorbell for any other inbox name.
+fm_task_inbox_ring_holds() {  # <backend> <target> <line> [expected-label]
+  fm_task_inbox_composer_holds "$1" "$2" "$3" "${4:-}" \
+    || fm_task_inbox_composer_holds_any_doorbell "$1" "$2" "${4:-}"
+}
+
+# Submit an unsent doorbell with Enter alone (never retyped) and verify the
+# composer emptied, up to FM_TASK_INBOX_SUBMIT_ATTEMPTS Enters. 0 when the
+# composer no longer holds our doorbell, 2 when it still does or Enter failed.
+fm_task_inbox_ring_submit() {  # <backend> <target> <line> [expected-label]
+  local i=0 max=${FM_TASK_INBOX_SUBMIT_ATTEMPTS:-3}
+  while [ "$i" -lt "$max" ]; do
+    fm_backend_send_key "$1" "$2" Enter "${4:-}" >/dev/null 2>&1 || return 2
+    sleep 0.3
+    fm_task_inbox_ring_holds "$1" "$2" "$3" "${4:-}" || return 0
+    i=$((i + 1))
+  done
+  return 2
+}
+
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
 # composer pre-check, then the backend's submit machinery with a minimal retry
 # budget, verdict discarded.
@@ -403,14 +424,9 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   # classifier verdict alone: the verdict can be `empty`, `unknown`, or
   # `pending-unproven` over a composer that visibly holds our unsubmitted
   # doorbell (claude under herdr), and retyping there only stacks more lines.
-  if fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label"; then
-    fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-    sleep 0.3
-    fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
-    fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-    sleep 0.3
-    fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
-    return 2
+  if fm_task_inbox_ring_holds "$backend" "$target" "$line" "$label"; then
+    fm_task_inbox_ring_submit "$backend" "$target" "$line" "$label"
+    return $?
   fi
   if [ "$cstate" = pending ]; then
     # shellcheck disable=SC2034 # read by the sourcing callers (fm-send.sh, fm-watch.sh)
@@ -427,14 +443,26 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   # The verdict is read only to report a failed keystroke; every other value
   # (empty, pending, unknown, ...) is deliberately ignored, never proof.
   [ "$verdict" != send-failed ] || return 2
-  if fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label"; then
-    fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
-    sleep 0.3
-    fm_task_inbox_composer_holds "$backend" "$target" "$line" "$label" || return 0
-    return 2
+  if fm_task_inbox_ring_holds "$backend" "$target" "$line" "$label"; then
+    fm_task_inbox_ring_submit "$backend" "$target" "$line" "$label"
+    return $?
   fi
   [ "$verdict" != pending ] || return 2
   return 0
+}
+
+# The composer's content with all whitespace removed, so a wrapped line
+# compares literally.
+fm_task_inbox_composer_held() {  # <backend> <target> [expected-label]
+  local cap held
+  fm_backend_source "$1" || return 1
+  if fm_backend_visible_capture_supported "$1" && cap=$(fm_backend_visible_capture "$1" "$2" "${3:-}" 2>/dev/null) && [ -n "$cap" ]; then
+    :
+  else
+    cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${3:-}" 2>/dev/null) || return 1
+  fi
+  held=$(fm_composer_extract_selected_content styled=0 "$cap") || return 1
+  printf '%s' "$held" | tr -d '[:space:]'
 }
 
 # Whether the composer's content, ignoring line wrapping, is exactly one or
@@ -442,17 +470,22 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
 # landed stacks another copy with no separator). Any other text, including a
 # copy mixed with typed words, is not ours.
 fm_task_inbox_composer_holds() {  # <backend> <target> <line> [expected-label]
-  local cap held want
-  fm_backend_source "$1" || return 1
-  if fm_backend_visible_capture_supported "$1" && cap=$(fm_backend_visible_capture "$1" "$2" "${4:-}" 2>/dev/null) && [ -n "$cap" ]; then
-    :
-  else
-    cap=$(fm_backend_capture "$1" "$2" "$FM_COMPOSER_CAPTURE_LINES" "${4:-}" 2>/dev/null) || return 1
-  fi
-  held=$(fm_composer_extract_selected_content styled=0 "$cap") || return 1
-  held=$(printf '%s' "$held" | tr -d '[:space:]')
+  local held want
+  held=$(fm_task_inbox_composer_held "$1" "$2" "${4:-}") || return 1
   want=$(printf '%s' "$3" | tr -d '[:space:]')
   [ -n "$held" ] && [ -n "$want" ] && [ -z "${held//"$want"/}" ]
+}
+
+# Whether the composer holds only steering doorbells, whatever inbox name each
+# copy carries: a previous ring typed for another record or inbox is still
+# firstmate's own unsent line, so a re-ring submits it instead of stacking a
+# new copy behind it. Typed words or any other text around the copies fail.
+fm_task_inbox_composer_holds_any_doorbell() {  # <backend> <target> [expected-label]
+  local held rest
+  held=$(fm_task_inbox_composer_held "$1" "$2" "${3:-}") || return 1
+  [ -n "$held" ] || return 1
+  rest=$(printf '%s' "$held" | perl -pe 's/:Firstmateinstructionwaiting:list"\$FM_TASK_INBOX"\/\*\.msginyour.*?steeringinbox,readandactoneachinnumericorder,thenmveachintoitshandled\/\.//g') || return 1
+  [ -z "$rest" ] && [ "$rest" != "$held" ]
 }
 
 fm_task_inbox_is_fire_and_forget() {  # <record-path>
