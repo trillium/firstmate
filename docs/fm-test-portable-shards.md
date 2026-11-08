@@ -49,6 +49,12 @@ The session-start hint retains its pre-optimization maximum until CI measures th
 The T3 Code backend suites carry the slowest successful Ubuntu samples from CI runs [39463576576](https://github.com/kunchenguid/firstmate/actions/runs/39463576576), [39814995718](https://github.com/kunchenguid/firstmate/actions/runs/39814995718), and [39883948163](https://github.com/kunchenguid/firstmate/actions/runs/39883948163) - 239245 ms for `tests/fm-backend-t3code.test.sh`, 57613 ms for `tests/fm-t3-mcp.test.sh`, 283 ms for `tests/fm-watch-inbox-meta.test.sh`, and the 51 ms and 52 ms live-guard skips for `tests/fm-backend-t3code-live-e2e.test.sh` and `tests/fm-backend-t3code-pr-tools-live-e2e.test.sh`.
 `tests/fm-backend-t3code.test.sh` and `tests/fm-t3-mcp.test.sh` run in the portable parallel lanes, so those two values sit in `portable_parallel_weight_hints`: every case id the backend suite spawns carries a per-run suffix and its cleanup removes only the `/tmp/fm-<id>` directories that run created, and both suites passed running concurrently with each other and beside another parallel suite (see [`fm-test-isolation-proof.md`](fm-test-isolation-proof.md)).
 
+The serial hint table was refreshed again on 2026-11-07 from the per-script `FM_TEST_END` `duration_ms` markers of four Ubuntu runs on `trillium/firstmate`: [42423070092](https://github.com/trillium/firstmate/actions/runs/42423070092), [42423792144](https://github.com/trillium/firstmate/actions/runs/42423792144), [42433362280](https://github.com/trillium/firstmate/actions/runs/42433362280), and the cancelled-shard log of [42412584983](https://github.com/trillium/firstmate/actions/runs/42412584983).
+Each hint is the slowest completed sample across them, replacing the provisional local and 2026-09-30 values.
+The old table had drifted far below CI reality (for example `tests/fm-teardown.test.sh` 202132 ms hinted against 433-553 s measured, `tests/fm-watch-arm.test.sh` 113076 ms against 288-317 s, `tests/fm-pr-check-security.test.sh` 300675 ms against 374-466 s) and 48 members had no hint at all, so the thirteen-shard split modeled every shard well under budget while serial shard 12 really ran 28.4-29.8 minutes of script time and was cancelled at the 30-minute cap in three of the last four cancelled runs.
+`tests/fm-remote-secondmate-lifecycle-e2e.test.sh` is packed at 1098288 ms, the second-slowest of three samples (945073, 1098288, 1554000 ms); the 1554000 ms sample is a single outlier that would alone overrun the packing budget.
+With the refreshed hints the lane totals about 283 minutes of script time, so fifteen shards model a worst shard near 19 minutes against the 20-minute packing target.
+
 ## Parallel lanes
 
 The two parallel lanes use longest-processing-time assignment over those hints.
@@ -139,7 +145,7 @@ No fast mode, path skips, or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the three watch-triage members still sum to about 26 minutes of CI test time.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses twenty long-lived Linux jobs (thirteen serial, two parallel, Herdr, four lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
+The layout uses twenty-two long-lived Linux jobs (fifteen serial, two parallel, Herdr, four lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession and keeps only the newest of close main pushes' runs, without changing the compliance workflow's event semantics.
 
