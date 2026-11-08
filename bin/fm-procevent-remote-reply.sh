@@ -426,6 +426,27 @@ process_document_pointers() { # <extract|rewrite> <pointer-map-file>
   '
 }
 
+# The machine a mate's report lives on, as the PARENT reaches it. A mate stamps
+# `report-at=<host>:<abs-path>` with its own `uname -n` (bin/fm-inactive-reconcile.sh),
+# which need not be the name the parent uses, so ingest replaces the host with the
+# registry's `host:` for the mate whose channel carried the line. A mid-tier mate
+# applies the same rule to its own child's lines before the parent sees them, and
+# the parent then names the mid-tier it actually registered. A route with no
+# registry host leaves the mate's own name untouched.
+rewrite_report_host() { # <host> <input-file> <output-file>
+  LC_ALL=C awk -v host="$1" '
+    {
+      rest = "\001" $0
+      out = ""
+      while (match(rest, /[^A-Za-z0-9._\/-]report-at=[^ :\t]+:/)) {
+        out = out substr(rest, 1, RSTART + 10) host ":"
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      print substr(out rest, 2)
+    }
+  ' < "$2" > "$3"
+}
+
 extract_document_pointers() { # <payload-file>
   process_document_pointers extract '' < "$1"
 }
@@ -562,7 +583,7 @@ stage_mirror_lines() { # <source> <rewritten> <source-record> <status> <status-a
 cmd_ingest() {
   local id=${1:-} result=${2:-} seq=${3:-} class blank payload normalized_payload schema status path from to from_hash to_hash payload_hash payload_bytes reason
   local actual_bytes actual_hash line doc local_doc appended=0 cursor_already=0 lock status_file source_record tmp
-  local fetch_rc append_rc offered='' delivered_map='' mirrored='' status_additions='' source_additions='' undelivered=''
+  local registry_host fetch_rc append_rc offered='' delivered_map='' mirrored='' status_additions='' source_additions='' undelivered=''
   validate_id "$id"
   [ -f "$result" ] && [ ! -L "$result" ] || die "result file is unavailable or unsafe: $result"
   class=$(classify_result "$result")
@@ -677,6 +698,14 @@ EOF
   mirrored="$tmp/mirrored"
   rewrite_document_pointers "$normalized_payload" "$delivered_map" "$mirrored" \
     || { fm_lock_release "$lock"; die "cannot rewrite remote document pointers"; }
+  registry_host=$(secondmate_registry_field "$DATA/secondmates.md" "$id" host 2>/dev/null | tr -d '[:space:]') || registry_host=
+  if [ -n "$registry_host" ]; then
+    if ! rewrite_report_host "$registry_host" "$mirrored" "$tmp/mirrored-host" \
+      || ! mv -f -- "$tmp/mirrored-host" "$mirrored"; then
+      fm_lock_release "$lock"
+      die "cannot rewrite remote report host"
+    fi
+  fi
   status_additions="$tmp/status-additions"
   source_additions="$tmp/source-additions"
   : > "$status_additions" \

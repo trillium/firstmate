@@ -668,6 +668,22 @@ assert_no_document_decision "an undeliverable foreign pointer raised a document 
 mirrored_cursor_is_current "an undeliverable foreign pointer prevented the cursor from advancing"
 pass "nested remote reports relay while an undeliverable foreign pointer fails open"
 
+# A grandchild's report relayed through this mid-tier mate carries the host name
+# the mid-tier stamped (its own hostname for the grandchild, or a name only it
+# resolves). The parent rewrites the host to the registry's `host:` for the mate
+# whose channel carried the line, and leaves a line with no pointer untouched.
+mkdir -p "$REMOTE/data/remote-secondmates/gc/data/gc"
+printf '# relayed grandchild report\n' > "$REMOTE/data/remote-secondmates/gc/data/gc/report.md"
+mirror_lines "done [key=relay-host]: child gc done: ok report=data/remote-secondmates/gc/data/gc/report.md report-at=gc-box.internal:/home/gc/data/gc/report.md" \
+  'done [key=relay-plain]: no pointer here, mentions report-at= only in prose'
+assert_grep 'report=data/remote-secondmates/ios/data/remote-secondmates/gc/data/gc/report.md report-at=remote-mac:/home/gc/data/gc/report.md' "$PARENT/state/ios.status" \
+  "a relayed report-at pointer did not name the registry host of the mid-tier mate"
+assert_no_grep 'gc-box.internal' "$PARENT/state/ios.status" \
+  "the mid-tier's own host name survived into the parent's pointer"
+assert_grep 'no pointer here, mentions report-at= only in prose' "$PARENT/state/ios.status" \
+  "a line without a report-at pointer was altered"
+pass "a relayed report-at pointer names the registry host of the mid-tier mate"
+
 # The reported incident, end to end. The mate announces a scout and names in
 # prose the path its report WILL be written to, then explains the resulting
 # false alarm in two more lines of the same delta. None of that is an offer, so

@@ -23,7 +23,7 @@ Every captain-facing outcome that leaves durable evidence in the mate home is pu
 | Outcome | Durable evidence in the mate home | Published by |
 |---|---|---|
 | Ship child PR ready | the child's `done:` PR ready line, whose accepted spellings the publisher below owns; `pr=` in the child's record once registered | `bin/fm-inactive-reconcile.sh` on the next poll with the child's line; `bin/fm-pr-check.sh` at registration with the canonical URL, or after the green report when [`config/ready-after-green`](configuration.md#pr-ready-line-after-green-configready-after-green) is set |
-| Scout child findings | the child's `done:` line plus `data/<child>/report.md` | `bin/fm-inactive-reconcile.sh` on the next poll, with the report pointer (`report=data/<child>/report.md` plus `report-at=<host>:<abs-path>/report.md`, which names the machine and absolute path so a parent on another machine, or a grandparent through a remote mate, can resolve it) |
+| Scout child findings | the child's `done:` line plus `data/<child>/report.md` | `bin/fm-inactive-reconcile.sh` on the next poll, with the report pointer (`report=data/<child>/report.md` plus `report-at=<host>:<abs-path>/report.md`, which names the machine and absolute path so a parent on another machine, or a grandparent through a remote mate, can resolve it; the mate stamps its own `uname -n` (or `FM_REPORT_HOST`), and `bin/fm-procevent-remote-reply.sh` replaces that host with the `host:` the parent's `data/secondmates.md` records for the mate whose channel carried the line, so a hostname the parent cannot resolve never reaches it, and a mate with no registry host keeps its own name) |
 | Child failed | the child's `failed:` line | `bin/fm-inactive-reconcile.sh` on the next poll |
 | Child decision escalated to the captain | the task held for the captain in the mate backlog | `bin/fm-captain-hold.sh hold`, and its answer by `answer` |
 | PR merged | the merge poll or the mate's own merge | `bin/fm-merge-outcome-lib.sh` |
@@ -52,6 +52,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 ## Regression coverage
 
 `tests/fm-inactive-reconcile.test.sh` covers the ledger delivery against real ledgers with no harness: immediate done and failed delivery with note, PR, mode, posture, and report pointer, once-only delivery across polls, a ship `done:` withheld while its named head exists only in the worker copy, a pending one still delivered after teardown removes that copy, a line still being appended, later routine status prose not minting a fresh parent event because the inactive receipt identity binds structured fields only, the remote route, the yield of the inactive path to a terminal ledger, and the real watcher poll driving it.
+`tests/fm-remote-reply.test.sh` covers the host rewrite of a pointer relayed through a middle-tier mate.
 `tests/fm-captain-hold-lifecycle.test.sh` covers a mate home publishing a hold, its answer, and a distinct occurrence on re-hold, and a main home publishing nothing.
 `tests/fm-pr-merge.test.sh` covers the PR-ready line at registration and the merge outcome's upward report.
 `tests/fm-teardown.test.sh` covers teardown delivering a child's final line and refusing when the channel cannot be written.
