@@ -252,6 +252,11 @@ FM_SEND_ORIGINAL_ARGS=("$@")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
+# shellcheck source=bin/fm-abort-reason-lib.sh
+. "$SCRIPT_DIR/fm-abort-reason-lib.sh"
+# A set -e abort from a failing subcommand must still say why on stderr: the
+# caller only sees the exit status and cannot otherwise tell a steer was lost.
+fm_abort_reason_install fm-send
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never steer
@@ -517,7 +522,8 @@ if [ -n "$TARGET_META" ]; then
   LEASE_GUARD_TASK=$(fm_send_id_from_meta "$TARGET_META")
   if [ -n "$LEASE_GUARD_TASK" ]; then
     fm_lease_guard "$LEASE_GUARD_TASK" "steer (fm-send)"
-    trap 'fm_lease_guard_release' EXIT
+    # Replaces the abort-reason EXIT trap, so the cleanup reports it too.
+    trap 'fm_abort_reason_report $?; fm_lease_guard_release' EXIT
   fi
 fi
 
@@ -1035,7 +1041,13 @@ else
     # (default 30, overridable) so a busy remote queue cannot hold this send
     # open indefinitely; a bound hit exits through the same
     # unconfirmed-delivery contract.
-    REMOTE_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
+    REMOTE_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || {
+      if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
+        fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
+      fi
+      echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID: its parent task metadata path '$TARGET_META' has no valid lock name" >&2
+      exit 1
+    }
     if ! fm_task_inbox_lock_acquire "$REMOTE_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
@@ -1114,7 +1126,7 @@ else
     if [ "$remote_rc" -ne 0 ]; then
       fm_send_known_undelivered_cleanup ||
         echo "error: known-undelivered pending-reply state could not be reset for $TARGET_TASK_ID" >&2
-      echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID (the remote steering-inbox record could not be written; the remote leg's stderr above has the reason)" >&2
+      echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID: the remote leg (fm-on.sh $TARGET_REMOTE_ID fm-remote-secondmate-control.sh send-stdin) exited $remote_rc and the message was not enqueued; its own stderr, if any, is above" >&2
       exit 1
     fi
     # The remote record is durable delivery, exactly as a local enqueue is.
@@ -1137,7 +1149,13 @@ else
   fi
   if [ "$INBOX_PLANE" = 1 ]; then
     INBOX_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
-    INBOX_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
+    INBOX_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || {
+      if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
+        fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
+      fi
+      echo "error: steer not sent to $INBOX_TASK_ID: its task metadata path '$TARGET_META' has no valid lock name" >&2
+      exit 1
+    }
     if ! fm_task_inbox_lock_acquire "$INBOX_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
