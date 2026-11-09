@@ -1,0 +1,34 @@
+# claude pane tail at failure:
+#    Accessing workspace:
+#    /Users/trilliumsmith/.no-mistakes/worktrees/46ba89dc2f0c/01M6ZD4TD90WCJVGRTHM1WP305
+#    Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment# harness absent, not verified here: kimi
+# harness absent, not verified here: muse
+ok - strict posture live: a blank shell row classifies unknown and injection defers
+# harness absent, not verified here: zellij (false-positive regression not exercised)
+): idle composer never classified empty (last verdict: pending)
+ok - codex (codex-cli 0.144.1): real idle composer classifies empty
+ok - codex (codex-cli 0.144.1): the same idle pane read cursorless is not pending (verdict: empty)
+ok - opencode (1.18.4): real idle composer classifies empty
+ok - opencode (1.18.4): the same idle pane read cursorless is not pending (verdict: unknown)
+# pi pane tail at failure:
+#    This allows pi to load .pi settings and resources, install missing project packages, and execute project extensions.
+#    → Trust
+#      Trust parent folder (/Users/trilliumsmith/.no-mistakes/worktrees/46ba89dc2f0c)
+#      Trust (this session only)
+#      Do not trust
+#      Do not trust (this session only)
+#    ↑↓ navigate  enter select  escape/ctrl+c cancel
+#   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+not ok - pi (1.0.0): idle composer never classified empty (last verdict: unknown)
+# grok pane tail at failure:
+#                                                                                                          ⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+#                                                                                           Do you trust the contents of this directory?
+#                                                                        /Users/trilliumsmith/.no-mistakes/worktrees/46ba89dc2f0c/01M6ZD4TD90WCJVGRTHM1WP305
+#                                                                                     Grok Build may run or modify contents in this directory,
+#                                                                                                      posing security risks.
+#                                                                                                  Yes, proceed                 y
+#                                                                                                  No, quit                     n
+#                                                                                                                                                                                                  Grok Build  1.0.77 [stable]
+not ok - grok (grok 1.0.77 (50ca579fa996) [stable]): idle composer never classified empty (last verdict: unknown)
+# harness absent, not verified here: kimi
+# harness absent, not verified here: muse
