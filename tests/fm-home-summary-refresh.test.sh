@@ -515,6 +515,28 @@ grep -F 'refresh exceeded its 1-second deadline' \
   || fail "publication validation timeout was not logged"
 pass "best-effort refresh bounds validation and publication"
 
+QUIET_ROOT="$TMP_ROOT/quiet-timeout-root"
+QUIET_HOME="$TMP_ROOT/quiet-timeout-home"
+mkdir -p "$QUIET_ROOT" "$QUIET_HOME/state" "$QUIET_HOME/data" "$QUIET_HOME/config" "$QUIET_HOME/projects"
+cp -R "$ROOT/bin" "$QUIET_ROOT/bin"
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$QUIET_ROOT/bin/fm-fleet-snapshot.sh"
+chmod +x "$QUIET_ROOT/bin/fm-fleet-snapshot.sh"
+for quiet_shell in /bin/bash bash; do
+  quiet_out=$(FM_HOME="$QUIET_HOME" FM_HOME_SUMMARY_TIMEOUT=1 \
+    "$quiet_shell" "$QUIET_ROOT/bin/fm-home-summary-refresh.sh" --best-effort 2>&1) \
+    || fail "slow producer timeout failed the best-effort caller under $quiet_shell"
+  [ -z "$quiet_out" ] || fail "timed-out refresh printed output under $quiet_shell: $quiet_out"
+  quiet_out=$(FM_HOME="$QUIET_HOME" FM_HOME_SUMMARY_TIMEOUT=1 \
+    "$quiet_shell" "$QUIET_ROOT/bin/fm-home-summary-refresh.sh" 2>&1) && quiet_rc=0 || quiet_rc=$?
+  [ "$quiet_rc" -eq 124 ] || fail "direct timed-out refresh exit changed to $quiet_rc under $quiet_shell"
+  case "$quiet_out" in
+    *Terminated*) fail "raw job-control line leaked under $quiet_shell: $quiet_out" ;;
+  esac
+  [ "$quiet_out" = "fm-home-summary-refresh: refresh exceeded its 1-second deadline" ] \
+    || fail "timed-out refresh message changed under $quiet_shell: $quiet_out"
+done
+pass "timed-out refresh stays quiet and keeps its exit semantics"
+
 MKBIN="$TMP_ROOT/mkdir-hangbin"
 REAL_MKDIR=$(command -v mkdir)
 mkdir -p "$MKBIN"
