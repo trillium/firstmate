@@ -1,0 +1,3 @@
+SCENARIO: named base is absent and project has neither origin/HEAD nor main/master
+PIN_AFTER_UNRESOLVED_BASE=1cd50870dd8f8af909fc9b6ecece4a442c8c16d2
+WORKER_HEAD=1cd50870dd8f8af909fc9b6ecece4a442c8c16d2
