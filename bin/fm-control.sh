@@ -896,6 +896,14 @@ do_exit() {
       done
     fi
   fi
+  # If relaunching and the recorded agent is already done, do not type the exit
+  # command into an unclear input area; retire the incarnation and continue the
+  # relaunch.
+  if [ "$VERB" = relaunch ] && fm_control_recorded_agent_done "$BACKEND" "$T"; then
+    retire_busy_incarnation
+    printf 'already-stopped'
+    return 0
+  fi
   case "$composer_state" in
     empty) ;;
     pending)

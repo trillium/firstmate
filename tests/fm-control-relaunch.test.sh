@@ -2760,7 +2760,7 @@ case "${1:-} ${2:-}" in
   'pane process-info')
     # A retained registration with a shell-only pane models an exited agent
     # whose Herdr status authority still belongs to its previous session.
-    if [ -f "$D/herdr-agent-registration" ]; then
+    if [ -f "$D/herdr-agent-registration" ] || { [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ] && [ -f "$D/herdr-agent-live" ] && grep -Fq '"agent_status":"done"' "$D/herdr-agent-live"; }; then
       printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":4242,"foreground_processes":[]}}}\n' \
         "$(cat "$D/herdr-pane")"
     else
@@ -2820,7 +2820,7 @@ SH
   chmod +x "$fb/herdr"
   cat > "$fb/ps" <<'SH'
 #!/usr/bin/env bash
-if [ -f "$FM_FAKE_DIR/herdr-agent-registration" ]; then
+if [ -f "$FM_FAKE_DIR/herdr-agent-registration" ] || { [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ] && [ -f "$FM_FAKE_DIR/herdr-agent-live" ] && grep -Fq '"agent_status":"done"' "$FM_FAKE_DIR/herdr-agent-live"; }; then
   case "$*" in
     '-axo pid=,ppid=,comm=') printf '4242 1 bash\n' ;;
     '-p 4242 -o args=') printf 'bash\n' ;;
@@ -3380,8 +3380,28 @@ JSON
   pass "fm-control relaunch: an idle agent whose prompt block holds text is still refused"
 }
 
+test_relaunch_proceeds_when_recorded_agent_is_done() {
+  local dir out rc=0
+  herdr_case_or_skip done-agent rl84 fmlab '%7' || return 0
+  dir=$HERDR_CASE_DIR
+  rm -f "$dir/fake/herdr-stopped"
+  cat > "$dir/fake/herdr-agent-live" <<'JSON'
+{"result":{"agent":{"agent":"opencode","agent_status":"done","pane_id":"%7"}}}
+JSON
+  opencode_screen 'half-typed draft' > "$dir/fake/herdr-agent-screen"
+
+  out=$(FM_FAKE_COMPOSER_READ_FAIL=1 run_control "$dir" rl84 relaunch --note "preserve") || rc=$?
+
+  expect_code 0 "$rc" "a relaunch must proceed when an OpenCode agent is already done"$'\n'"$out"
+  assert_not_contains "$out" "not proven empty" "should not fail with unproven empty"
+  assert_not_contains "$(cat "$dir/fake/herdr-log")" "pane send-text %7 /exit" "should not type /exit when agent is done"
+  assert_not_contains "$(cat "$dir/fake/herdr-log")" "pane send-keys %7 C-c" "should not send exit key when agent is done"
+  pass "fm-control relaunch: a finished OpenCode agent skips exit command and proceeds with relaunch"
+}
+
 test_relaunch_proceeds_when_composer_is_unproven_but_idle_with_empty_prompt_block
 test_relaunch_refuses_when_idle_prompt_block_holds_text
+test_relaunch_proceeds_when_recorded_agent_is_done
 test_away_branch_relaunch_accepts_existing_dispatchable_items
 
 test_relaunch_clears_control_exit_marker_only_when_published() {
