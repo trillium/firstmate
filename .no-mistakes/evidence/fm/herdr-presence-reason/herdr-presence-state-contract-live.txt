@@ -1,0 +1,3 @@
+session=fm-lab-presence-state-13880-10106
+pane=w1:p1
+state_stdout=present

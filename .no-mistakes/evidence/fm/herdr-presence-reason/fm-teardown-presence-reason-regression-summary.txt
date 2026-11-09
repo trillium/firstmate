@@ -1,0 +1,2 @@
+ok - herdr flat teardown never erases records when pane presence is unparseable
+ok - herdr flat teardown refusal names the herdr error code behind ambiguous presence
