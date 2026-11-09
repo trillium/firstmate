@@ -792,3 +792,19 @@ fm_control_grok_composer_empty() {  # <screen-text>
       exit (glyph ? 0 : 1)
     }'
 }
+
+# fm_control_recorded_agent_done: 0 when the backend records the agent as
+# finished (done). On Herdr, a finished agent reports agent_status: done.
+fm_control_recorded_agent_done() {  # <backend> <target>
+  local backend=$1 target=$2
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    herdr)
+      fm_backend_herdr_parse_target "$target" || return 1
+      local status
+      status=$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" 2>/dev/null) || return 1
+      [ "$status" = 'done' ] || return 1
+      ;;
+    *) return 1 ;;
+  esac
+}
