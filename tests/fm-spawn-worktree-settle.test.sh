@@ -65,7 +65,7 @@ case "${1:-}" in
     done
     printf '%s\n' "$name" > "$window_file"
     exit 0 ;;
-  kill-window) : > "$window_file"; exit 0 ;;
+  kill-window) : > "$window_file"; printf 'killed\n' >> "$window_file.kills"; exit 0 ;;
   has-session|new-session) exit 0 ;;
   capture-pane) printf '%s\n' "${FM_FAKE_CAPTURE_TEXT:-}"; exit 0 ;;
   send-keys)
@@ -293,7 +293,7 @@ test_unborn_head_project_is_refused_at_once() {
 }
 
 # The pool-full refusal treehouse prints into the pane when other clones of the
-# same origin hold the free slots must be named in the spawn's own error.
+# same origin hold the free slots must be named in the spawn's own deferral.
 test_shared_pool_refusal_names_the_cause() {
   local rec id out status
   id=settle-shared-pool-z6
@@ -303,11 +303,11 @@ test_shared_pool_refusal_names_the_cause() {
 
   out=$(FM_FAKE_CAPTURE_TEXT="all 5 worktrees are in use, dirty, or not provably this clone's (2 belong to another clone; max_trees = 5)" run_settle_spawn "$id")
   status=$?
-  [ "$status" -ne 0 ] || fail "spawn accepted a pane that never entered a worktree"
-  assert_contains "$out" "belong to another clone of the same origin" \
-    "the refusal did not name the shared-pool cause"
-  assert_contains "$out" "max_trees" "the refusal did not name the remedy"
-  pass "a shared-pool treehouse refusal is named in the spawn error"
+  expect_code 75 "$status" "a pool full of another clone's worktrees should exit as queued"$'\n'"$out"
+  assert_contains "$out" "belong to another clone" \
+    "the deferral did not name the shared-pool cause"
+  assert_contains "$out" "max_trees" "the deferral did not name the remedy"
+  pass "a shared-pool treehouse refusal is named in the spawn deferral"
 }
 
 # A non-zero interactive get writes its stderr and returns to the pane's parent
@@ -332,9 +332,77 @@ test_nonzero_treehouse_get_reports_verbatim_refusal_without_polling() {
   pass "a non-zero treehouse get reports its verbatim refusal without polling"
 }
 
+
+# The same pool-full sentence arriving as a non-zero `treehouse get` stderr is
+# also a queued shortage: exit 75 with the sentence, not the generic failure.
+test_nonzero_get_with_a_full_pool_defers() {
+  local rec id out status
+  id=settle-get-pool-full-z8
+  rec=$(make_primary_case settle-get-pool-full "$id" 100000)
+  read_settle_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+
+  out=$(FM_FAKE_TREEHOUSE_GET_STDERR="error: all 16 worktrees are in use, dirty, or not provably this clone's (6 belong to another clone)" run_settle_spawn "$id")
+  status=$?
+  expect_code 75 "$status" "a refused get on a full pool should exit as queued"$'\n'"$out"
+  assert_contains "$out" "deferred:" "the spawn did not report a deferral"
+  assert_contains "$out" "all 16 worktrees are in use" "the deferral did not carry treehouse's own sentence"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "deferred spawn published task metadata"
+  pass "a refused treehouse get on a full pool defers as queued"
+}
+
+# A pool with no slot this clone may take makes `treehouse get` print its own
+# refusal into the pane and never move the shell. That is a queued shortage, not
+# a spawn failure: the spawn reads the sentence, closes the window it opened,
+# prints a deferral carrying it, and exits 75 without any record.
+test_full_pool_defers_and_closes_the_window() {
+  local rec id out status
+  id=settle-pool-full-z6
+  rec=$(make_primary_case settle-pool-full "$id" 100000)
+  read_settle_record "$rec"
+
+  out=$(FM_SPAWN_WT_POLLS=5 FM_SPAWN_WT_POLL_INTERVAL=0.05 \
+    FM_FAKE_PANE_STALE="$PROJ_DIR" \
+    FM_FAKE_CAPTURE_TEXT="treehouse get
+error: all 16 worktrees are in use, dirty, or not provably this clone's (6 belong to another clone)" \
+    run_settle_spawn "$id")
+  status=$?
+  expect_code 75 "$status" "a full pool should exit as queued"$'\n'"$out"
+  assert_contains "$out" "deferred:" "the spawn did not report a deferral"
+  assert_contains "$out" "all 16 worktrees are in use, dirty, or not provably this clone's (6 belong to another clone)" \
+    "the deferral did not carry treehouse's own sentence"
+  assert_not_contains "$out" "did not enter an isolated worktree" "a full pool was reported as an isolation timeout"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "deferred spawn published task metadata"
+  [ -s "$COUNTFILE.window.kills" ] || fail "the window the spawn opened was left behind"
+  [ ! -s "$COUNTFILE.window" ] || fail "the window the spawn opened is still listed"
+  pass "a full treehouse pool defers the task (exit 75), names treehouse's reason, and closes the window"
+}
+
+# Without treehouse's refusal in the pane the ordinary deadline still applies:
+# a quiet pane is not read as a full pool and keeps its window for inspection.
+test_quiet_pane_keeps_the_ordinary_deadline() {
+  local rec id out status
+  id=settle-pool-quiet-z7
+  rec=$(make_primary_case settle-pool-quiet "$id" 100000)
+  read_settle_record "$rec"
+
+  out=$(FM_SPAWN_WT_POLLS=3 FM_SPAWN_WT_POLL_INTERVAL=0.05 \
+    FM_FAKE_PANE_STALE="$PROJ_DIR" FM_FAKE_CAPTURE_TEXT="treehouse get" \
+    run_settle_spawn "$id")
+  status=$?
+  expect_code 1 "$status" "a pane that never moves and shows no refusal should fail"
+  assert_contains "$out" "did not enter an isolated worktree" "the ordinary deadline message is missing"
+  assert_not_contains "$out" "deferred:" "a quiet pane was wrongly deferred"
+  [ ! -e "$COUNTFILE.window.kills" ] || fail "a plain timeout closed the window it left for inspection"
+  pass "a pane without treehouse's refusal keeps the ordinary deadline and its window"
+}
+
 test_single_stale_first_read_is_not_accepted
 test_shared_pool_refusal_names_the_cause
 test_nonzero_treehouse_get_reports_verbatim_refusal_without_polling
+test_nonzero_get_with_a_full_pool_defers
+test_full_pool_defers_and_closes_the_window
+test_quiet_pane_keeps_the_ordinary_deadline
 test_spawn_polling_ignores_a_path_sleep_shim
 test_already_settled_pane_costs_one_confirm_read
 test_transient_primary_checkout_is_not_accepted
