@@ -1,0 +1,32 @@
+Scenario: exact valid account path with trailing space
+exit=1
+fm-gate-refuse: gate agent lifecycle permitted only against\
+ lab home /Users/trilliumsmith/.no-mistakes/worktrees/6762f\
+b16e3f7/01M71E97ZJYZ5SG06QRVZVJ5P5/.fm-live-profile-account\
+.V7FIgC$
+error: config/claude-accounts pins Claude workers to /Users\
+/trilliumsmith/.no-mistakes/worktrees/6762fb16e3f7/01M71E97\
+ZJYZ5SG06QRVZVJ5P5/.fm-live-profile-account.V7FIgC/account \
+, which is not signed in (claude auth status); sign in with\
+ CLAUDE_CONFIG_DIR=/Users/trilliumsmith/.no-mistakes/worktr\
+ees/6762fb16e3f7/01M71E97ZJYZ5SG06QRVZVJ5P5/.fm-live-profil\
+e-account.V7FIgC/account  claude, then /login, or change th\
+e pin$
+assertion=PASS exact trailing-space path reached its declared-account sign-in check
+Scenario: near-match path without trailing space
+exit=1
+fm-gate-refuse: gate agent lifecycle permitted only against\
+ lab home /Users/trilliumsmith/.no-mistakes/worktrees/6762f\
+b16e3f7/01M71E97ZJYZ5SG06QRVZVJ5P5/.fm-live-profile-account\
+.V7FIgC$
+error: launch flags do not match the clear dispatch selecti\
+on --harness claude --account /Users/trilliumsmith/.no-mist\
+akes/worktrees/6762fb16e3f7/01M71E97ZJYZ5SG06QRVZVJ5P5/.fm-\
+live-profile-account.V7FIgC/account  recorded in /Users/tri\
+lliumsmith/.no-mistakes/worktrees/6762fb16e3f7/01M71E97ZJYZ\
+5SG06QRVZVJ5P5/.fm-live-profile-account.V7FIgC/data/trailin\
+g-account-live/dispatch-resolution.json; pass those flags w\
+ith no raw launch command, or record this task's override w\
+ith --dispatch-override <reason>$
+assertion=PASS near-match path rejected by dispatch binding
+assertion=PASS no worker metadata created by either refusal
