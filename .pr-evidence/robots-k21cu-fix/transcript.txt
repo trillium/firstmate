@@ -1,0 +1,6 @@
+$ pi auth check --provider openai-codex --json --no-refresh
+{"status":"not_ready","provider":"openai-codex","reason":"credentials_not_configured"}
+exit=1
+
+# fm-spawn now refuses before launch:
+error: Pi has no usable credential for provider 'openai-codex' (credentials_not_configured), so a worker launched on it would idle on 'No API key found'; sign in with pi, then /login openai-codex, or dispatch on a different provider
