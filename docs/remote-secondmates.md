@@ -49,6 +49,11 @@ A name may use letters, digits, dot, underscore, and dash, and must start with a
 The parent accepts a launch's reported session only when the same setting could have produced it, which for `fm-remote` includes a code-root-derived `fm-remote-<root-id>`.
 The setting is the host's choice, so set it the same on the primary and on the remote host.
 
+A Linux remote whose custom dedicated session was started before the per-code-root session redesign must have its owner record written once.
+Write the absolute path of the Firstmate code root that owns the service, as a single line, to `~/.firstmate/remote-herdr-session-owner-<session>`, where `~/.firstmate` is a plain directory, not a symlink.
+Until then the doctor reports that the session's owner cannot be proven, and the host is not ready.
+macOS needs no manual step, because the doctor proves ownership from the session's launch-agent plist.
+
 ## Prerequisites
 
 ### SSH access from the primary

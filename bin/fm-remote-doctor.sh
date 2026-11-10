@@ -1009,8 +1009,13 @@ check_herdr_server() {
       return 0
     fi
     if [ -z "$HERDR_OWNER_ROOT" ]; then
-      record herdr-server "human: session $HERDR_SESSION_NAME is running but its Firstmate code-root owner cannot be proven; leaving the legacy service untouched" \
-        "identify the code root that owns this Herdr service before attempting a repair"
+      if fm_remote_herdr_managed_request "$HERDR_SESSION_NAME"; then
+        record herdr-server "human: session $HERDR_SESSION_NAME is running but its Firstmate code-root owner cannot be proven; leaving the legacy service untouched" \
+          "identify the code root that owns this Herdr service before attempting a repair"
+      else
+        record herdr-server "human: session $HERDR_SESSION_NAME is running but its Firstmate code-root owner cannot be proven; leaving the legacy service untouched" \
+          "write the absolute path of the Firstmate code root that owns this Herdr service, as a single line, to $HERDR_OWNER_FILE in a plain, non-symlink $HERDR_OWNER_DIR directory"
+      fi
       return 0
     fi
     # A legacy service is adopted only when its launch-agent guard proves this
