@@ -230,6 +230,12 @@ test_claude_launch_brief_publishes_record_doorbell() {
   [ "$(printf '%s' "$doorbell" | FM_STATE_OVERRIDE="$HOME_DIR/state" "$ROOT/bin/fm-operational-input.sh" open "$record")" \
     = "$(cat "$HOME_DIR/data/$id/launch-brief.md")" ] \
     || fail "open did not return the launch brief body"
+  [ -d "$HOME_DIR/state/operational-inbox/handled" ] \
+    || fail "the claude launch did not create operational-inbox/handled"
+  mv "$record" "$HOME_DIR/state/operational-inbox/handled/" \
+    || fail "the launch record could not be moved into operational-inbox/handled"
+  [ -f "$HOME_DIR/state/operational-inbox/handled/${record##*/}" ] \
+    || fail "the acknowledged launch record is missing from handled/"
   pass "a claude launch publishes the brief as an operational-inbox record and passes only the doorbell"
 }
 

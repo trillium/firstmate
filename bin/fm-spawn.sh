@@ -4213,7 +4213,7 @@ claude_add_dirs_flag() {  # <kind> <state-dir> <data-dir> <code-root> <task-id>
     data_real=$(cd "$data_dir" && pwd -P) || return 1
     root_real=$(cd "$code_root" && pwd -P) || return 1
     [ -d "$root_real/.agents/skills" ] || return 1
-    mkdir -p "$state_real/operational-inbox" "$state_real/$id.inbox/handled" "$data_real/$id" || return 1
+    mkdir -p "$state_real/operational-inbox/handled" "$state_real/$id.inbox/handled" "$data_real/$id" || return 1
     dirs=("$state_real/operational-inbox" "$state_real/$id.inbox" "$data_real/$id" "$root_real/.agents/skills")
     ;;
   esac

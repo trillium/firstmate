@@ -247,6 +247,21 @@ test_record_prune_outgrows_one_argument_list() {
   pass "record pruning: expired records past one argument list are all pruned on a write"
 }
 
+test_record_write_creates_handled_dir() {
+  local tmp state doorbell record
+  tmp=$(fm_test_tmproot fm-operational-input-handled)
+  state="$tmp/state"
+  doorbell=$(printf 'x' | FM_STATE_OVERRIDE="$state" "$OWNER" record watcher) \
+    || fail "record write into a fresh state dir failed"
+  record=$(printf '%s' "$doorbell" | sed -n "s/.*read '\([^']*\)'.*/\1/p")
+  [ -d "$state/operational-inbox/handled" ] \
+    || fail "a first record write did not create operational-inbox/handled"
+  mv "$record" "$state/operational-inbox/handled/" \
+    || fail "a record could not be moved into operational-inbox/handled"
+  [ -f "$state/operational-inbox/handled/${record##*/}" ] || fail "the moved record is missing from handled/"
+  pass "record write: creates operational-inbox/handled so a record can be acknowledged by moving it"
+}
+
 test_current_generic_matrix
 test_current_from_firstmate_carrier
 test_landed_untyped_prefix_is_explicitly_legacy
@@ -256,3 +271,4 @@ test_cross_language_adapter_uses_the_owner
 test_invalid_current_encodings_are_rejected
 test_record_backed_doorbell_carrier
 test_record_prune_outgrows_one_argument_list
+test_record_write_creates_handled_dir
