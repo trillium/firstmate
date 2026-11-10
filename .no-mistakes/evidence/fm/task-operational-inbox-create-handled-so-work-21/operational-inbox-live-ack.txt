@@ -1,0 +1,5 @@
+doorbell_kind=launch-brief
+opened_body=Live launch brief acknowledgement
+handled_directory=created
+acknowledged_record=handled/1794335364-8f99c9ebe810e5f4.msg
+original_path_unreadable_after_ack=yes
