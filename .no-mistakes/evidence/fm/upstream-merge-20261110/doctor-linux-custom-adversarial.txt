@@ -1,0 +1,13 @@
+### symlinked ~/.firstmate holding a correct record
+note: not launched through the fixed remote entrypoint; the reported PATH is this caller environment.
+check herdr-server=human: session fm-lab-ownerck-41930-14914 is running but its Firstmate code-root owner cannot be proven; leaving the legacy service untouched
+action: herdr-server: write the absolute path of the Firstmate code root that owns this Herdr service, as a single line, to /tmp/fmhome.ePJk/.firstmate/remote-herdr-session-owner-fm-lab-ownerck-41930-14914 in a plain, non-symlink /tmp/fmhome.ePJk/.firstmate directory
+error: this host is not ready for a remote second mate; unresolved: remote-job-worker remote-job-probe herdr-server
+exit=1
+### record naming a different code root
+note: not launched through the fixed remote entrypoint; the reported PATH is this caller environment.
+required herdr=/opt/homebrew/bin/herdr
+check herdr=ok: /opt/homebrew/bin/herdr
+check herdr-server=ok: session fm-lab-ownerck-41930-14914 is running
+error: this host is not ready for a remote second mate; unresolved: remote-job-worker remote-job-probe
+exit=1

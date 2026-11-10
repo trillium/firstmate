@@ -1,0 +1,13 @@
+setting=<unset> -> session=default label=dev.firstmate.herdr.default dedicated=0 owner_file=
+   parent accepts: default
+setting=default -> session=default label=dev.firstmate.herdr.default dedicated=0 owner_file=
+   parent accepts: default
+setting=fm-remote -> session=fm-remote label=dev.firstmate.herdr.fm-remote dedicated=1 owner_file=.firstmate/remote-herdr-owner
+   parent accepts: fm-remote fm-remote-0123456789abcdef
+setting=team-a -> session=team-a label=dev.firstmate.herdr.team-a dedicated=1 owner_file=.firstmate/remote-herdr-session-owner-team-a
+   parent accepts: team-a
+setting=bad name -> REFUSED: FM_REMOTE_HERDR_SESSION 'bad name' is not a usable session name; use letters, digits, dot, underscore, or dash, starting with a letter or digit
+setting=-lead -> REFUSED: FM_REMOTE_HERDR_SESSION '-lead' is not a usable session name; use letters, digits, dot, underscore, or dash, starting with a letter or digit
+### second code root when fm-remote owned by another root
+session=fm-remote-bd33c131774bce08
+re-resolved=fm-remote-bd33c131774bce08

@@ -1,0 +1,31 @@
+### Linux custom session fm-lab-ownerck-41930-14914, running, no owner record
+mode=check
+path=/opt/homebrew/bin:/opt/homebrew/sbin:/Users/mini0/.local/bin:/Users/mini0/.bun/bin:/Users/mini0/.nix-profile/bin:/etc/profiles/per-user/mini0/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/mini0/go/bin:/Users/mini0/.cargo/bin:/Users/mini0/bin:/usr/local/sbin
+entrypoint=no
+note: not launched through the fixed remote entrypoint; the reported PATH is this caller environment.
+platform=linux
+required git=/Users/mini0/.local/bin/git
+required jq=/opt/homebrew/bin/jq
+required herdr=/opt/homebrew/bin/herdr
+required tasks-axi=/opt/homebrew/bin/tasks-axi
+required treehouse=/opt/homebrew/bin/treehouse
+required harness=claude:/opt/homebrew/bin/claude
+optional tmux=/opt/homebrew/bin/tmux
+optional no-mistakes=/Users/mini0/.local/bin/no-mistakes
+optional gh=/run/current-system/sw/bin/gh
+check herdr=ok: /opt/homebrew/bin/herdr
+check gui-session=skip: no Aqua login session applies on linux
+check remote-job-worker=fixable: the Linux remote job worker is not running
+check remote-job-worker-loaded=skip: Aqua launch agents do not apply on linux
+check remote-job-probe=fixable: the remote job worker has not reported a fresh probe
+check launchagent-legacy=skip: launch agents apply only on darwin
+check launchagent=skip: launch agents apply only on darwin
+check launchagent-scope=skip: launch agents apply only on darwin
+check launchagent-loaded=skip: launch agents apply only on darwin
+check herdr-server=human: session fm-lab-ownerck-41930-14914 is running but its Firstmate code-root owner cannot be proven; leaving the legacy service untouched
+check entrypoint-link=skip: this run did not come through the fixed remote entrypoint
+action: remote-job-worker: rerun this command with --fix to start it
+action: remote-job-probe: rerun this command with --fix to restart the worker, then rerun through fm-on.sh
+action: herdr-server: write the absolute path of the Firstmate code root that owns this Herdr service, as a single line, to /tmp/fmhome.ePJk/.firstmate/remote-herdr-session-owner-fm-lab-ownerck-41930-14914 in a plain, non-symlink /tmp/fmhome.ePJk/.firstmate directory
+error: this host is not ready for a remote second mate; unresolved: remote-job-worker remote-job-probe herdr-server
+exit=1

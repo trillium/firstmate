@@ -1,0 +1,5 @@
+ok - A host-local launch accepts omp and records the fm-remote Herdr endpoint
+ok - B host-local relaunch accepts omp and reaches the control plane
+ok - C the parent-side remote spawn gate accepts omp
+ok - D host-local retirement removes an omp mate's home and succeeds
+ALL TESTS PASSED

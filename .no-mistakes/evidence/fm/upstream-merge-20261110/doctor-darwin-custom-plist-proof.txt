@@ -1,0 +1,15 @@
+### macOS: custom session running, no owner record, legacy launch-agent plist guard names this root
+note: not launched through the fixed remote entrypoint; the reported PATH is this caller environment.
+platform=darwin
+check launchagent-legacy=ok: no legacy dev.firstmate.herdr.fm-remote agent remains
+check launchagent=fixable: /tmp/fmhome.ePJk/Library/LaunchAgents/dev.firstmate.herdr.fm-lab-ownerck-41930-14914.plist does not match the current Firstmate-owned contract
+check launchagent-scope=fixable: /tmp/fmhome.ePJk/Library/LaunchAgents/dev.firstmate.herdr.fm-lab-ownerck-41930-14914.plist is not scoped to the Aqua login session
+check launchagent-loaded=fixable: dev.firstmate.herdr.fm-lab-ownerck-41930-14914 is not loaded into gui/501
+check herdr-owner=fixable: session fm-lab-ownerck-41930-14914 is proven to belong to /Users/mini0/.no-mistakes/worktrees/0bf32a15afdb/01M72SRN6KVHBMMPW0RVB96VSS but still needs its durable owner record
+check herdr-server=fixable: session fm-lab-ownerck-41930-14914 is served by pid 42030 born outside the Aqua login session (unknown), so its panes cannot reach the login keychain
+action: launchagent: rerun this command with --fix to rewrite its label, program arguments, session scope, restart policy, and log paths
+action: launchagent-scope: rerun this command with --fix to rewrite it with LimitLoadToSessionType=Aqua
+action: launchagent-loaded: rerun this command with --fix to bootstrap and start it
+action: herdr-owner: rerun this command with --fix to record ownership without restarting the server
+action: herdr-server: rerun this command with --fix so the launch agent takes the session over
+error: this host is not ready for a remote second mate; unresolved: remote-job-worker remote-job-worker-loaded remote-job-probe launchagent launchagent-scope launchagent-loaded herdr-owner herdr-server
