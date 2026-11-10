@@ -81,6 +81,15 @@ if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   exit 1
 fi
 MERGE_EXPECTED_SPAWN_GEN=$FM_BACKLOG_META_SPAWN_GEN
+MERGE_CONTROL_LOCK=
+MERGE_META_LOCK=
+MERGE_PROJECT_LOCK=
+merge_control_cleanup() {
+  [ -z "$MERGE_PROJECT_LOCK" ] || fm_lock_release "$MERGE_PROJECT_LOCK" || true
+  [ -z "$MERGE_META_LOCK" ] || fm_lock_release "$MERGE_META_LOCK" || true
+  [ -z "$MERGE_CONTROL_LOCK" ] || fm_lock_release "$MERGE_CONTROL_LOCK" || true
+}
+trap merge_control_cleanup EXIT
 if [ "$RECORD_LANDED" = 1 ]; then
   [ "$(fm_dod_meta_value "$META" mode)" = local-only ] || { echo "error: task $ID is not local-only; nothing to record" >&2; exit 1; }
   rl_proj=$(fm_dod_meta_value "$META" project)
@@ -102,11 +111,18 @@ if [ "$RECORD_LANDED" = 1 ]; then
     echo "REFUSED: $rl_branch has commits with no patch-equivalent on $rl_default; nothing recorded." >&2
     exit 1
   fi
-  rl_lock=$(fm_meta_lock_path "$META")
-  fm_lock_acquire_wait "$rl_lock"
-  rl_meta=$(grep -v '^landed_equivalent=' "$META" || true)
-  printf '%s\nlanded_equivalent=%s\n' "$rl_meta" "$rl_head" > "$META"
-  fm_lock_release "$rl_lock" || true
+  # shellcheck source=bin/fm-backend.sh
+  . "$SCRIPT_DIR/fm-backend.sh"
+  MERGE_CONTROL_LOCK="$STATE/.control-$ID.lock"
+  fm_lock_acquire_wait "$MERGE_CONTROL_LOCK"
+  MERGE_META_LOCK=$(fm_meta_lock_path "$META")
+  fm_lock_acquire_wait "$MERGE_META_LOCK"
+  if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE" \
+    || [ "$FM_BACKLOG_META_SPAWN_GEN" != "$MERGE_EXPECTED_SPAWN_GEN" ]; then
+    echo "error: task $ID changed while waiting to record; nothing recorded" >&2
+    exit 1
+  fi
+  fm_meta_set "$META" landed_equivalent "$rl_head" || { echo "error: could not record landed_equivalent for task $ID" >&2; exit 1; }
   echo "recorded $rl_branch (${rl_head:0:8}) as landed on $rl_default by patch-equivalence"
   exit 0
 fi
@@ -126,15 +142,6 @@ if ! MERGE_EXPECTED_HEAD=$(fm_dod_local_done_head "$META"); then
   }
 fi
 
-MERGE_CONTROL_LOCK=
-MERGE_META_LOCK=
-MERGE_PROJECT_LOCK=
-merge_control_cleanup() {
-  [ -z "$MERGE_PROJECT_LOCK" ] || fm_lock_release "$MERGE_PROJECT_LOCK" || true
-  [ -z "$MERGE_META_LOCK" ] || fm_lock_release "$MERGE_META_LOCK" || true
-  [ -z "$MERGE_CONTROL_LOCK" ] || fm_lock_release "$MERGE_CONTROL_LOCK" || true
-}
-trap merge_control_cleanup EXIT
 MERGE_CONTROL_LOCK="$STATE/.control-$ID.lock"
 fm_lock_acquire_wait "$MERGE_CONTROL_LOCK"
 MERGE_META_LOCK=$(fm_meta_lock_path "$META")

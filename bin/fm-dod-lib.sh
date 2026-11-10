@@ -969,15 +969,34 @@ fm_dod_local_done_head() {  # <meta>
 
 # Is every commit of <head> not on <ref> patch-equivalent to a commit on <ref>?
 # Single owner of the equivalence proof shared by bin/fm-teardown.sh and
-# bin/fm-merge-local.sh --record-landed. git cherry matches stable patch ids, so
-# a squash merge or a conflict-resolved replay never matches and still refuses.
-# A merge commit among the unmatched commits, a git error, or any "+" line
-# returns non-zero; a head already on <ref> is trivially equivalent.
+# bin/fm-merge-local.sh --record-landed. Ids are whitespace-exact
+# (git patch-id --verbatim; plain git cherry ignores whitespace, and indentation
+# can change semantics), so a squash merge or a replay that changed the patch
+# never matches and still refuses. A merge commit among the unmatched commits, a
+# git error, unsupported --verbatim, or a commit with no id or no match returns
+# non-zero; a head already on <ref> is trivially equivalent.
 fm_dod_patch_equivalent() {  # <repo> <ref> <head>
-  local repo=$1 ref=$2 head=$3 out
-  [ -z "$(git -C "$repo" rev-list --merges "$head" --not "$ref" -- 2>/dev/null)" ] || return 1
-  out=$(git -C "$repo" cherry "$ref" "$head" 2>/dev/null) || return 1
-  ! printf '%s\n' "$out" | grep -q '^+'
+  local repo=$1 ref=$2 head=$3 merges commits head_ids ref_ids commit id
+  merges=$(git -C "$repo" rev-list --merges "$head" --not "$ref" -- 2>/dev/null) || return 1
+  [ -z "$merges" ] || return 1
+  commits=$(git -C "$repo" rev-list "$head" --not "$ref" -- 2>/dev/null) || return 1
+  [ -n "$commits" ] || return 0
+  head_ids=$(fm_dod_verbatim_patch_ids "$repo" "$head" "$ref")
+  ref_ids=$(fm_dod_verbatim_patch_ids "$repo" "$ref" "$head" | awk '{ print $1 }')
+  [ -n "$ref_ids" ] || return 1
+  while IFS= read -r commit; do
+    id=$(printf '%s\n' "$head_ids" | awk -v c="$commit" '$2 == c { print $1; exit }')
+    [ -n "$id" ] || return 1
+    printf '%s\n' "$ref_ids" | grep -qxF "$id" || return 1
+  done <<EOF
+$commits
+EOF
+}
+
+# "<patch-id> <commit>" lines for the non-merge commits of <tip> not on <exclude>.
+fm_dod_verbatim_patch_ids() {  # <repo> <tip> <exclude>
+  git -C "$1" log --no-merges --no-ext-diff --no-color -p --pretty=medium "$2" --not "$3" -- 2>/dev/null \
+    | git patch-id --verbatim 2>/dev/null
 }
 
 # Latch the head before reporting readiness, not at landing time. Snapshot

@@ -754,6 +754,24 @@ test_local_only_replay_with_dirty_tree_refuses() {
   pass "patch-equivalent work with uncommitted changes still refuses"
 }
 
+test_local_only_whitespace_changed_replay_refuses() {
+  local case_dir rc
+  case_dir=$(make_case equiv-local-whitespace)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" a.py '    alpha'
+  # Same tokens, different indentation: plain git cherry would call it equivalent.
+  printf 'alpha\n' > "$case_dir/project/a.py"
+  git -C "$case_dir/project" add a.py
+  git -C "$case_dir/project" -c user.email=t@t -c user.name=t commit -q -m 'add a.py'
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "equiv-local-whitespace: a replay that changed indentation must refuse"
+  grep -q REFUSED "$case_dir/stderr" || fail "equiv-local-whitespace: no REFUSED line"
+  pass "local-only replay that changed only whitespace still refuses"
+}
+
 test_ordinary_patch_equivalent_commit_on_origin_main_allows() {
   local case_dir rc tmp
   case_dir=$(make_case equiv-ordinary-allow)
@@ -812,6 +830,7 @@ test_local_only_fork_remote_allows() {
 
   expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
+  ! grep -q '^landed proof:' "$case_dir/stdout" || fail "fork-allow: work only on a fork was reported as landed"
   [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
     || fail "fork-allow: teardown left the task's branch outcome index behind"
   # The supervision branch reports the teardown it just performed AFTER the
@@ -7045,6 +7064,7 @@ test_local_only_fork_remote_allows
 test_local_only_patch_equivalent_replay_allows
 test_local_only_replay_with_unmatched_commit_refuses
 test_local_only_replay_with_dirty_tree_refuses
+test_local_only_whitespace_changed_replay_refuses
 test_ordinary_patch_equivalent_commit_on_origin_main_allows
 test_stale_landed_record_for_another_head_refuses
 test_teardown_closes_the_backlog_item_itself

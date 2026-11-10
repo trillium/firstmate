@@ -71,14 +71,15 @@
 # the local branch diverged; merge commits, empty diffs, and any commit without an
 # exact match still refuse. Anything else refuses.
 # Work also counts as landed when every commit not on the default branch is
-# patch-equivalent to a commit on it (git cherry shows no "+" line and no merge
-# commit is among them; fm_dod_patch_equivalent in bin/fm-dod-lib.sh), which covers
+# patch-equivalent to a commit on it (matching whitespace-exact patch ids and no
+# merge commit among them; fm_dod_patch_equivalent in bin/fm-dod-lib.sh), which covers
 # work a different task re-applied as new commits, or when bin/fm-merge-local.sh
 # --record-landed recorded landed_equivalent= for exactly the current HEAD. A
 # replay that changed the patch (conflict resolution) is not matched and refuses.
-# A successful check prints "landed proof: <ancestry|patch-equivalent|merged PR|
-# ...>" naming which proof was used. Uncommitted changes still refuse under every
-# proof. tests/fm-teardown.test.sh covers each proof and the refusals.
+# The first successful check prints "landed proof: <ancestry|patch-equivalent|
+# merged PR|...>" naming which proof was used; work already on a remote needs
+# none. Uncommitted changes still refuse under every proof.
+# tests/fm-teardown.test.sh covers each proof and the refusals.
 # The PR itself is resolved from the task's recorded pr= when present, or - when
 # no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
 # where the usual "checks green" fm-pr-check.sh trigger never fires) - by looking
@@ -2285,8 +2286,9 @@ work_is_landed() {
   return 1
 }
 
-# Proof used for the landed-work verdict, named in the teardown output.
-LANDED_PROOF=ancestry
+# Proof used for the landed-work verdict, named in the teardown output; empty
+# when no proof was needed (no commit is off every remote).
+LANDED_PROOF=
 
 # Do the commits not on <ref> already exist there as patch-equivalent commits,
 # or did bin/fm-merge-local.sh --record-landed record exactly this head as
@@ -2674,6 +2676,7 @@ read_worktree_dirt() {
 
 validate_worktree_teardown_safety() {
   local dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
+  LANDED_PROOF=
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
   case "$KIND" in
@@ -2718,7 +2721,9 @@ validate_worktree_teardown_safety() {
       return 1
     fi
     unmerged=$(printf '%s\n' "$unmerged_raw" | head -5)
-    if [ -z "$dirty" ] && [ -n "$unmerged" ] && landed_by_equivalence "$DEFAULT"; then
+    if [ -z "$unmerged" ]; then
+      LANDED_PROOF=ancestry
+    elif [ -z "$dirty" ] && landed_by_equivalence "$DEFAULT"; then
       unmerged=
     fi
     if [ -n "$dirty" ] || [ -n "$unmerged" ]; then
@@ -2753,7 +2758,6 @@ validate_worktree_teardown_safety() {
       return 1
     fi
   fi
-  echo "landed proof: $LANDED_PROOF"
 }
 
 # Fix 1 (see script header): does the active-or-most-recent no-mistakes run in
@@ -4486,6 +4490,7 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       exit 1
     fi
   fi
+  [ -z "$LANDED_PROOF" ] || echo "landed proof: $LANDED_PROOF"
 fi
 
 # A Herdr close may reposition shared workspace order, so the whole

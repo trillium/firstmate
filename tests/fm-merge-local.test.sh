@@ -359,7 +359,19 @@ test_record_landed_refuses_unmatched_work() {
   pass 'work with no equivalent on main is not recorded'
 }
 
-fm_test_run test_record_landed_for_replayed_work test_record_landed_refuses_unmatched_work test_two_tasks_cannot_undo_a_same_tree_landing test_branch_advance_does_not_change_approval \
+test_record_landed_refuses_whitespace_changed_replay() {
+  local rc=0
+  make_case whitespace
+  printf 'approved  X\n' > "$PROJ/approved.txt"
+  git -C "$PROJ" add approved.txt
+  git -C "$PROJ" -c user.email=t@t -c user.name=t commit -q -m 'replayed X with changed spacing'
+  record_landed >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail 'a whitespace-changed replay was recorded as landed'
+  assert_no_regex '^landed_equivalent=' "$META" 'a refused record left a marker'
+  pass 'a replay that changed only whitespace is not recorded'
+}
+
+fm_test_run test_record_landed_for_replayed_work test_record_landed_refuses_whitespace_changed_replay test_record_landed_refuses_unmatched_work test_two_tasks_cannot_undo_a_same_tree_landing test_branch_advance_does_not_change_approval \
   test_missing_and_malformed_head_refuse test_change_after_hold_check_refuses \
   test_diverged_default_refuses test_change_during_approval_check_refuses \
   test_snapshot_cannot_pin_a_replacement_task test_done_recording_preserves_caller_locks \
