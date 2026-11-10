@@ -323,7 +323,9 @@ exec "$FM_TEST_REAL_SLEEP" "$@"
 SH
     chmod +x "$fakebin/sleep"
   fi
-  PATH="$fakebin:$PATH" FM_TEST_REAL_SLEEP="${real_sleep:-}" FM_TEST_WATCH_PAUSED="$dir/old.paused" FM_PROC_ROOT_OVERRIDE="$no_proc" TZ=America/Los_Angeles FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 FM_POLL="$old_poll" FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$old_out" 2>&1 &
+  # The host's booted iOS simulators must not wake the old watcher before it
+  # reaches that poll sleep (bin/fm-sim-idle.sh scans the real xcrun).
+  PATH="$fakebin:$PATH" FM_TEST_REAL_SLEEP="${real_sleep:-}" FM_TEST_WATCH_PAUSED="$dir/old.paused" FM_SIM_IDLE_HOURS=off FM_PROC_ROOT_OVERRIDE="$no_proc" TZ=America/Los_Angeles FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 FM_POLL="$old_poll" FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$old_out" 2>&1 &
   old=$!
   i=0
   lock_pid=
@@ -353,7 +355,7 @@ SH
   rm -f "$state/.watch.lock/pid-start"
   printf '%s\n' "$legacy" > "$state/.watch.lock/pid-identity"
   is_live_non_zombie "$old" || fail "the old holder exited before its successor started, so the replacement would not be exercised: $(cat "$old_out")"
-  PATH="$fakebin:$PATH" FM_TEST_REAL_SLEEP="${real_sleep:-}" FM_PROC_ROOT_OVERRIDE="$no_proc" TZ=America/Los_Angeles FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$new_out" 2>&1 &
+  PATH="$fakebin:$PATH" FM_TEST_REAL_SLEEP="${real_sleep:-}" FM_SIM_IDLE_HOURS=off FM_PROC_ROOT_OVERRIDE="$no_proc" TZ=America/Los_Angeles FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$new_out" 2>&1 &
   new=$!
   i=0
   claimed=0
