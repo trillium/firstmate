@@ -28,7 +28,7 @@
 #             exactly the encoded envelope bytes, published by atomic rename.
 #             The directory always has a handled/ subdirectory, so a reader can
 #             set a record aside by moving it there.
-#             Records are never re-rung or acknowledged; every write prunes
+#             Records are never re-rung or automatically acknowledged; every write prunes
 #             records at about FM_OPERATIONAL_RECORD_RETENTION_DAYS (7) elapsed days.
 #   Doorbell: FM_OPERATIONAL_DOORBELL_PREFIX <absolute physical record path>
 #             FM_OPERATIONAL_DOORBELL_SUFFIX, one printable-ASCII line whose
