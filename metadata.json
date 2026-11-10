@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.5",
+  "checkpoint_id": "01M71JD0KBKG0GNDH31BY1F3ZZ",
+  "strategy": "manual-commit",
+  "branch": "rescue/macbook-20261109",
+  "checkpoints_count": 48,
+  "files_touched": [
+    "OPENCLAW_TALK_PREP.md",
+    "bin/fm-primary-failover.sh"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 3383025,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 95211136,
+    "output_tokens": 121834,
+    "api_call_count": 356
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "cli_version": "0.11.5",
+  "checkpoint_id": "01M71JD0KBKG0GNDH31BY1F3ZZ",
+  "session_id": "01a1bd7e-71fc-7112-9aff-35cf79dac0d7",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-10T01:50:44.163941Z",
+  "branch": "rescue/macbook-20261109",
+  "checkpoints_count": 48,
+  "save_step_count": 48,
+  "files_touched": [
+    "OPENCLAW_TALK_PREP.md",
+    "bin/fm-primary-failover.sh"
+  ],
+  "agent": "Pi",
+  "model": "grok-4.7",
+  "turn_id": "a78013485436",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 3383025,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 95211136,
+    "output_tokens": 121834,
+    "api_call_count": 356
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "prompt-skill-pi-models-2026-11-08T23:29:20.767019Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "models"
+      },
+      "source": {
+        "agent": "pi",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "a2b2fc9a6cbf",
+      "timestamp": "2026-11-08T23:29:20.767019Z",
+      "native": {
+        "command": "/models"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/models",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 48
+  }
+}
