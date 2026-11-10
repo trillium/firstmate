@@ -19,19 +19,20 @@ Posture: direct-PR, yolo on, no no-mistakes/CodeRabbit, merge+test on green. Rep
 .6 skip Grok hour · .7 Hermes one-line mention · .8 OpenClaw = framing slide + live voice-to-task demo · .11 studio presenter-only · .9 phrases "next slide"/"previous slide", capture cmd "capture note" · ~~.12 cut .11.1~~ REVERSED by captain: .11.1 (isolated Beads Bridge MCP inside the Coder workspace) is IN scope, build it
 
 ## CURRENT STATUS (overwrite this block every wake; history goes in the wake log below)
-Last updated: wake #32. If this block disagrees with the log, the newest log entry wins.
+Last updated: wake #69 (2026-11-08). If this block disagrees with the log, the newest log entry wins.
+Talk delivered 2026-10-14. Parent task-l6wjg closed 2026-10-15. Header authorization ended with the talk. Primary is back on Claude (switched back from Grok at wake #69).
 
 | # | Item | State | Evidence / PR | Next |
 |---|------|-------|---------------|------|
-| 1 | voicefirst-landing | MERGED (#2-#5), live | apex HTTPS 200, cert valid (curl verify 0) | none |
-| 2 | brain-playground | MERGED (#2), live | play.voicefirst.dev HTTPS 200 valid cert | presenter reset outside check |
-| 3 | coder-brain-studio | MERGED (#2-#6) | studio.voicefirst.dev 401 gated; real Beads MCP + attendee access merged; lnx boundaries approved | outside attendee test |
-| 4 | parlay | MERGED + LIVE (#325, #326) | phone trigger on tailnet :8450 | captain phone tap |
-| 5 | beads-bridge | MERGED + DEPLOYED (#33) | /live/variants 200 | auth check |
-| 6 | demo prep + day-of | in flight (mini0-ops talk-dayof) | DAY-OF.md unconfirmed | confirm file |
-| 7 | guard fixes | MERGED (#211) | primary synced | watch xldf |
-| 8 | failover (task-673ui) | drill PASSED in disposable home; fixes in https://github.com/trillium/firstmate/pull/212 (CI pending) | evidence on task-673ui | merge on green, tick box |
-| 9 | slides + rehearsal | plan MERGED (#4) | | schedule rehearsal with captain |
+| 1 | voicefirst-landing | delivered; one PR still open | task-l6wjg closed; https://github.com/trillium/voicefirst-landing/pull/87 open, checks green 2026-10-19 | leave PR 87 open (workflow edit, reviewed) |
+| 2 | brain-playground | delivered | play.voicefirst.dev was HTTPS 200 on 2026-10-14 | none for the talk |
+| 3 | coder-brain-studio | delivered | studio gated; acceptance 77/0 on 2026-10-14 | none for the talk |
+| 4 | parlay | delivered | phone trigger was live | phone tap never confirmed; talk already given |
+| 5 | beads-bridge | delivered | PR #33 merged | none for the talk |
+| 6 | demo prep + day-of | delivered | DAY-OF.md confirmed wake #33 | none |
+| 7 | guard fixes | MERGED (#211) | primary synced at the time | none |
+| 8 | failover (task-673ui) | drill passed; PR #212 merged | wake #37 | primary is grok again until Claude resets |
+| 9 | slides + rehearsal | deck merged and deployed | PR #4, later #11-#13 | rehearsal time was never booked; talk already given |
 
 ## DEADLINES (all local time, 2026-10-13/14)
 - 04:00: primary failover tested (drill + switch-back). Claude 5h window ends about 04:26; codex is unavailable, so route to grok / opencode-go / agy.
@@ -462,3 +463,22 @@ robots-h36m (Monitor guard, fixed, needs PR), robots-xldf (wake flood, mitigated
 - In flight: none.
 - Next: studio load test, failure drills, mini1 clean build; wire pane-triage into wake digest.
 - Blocked (captain-only): slot length, agent-path pick for slide 11, read slide 14 vs reality, phone/cellular checks (review-rbnd).
+
+## Wake #67 — 2026-11-08 14:10 PDT (grok primary; Claude limit exhausted)
+**Done**: Session start on grok; this session holds the lock. Reread the pad. Parent task-l6wjg is closed: talk delivered 2026-10-14 (closed 2026-10-15). The header authorization ended with the talk, so it does not authorize merges, discards, or project edits now. Pane triage at 14:11: 48 panes, 8 flagged (4 Claude usage limit, 1 waiting on a decision, 3 empty shells).
+**Reviewed**: https://github.com/trillium/voicefirst-landing/pull/87 is still open. Diff is four workflow files, each `runs-on: ubuntu-latest` to `fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"')`. Checks green 2026-10-19. robots-4r0ku fired because any workflow diff is flagged when there is no prior known-good head. The push is the intended runner pin. PR left open.
+**In flight**: no talk workers.
+**Next**: nothing left on this pad that should run after the talk. Studio load, failure drills, and a mini1 clean build were pre-talk QA and were not started from here; failure drills stay off (they kill live services, and the talk authorization has ended).
+**Blocked**: none for the talk. Other workers are stopped on the Claude usage limit until Nov 9, 4pm PT.
+
+## Wake #68 — 2026-11-08 (failover confirmed)
+**Done**: mini0-ops recorded that this MacBook primary was failed over to Grok on purpose, lock handed over cleanly, Grok credits 100%. A watchdog will switch back to Claude on its own once Claude's quota is above 15%, and will fail over again next time.
+**In flight**: no talk workers.
+**Next**: none on this pad.
+**Blocked**: none for the talk.
+
+## Wake #69 — 2026-11-08 (primary back on Claude)
+**Done**: Reread the pad; nothing left on it for the talk. Drained the queue. Filed the captain's shared Instagram link as idea-x78y (ideas store, label date-ideas) and closed inbox-q5pi. Upstream inventory: 20+ open PRs on kunchenguid/firstmate; kun-review-replies worker is dead (pane gone, last status 016 on PR 7830).
+**In flight**: firstmate PR 395 (robots-k4ic3 relaunch fix) checks running; merge on green (direct-PR, yolo on).
+**Next**: merge PR 395; re-dispatch upstream PR fixes once the review pipeline agent has quota (Nov 9 4pm PT); advance a robots item each turn.
+**Blocked**: upstream no-mistakes runs need Claude usage until Nov 9 4pm PT. None for the talk.

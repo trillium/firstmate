@@ -293,7 +293,14 @@ launch_line() {  # <harness>
       printf "cd '%s' && %s %s" "$FM_HOME" "${prefix:-claude --dangerously-skip-permissions}" "$p" ;;
     grok) printf "cd '%s' && grok --always-approve %s" "$FM_HOME" "$p" ;;
     opencode) printf "cd '%s' && opencode --prompt %s" "$FM_HOME" "$p" ;;
-    pi) printf "cd '%s' && pi -e .pi/extensions/fm-primary-turnend-guard.ts -e .pi/extensions/fm-primary-pi-watch.ts %s" "$FM_HOME" "$p" ;;
+    pi)
+      pi_model=$(tr -d '[:space:]' < "$CONFIG/primary-failover-pi-model" 2>/dev/null || true)
+      if [ -n "$pi_model" ]; then
+        printf "cd '%s' && pi --model %s -e .pi/extensions/fm-primary-turnend-guard.ts -e .pi/extensions/fm-primary-pi-watch.ts %s" "$FM_HOME" "$pi_model" "$p"
+      else
+        printf "cd '%s' && pi -e .pi/extensions/fm-primary-turnend-guard.ts -e .pi/extensions/fm-primary-pi-watch.ts %s" "$FM_HOME" "$p"
+      fi
+      ;;
   esac
 }
 exit_cmd() { case "$1" in pi) echo /quit ;; *) echo /exit ;; esac; }
@@ -381,7 +388,14 @@ cmd_failover() {
   claude_quota
   [ -n "$target" ] || target=$(pick_target) || { log "no usable failover harness"; return 5; }
   case "$(candidate_verdict "$target")" in ok*) ;; *) log "$target not usable: $(candidate_verdict "$target")"; return 5 ;; esac
-  do_move "$target" "Claude limit exhausted (resets ${CL_RESETS:-unknown}); primary moved to $target for continuity" failover
+  if [ -n "$TARGET" ]; then
+    reason="captain asked to relaunch the primary on $target"
+    [ "$target" = pi ] && pi_model=$(tr -d '[:space:]' < "$CONFIG/primary-failover-pi-model" 2>/dev/null || true)
+    [ -n "${pi_model:-}" ] && reason="$reason using $pi_model"
+  else
+    reason="Claude limit exhausted (resets ${CL_RESETS:-unknown}); primary moved to $target for continuity"
+  fi
+  do_move "$target" "$reason" failover
 }
 cmd_switch_back() {
   claude_quota
