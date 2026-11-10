@@ -8,6 +8,13 @@
 # A kind=scout task whose meta lacks decisions_reviewed=1 (the record
 # bin/fm-captain-hold.sh complete writes) gets a completion-gate warning.
 #
+# A ship whose worktree is a git repository with a Makefile `check` target must
+# back the done line with a recorded verification: .pr-evidence/<task>/check.json
+# (written by bin/fm-check-record.sh) naming the same head, with exit 0 and
+# source live. The head is the commit hash the done line names, else the
+# worktree's HEAD. A missing, mismatched, failing, or sample-sourced record gets
+# a warning; a worktree without a Makefile check target, or without jq, is quiet.
+#
 # When meta names a worktree and a branch, and that branch has an open pull
 # request, a further warning names the pending and failing checks. No open
 # pull request, a forge failure, or a read that exceeds FM_DONE_GATE_CHECK_SECS
@@ -31,6 +38,38 @@ id=$(basename "${status%.status}")
 if [ "$(get kind)" = scout ] && [ "$(get decisions_reviewed)" != 1 ]; then
   echo "warning: $id reported done but no captain-hold completion record exists; run bin/fm-captain-hold.sh complete $id (--none | <task-id>...) before treating it as finished" >&2
 fi
+
+# Quiet unless the done head lacks a passing recorded check. Reads only local
+# files, so it cannot change the exit status.
+warn_unrecorded_check() {
+  local wt line named head file rec_head rec_exit rec_source
+  [ "$(get kind)" = scout ] && return 0
+  wt=$(get worktree)
+  [ -n "$wt" ] && [ -f "$wt/Makefile" ] && grep -q '^check:' "$wt/Makefile" || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || return 0
+  line=$(tail -n 1 "$status")
+  named=$(printf '%s\n' "$line" | grep -oE '(^|[^0-9a-fA-F])[0-9a-f]{7,40}([^0-9a-fA-F]|$)' | grep -oE '[0-9a-f]{7,40}' | head -n 1)
+  if [ -n "$named" ]; then
+    head=$(git -C "$wt" rev-parse --verify --quiet "$named^{commit}" 2>/dev/null) || head=$named
+  fi
+  file="$wt/.pr-evidence/$id/check.json"
+  if [ ! -f "$file" ]; then
+    echo "warning: $id reported done at ${head:0:12} but no recorded check exists (.pr-evidence/$id/check.json); run make check through bin/fm-check-record.sh on this head" >&2
+    return 0
+  fi
+  rec_head=$(jq -r '.head // empty' "$file" 2>/dev/null) || rec_head=
+  rec_exit=$(jq -r '.exit // empty' "$file" 2>/dev/null) || rec_exit=
+  rec_source=$(jq -r '.source // empty' "$file" 2>/dev/null) || rec_source=
+  if [ "$rec_head" != "$head" ]; then
+    echo "warning: $id reported done at ${head:0:12} but the recorded check is for ${rec_head:0:12}; rerun make check on this head" >&2
+  elif [ "$rec_exit" != 0 ]; then
+    echo "warning: $id reported done at ${head:0:12} but its recorded check exited ${rec_exit:-unknown}" >&2
+  elif [ "$rec_source" != live ]; then
+    echo "warning: $id reported done at ${head:0:12} but its recorded check used ${rec_source:-unknown} data, not live" >&2
+  fi
+}
+warn_unrecorded_check || true
 
 # Quiet unless an open PR's checks are still unsettled. A forge failure or the
 # time bound leaves no warning and cannot change the exit status.
