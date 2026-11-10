@@ -51,7 +51,9 @@
 # It ends by printing the same route block `route` prints, so a caller that
 # invoked it directly (rather than through bin/fm-remote-secondmate-relaunch.sh,
 # which reads this block to keep the parent's own record in sync) still gets
-# the confirmed identity.
+# the confirmed identity. That block carries the account pin the host-local
+# launch actually resolved (account=, plus account_provider= for a Pi pin),
+# read from the endpoint's own record and empty for an unpinned mate.
 #
 # The optional launch traceparent is the per-task W3C trace-context carrier the
 # PARENT home resolved for this secondmate; this host only delivers it to the
@@ -222,11 +224,13 @@ state_value() { # <id>; prints recovery-grade state
 }
 
 print_route() { # <id>
-  local id=$1 harness model effort traceparent rex_session_id rex_server
+  local id=$1 harness model effort account account_provider traceparent rex_session_id rex_server
   remote_endpoint_require "$id"
   harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
   model=$(fm_meta_get "$REMOTE_ENDPOINT_META" model)
   effort=$(fm_meta_get "$REMOTE_ENDPOINT_META" effort)
+  account=$(fm_meta_get "$REMOTE_ENDPOINT_META" account)
+  account_provider=$(fm_meta_get "$REMOTE_ENDPOINT_META" account_provider)
   traceparent=$(fm_meta_get "$REMOTE_ENDPOINT_META" traceparent)
   printf 'schema=fm-remote-secondmate-control.v1\n'
   printf 'backend=%s\n' "$REMOTE_ENDPOINT_BACKEND"
@@ -245,6 +249,10 @@ print_route() { # <id>
   printf 'harness=%s\n' "$harness"
   printf 'model=%s\n' "$model"
   printf 'effort=%s\n' "$effort"
+  # Always printed, empty for an unpinned mate, so a caller can tell "this
+  # host confirms no account pin" from a host old enough to report nothing.
+  printf 'account=%s\n' "$account"
+  [ -z "$account_provider" ] || printf 'account_provider=%s\n' "$account_provider"
   [ -z "$traceparent" ] || printf 'traceparent=%s\n' "$traceparent"
 }
 

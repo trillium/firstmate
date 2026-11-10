@@ -3588,6 +3588,26 @@ test_remote_alive_idle_is_healthy_not_gone() {
   pass "fm-crew-state remote: an idle alive endpoint reads alive, never gone or dead"
 }
 
+test_remote_alive_shows_recorded_account() {
+  reset_fakes
+  local d out rc
+  d=$(setup_remote_case remote-alive-account)
+  make_fakebin "$d" >/dev/null
+  printf 'account=token:work\n' >> "$d/state/rsm.meta"
+  out=$(FM_FAKE_REMOTE_STATE_OUT=alive FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
+  expect_code 0 "$rc" "remote alive with a recorded account exits 0"
+  assert_contains "$out" "alive on remote-mac, account=token:work" "the recorded account should be visible"
+  printf 'working: refactoring the quota adapter\n' > "$d/state/rsm.status"
+  out=$(FM_FAKE_REMOTE_STATE_OUT=alive FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
+  assert_contains "$out" "remote endpoint alive on remote-mac, account=token:work" \
+    "the account should show on the status-log arm too"
+  d=$(setup_remote_case remote-alive-no-account)
+  make_fakebin "$d" >/dev/null
+  out=$(FM_FAKE_REMOTE_STATE_OUT=alive FM_FAKE_SSH_RC=0 run_remote_crew_state "$d" rsm); rc=$?
+  assert_not_contains "$out" "account=" "an unpinned remote mate must not print an account"
+  pass "fm-crew-state remote: the recorded account pin is shown for an alive endpoint"
+}
+
 test_remote_unreachable_is_unknown_remote_not_dead() {
   reset_fakes
   local d out rc
@@ -6920,6 +6940,7 @@ test_scout_skips_run_lookup
 test_torn_down_worktree
 test_remote_alive_with_log_uses_status_log
 test_remote_alive_idle_is_healthy_not_gone
+test_remote_alive_shows_recorded_account
 test_remote_unreachable_is_unknown_remote_not_dead
 test_remote_dead_reports_remote_verdict
 test_missing_meta
