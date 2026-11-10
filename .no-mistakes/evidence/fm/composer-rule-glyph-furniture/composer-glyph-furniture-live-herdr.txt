@@ -1,0 +1,48 @@
+live Claude/Herdr composer validation
+lab=fm-lab-composer-glyph-f-61577-10315 pane=w1:p1
+idle-verdict=empty
+draft-verdict=pending
+draft-content=draft text retained by the composer guard
+cleared-verdict=empty
+
+visible ANSI capture follows
+
+ ▐▛███▛█   Claude Code v2.1.293
+▝▜██████▀  Sonnet 5.5 · Claude API
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/376b8734278c/01M72NPEWF44AH08XS15TAW2F5
+
+⚠ AGENTS.md is over the 40.0k-char limit (51.6k chars) · /memory to free up context
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                         Ctrl+Y to paste deleted text
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────���───────────────
+──⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents
