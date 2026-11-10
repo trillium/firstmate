@@ -1410,6 +1410,7 @@ spawn_remote_secondmate() {
   local remote_backend remote_target remote_harness remote_herdr_session registry_lock remote_lock remote_generation
   local remote_rex_session_id remote_rex_server remote_rex_ok
   local remote_traceparent remote_recorded_traceparent sm_primary_head sync_out sync_rc account_config
+  local remote_account remote_account_provider
   local -a launch_args
   id=${POS[0]:-}
   fm_task_id_creation_valid "$id" || {
@@ -1695,6 +1696,10 @@ spawn_remote_secondmate() {
   # reports it here so the parent does not deny the agent's actual identity.
   remote_recorded_traceparent=$(printf '%s\n' "$out" | sed -n 's/^traceparent=//p' | tail -1)
   fm_trace_context_valid "$remote_recorded_traceparent" || remote_recorded_traceparent=
+  # The account pin the host's own launch resolved, so the parent's record names
+  # what the mate runs under rather than what this side's config might imply.
+  remote_account=$(printf '%s\n' "$out" | sed -n 's/^account=//p' | tail -1)
+  remote_account_provider=$(printf '%s\n' "$out" | sed -n 's/^account_provider=//p' | tail -1)
   tmp="$meta.tmp.$$"
   {
     echo "window=remote:$id"
@@ -1708,6 +1713,8 @@ spawn_remote_secondmate() {
     echo "tasktmp="
     echo "model=${model#-}"
     echo "effort=${effort#-}"
+    [ -z "$remote_account" ] || echo "account=$remote_account"
+    [ -z "$remote_account_provider" ] || echo "account_provider=$remote_account_provider"
     echo "home=$home"
     echo "projects=$(secondmate_registry_field "$DATA/secondmates.md" "$id" projects)"
     echo "remote_host=$host"

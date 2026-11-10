@@ -238,6 +238,29 @@ RELAUNCH_INJECTED=$(remote_injected_traceparent)
   || fail "a remote relaunch must re-export the original carrier (first='$PARENT_TP' injected='$RELAUNCH_INJECTED')"
 pass "relaunch: a remote-routed second mate keeps one stable identity across restarts"
 
+# --- account pin: the host reports it and the parent records what it reported -
+# The host-local launch records the account pin it resolved in its own endpoint
+# record. The route block must carry that value, and the parent's record must
+# follow it, so a repin is verifiable without inspecting the host's processes.
+REMOTE_ENDPOINT_META="$REMOTE_HOME/state/parent-route/ios.meta"
+route_out() { remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh route ios 2>&1; }
+ROUTE=$(route_out) || fail "the route read failed: $ROUTE"
+assert_contains "$ROUTE" "account=" "an unpinned mate's route block must still carry the account key"
+assert_not_contains "$ROUTE" "account=token" "an unpinned mate's route block must not invent a pin"
+printf 'account=token:work\n' >> "$REMOTE_ENDPOINT_META"
+ROUTE=$(route_out) || fail "the route read failed: $ROUTE"
+assert_contains "$ROUTE" "account=token:work" "the route block must carry the account the host recorded"
+remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate >/dev/null 2>&1 \
+  || fail "re-spawning onto the alive pinned endpoint failed"
+assert_grep 'account=token:work' "$PARENT/state/ios.meta" \
+  "the parent record must follow the account the host confirmed"
+grep -v '^account=' "$REMOTE_ENDPOINT_META" > "$REMOTE_ENDPOINT_META.new" && mv "$REMOTE_ENDPOINT_META.new" "$REMOTE_ENDPOINT_META"
+remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate >/dev/null 2>&1 \
+  || fail "re-spawning onto the alive unpinned endpoint failed"
+assert_no_regex '^account=' "$PARENT/state/ios.meta" \
+  "the parent record must drop an account the host no longer reports"
+pass "account: the remote route reports the host's account pin and the parent records it"
+
 # --- per-task boundary: ambient carriers are never adopted or shared ---------
 # A persistent supervisor exports its own launch-time TRACEPARENT for its whole
 # life. A second remote route resolved from that same environment must root its

@@ -382,15 +382,19 @@ if [ -n "$REMOTE_HOST" ]; then
     REMOTE_STATE=
   fi
   REMOTE_STATE=$(printf '%s\n' "$REMOTE_STATE" | tail -1)
+  # The account pin the host confirmed when this route was last recorded
+  # (launch or bin/fm-remote-secondmate-relaunch.sh), so a repin is readable here.
+  REMOTE_ACCOUNT_NOTE=
+  [ -z "$(meta_value account)" ] || REMOTE_ACCOUNT_NOTE=", account=$(meta_value account)"
   case "$REMOTE_STATE" in
     alive)
       if [ -n "$LOG_VERB" ]; then
         LOG_STATE=$(map_log_state "$LOG_LINE")
         if [ "$LOG_STATE" != unknown ]; then
-          emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}remote endpoint alive on $REMOTE_HOST"
+          emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}remote endpoint alive on $REMOTE_HOST$REMOTE_ACCOUNT_NOTE"
         fi
       fi
-      emit unknown remote-endpoint "alive on $REMOTE_HOST (an idle secondmate is healthy)"
+      emit unknown remote-endpoint "alive on $REMOTE_HOST$REMOTE_ACCOUNT_NOTE (an idle secondmate is healthy)"
       ;;
     dead|missing)
       emit unknown remote-endpoint "remote endpoint $REMOTE_STATE on $REMOTE_HOST"

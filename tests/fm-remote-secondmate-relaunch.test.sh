@@ -101,12 +101,21 @@ printf 'herdr_session=fm-remote\n'
 printf 'harness=%s\n' "$harness"
 printf 'model=%s\n' "$model"
 printf 'effort=%s\n' "$effort"
+# The account pin the host's launch resolved: FM_FAKE_ACCOUNT is the value
+# (empty for an unpinned mate), and report-none models a host too old to
+# report an account key at all.
+if [ "${FM_FAKE_ACCOUNT_MODE:-}" != report-none ]; then
+  printf 'account=%s\n' "${FM_FAKE_ACCOUNT:-}"
+  [ -z "${FM_FAKE_ACCOUNT_PROVIDER:-}" ] || printf 'account_provider=%s\n' "$FM_FAKE_ACCOUNT_PROVIDER"
+fi
 SH
 chmod +x "$FAKEBIN/fake-ssh"
 
 run_relaunch() {  # <args...>
   env FM_HOME="$HOME_DIR" FM_SSH_BIN="$FAKEBIN/fake-ssh" \
     FM_FAKE_RELAUNCH_MODE="${FM_FAKE_RELAUNCH_MODE:-}" FM_FAKE_RENAME_LOG="$TMP/rename.log" \
+    FM_FAKE_ACCOUNT="${FM_FAKE_ACCOUNT:-}" FM_FAKE_ACCOUNT_PROVIDER="${FM_FAKE_ACCOUNT_PROVIDER:-}" \
+    FM_FAKE_ACCOUNT_MODE="${FM_FAKE_ACCOUNT_MODE:-}" \
     "$ROOT/bin/fm-remote-secondmate-relaunch.sh" "$@" 2>&1
 }
 
@@ -145,6 +154,40 @@ assert_grep 'model=claude-opus-5-5' "$HOME_DIR/state/ios.meta" \
 assert_no_grep 'harness=default' "$HOME_DIR/state/ios.meta" \
   "the parent record must not keep the unresolved request"
 pass "a remote relaunch records the identity the host confirmed"
+
+# --- the account the host confirmed is printed and recorded -----------------
+reset_meta
+OUT=$(FM_FAKE_ACCOUNT=token:work run_relaunch ios claude default default); RC=$?
+expect_code 0 "$RC" "a relaunch onto a pinned host should succeed"$'\n'"$OUT"
+assert_contains "$OUT" "account=token:work" \
+  "the relaunch output should print the account the host confirmed"
+assert_grep 'account=token:work' "$HOME_DIR/state/ios.meta" \
+  "the parent record did not pick up the confirmed account"
+OUT=$(FM_FAKE_ACCOUNT=token:other FM_FAKE_ACCOUNT_PROVIDER=openai run_relaunch ios claude default default); RC=$?
+expect_code 0 "$RC" "a repin relaunch should succeed"$'\n'"$OUT"
+assert_contains "$OUT" "account=token:other" "the repin should show in the relaunch output"
+assert_grep 'account=token:other' "$HOME_DIR/state/ios.meta" "the repin was not recorded"
+assert_grep 'account_provider=openai' "$HOME_DIR/state/ios.meta" "the confirmed account provider was not recorded"
+[ "$(grep -c '^account=' "$HOME_DIR/state/ios.meta")" = 1 ] \
+  || fail "a repin must leave exactly one account= line"
+assert_no_grep 'account=token:work' "$HOME_DIR/state/ios.meta" "the previous pin should not survive a repin"
+OUT=$(run_relaunch ios claude default default); RC=$?
+expect_code 0 "$RC" "a relaunch onto an unpinned host should succeed"$'\n'"$OUT"
+assert_no_regex '^account' "$HOME_DIR/state/ios.meta" \
+  "a host that confirms no pin must clear the recorded account and provider"
+assert_grep 'remote_host=remote-mac' "$HOME_DIR/state/ios.meta" \
+  "unrelated route fields must survive an account update"
+pass "a remote relaunch prints and records the account the host confirmed, including a repin and an unpin"
+
+# --- a host that reports no account key leaves the recorded account alone ----
+reset_meta
+printf 'account=token:recorded\n' >> "$HOME_DIR/state/ios.meta"
+OUT=$(FM_FAKE_ACCOUNT_MODE=report-none run_relaunch ios claude default default); RC=$?
+expect_code 0 "$RC" "a relaunch onto a host that reports no account should still succeed"$'\n'"$OUT"
+assert_contains "$OUT" "did not report an account pin" "the unconfirmed account should be called out"
+assert_grep 'account=token:recorded' "$HOME_DIR/state/ios.meta" \
+  "an unreported account must not be rewritten as confirmed or cleared"
+pass "a host that reports no account leaves the recorded account untouched and says so"
 
 # --- a refused relaunch leaves the parent's record untouched -----------------
 reset_meta
