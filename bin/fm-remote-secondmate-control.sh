@@ -17,14 +17,15 @@
 #   fm-remote-secondmate-control.sh update <id>
 #   fm-remote-secondmate-control.sh retire <id> [--force]
 #
-# Remote placement ends here, but the second-mate agent runs only on a
-# session-provider backend whose server survives every SSH disconnection that
-# supervises it: herdr in the configured remote-secondmate session
-# (FM_REMOTE_HERDR_SESSION, default `default`), or rex in this home's own
-# 2ndmate-<id>-<hash> session on the host's personal rex server. Launch refuses
-# any other selection rather than reading this home's config/backend. The
-# session default keeps remote mates visible from the captain's own Herdr
-# client, and the user's interactive sessions remain for the user's work.
+# Remote placement ends here, but the second-mate agent runs only on a session
+# backend whose server survives every SSH disconnection that supervises it:
+# herdr in the session FM_REMOTE_HERDR_SESSION selects (default `default`, the
+# host's own shared session, so remote mates stay visible from the captain's
+# Herdr client; `fm-remote` selects this code root's managed session per
+# bin/fm-remote-herdr-identity-lib.sh), or rex in this home's
+# 2ndmate-<id>-<hash> session on the personal rex server.
+# Launch refuses any other selection rather than reading this home's
+# config/backend. The user's interactive sessions remain for the user's work.
 # fm-spawn/fm-send/fm-teardown keep owning the local endpoint mechanics.
 # The home's own workers keep their ordinary backend selection.
 # bin/fm-remote-doctor.sh owns that host's readiness for the selected backend.
@@ -43,7 +44,7 @@
 # agent's endpoint record; the home's own
 # state/*.meta remains reserved for workers the secondmate supervises.
 # Retirement closes only this secondmate's panes or workspace and never
-# stops the remote-secondmate session or removes a sibling secondmate's workspace or panes.
+# stops the remote Herdr service or removes a sibling secondmate's workspace or panes.
 #
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
 # control plane here, because from this host the mate is a plain local
@@ -67,11 +68,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-abort-reason-lib.sh
 . "$SCRIPT_DIR/fm-abort-reason-lib.sh"
 fm_abort_reason_install fm-remote-secondmate-control
-FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-# Same deployment choice bin/fm-remote-doctor.sh owns: FM_REMOTE_HERDR_SESSION
-# points the remote-secondmate session elsewhere without editing code, and
-# defaults to `default`.
-REMOTE_HERDR_SESSION=${FM_REMOTE_HERDR_SESSION:-default}
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
+# Resolved lazily by remote_herdr_session_resolve from FM_REMOTE_HERDR_SESSION
+# through bin/fm-remote-herdr-identity-lib.sh, the owner the readiness doctor
+# prepares the service under.
+REMOTE_HERDR_SESSION=
 # Rex starts a missing server as exit-empty, which remote readiness refuses and
 # cannot repair while it answers, so nothing this control plane runs may start
 # one: bin/fm-remote-doctor.sh --fix alone starts the persistent server.
@@ -122,6 +123,16 @@ fi
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-remote-herdr-identity-lib.sh
+. "$SCRIPT_DIR/fm-remote-herdr-identity-lib.sh"
+
+# The Herdr session this code root's remote mates live in, resolved by the same
+# owner the readiness doctor prepares the service under.
+remote_herdr_session_resolve() {
+  [ -z "$REMOTE_HERDR_SESSION" ] || return 0
+  fm_remote_herdr_identity "$FM_ROOT" || return 1
+  REMOTE_HERDR_SESSION=$FM_REMOTE_HERDR_SESSION
+}
 
 validate_home() { # <id>
   local id=$1 marker
@@ -147,6 +158,10 @@ remote_endpoint_load() {
   REMOTE_ENDPOINT_TARGET=$FM_BACKEND_VALIDATED_TARGET
   case "$REMOTE_ENDPOINT_BACKEND" in
     herdr)
+      if ! remote_herdr_session_resolve; then
+        REMOTE_ENDPOINT_ERROR=$FM_REMOTE_HERDR_IDENTITY_ERROR
+        return 1
+      fi
       herdr_session=$(fm_backend_meta_exact_value "$REMOTE_ENDPOINT_META" herdr_session 2>/dev/null || true)
       if [ "$herdr_session" != "$REMOTE_HERDR_SESSION" ]; then
         REMOTE_ENDPOINT_ERROR="remote secondmate $id endpoint is recorded in Herdr session '${herdr_session:-missing}', expected '$REMOTE_HERDR_SESSION'; refusing access until it is explicitly migrated"
@@ -321,14 +336,17 @@ cmd_launch() {
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA"
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1
     FM_SKIP_SECONDMATE_SYNC=1)
-  [ "$selected_backend" != herdr ] || launch_env=("HERDR_SESSION=$REMOTE_HERDR_SESSION" "${launch_env[@]}")
+  if [ "$selected_backend" = herdr ]; then
+    remote_herdr_session_resolve || die "$FM_REMOTE_HERDR_IDENTITY_ERROR"
+    launch_env=("HERDR_SESSION=$REMOTE_HERDR_SESSION" "${launch_env[@]}")
+  fi
   if ! out=$(env "${launch_env[@]}" "$SCRIPT_DIR/fm-spawn.sh" "${ARGS[@]}" 2>&1); then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
     die "remote host-local secondmate launch failed"
   fi
   [ -f "$meta" ] || die "remote launch returned without endpoint metadata"
   # remote_endpoint_load's per-backend record checks are the post-spawn
-  # verification: herdr session fm-remote plus target, or rex's id trio and a
+  # verification: this root's Herdr session plus target, or rex's id trio and a
   # local unix:// server endpoint.
   remote_endpoint_require "$id"
   print_route "$id"
