@@ -1,0 +1,2063 @@
+can you relaunch mini0 2nd mate on the api usage? i think that's the only available bucket right now and I'm not sure that mini0 is configured for it yet
+
+---
+
+start
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/mini0-ops.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794215843-Ojc50U
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/mini0-ops.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/mini0-ops.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pJK
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/up-pr-8128-conflict.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: inactive-outcome
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPY
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPM
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794216756-cBzIEz
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 338s, possible wedge, escalation 1)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/mini0-ops.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 440s, possible wedge, escalation 1)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/mini0-ops.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 565s, possible wedge, escalation 1)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 559s, possible wedge, escalation 1)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 264s, possible wedge, escalation 2)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ1 (blocked-on-prompt: agy feedback survey)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pF4
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 265s, possible wedge, escalation 2)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 273s, possible wedge, escalation 2)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/mini0-ops.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794217663-E8aHaA
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/mini0-ops.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 517s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 383s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 603s, possible wedge, escalation 2)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 274s, possible wedge, escalation 4, demand-deep-inspection: same pane has wedge-escalated 4 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 279s, possible wedge, escalation 4, demand-deep-inspection: same pane has wedge-escalated 4 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 317s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 321s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 285s, possible wedge, escalation 5, demand-deep-inspection: same pane has wedge-escalated 5 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 292s, possible wedge, escalation 5, demand-deep-inspection: same pane has wedge-escalated 5 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 273s, possible wedge, escalation 4, demand-deep-inspection: same pane has wedge-escalated 4 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 278s, possible wedge, escalation 4, demand-deep-inspection: same pane has wedge-escalated 4 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 305s, possible wedge, escalation 6, demand-deep-inspection: same pane has wedge-escalated 6 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 323s, possible wedge, escalation 6, demand-deep-inspection: same pane has wedge-escalated 6 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 316s, possible wedge, escalation 5, demand-deep-inspection: same pane has wedge-escalated 5 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 323s, possible wedge, escalation 5, demand-deep-inspection: same pane has wedge-escalated 5 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 277s, possible wedge, escalation 7, demand-deep-inspection: same pane has wedge-escalated 7 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 288s, possible wedge, escalation 7, demand-deep-inspection: same pane has wedge-escalated 7 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 283s, possible wedge, escalation 6, demand-deep-inspection: same pane has wedge-escalated 6 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 281s, possible wedge, escalation 6, demand-deep-inspection: same pane has wedge-escalated 6 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794219466-Ub0a95
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 345s, possible wedge, escalation 8, demand-deep-inspection: same pane has wedge-escalated 8 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 346s, possible wedge, escalation 8, demand-deep-inspection: same pane has wedge-escalated 8 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 344s, possible wedge, escalation 7, demand-deep-inspection: same pane has wedge-escalated 7 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 343s, possible wedge, escalation 7, demand-deep-inspection: same pane has wedge-escalated 7 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: contributions integrity https://github.com/trillium/barter/pull/4 rules=conflicting bad=2d07fe0f03cf58429c06967a2ca3079b72b40d98 last-good=2d07fe0f03cf58429c06967a2ca3079b72b40d98
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 308s, possible wedge, escalation 9, demand-deep-inspection: same pane has wedge-escalated 9 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 315s, possible wedge, escalation 9, demand-deep-inspection: same pane has wedge-escalated 9 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 307s, possible wedge, escalation 8, demand-deep-inspection: same pane has wedge-escalated 8 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 313s, possible wedge, escalation 8, demand-deep-inspection: same pane has wedge-escalated 8 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: contributions integrity https://github.com/trillium/barter/pull/6 rules=conflicting bad=9cc9f68e56c6445df4e6490b5845c881efeb7a2b last-good=9cc9f68e56c6445df4e6490b5845c881efeb7a2b
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 295s, possible wedge, escalation 10, demand-deep-inspection: same pane has wedge-escalated 10 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 295s, possible wedge, escalation 10, demand-deep-inspection: same pane has wedge-escalated 10 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 298s, possible wedge, escalation 9, demand-deep-inspection: same pane has wedge-escalated 9 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 297s, possible wedge, escalation 9, demand-deep-inspection: same pane has wedge-escalated 9 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: contributions integrity https://github.com/trillium/barter/pull/9 rules=workflows bad=25ff1c1c554611eb755f4ecd07cd8a13e54ead07 last-good=none
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 336s, possible wedge, escalation 11, demand-deep-inspection: same pane has wedge-escalated 11 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 322s, possible wedge, escalation 11, demand-deep-inspection: same pane has wedge-escalated 11 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 329s, possible wedge, escalation 10, demand-deep-inspection: same pane has wedge-escalated 10 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 319s, possible wedge, escalation 10, demand-deep-inspection: same pane has wedge-escalated 10 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 257s, possible wedge, escalation 12, demand-deep-inspection: same pane has wedge-escalated 12 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 257s, possible wedge, escalation 12, demand-deep-inspection: same pane has wedge-escalated 12 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 255s, possible wedge, escalation 11, demand-deep-inspection: same pane has wedge-escalated 11 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 256s, possible wedge, escalation 11, demand-deep-inspection: same pane has wedge-escalated 11 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: contributions integrity https://github.com/trillium/firstmate/pull/256 rules=conflicting bad=aa57ecf142ec9fc3fc55b96b967e5ba8dee6d1bc last-good=aa57ecf142ec9fc3fc55b96b967e5ba8dee6d1bc
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794221271-vzc9Hu
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 357s, possible wedge, escalation 13, demand-deep-inspection: same pane has wedge-escalated 13 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 360s, possible wedge, escalation 13, demand-deep-inspection: same pane has wedge-escalated 13 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 350s, possible wedge, escalation 12, demand-deep-inspection: same pane has wedge-escalated 12 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 346s, possible wedge, escalation 12, demand-deep-inspection: same pane has wedge-escalated 12 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: contributions integrity https://github.com/trillium/firstmate/pull/258 rules=conflicting bad=36fc459f0b987a22a593f9c6958b7ccd17ed1e98 last-good=36fc459f0b987a22a593f9c6958b7ccd17ed1e98
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 289s, possible wedge, escalation 14, demand-deep-inspection: same pane has wedge-escalated 14 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 289s, possible wedge, escalation 14, demand-deep-inspection: same pane has wedge-escalated 14 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 291s, possible wedge, escalation 13, demand-deep-inspection: same pane has wedge-escalated 13 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 291s, possible wedge, escalation 13, demand-deep-inspection: same pane has wedge-escalated 13 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 287s, possible wedge, escalation 15, demand-deep-inspection: same pane has wedge-escalated 15 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 292s, possible wedge, escalation 15, demand-deep-inspection: same pane has wedge-escalated 15 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 291s, possible wedge, escalation 14, demand-deep-inspection: same pane has wedge-escalated 14 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 286s, possible wedge, escalation 14, demand-deep-inspection: same pane has wedge-escalated 14 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 309s, possible wedge, escalation 16, demand-deep-inspection: same pane has wedge-escalated 16 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 316s, possible wedge, escalation 16, demand-deep-inspection: same pane has wedge-escalated 16 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 310s, possible wedge, escalation 15, demand-deep-inspection: same pane has wedge-escalated 15 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 314s, possible wedge, escalation 15, demand-deep-inspection: same pane has wedge-escalated 15 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 274s, possible wedge, escalation 17, demand-deep-inspection: same pane has wedge-escalated 17 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 274s, possible wedge, escalation 17, demand-deep-inspection: same pane has wedge-escalated 17 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 274s, possible wedge, escalation 16, demand-deep-inspection: same pane has wedge-escalated 16 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 273s, possible wedge, escalation 16, demand-deep-inspection: same pane has wedge-escalated 16 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 326s, possible wedge, escalation 18, demand-deep-inspection: same pane has wedge-escalated 18 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794223074-Rj9LV7
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 358s, possible wedge, escalation 18, demand-deep-inspection: same pane has wedge-escalated 18 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 367s, possible wedge, escalation 17, demand-deep-inspection: same pane has wedge-escalated 17 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 358s, possible wedge, escalation 17, demand-deep-inspection: same pane has wedge-escalated 17 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 290s, possible wedge, escalation 19, demand-deep-inspection: same pane has wedge-escalated 19 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 287s, possible wedge, escalation 19, demand-deep-inspection: same pane has wedge-escalated 19 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 286s, possible wedge, escalation 18, demand-deep-inspection: same pane has wedge-escalated 18 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 280s, possible wedge, escalation 18, demand-deep-inspection: same pane has wedge-escalated 18 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 309s, possible wedge, escalation 20, demand-deep-inspection: same pane has wedge-escalated 20 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 315s, possible wedge, escalation 20, demand-deep-inspection: same pane has wedge-escalated 20 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 310s, possible wedge, escalation 19, demand-deep-inspection: same pane has wedge-escalated 19 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 313s, possible wedge, escalation 19, demand-deep-inspection: same pane has wedge-escalated 19 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794223957-N9L2wS
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 329s, possible wedge, escalation 21, demand-deep-inspection: same pane has wedge-escalated 21 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 334s, possible wedge, escalation 21, demand-deep-inspection: same pane has wedge-escalated 21 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 324s, possible wedge, escalation 20, demand-deep-inspection: same pane has wedge-escalated 20 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 320s, possible wedge, escalation 20, demand-deep-inspection: same pane has wedge-escalated 20 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 306s, possible wedge, escalation 22, demand-deep-inspection: same pane has wedge-escalated 22 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 305s, possible wedge, escalation 22, demand-deep-inspection: same pane has wedge-escalated 22 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 305s, possible wedge, escalation 21, demand-deep-inspection: same pane has wedge-escalated 21 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 304s, possible wedge, escalation 21, demand-deep-inspection: same pane has wedge-escalated 21 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 284s, possible wedge, escalation 23, demand-deep-inspection: same pane has wedge-escalated 23 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 300s, possible wedge, escalation 23, demand-deep-inspection: same pane has wedge-escalated 23 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794224879-4beOZU
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 342s, possible wedge, escalation 22, demand-deep-inspection: same pane has wedge-escalated 22 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 344s, possible wedge, escalation 22, demand-deep-inspection: same pane has wedge-escalated 22 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 294s, possible wedge, escalation 24, demand-deep-inspection: same pane has wedge-escalated 24 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 261s, possible wedge, escalation 24, demand-deep-inspection: same pane has wedge-escalated 24 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 245s, possible wedge, escalation 23, demand-deep-inspection: same pane has wedge-escalated 23 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPS (idle 252s, possible wedge, escalation 23, demand-deep-inspection: same pane has wedge-escalated 23 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 274s, possible wedge, escalation 25, demand-deep-inspection: same pane has wedge-escalated 25 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 287s, possible wedge, escalation 25, demand-deep-inspection: same pane has wedge-escalated 25 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPR (idle 277s, possible wedge, escalation 24, demand-deep-inspection: same pane has wedge-escalated 24 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/up-composer-rule-glyph.status /Users/trilliumsmith/fm_home/firstmate/state/up-composer-rule-glyph.turn-ended /Users/trilliumsmith/fm_home/firstmate/state/up-herdr-presence-reason.status /Users/trilliumsmith/fm_home/firstmate/state/up-herdr-presence-reason.turn-ended
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 272s, possible wedge, escalation 26, demand-deep-inspection: same pane has wedge-escalated 26 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 287s, possible wedge, escalation 26, demand-deep-inspection: same pane has wedge-escalated 26 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794225971-QeDxIy
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 242s, possible wedge, escalation 27, demand-deep-inspection: same pane has wedge-escalated 27 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 256s, possible wedge, escalation 27, demand-deep-inspection: same pane has wedge-escalated 27 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 252s, possible wedge, escalation 28, demand-deep-inspection: same pane has wedge-escalated 28 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 246s, possible wedge, escalation 28, demand-deep-inspection: same pane has wedge-escalated 28 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794226689-BjJ3gs
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 342s, possible wedge, escalation 29, demand-deep-inspection: same pane has wedge-escalated 29 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 338s, possible wedge, escalation 29, demand-deep-inspection: same pane has wedge-escalated 29 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 318s, possible wedge, escalation 30, demand-deep-inspection: same pane has wedge-escalated 30 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 335s, possible wedge, escalation 30, demand-deep-inspection: same pane has wedge-escalated 30 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794227405-iUCpkW
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 278s, possible wedge, escalation 31, demand-deep-inspection: same pane has wedge-escalated 31 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 285s, possible wedge, escalation 31, demand-deep-inspection: same pane has wedge-escalated 31 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: inactive-outcome
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 297s, possible wedge, escalation 32, demand-deep-inspection: same pane has wedge-escalated 32 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 302s, possible wedge, escalation 32, demand-deep-inspection: same pane has wedge-escalated 32 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 279s, possible wedge, escalation 33, demand-deep-inspection: same pane has wedge-escalated 33 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 292s, possible wedge, escalation 33, demand-deep-inspection: same pane has wedge-escalated 33 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 243s, possible wedge, escalation 34, demand-deep-inspection: same pane has wedge-escalated 34 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 258s, possible wedge, escalation 34, demand-deep-inspection: same pane has wedge-escalated 34 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794228510-pEuxNo
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 259s, possible wedge, escalation 35, demand-deep-inspection: same pane has wedge-escalated 35 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 301s, possible wedge, escalation 35, demand-deep-inspection: same pane has wedge-escalated 35 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 263s, possible wedge, escalation 36, demand-deep-inspection: same pane has wedge-escalated 36 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 324s, possible wedge, escalation 36, demand-deep-inspection: same pane has wedge-escalated 36 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 311s, possible wedge, escalation 37, demand-deep-inspection: same pane has wedge-escalated 37 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 287s, possible wedge, escalation 37, demand-deep-inspection: same pane has wedge-escalated 37 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 258s, possible wedge, escalation 38, demand-deep-inspection: same pane has wedge-escalated 38 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 316s, possible wedge, escalation 38, demand-deep-inspection: same pane has wedge-escalated 38 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 260s, possible wedge, escalation 39, demand-deep-inspection: same pane has wedge-escalated 39 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pMN (paused 311328s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pKS (paused 318367s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794230317-zQlE7Z
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 317s, possible wedge, escalation 40, demand-deep-inspection: same pane has wedge-escalated 40 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 361s, possible wedge, escalation 39, demand-deep-inspection: same pane has wedge-escalated 39 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: inactive-outcome
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 314s, possible wedge, escalation 41, demand-deep-inspection: same pane has wedge-escalated 41 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 310s, possible wedge, escalation 40, demand-deep-inspection: same pane has wedge-escalated 40 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 291s, possible wedge, escalation 42, demand-deep-inspection: same pane has wedge-escalated 42 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 287s, possible wedge, escalation 41, demand-deep-inspection: same pane has wedge-escalated 41 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794231157-jqZ7EI
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: contributions integrity https://github.com/kunchenguid/firstmate/pull/8128 rules=conflicting bad=7664ce0fe9f7fd76683a0b54005f8be748fa63ea last-good=7664ce0fe9f7fd76683a0b54005f8be748fa63ea
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 291s, possible wedge, escalation 43, demand-deep-inspection: same pane has wedge-escalated 43 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 250s, possible wedge, escalation 42, demand-deep-inspection: same pane has wedge-escalated 42 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 243s, possible wedge, escalation 44, demand-deep-inspection: same pane has wedge-escalated 44 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 289s, possible wedge, escalation 43, demand-deep-inspection: same pane has wedge-escalated 43 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 320s, possible wedge, escalation 45, demand-deep-inspection: same pane has wedge-escalated 45 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 261s, possible wedge, escalation 44, demand-deep-inspection: same pane has wedge-escalated 44 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794232119-ZkfR7j
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 241s, possible wedge, escalation 46, demand-deep-inspection: same pane has wedge-escalated 46 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 297s, possible wedge, escalation 45, demand-deep-inspection: same pane has wedge-escalated 45 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 246s, possible wedge, escalation 47, demand-deep-inspection: same pane has wedge-escalated 47 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 247s, possible wedge, escalation 46, demand-deep-inspection: same pane has wedge-escalated 46 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 299s, possible wedge, escalation 48, demand-deep-inspection: same pane has wedge-escalated 48 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 294s, possible wedge, escalation 47, demand-deep-inspection: same pane has wedge-escalated 47 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 262s, possible wedge, escalation 49, demand-deep-inspection: same pane has wedge-escalated 49 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 242s, possible wedge, escalation 48, demand-deep-inspection: same pane has wedge-escalated 48 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 302s, possible wedge, escalation 50, demand-deep-inspection: same pane has wedge-escalated 50 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 279s, possible wedge, escalation 49, demand-deep-inspection: same pane has wedge-escalated 49 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 265s, possible wedge, escalation 51, demand-deep-inspection: same pane has wedge-escalated 51 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794233922-1nxBjw
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 294s, possible wedge, escalation 50, demand-deep-inspection: same pane has wedge-escalated 50 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 295s, possible wedge, escalation 52, demand-deep-inspection: same pane has wedge-escalated 52 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 277s, possible wedge, escalation 51, demand-deep-inspection: same pane has wedge-escalated 51 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 247s, possible wedge, escalation 53, demand-deep-inspection: same pane has wedge-escalated 53 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 321s, possible wedge, escalation 52, demand-deep-inspection: same pane has wedge-escalated 52 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 263s, possible wedge, escalation 54, demand-deep-inspection: same pane has wedge-escalated 54 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 289s, possible wedge, escalation 53, demand-deep-inspection: same pane has wedge-escalated 53 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 305s, possible wedge, escalation 55, demand-deep-inspection: same pane has wedge-escalated 55 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 242s, possible wedge, escalation 54, demand-deep-inspection: same pane has wedge-escalated 54 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 256s, possible wedge, escalation 56, demand-deep-inspection: same pane has wedge-escalated 56 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 277s, possible wedge, escalation 55, demand-deep-inspection: same pane has wedge-escalated 55 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794235732-i7VCOC
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 260s, possible wedge, escalation 57, demand-deep-inspection: same pane has wedge-escalated 57 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 289s, possible wedge, escalation 58, demand-deep-inspection: same pane has wedge-escalated 58 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 333s, possible wedge, escalation 56, demand-deep-inspection: same pane has wedge-escalated 56 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 288s, possible wedge, escalation 59, demand-deep-inspection: same pane has wedge-escalated 59 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 295s, possible wedge, escalation 57, demand-deep-inspection: same pane has wedge-escalated 57 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 326s, possible wedge, escalation 60, demand-deep-inspection: same pane has wedge-escalated 60 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 336s, possible wedge, escalation 58, demand-deep-inspection: same pane has wedge-escalated 58 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 296s, possible wedge, escalation 61, demand-deep-inspection: same pane has wedge-escalated 61 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 307s, possible wedge, escalation 59, demand-deep-inspection: same pane has wedge-escalated 59 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 245s, possible wedge, escalation 62, demand-deep-inspection: same pane has wedge-escalated 62 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 263s, possible wedge, escalation 60, demand-deep-inspection: same pane has wedge-escalated 60 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794237534-EQZxls
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 250s, possible wedge, escalation 63, demand-deep-inspection: same pane has wedge-escalated 63 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 287s, possible wedge, escalation 61, demand-deep-inspection: same pane has wedge-escalated 61 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 273s, possible wedge, escalation 64, demand-deep-inspection: same pane has wedge-escalated 64 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 319s, possible wedge, escalation 62, demand-deep-inspection: same pane has wedge-escalated 62 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794238357-Zd8RuR
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 320s, possible wedge, escalation 65, demand-deep-inspection: same pane has wedge-escalated 65 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 246s, possible wedge, escalation 63, demand-deep-inspection: same pane has wedge-escalated 63 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 264s, possible wedge, escalation 66, demand-deep-inspection: same pane has wedge-escalated 66 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 256s, possible wedge, escalation 64, demand-deep-inspection: same pane has wedge-escalated 64 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 296s, possible wedge, escalation 67, demand-deep-inspection: same pane has wedge-escalated 67 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 283s, possible wedge, escalation 65, demand-deep-inspection: same pane has wedge-escalated 65 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794239339-uhUpZZ
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 287s, possible wedge, escalation 68, demand-deep-inspection: same pane has wedge-escalated 68 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 291s, possible wedge, escalation 66, demand-deep-inspection: same pane has wedge-escalated 66 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 292s, possible wedge, escalation 69, demand-deep-inspection: same pane has wedge-escalated 69 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 302s, possible wedge, escalation 67, demand-deep-inspection: same pane has wedge-escalated 67 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 249s, possible wedge, escalation 70, demand-deep-inspection: same pane has wedge-escalated 70 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 246s, possible wedge, escalation 68, demand-deep-inspection: same pane has wedge-escalated 68 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 254s, possible wedge, escalation 71, demand-deep-inspection: same pane has wedge-escalated 71 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 299s, possible wedge, escalation 69, demand-deep-inspection: same pane has wedge-escalated 69 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 280s, possible wedge, escalation 72, demand-deep-inspection: same pane has wedge-escalated 72 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: secondmate mini0-ops auto-relaunch failed after remote endpoint dead on its configured host: 
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: /Users/trilliumsmith/fm_home/firstmate/state/mini0-ops.status
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 387s, possible wedge, escalation 73, demand-deep-inspection: same pane has wedge-escalated 73 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794241141-rOw1Qs
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 664s, possible wedge, escalation 70, demand-deep-inspection: same pane has wedge-escalated 70 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 292s, possible wedge, escalation 74, demand-deep-inspection: same pane has wedge-escalated 74 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 293s, possible wedge, escalation 71, demand-deep-inspection: same pane has wedge-escalated 71 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 277s, possible wedge, escalation 75, demand-deep-inspection: same pane has wedge-escalated 75 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 269s, possible wedge, escalation 72, demand-deep-inspection: same pane has wedge-escalated 72 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 293s, possible wedge, escalation 76, demand-deep-inspection: same pane has wedge-escalated 76 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 290s, possible wedge, escalation 73, demand-deep-inspection: same pane has wedge-escalated 73 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 273s, possible wedge, escalation 77, demand-deep-inspection: same pane has wedge-escalated 77 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 273s, possible wedge, escalation 74, demand-deep-inspection: same pane has wedge-escalated 74 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 294s, possible wedge, escalation 78, demand-deep-inspection: same pane has wedge-escalated 78 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 300s, possible wedge, escalation 75, demand-deep-inspection: same pane has wedge-escalated 75 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794242944-tWMnvV
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 302s, possible wedge, escalation 79, demand-deep-inspection: same pane has wedge-escalated 79 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 309s, possible wedge, escalation 76, demand-deep-inspection: same pane has wedge-escalated 76 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 281s, possible wedge, escalation 80, demand-deep-inspection: same pane has wedge-escalated 80 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 292s, possible wedge, escalation 77, demand-deep-inspection: same pane has wedge-escalated 77 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 269s, possible wedge, escalation 81, demand-deep-inspection: same pane has wedge-escalated 81 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 264s, possible wedge, escalation 78, demand-deep-inspection: same pane has wedge-escalated 78 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 293s, possible wedge, escalation 82, demand-deep-inspection: same pane has wedge-escalated 82 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 301s, possible wedge, escalation 79, demand-deep-inspection: same pane has wedge-escalated 79 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pMN (paused 325789s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 371s, possible wedge, escalation 83, demand-deep-inspection: same pane has wedge-escalated 83 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pKS (paused 332767s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 411s, possible wedge, escalation 80, demand-deep-inspection: same pane has wedge-escalated 80 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794244747-zP0GeO
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 255s, possible wedge, escalation 84, demand-deep-inspection: same pane has wedge-escalated 84 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 254s, possible wedge, escalation 81, demand-deep-inspection: same pane has wedge-escalated 81 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 320s, possible wedge, escalation 85, demand-deep-inspection: same pane has wedge-escalated 85 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 328s, possible wedge, escalation 82, demand-deep-inspection: same pane has wedge-escalated 82 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794245558-D14Gwy
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 347s, possible wedge, escalation 86, demand-deep-inspection: same pane has wedge-escalated 86 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 355s, possible wedge, escalation 83, demand-deep-inspection: same pane has wedge-escalated 83 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 317s, possible wedge, escalation 87, demand-deep-inspection: same pane has wedge-escalated 87 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 329s, possible wedge, escalation 84, demand-deep-inspection: same pane has wedge-escalated 84 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 289s, possible wedge, escalation 88, demand-deep-inspection: same pane has wedge-escalated 88 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 306s, possible wedge, escalation 85, demand-deep-inspection: same pane has wedge-escalated 85 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794246550-km22uy
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 285s, possible wedge, escalation 89, demand-deep-inspection: same pane has wedge-escalated 89 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 292s, possible wedge, escalation 86, demand-deep-inspection: same pane has wedge-escalated 86 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 295s, possible wedge, escalation 90, demand-deep-inspection: same pane has wedge-escalated 90 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 306s, possible wedge, escalation 87, demand-deep-inspection: same pane has wedge-escalated 87 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 282s, possible wedge, escalation 91, demand-deep-inspection: same pane has wedge-escalated 91 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 298s, possible wedge, escalation 88, demand-deep-inspection: same pane has wedge-escalated 88 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 303s, possible wedge, escalation 92, demand-deep-inspection: same pane has wedge-escalated 92 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 316s, possible wedge, escalation 89, demand-deep-inspection: same pane has wedge-escalated 89 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 276s, possible wedge, escalation 93, demand-deep-inspection: same pane has wedge-escalated 93 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 295s, possible wedge, escalation 90, demand-deep-inspection: same pane has wedge-escalated 90 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 262s, possible wedge, escalation 94, demand-deep-inspection: same pane has wedge-escalated 94 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 278s, possible wedge, escalation 91, demand-deep-inspection: same pane has wedge-escalated 91 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 281s, possible wedge, escalation 95, demand-deep-inspection: same pane has wedge-escalated 95 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 286s, possible wedge, escalation 92, demand-deep-inspection: same pane has wedge-escalated 92 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 321s, possible wedge, escalation 96, demand-deep-inspection: same pane has wedge-escalated 96 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 336s, possible wedge, escalation 93, demand-deep-inspection: same pane has wedge-escalated 93 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 291s, possible wedge, escalation 97, demand-deep-inspection: same pane has wedge-escalated 97 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 295s, possible wedge, escalation 94, demand-deep-inspection: same pane has wedge-escalated 94 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 317s, possible wedge, escalation 98, demand-deep-inspection: same pane has wedge-escalated 98 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 328s, possible wedge, escalation 95, demand-deep-inspection: same pane has wedge-escalated 95 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 281s, possible wedge, escalation 99, demand-deep-inspection: same pane has wedge-escalated 99 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794250184-lLIny5
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 327s, possible wedge, escalation 96, demand-deep-inspection: same pane has wedge-escalated 96 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 243s, possible wedge, escalation 100, demand-deep-inspection: same pane has wedge-escalated 100 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 251s, possible wedge, escalation 97, demand-deep-inspection: same pane has wedge-escalated 97 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 274s, possible wedge, escalation 101, demand-deep-inspection: same pane has wedge-escalated 101 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 291s, possible wedge, escalation 98, demand-deep-inspection: same pane has wedge-escalated 98 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 329s, possible wedge, escalation 102, demand-deep-inspection: same pane has wedge-escalated 102 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 341s, possible wedge, escalation 99, demand-deep-inspection: same pane has wedge-escalated 99 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 272s, possible wedge, escalation 103, demand-deep-inspection: same pane has wedge-escalated 103 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 284s, possible wedge, escalation 100, demand-deep-inspection: same pane has wedge-escalated 100 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 295s, possible wedge, escalation 104, demand-deep-inspection: same pane has wedge-escalated 104 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 303s, possible wedge, escalation 101, demand-deep-inspection: same pane has wedge-escalated 101 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 252s, possible wedge, escalation 105, demand-deep-inspection: same pane has wedge-escalated 105 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 270s, possible wedge, escalation 102, demand-deep-inspection: same pane has wedge-escalated 102 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 321s, possible wedge, escalation 106, demand-deep-inspection: same pane has wedge-escalated 106 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 316s, possible wedge, escalation 103, demand-deep-inspection: same pane has wedge-escalated 103 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794252758-v0FRJK
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 288s, possible wedge, escalation 107, demand-deep-inspection: same pane has wedge-escalated 107 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 307s, possible wedge, escalation 104, demand-deep-inspection: same pane has wedge-escalated 104 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 316s, possible wedge, escalation 108, demand-deep-inspection: same pane has wedge-escalated 108 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 321s, possible wedge, escalation 105, demand-deep-inspection: same pane has wedge-escalated 105 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 276s, possible wedge, escalation 109, demand-deep-inspection: same pane has wedge-escalated 109 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 287s, possible wedge, escalation 106, demand-deep-inspection: same pane has wedge-escalated 106 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: captain inbox note pending: inbox:1794253859-FVWfm6
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 350s, possible wedge, escalation 110, demand-deep-inspection: same pane has wedge-escalated 110 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 359s, possible wedge, escalation 107, demand-deep-inspection: same pane has wedge-escalated 107 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 303s, possible wedge, escalation 111, demand-deep-inspection: same pane has wedge-escalated 111 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 367s, possible wedge, escalation 108, demand-deep-inspection: same pane has wedge-escalated 108 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 302s, possible wedge, escalation 112, demand-deep-inspection: same pane has wedge-escalated 112 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 275s, possible wedge, escalation 109, demand-deep-inspection: same pane has wedge-escalated 109 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 273s, possible wedge, escalation 113, demand-deep-inspection: same pane has wedge-escalated 113 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 261s, possible wedge, escalation 110, demand-deep-inspection: same pane has wedge-escalated 110 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 253s, possible wedge, escalation 114, demand-deep-inspection: same pane has wedge-escalated 114 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 251s, possible wedge, escalation 111, demand-deep-inspection: same pane has wedge-escalated 111 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 243s, possible wedge, escalation 115, demand-deep-inspection: same pane has wedge-escalated 115 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 271s, possible wedge, escalation 112, demand-deep-inspection: same pane has wedge-escalated 112 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 328s, possible wedge, escalation 116, demand-deep-inspection: same pane has wedge-escalated 116 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 326s, possible wedge, escalation 113, demand-deep-inspection: same pane has wedge-escalated 113 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 270s, possible wedge, escalation 117, demand-deep-inspection: same pane has wedge-escalated 117 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 285s, possible wedge, escalation 114, demand-deep-inspection: same pane has wedge-escalated 114 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 281s, possible wedge, escalation 118, demand-deep-inspection: same pane has wedge-escalated 118 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 298s, possible wedge, escalation 115, demand-deep-inspection: same pane has wedge-escalated 115 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pPZ (idle 264s, possible wedge, escalation 119, demand-deep-inspection: same pane has wedge-escalated 119 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.
+
+---
+
+⁣FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: stale: default:wY7:pQ2 (idle 257s, possible wedge, escalation 116, demand-deep-inspection: same pane has wedge-escalated 116 times in a row - do not re-absorb on the run-step/pane state alone)
+
+Run bin/fm-wake-drain.sh first and handle the queued wake. Watcher continuity is extension-owned.

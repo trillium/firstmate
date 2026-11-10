@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.11.5",
+  "checkpoint_id": "01M71JD0KBKG0GNDH31BY1F3ZZ",
+  "session_id": "01a1bf7e-47bb-707a-9b10-d5795884ddd4",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-10T01:50:45.857125Z",
+  "branch": "rescue/macbook-20261109",
+  "checkpoints_count": 348,
+  "save_step_count": 348,
+  "files_touched": [
+    "OPENCLAW_TALK_PREP.md",
+    "bin/fm-primary-failover.sh"
+  ],
+  "agent": "Pi",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "c896560a290f",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 254,
+    "cache_creation_tokens": 3727527,
+    "cache_read_tokens": 12490296,
+    "output_tokens": 19439,
+    "api_call_count": 393
+  },
+  "session_metrics": {
+    "turn_count": 348
+  }
+}
