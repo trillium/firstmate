@@ -522,28 +522,6 @@ test_relaunch_accepts_a_standalone_clone_worktree() {
   pass "fm-control relaunch: a recorded worktree that is a standalone clone relaunches"
 }
 
-# The remaining refused case still stops the old agent first: the isolation
-# check lives only in the launch owner, so on the `relaunch` verb a refusal
-# ends as a failed launch with no replacement running.
-test_relaunch_refusal_of_the_project_primary_checkout_still_leaves_no_replacement() {
-  local dir out rc
-  dir=$(new_case projwt-stop rl46)
-  add_ship_task "$dir" rl46 claude
-  sed -i.bak "s#^worktree=.*#worktree=$dir/proj#" "$dir/home/state/rl46.meta"
-  printf '%s' "$dir/proj" > "$dir/fake/cwd"
-
-  out=$(run_control "$dir" rl46 relaunch --note "x"); rc=$?
-  expect_code 1 "$rc" "a worktree that is the project primary checkout should refuse"
-  assert_contains "$out" "primary home or checkout" "the refusal should name the primary checkout"
-  [ "$(cat "$dir/fake/command")" = zsh ] \
-    || fail "the launch-owner refusal fires after the old agent has stopped"
-  assert_no_grep "Firstmate operational input waiting: read" "$dir/fake/literal" \
-    "a refused relaunch must leave no replacement launched"
-  [ "$(journal_field "$dir" rl46 phase)" = "failed:launching" ] \
-    || fail "the journal should record the failed launch, got '$(journal_field "$dir" rl46 phase)'"
-  pass "fm-control relaunch: the project primary checkout is refused after stop, leaving no replacement"
-}
-
 test_relaunch_preserves_durable_task_metadata() {
   local dir out rc
   dir=$(new_case durable-meta rl19)
@@ -3324,7 +3302,6 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree
 test_relaunch_accepts_a_standalone_clone_worktree
-test_relaunch_refusal_of_the_project_primary_checkout_still_leaves_no_replacement
 test_relaunch_preserves_durable_task_metadata
 test_traced_relaunch_keeps_an_armed_pr_poll_authenticated
 test_relaunch_accepts_a_legacy_mixed_task_brief

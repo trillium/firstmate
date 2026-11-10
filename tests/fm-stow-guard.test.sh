@@ -351,7 +351,7 @@ test_tracked_stop_hook_is_synchronous_and_grok_inert() {
   local matches
   matches=$(jq -e '
     [.hooks.Stop[0].hooks[]
-      | select(.command | contains("/bin/fm-stow-guard.sh"))
+      | select(.command | contains("/bin/fm-hook-guard-run.sh fm-stow-guard.sh"))
       | select(.timeout == 10)
       | select(.asyncRewake | not)
       | select(.command | contains("${GROK_AGENT:-}${GROK_HOOK_EVENT:-}"))]
