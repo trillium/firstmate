@@ -104,6 +104,12 @@
 #        (with the shared-quota opt-out: <harness>:<model> provider=.. -> eligible (quota ranking off: home declares a single shared quota))
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
 #     profile: --harness <h> [--model <m>] [--effort <e>] [--account <a>]     (status clear only)
+#   Task record: for <data>/<id>/brief.md, where <data> is FM_DATA_OVERRIDE,
+#   else $FM_HOME/data, every run first removes
+#   <data>/<id>/dispatch-resolution.json, then every outcome except exit 2 writes
+#   {"task", "status" (clear, ambiguous, escalate, error, or off), "profile"}
+#   there; profile holds harness, model, effort, and account on clear and is null
+#   otherwise. fm-spawn.sh reads it as the task's dispatch decision.
 #   clear     -> pass the profile line to fm-spawn.sh unless you state a reason to override
 #   ambiguous -> confidence below the floor; decide as today from the probabilities
 #   escalate  -> the rule requires captain approval, no candidate is rankable, or a genuine tie
@@ -171,12 +177,29 @@ OA_TIMEOUT=10
 DEFAULT_WHEN="No listed rule applies to this task."
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
+record_task() {
+  [ -n "$TASK_RECORD" ] || return 0
+  if ! { jq -cn --arg task "$TASK_ID" --arg status "$1" --argjson profile "${2:-null}" \
+      '{task: $task, status: $status, profile: $profile}' > "$TASK_RECORD.tmp.$$" \
+      && mv -f -- "$TASK_RECORD.tmp.$$" "$TASK_RECORD"; } 2>/dev/null; then
+    rm -f -- "$TASK_RECORD.tmp.$$"
+    echo "dispatch-resolve: could not write $TASK_RECORD" >&2
+    return 1
+  fi
+}
+resolver_off() {
+  echo "dispatch-resolve: off ($1)" >&2
+  record_task off || true
+  exit 0
+}
 no_rules() {
+  record_task escalate || true
   printf 'dispatch-resolve:\n  status: escalate\n  reason: no rules to match\n'
   exit 0
 }
 emit_error() {
   local reason=$1
+  record_task error || true
   echo "dispatch-resolve: error ($reason)" >&2
   printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
   exit 0
@@ -204,6 +227,19 @@ while [ $# -gt 0 ]; do
     *) [ -z "$BRIEF" ] || die "one brief file only"; BRIEF=$1; shift ;;
   esac
 done
+TASK_ID='' TASK_RECORD=''
+# Matched against the same data directory fm-brief.sh and fm-spawn.sh use, so a
+# FM_DATA_OVERRIDE home records where fm-spawn.sh reads.
+task_dir=$(CDPATH='' cd -- "$(dirname -- "$BRIEF")" 2>/dev/null && pwd -P) || task_dir=''
+data_dir=$(CDPATH='' cd -- "${FM_DATA_OVERRIDE:-$FM_HOME/data}" 2>/dev/null && pwd -P) || data_dir=''
+if [ "$(basename -- "$BRIEF")" = brief.md ] && [ -n "$task_dir" ] && [ -n "$data_dir" ] \
+  && [ "$(dirname -- "$task_dir")" = "$data_dir" ]; then
+  TASK_ID=$(basename -- "$task_dir")
+  TASK_RECORD="$task_dir/dispatch-resolution.json"
+  if [ -e "$TASK_RECORD" ] || [ -L "$TASK_RECORD" ]; then
+    rm -f -- "$TASK_RECORD" || die "could not clear the previous dispatch resolution: $TASK_RECORD"
+  fi
+fi
 
 # ---- opt-in gate ---------------------------------------------------------------
 # declared_key <provider> <private variable>: set the variable from the source
@@ -242,8 +278,7 @@ select_key() {
   [ -n "${!var}" ] || printf -v "$var" '%s' "$(fmx_env_get "$name" "$FM_HOME/.env")"
   [ -n "${!var}" ] || declared_key "$provider" "$var"
   if [ -z "${!var}" ]; then
-    echo "dispatch-resolve: off ($name absent from the environment and $FM_HOME/.env)" >&2
-    exit 0
+    resolver_off "$name absent from the environment and $FM_HOME/.env"
   fi
 }
 
@@ -317,8 +352,7 @@ case "$DISPATCH_PROVIDER" in
     [ -n "$DISPATCH_MODEL" ] || die "FM_DISPATCH_MODEL required when FM_DISPATCH_PROVIDER=openai"
     [ -n "$OPENAI_API_KEY_PRIVATE" ] || OPENAI_API_KEY_PRIVATE=$(fmx_env_get OPENAI_API_KEY "$FM_HOME/.env")
     if [ -z "$OPENAI_API_KEY_PRIVATE" ]; then
-      echo "dispatch-resolve: off (OPENAI_API_KEY absent from the environment and $FM_HOME/.env)" >&2
-      exit 0
+      resolver_off "OPENAI_API_KEY absent from the environment and $FM_HOME/.env"
     fi
     ;;
   *) die "unknown FM_DISPATCH_PROVIDER: $DISPATCH_PROVIDER (expected typesafe, openrouter, systemone, or openai)" ;;
@@ -443,8 +477,7 @@ SEND_TEXT=$(mktemp) || { rm -f "$RESP_FILE" "$QUOTA" "$CLAUDE_QUOTA" "$TASK_TEXT
 trap 'rm -f "$RULES" "$RESP_FILE" "$QUOTA" "$CLAUDE_QUOTA" "$TASK_TEXT" "$SEND_TEXT"' EXIT
 
 never_send_off() {
-  echo "dispatch-resolve: off ($1; nothing sent)" >&2
-  exit 0
+  resolver_off "$1; nothing sent"
 }
 
 # Checks the endpoint and every string the final request body carries,
@@ -893,5 +926,9 @@ TEXT=$(jq -r '
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end)
       + (if .chosen.profile.account then " --account \(.chosen.profile.account | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
+STATUS=$(jq -r '.status' <<<"$RESULT") || emit_error "status rendering failed"
+PROFILE=$(jq -c 'if .chosen then .chosen.profile | {harness, model: (.model // null), effort: (.effort // null), account: (.account // null)} else null end' <<<"$RESULT") \
+  || emit_error "profile rendering failed"
+record_task "$STATUS" "$PROFILE" || emit_error "could not record the dispatch resolution"
 printf '%s\n' "$TEXT"
 exit 0
