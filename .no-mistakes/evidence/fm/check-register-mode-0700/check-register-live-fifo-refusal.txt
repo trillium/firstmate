@@ -1,0 +1,4 @@
+Scenario: replace the check with a FIFO between initial validation and normalization
+Registration exit: 1
+Refusal: error: could not set mode 0700 on state/demo.check.sh; not registered, the watcher will refuse it
+Trust record created: no

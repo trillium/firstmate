@@ -1,0 +1,7 @@
+Scenario: register a restrictive-umask custom check
+Before: mode=600 trust=absent
+CLI: registered: state/demo.check.sh
+After: mode=700 trust_verified=yes
+Trust record:
+  fm-custom-check-v1
+  53572c04b3a3cc3a23b2dac35b0e5eec5bb3284319d4730703e2ec2c97883ed9

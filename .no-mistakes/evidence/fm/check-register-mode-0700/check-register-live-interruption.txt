@@ -1,0 +1,5 @@
+Scenario: interrupt normalization while the real Perl copy is in progress
+Signal delivered during copy: yes
+Registration exit: 1
+Temporary normalization copy remains: no
+Trust record remains: no
