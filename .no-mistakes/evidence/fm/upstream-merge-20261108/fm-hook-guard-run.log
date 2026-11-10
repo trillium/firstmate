@@ -1,0 +1,6 @@
+ok - tracked guards with conflict markers pass through with a one-line warning
+ok - a missing guard passes through
+ok - a guard that runs and denies still denies, with args and stdin intact
+ok - every tracked hook command steps aside on conflict markers and still runs a refusing script (32 commands)
+ok - OpenCode, Pi, and omp turn-end hooks step aside only for broken guards
+exit=0

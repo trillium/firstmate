@@ -1,0 +1,23 @@
+StopFailure hook command: [ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-hook-guard-run.sh fm-claude-stop-autoarm.sh
+asyncRewake=true timeout=28800
+
+### A. conflict-marked fm-claude-stop-autoarm.sh, via the tracked StopFailure command
+fm-hook-guard-run: fm-claude-stop-autoarm.sh does not parse (conflict markers or syntax error?); guard skipped
+[exit 0]  (asyncRewake treats exit 2 as a rewake; 0 = pass-through)
+
+### B. the pre-fix upstream form (direct exec, no guard runner), same broken script
+
+[exit 0]
+
+### C. Grok context short-circuits
+[exit 0] 
+SCRATCH=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-stopfail.mqwsZe
+
+### A2. syntax error at line 2 (top of script), via tracked StopFailure command
+fm-hook-guard-run: fm-claude-stop-autoarm.sh does not parse (conflict markers or syntax error?); guard skipped
+[exit 0]
+
+### B2. same broken script, pre-fix direct-exec form
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-stopfail.mqwsZe/bin/fm-claude-stop-autoarm.sh: line 2: syntax error near unexpected token `then'
+/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-stopfail.mqwsZe/bin/fm-claude-stop-autoarm.sh: line 2: `if then <<<<<<< HEAD'
+[exit 2]

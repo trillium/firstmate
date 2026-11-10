@@ -1,0 +1,38 @@
+### default host env (booted simulator present)
+ok - disposable watcher refuses inherited state outside its marked lab
+not ok - old watcher never reached its lock-free poll sleep: check: idle simulator: simulator iPhone 16e 73B4930C-C42E-4FB4-BBC9-C70D51DA3B5C has been booted 18h with nothing using it (no live task may own it);  shut it down with: xcrun simctl shutdown 73B4930C-C42E-4FB4-BBC9-C70D51DA3B5C
+[exit 1]
+### FM_SIM_IDLE_HOURS=off
+ok - disposable watcher refuses inherited state outside its marked lab
+ok - a fresh watcher replaces a live holder whose pre-UTC-pin identity no longer recomputes, and the old holder stands down unsignalled
+ok - a replaced holder stands down cleanly even when its successor has already exited and released the lock
+[exit 0]
+### sweep beacon run 1 (macOS stat, sim off)
+ok - disposable watcher refuses inherited state outside its marked lab
+not ok - beacon aged 15s during a sweep of 3s checks (only one check's span is allowed)
+[exit 1]
+### sweep beacon run 2 (macOS stat, sim off)
+ok - disposable watcher refuses inherited state outside its marked lab
+not ok - beacon aged 15s during a sweep of 3s checks (only one check's span is allowed)
+[exit 1]
+### BASE b042ca0d sweep beacon
+ok - disposable watcher refuses inherited state outside its marked lab
+not ok - beacon aged 15s during a sweep of 3s checks (only one check's span is allowed)
+[exit 1]
+### BASE b042ca0d legacy takeover, default host env (booted simulator)
+ok - disposable watcher refuses inherited state outside its marked lab
+ok - a fresh watcher replaces a live holder whose pre-UTC-pin identity no longer recomputes, and the old holder stands down unsignalled
+ok - a replaced holder stands down cleanly even when its successor has already exited and released the lock
+[exit 0]
+### AFTER FIX, default host env (booted simulator present, no env overrides)
+ok - disposable watcher refuses inherited state outside its marked lab
+ok - a fresh watcher replaces a live holder whose pre-UTC-pin identity no longer recomputes, and the old holder stands down unsignalled
+ok - a replaced holder stands down cleanly even when its successor has already exited and released the lock
+[exit 0]
+not ok - self-evicted arm did not fail nonzero (status 0)
+not ok - self-evicted arm did not fail nonzero (status 0)
+not ok - self-evicted arm did not fail nonzero (status 0)
+### self-eviction with FM_SIM_IDLE_HOURS=off
+ok - arm turns clean self-eviction without a successor into a typed failure
+### BASE b042ca0d self-eviction, default host env
+not ok - self-evicted arm did not fail nonzero (status 0)

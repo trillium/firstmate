@@ -1,0 +1,3 @@
+ok - disposable watcher refuses inherited state outside its marked lab
+ok - a fresh watcher replaces a live holder whose pre-UTC-pin identity no longer recomputes, and the old holder stands down unsignalled
+ok - a replaced holder stands down cleanly even when its successor has already exited and released the lock

@@ -1,0 +1,39 @@
+### 1. crew-dispatch active, no record
+$ fm-spawn.sh binding-probe demo --mode local-only --yolo on --harness claude --model opus
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT
+error: config/crew-dispatch.json is active and task binding-probe has no recorded dispatch resolution; run bin/fm-dispatch-resolve.sh /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT/data/binding-probe/brief.md --project <name> first
+[exit 1]
+
+### record: {"task":"binding-probe","status":"clear","profile":{"harness":"claude","model":"opus","effort":"high","account":"work"}}
+### 2. harness drift (codex vs recorded claude)
+$ fm-spawn.sh binding-probe demo --mode local-only --yolo on --harness codex --model opus --effort high
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT
+error: launch flags do not match the clear dispatch selection --harness claude --model opus --effort high recorded in /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT/data/binding-probe/dispatch-resolution.json; pass those flags with no raw launch command, or record this task's override with --dispatch-override <reason>
+[exit 1]
+
+### 3. model drift (sonnet vs recorded opus)
+$ fm-spawn.sh binding-probe demo --mode local-only --yolo on --harness claude --model sonnet --effort high
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT
+error: launch flags do not match the clear dispatch selection --harness claude --model opus --effort high recorded in /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT/data/binding-probe/dispatch-resolution.json; pass those flags with no raw launch command, or record this task's override with --dispatch-override <reason>
+[exit 1]
+
+### 4. effort omitted
+$ fm-spawn.sh binding-probe demo --mode local-only --yolo on --harness claude --model opus
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT
+error: launch flags do not match the clear dispatch selection --harness claude --model opus --effort high recorded in /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT/data/binding-probe/dispatch-resolution.json; pass those flags with no raw launch command, or record this task's override with --dispatch-override <reason>
+[exit 1]
+
+### 5. raw launch command
+$ fm-spawn.sh binding-probe demo --mode local-only --yolo on claude --model opus --model opus --effort high
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT
+error: launch flags do not match the clear dispatch selection --harness claude --model opus --effort high recorded in /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT/data/binding-probe/dispatch-resolution.json; pass those flags with no raw launch command, or record this task's override with --dispatch-override <reason>
+[exit 1]
+
+### 6. record for another task (malformed)
+$ fm-spawn.sh binding-probe demo --mode local-only --yolo on --harness claude --model opus --effort high
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT
+error: malformed dispatch resolution /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT/data/binding-probe/dispatch-resolution.json for task binding-probe; rerun bin/fm-dispatch-resolve.sh /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT/data/binding-probe/brief.md --project <name>
+[exit 1]
+
+### lab tmux dir contents: /tmp/fml.I4HXKX: 
+LAB=/private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pnCctT
