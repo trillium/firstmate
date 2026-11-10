@@ -1696,8 +1696,9 @@ spawn_remote_secondmate() {
   # reports it here so the parent does not deny the agent's actual identity.
   remote_recorded_traceparent=$(printf '%s\n' "$out" | sed -n 's/^traceparent=//p' | tail -1)
   fm_trace_context_valid "$remote_recorded_traceparent" || remote_recorded_traceparent=
-  # The account pin the host's own launch resolved, so the parent's record names
-  # what the mate runs under rather than what this side's config might imply.
+  # The host-reported account pin, so the parent's record names what the mate
+  # runs under rather than what this side's config might imply. A legacy report
+  # with no account key is explicitly marked unconfirmed below.
   remote_account=$(printf '%s\n' "$out" | sed -n 's/^account=//p' | tail -1)
   remote_account_provider=$(printf '%s\n' "$out" | sed -n 's/^account_provider=//p' | tail -1)
   remote_account_reported=0

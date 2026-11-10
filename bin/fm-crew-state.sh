@@ -382,8 +382,9 @@ if [ -n "$REMOTE_HOST" ]; then
     REMOTE_STATE=
   fi
   REMOTE_STATE=$(printf '%s\n' "$REMOTE_STATE" | tail -1)
-  # The account pin the host confirmed when this route was last recorded
-  # (launch or bin/fm-remote-secondmate-relaunch.sh), so a repin is readable here.
+  # The account recorded when this route was last written (host-confirmed on
+  # current routes, explicitly unconfirmed for a legacy report), so a repin is
+  # readable here without hiding an incomplete confirmation.
   REMOTE_ACCOUNT_NOTE=
   [ -z "$(meta_value account)" ] || REMOTE_ACCOUNT_NOTE=", account=$(meta_value account)"
   case "$REMOTE_STATE" in
