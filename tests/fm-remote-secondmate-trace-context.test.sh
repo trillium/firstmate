@@ -266,8 +266,10 @@ assert_no_regex '^account=' "$PARENT/state/ios.meta" \
 printf 'account=token:stale\naccount_provider=openai\n' >> "$REMOTE_ENDPOINT_META"
 FM_FAKE_REMOTE_OMIT_ACCOUNT=1 remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate >/dev/null 2>&1 \
   || fail "re-spawning through an older host route failed"
-assert_grep '^account=unconfirmed$' "$PARENT/state/ios.meta" \
+assert_grep 'account=unconfirmed' "$PARENT/state/ios.meta" \
   "a route that omits account= must be marked unconfirmed"
+assert_no_grep 'account=token:stale' "$PARENT/state/ios.meta" \
+  "an unconfirmed route must not retain the stale account"
 assert_no_regex '^account_provider=' "$PARENT/state/ios.meta" \
   "an unconfirmed route must not retain an account provider"
 pass "account: the remote route records confirmed, unpinned, and unconfirmed account states"
