@@ -655,9 +655,9 @@ fm_worker_account_check() {
 # judge. An empty root checks the ordinary Pi config the pane will inherit.
 fm_worker_account_pi_ready() {
   local executable=$1 provider=$2 root=${3:-} out verdict
-  local -a prefix=()
-  [ -z "$root" ] || prefix=(env "PI_CODING_AGENT_DIR=$root")
-  out=$(fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" ${prefix[@]+"${prefix[@]}"} \
+  local -a root_env=()
+  [ -z "$root" ] || root_env=(env "PI_CODING_AGENT_DIR=$root")
+  out=$(fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" ${root_env[@]+"${root_env[@]}"} \
     "$executable" auth check --provider "$provider" --json --no-refresh 2>/dev/null </dev/null) || true
   verdict=$(printf '%s\n' "$out" | jq -r '
     if type == "object" and .status == "not_ready" and .reason != "provider_not_found"
