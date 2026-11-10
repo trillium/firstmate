@@ -1005,6 +1005,7 @@ tests/fm-remote-delta-read.test.sh 5405
 tests/fm-remote-doctor.test.sh 24110
 tests/fm-remote-entrypoint.test.sh 191
 tests/fm-remote-herdr-guard.test.sh 3200
+tests/fm-remote-herdr-identity.test.sh 6158
 tests/fm-remote-inherit-generation.test.sh 4835
 tests/fm-remote-job-claim-reap.test.sh 3589
 tests/fm-remote-job-claim-retention.test.sh 152
@@ -1068,6 +1069,7 @@ tests/fm-startup-memory-budget.test.sh 9830
 tests/fm-startup-network.test.sh 80235
 tests/fm-stat-shadowing.test.sh 54
 tests/fm-stow-cascade.test.sh 3244
+tests/fm-stow-guard.test.sh 30000
 tests/fm-subagent-pretool-check.test.sh 1354
 tests/fm-supervision-events.test.sh 1390
 tests/fm-supervision-host-attended-live-e2e.test.sh 92

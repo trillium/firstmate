@@ -973,14 +973,16 @@ fm_remote_job_launchctl_settled() { # <uid> <label>
 }
 
 # Reload one label in gui/<uid>, leaving the last bootstrap diagnostic in
-# FM_REMOTE_JOB_BOOTSTRAP_OUT for the caller's own error wording.
+# FM_REMOTE_JOB_BOOTSTRAP_OUT for the caller's own error wording. A fourth
+# argument of `no-bootout` bootstraps without first removing a loaded job, for a
+# caller that must never stop a service that may already be serving.
 # Only an EIO refusal in a live gui domain whose label has since drained is
 # retried; a missing login session, an already-loaded service, and every other
 # refusal are permanent and reported on the first attempt.
-fm_remote_job_launchctl_reload() { # <uid> <label> <plist>
+fm_remote_job_launchctl_reload() { # <uid> <label> <plist> [no-bootout]
   local uid=$1 label=$2 plist=$3 tries=0 out
   FM_REMOTE_JOB_BOOTSTRAP_OUT=
-  if launchctl bootout "gui/$uid/$label" >/dev/null 2>&1; then
+  if [ "${4:-}" != no-bootout ] && launchctl bootout "gui/$uid/$label" >/dev/null 2>&1; then
     fm_remote_job_launchctl_settled "$uid" "$label" || true
   fi
   while :; do

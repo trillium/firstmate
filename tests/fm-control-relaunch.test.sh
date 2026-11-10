@@ -487,6 +487,41 @@ test_relaunch_from_linked_home_preserves_recorded_worktree() {
   pass "fm-control relaunch: a linked spawning home preserves committed and unfinished work in the recorded copy"
 }
 
+# A standalone clone is a legitimate task copy: fresh spawn's isolation check
+# (spawn_worktree_isolated) accepts it because its git dir is not the recorded
+# project's common git dir, even though its own --git-dir and --git-common-dir
+# are equal. The relaunch isolation check must draw the same boundary, or every
+# clone-layout task starts once and can never be restarted. The fixture drives
+# a codex task because Claude's own launch-time trust pre-registration refuses
+# any path that is not a linked worktree of the project (bin/fm-claude-trust.sh).
+test_relaunch_accepts_a_standalone_clone_worktree() {
+  local dir out rc
+  dir=$(new_case clone-wt rl45)
+  add_ship_task "$dir" rl45 codex
+  printf 'codex' > "$dir/fake/command"
+  printf 'codex' > "$dir/fake/becomes"
+  git -C "$dir/proj" worktree remove --force "$dir/wt"
+  git clone -q "$dir/proj" "$dir/wt"
+  [ "$(git -C "$dir/wt" rev-parse --path-format=absolute --git-dir --git-common-dir | sort -u | wc -l | tr -d ' ')" = 1 ] \
+    || fail "fixture broken: the clone's git-dir and git-common-dir must be equal"
+  [ "$(git -C "$dir/wt" rev-parse --path-format=absolute --git-common-dir)" != \
+    "$(git -C "$dir/proj" rev-parse --path-format=absolute --git-common-dir)" ] \
+    || fail "fixture broken: the clone must not share the recorded project's common git dir"
+
+  out=$(run_control "$dir" rl45 relaunch --note "continue in the clone"); rc=$?
+  expect_code 0 "$rc" "a standalone clone worktree should relaunch"$'\n'"$out"
+  assert_contains "$out" "relaunched rl45 harness=codex" "the outcome should name the transition"
+  [ "$(meta_field "$dir" rl45 worktree)" = "$dir/wt" ] \
+    || fail "the recorded copy must be reused, not reallocated"
+  [ "$(meta_field "$dir" rl45 window)" = "fmses:fm-rl45" ] \
+    || fail "the endpoint must be reused, not recreated"
+  [ "$(journal_field "$dir" rl45 phase)" = complete ] \
+    || fail "the transaction journal should end complete"
+  assert_grep "/quit" "$dir/fake/literal" "the previous agent should have been exited"
+  assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement should have been launched"
+  pass "fm-control relaunch: a recorded worktree that is a standalone clone relaunches"
+}
+
 test_relaunch_preserves_durable_task_metadata() {
   local dir out rc
   dir=$(new_case durable-meta rl19)
@@ -3266,6 +3301,7 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree
+test_relaunch_accepts_a_standalone_clone_worktree
 test_relaunch_preserves_durable_task_metadata
 test_traced_relaunch_keeps_an_armed_pr_poll_authenticated
 test_relaunch_accepts_a_legacy_mixed_task_brief
