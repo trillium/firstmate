@@ -1277,20 +1277,24 @@ test_task_rows_carry_agent_fields() {
   fm_write_meta "$home/state/odd.meta" "window=firstmate:fm-odd" "harness=mystery" "kind=scout"
   fm_write_meta "$home/state/far.meta" "window=firstmate:fm-far" "harness=claude" "kind=ship" \
     "remote_host=mini0" "remote_root=/r" "remote_backend=tmux"
+  fm_write_meta "$home/state/unconfirmed.meta" "window=remote:unconfirmed" "harness=claude" "kind=secondmate" \
+    "remote_host=mini1" "remote_root=/r" "remote_backend=herdr" "account=unconfirmed"
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_HOST=thishost "$SNAPSHOT" --json)
   printf '%s' "$out" | jq -e '
     (.tasks[] | select(.id == "pinned")) as $p
     | (.tasks[] | select(.id == "unpinned")) as $u
     | (.tasks[] | select(.id == "odd")) as $o
     | (.tasks[] | select(.id == "far")) as $f
+    | (.tasks[] | select(.id == "unconfirmed")) as $r
     | $p.model == "opus" and $p.effort == "high" and $p.host == "thishost"
       and $p.inference == {provider:"claude",provider_source:"account-meta",account:"work-a",account_request:"work-a",account_reason:null}
       and $u.model == null and $u.inference.account == null
       and $u.inference.provider == "codex" and $u.inference.provider_source == "harness-table"
       and $o.inference.provider == null and $o.inference.provider_source == null
       and $f.host == "mini0"
-      and (.fleet_agents.agents | map(select(.home == null)) | length) == 4
-      and (.fleet_agents.hosts[0] | .host == "thishost" and .status == "local" and .count == 4)
+      and $r.host == "mini1" and $r.inference.account == "unconfirmed"
+      and (.fleet_agents.agents | map(select(.home == null)) | length) == 5
+      and (.fleet_agents.hosts[0] | .host == "thishost" and .status == "local" and .count == 5)
       and (has("quota") | not)
   ' >/dev/null || fail "task rows or fleet_agents wrong: $(printf '%s' "$out" | jq -c '.fleet_agents')"
   pass "task rows carry model, effort, host, and inference source; unknown stays null"

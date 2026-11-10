@@ -23,7 +23,7 @@
 # (account=, plus account_provider= for a Pi pin; empty for an unpinned mate),
 # so this wrapper records that too and a repin is verifiable from the output
 # and the record alone, without inspecting the host's processes. A host too old
-# to report account= leaves the parent's existing account lines untouched.
+# to report account= records account=unconfirmed instead.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,13 +77,12 @@ NEW_EFFORT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^effort=//p' | tail -1)
 [ -n "$NEW_HARNESS" ] || die "the host's route confirmation carried no harness to record"
 NEW_ACCOUNT=
 NEW_ACCOUNT_PROVIDER=
-HOST_REPORTED_ACCOUNT=0
 if printf '%s\n' "$RELAUNCH_OUT" | grep -q '^account='; then
-  HOST_REPORTED_ACCOUNT=1
   NEW_ACCOUNT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^account=//p' | tail -1)
   NEW_ACCOUNT_PROVIDER=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^account_provider=//p' | tail -1)
 else
-  printf 'warning: the host did not report an account pin for %s; the recorded account is unchanged and unconfirmed\n' "$ID" >&2
+  NEW_ACCOUNT=unconfirmed
+  printf 'warning: the host did not report an account pin for %s; recording account=unconfirmed\n' "$ID" >&2
 fi
 
 META_LOCK=$(fm_meta_lock_path "$META") || die "metadata lock path is invalid for $ID"
@@ -96,8 +95,8 @@ META_TMP=$(mktemp "$STATE/.fm-remote-relaunch-meta.XXXXXX") || {
   printf 'harness=%s\n' "$NEW_HARNESS"
   printf 'model=%s\n' "$NEW_MODEL"
   printf 'effort=%s\n' "$NEW_EFFORT"
-  if [ "$HOST_REPORTED_ACCOUNT" -eq 1 ]; then
-    [ -z "$NEW_ACCOUNT" ] || printf 'account=%s\n' "$NEW_ACCOUNT"
+  [ -z "$NEW_ACCOUNT" ] || printf 'account=%s\n' "$NEW_ACCOUNT"
+  if [ -n "$NEW_ACCOUNT" ]; then
     [ -z "$NEW_ACCOUNT_PROVIDER" ] || printf 'account_provider=%s\n' "$NEW_ACCOUNT_PROVIDER"
   fi
 } >> "$META_TMP"
@@ -111,7 +110,7 @@ META_TMP=$(mktemp "$STATE/.fm-remote-relaunch-meta.XXXXXX") || {
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     harness=*|model=*|effort=*) ;;
-    account=*|account_provider=*) [ "$HOST_REPORTED_ACCOUNT" -eq 1 ] || printf '%s\n' "$line" >> "$META_TMP" ;;
+    account=*|account_provider=*) ;;
     *) printf '%s\n' "$line" >> "$META_TMP" ;;
   esac
 done < "$META"

@@ -680,6 +680,7 @@ Letting the far side re-resolve it would silently move the mate onto another run
 SSH exit 255 leaves completion unknown and the route preserved, exactly as every other verb here.
 Move a live remote second mate onto a newly pinned harness, model, or effort with [`bin/fm-remote-secondmate-relaunch.sh`](../bin/fm-remote-secondmate-relaunch.sh) rather than calling `relaunch` through `fm-on.sh` directly: the host-local relaunch it drives can only rewrite the host's own endpoint record, so this wrapper reads the confirmed identity back from that record afterward and republishes the primary's own route metadata to match, the same way launch already records a fresh route.
 The confirmed identity includes the account pin the host's launch resolved, which the wrapper prints as `account=` and records in the primary's route metadata, so a repin is verifiable without inspecting the host's processes.
+An older host that omits the `account=` key is recorded as `account=unconfirmed` instead of preserving a stale pin.
 `bin/fm-crew-state.sh` shows the recorded account for an alive remote endpoint, and the fleet view already reads it from the same record.
 
 ### Firstmate code convergence

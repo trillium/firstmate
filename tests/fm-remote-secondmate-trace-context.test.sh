@@ -120,6 +120,10 @@ if printf '%s' "$4" | base64 --decode 2>/dev/null | tr '\0' '\n' | head -1 | gre
   printf 'ok: remote second-mate readiness confirmed on this host\n'
   exit 0
 fi
+if [ "${FM_FAKE_REMOTE_OMIT_ACCOUNT:-}" = 1 ]; then
+  "$FM_FAKE_REMOTE_ENTRYPOINT" "$@" | sed '/^account=/d; /^account_provider=/d'
+  exit "${PIPESTATUS[0]}"
+fi
 exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
@@ -259,7 +263,14 @@ remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate >/dev/null 2>&1 \
   || fail "re-spawning onto the alive unpinned endpoint failed"
 assert_no_regex '^account=' "$PARENT/state/ios.meta" \
   "the parent record must drop an account the host no longer reports"
-pass "account: the remote route reports the host's account pin and the parent records it"
+printf 'account=token:stale\naccount_provider=openai\n' >> "$REMOTE_ENDPOINT_META"
+FM_FAKE_REMOTE_OMIT_ACCOUNT=1 remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate >/dev/null 2>&1 \
+  || fail "re-spawning through an older host route failed"
+assert_grep '^account=unconfirmed$' "$PARENT/state/ios.meta" \
+  "a route that omits account= must be marked unconfirmed"
+assert_no_regex '^account_provider=' "$PARENT/state/ios.meta" \
+  "an unconfirmed route must not retain an account provider"
+pass "account: the remote route records confirmed, unpinned, and unconfirmed account states"
 
 # --- per-task boundary: ambient carriers are never adopted or shared ---------
 # A persistent supervisor exports its own launch-time TRACEPARENT for its whole

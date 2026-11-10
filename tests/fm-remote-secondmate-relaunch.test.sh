@@ -179,15 +179,20 @@ assert_grep 'remote_host=remote-mac' "$HOME_DIR/state/ios.meta" \
   "unrelated route fields must survive an account update"
 pass "a remote relaunch prints and records the account the host confirmed, including a repin and an unpin"
 
-# --- a host that reports no account key leaves the recorded account alone ----
+# --- a host that reports no account key records the missing confirmation -----
 reset_meta
 printf 'account=token:recorded\n' >> "$HOME_DIR/state/ios.meta"
+printf 'account_provider=openai\n' >> "$HOME_DIR/state/ios.meta"
 OUT=$(FM_FAKE_ACCOUNT_MODE=report-none run_relaunch ios claude default default); RC=$?
 expect_code 0 "$RC" "a relaunch onto a host that reports no account should still succeed"$'\n'"$OUT"
 assert_contains "$OUT" "did not report an account pin" "the unconfirmed account should be called out"
-assert_grep 'account=token:recorded' "$HOME_DIR/state/ios.meta" \
-  "an unreported account must not be rewritten as confirmed or cleared"
-pass "a host that reports no account leaves the recorded account untouched and says so"
+assert_grep 'account=unconfirmed' "$HOME_DIR/state/ios.meta" \
+  "an unreported account must be marked unconfirmed"
+assert_no_grep '^account=token:recorded$' "$HOME_DIR/state/ios.meta" \
+  "an unreported account must not preserve stale verification evidence"
+assert_no_regex '^account_provider=' "$HOME_DIR/state/ios.meta" \
+  "an unreported account must clear a stale provider"
+pass "a host that reports no account records an unconfirmed account and says so"
 
 # --- a refused relaunch leaves the parent's record untouched -----------------
 reset_meta
