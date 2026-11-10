@@ -1,0 +1,54 @@
+{
+  "task": {
+    "id": "remote-demo",
+    "host": "localhost",
+    "backend": "tmux",
+    "inference": {
+      "provider": "claude",
+      "provider_source": "harness-table",
+      "account": "unconfirmed",
+      "account_request": null,
+      "account_reason": null
+    }
+  },
+  "fleet_agents": {
+    "host": "validation-lab",
+    "agents": [
+      {
+        "id": "remote-demo",
+        "kind": "secondmate",
+        "state": "unknown",
+        "host": "localhost",
+        "home": null,
+        "harness": "claude",
+        "model": null,
+        "effort": null,
+        "inference": {
+          "provider": "claude",
+          "provider_source": "harness-table",
+          "account": "unconfirmed",
+          "account_request": null,
+          "account_reason": null
+        }
+      }
+    ],
+    "hosts": [
+      {
+        "host": "validation-lab",
+        "home": null,
+        "status": "local",
+        "count": 1,
+        "freshness": "fresh",
+        "observed_at": "2026-11-10T06:42:12Z"
+      },
+      {
+        "host": "validation-lab",
+        "home": "remote-demo",
+        "status": "unavailable",
+        "count": 0,
+        "freshness": "unknown",
+        "observed_at": "2026-11-10T06:42:12Z"
+      }
+    ]
+  }
+}
