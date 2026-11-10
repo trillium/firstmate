@@ -333,7 +333,33 @@ test_stale_worker_copy_at_base_tip_does_not_latch() {
   pass 'a done at the base tip refuses without latching, and a later real head latches and lands'
 }
 
-fm_test_run test_two_tasks_cannot_undo_a_same_tree_landing test_branch_advance_does_not_change_approval \
+record_landed() {
+  FM_ROOT_OVERRIDE="$HOME_DIR" FM_HOME="$HOME_DIR" FM_STATE_OVERRIDE="$HOME_DIR/state" \
+    bash "$ROOT/bin/fm-merge-local.sh" --record-landed local-task
+}
+
+test_record_landed_for_replayed_work() {
+  local out
+  make_case replayed
+  git -C "$PROJ" -c user.email=t@t -c user.name=t cherry-pick -x "$X" >/dev/null
+  out=$(record_landed 2>&1) || fail "replayed work was not recorded: $out"
+  assert_contains "$out" 'patch-equivalence' 'the record did not name its proof'
+  [ "$(fm_dod_meta_value "$META" landed_equivalent)" = "$X" ] || fail 'the branch head was not recorded'
+  [ "$(git -C "$PROJ" rev-parse "refs/heads/fm/local-task")" = "$X" ] || fail 'recording moved the ship branch'
+  pass 'work replayed onto main is recorded as landed without moving any branch'
+}
+
+test_record_landed_refuses_unmatched_work() {
+  local rc=0
+  make_case unmatched
+  record_landed >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail 'unmatched work was recorded as landed'
+  assert_no_regex '^landed_equivalent=' "$META" 'a refused record left a marker'
+  [ "$(git -C "$PROJ" rev-parse HEAD)" = "$BASE" ] || fail 'a refused record moved main'
+  pass 'work with no equivalent on main is not recorded'
+}
+
+fm_test_run test_record_landed_for_replayed_work test_record_landed_refuses_unmatched_work test_two_tasks_cannot_undo_a_same_tree_landing test_branch_advance_does_not_change_approval \
   test_missing_and_malformed_head_refuse test_change_after_hold_check_refuses \
   test_diverged_default_refuses test_change_during_approval_check_refuses \
   test_snapshot_cannot_pin_a_replacement_task test_done_recording_preserves_caller_locks \

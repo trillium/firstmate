@@ -967,6 +967,19 @@ fm_dod_local_done_head() {  # <meta>
   case ${#value} in 40|64) printf '%s\n' "$value" ;; *) return 1 ;; esac
 }
 
+# Is every commit of <head> not on <ref> patch-equivalent to a commit on <ref>?
+# Single owner of the equivalence proof shared by bin/fm-teardown.sh and
+# bin/fm-merge-local.sh --record-landed. git cherry matches stable patch ids, so
+# a squash merge or a conflict-resolved replay never matches and still refuses.
+# A merge commit among the unmatched commits, a git error, or any "+" line
+# returns non-zero; a head already on <ref> is trivially equivalent.
+fm_dod_patch_equivalent() {  # <repo> <ref> <head>
+  local repo=$1 ref=$2 head=$3 out
+  [ -z "$(git -C "$repo" rev-list --merges "$head" --not "$ref" -- 2>/dev/null)" ] || return 1
+  out=$(git -C "$repo" cherry "$ref" "$head" 2>/dev/null) || return 1
+  ! printf '%s\n' "$out" | grep -q '^+'
+}
+
 # Latch the head before reporting readiness, not at landing time. Snapshot
 # callers may supply captured meta; compare it with the live record under the
 # existing control/meta locks before publishing to the live owner only. A caller
