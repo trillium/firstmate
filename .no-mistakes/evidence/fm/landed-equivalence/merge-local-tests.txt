@@ -1,0 +1,15 @@
+1..13
+ok - work replayed onto main is recorded as landed without moving any branch
+ok - a replay that changed only whitespace is not recorded
+ok - work with no equivalent on main is not recorded
+ok - two approved tasks with the same tree cannot roll back a successful landing
+ok - branch advance refuses, and restoring the reported X lands exactly X
+ok - missing, malformed and ambiguous done heads refuse without moving main
+ok - a branch move inside the final Git invocation refuses without changing main or its checkout
+ok - a diverged default branch refuses without changing main or its checkout
+ok - approval and branch changes during the hold read refuse without moving main
+ok - captured metadata cannot pin a replacement task generation
+ok - ledger and teardown record the first done head without reacquiring or releasing caller locks
+ok - a reported done line lands without a prior crew-state observation
+ok - a done at the base tip refuses without latching, and a later real head latches and lands
+FM_TEST_COMPLETE

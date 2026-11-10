@@ -1,0 +1,10 @@
+ok - teardown leaves opencode's busy plugin in the returned pool worktree as on main
+ok - local-only work replayed onto main as new commits tears down and names the patch-equivalent proof
+ok - local-only branch with one unmatched commit still refuses
+ok - patch-equivalent work with uncommitted changes still refuses
+ok - local-only replay that changed only whitespace still refuses
+ok - ordinary task whose commit is patch-equivalent on origin main tears down and names the proof
+ok - landing record naming a different head still refuses
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+ok - local-only worktree with truly unpushed work is refused (safety preserved)
+ok - content fallback distinguishes unavailable Git proof, containment, conflicts, and unlanded content

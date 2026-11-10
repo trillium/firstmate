@@ -1,0 +1,99 @@
+
+=== S1 local-only: work re-applied onto main by another task as new commits, recorded with --record-landed ===
+branch head 0af2011; main d378a1a; branch ancestor of main? no
+$ fm-merge-local.sh --record-landed t-replay
+recorded fm/t-replay (0af2011b) as landed on main by patch-equivalence
+exit=0
+meta: landed_equivalent=0af2011b98f189bbb4f9a8dd617a351287d46a8d
+branch head after record: 0af2011; main after record: d378a1a
+$ fm-teardown.sh t-replay
+landed proof: recorded patch-equivalent landing
+exit=0
+task meta removed: yes
+
+=== S2 local-only: patch-equivalent replay, no record (teardown proves it itself) ===
+$ fm-teardown.sh t-eq
+landed proof: patch-equivalent
+exit=0
+task meta removed: yes
+
+=== S2b local-only: plain fast-forward landing still uses ancestry ===
+$ fm-teardown.sh t-ff
+landed proof: ancestry
+exit=0
+task meta removed: yes
+
+=== S3 ADVERSARIAL conflict-resolved replay (patch changed): record refused, teardown refuses ===
+$ fm-merge-local.sh --record-landed t-conf
+REFUSED: fm/t-conf has commits with no patch-equivalent on main; nothing recorded.
+exit=1
+meta landed_equivalent line: ''
+$ fm-teardown.sh t-conf
+REFUSED: local-only worktree /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.2AsV7t/wt-t-conf has work not yet merged into main and not on any remote.
+commits not yet on main:
+94a1338 task: a.txt
+exit=1
+task meta removed: no
+
+=== S4 ADVERSARIAL replay that changed only indentation refuses (plain git cherry would accept) ===
+plain git cherry main fm/t-ws: - 6aaf1e141bc275d26d510b56748ad3f41070ad72
+$ fm-merge-local.sh --record-landed t-ws
+REFUSED: fm/t-ws has commits with no patch-equivalent on main; nothing recorded.
+exit=1
+$ fm-teardown.sh t-ws
+REFUSED: local-only worktree /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.2AsV7t/wt-t-ws has work not yet merged into main and not on any remote.
+commits not yet on main:
+6aaf1e1 py
+exit=1
+task meta removed: no
+
+=== S5 ADVERSARIAL equivalent replay but uncommitted change in the task copy refuses ===
+$ fm-teardown.sh t-dirty
+REFUSED: local-only worktree /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.2AsV7t/wt-t-dirty has work not yet merged into main and not on any remote.
+commits not yet on main:
+8e0683f task: a.txt
+exit=1
+task meta removed: no
+
+=== S6 ADVERSARIAL record, then worker adds a commit: stale record no longer counts ===
+recorded: landed_equivalent=41337e6d5598b2efecbe75d032a25803ab0ae59b
+$ fm-teardown.sh t-stale
+REFUSED: local-only worktree /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.2AsV7t/wt-t-stale has work not yet merged into main and not on any remote.
+commits not yet on main:
+9cd2faa task: c.txt
+41337e6 task: a.txt
+exit=1
+task meta removed: no
+
+=== S7 ADVERSARIAL --record-landed on a non-local-only task refuses ===
+$ fm-merge-local.sh --record-landed t-nm
+error: task t-nm is not local-only; nothing to record
+exit=1
+
+=== S8 PR task: squash-merged PR (one-parent merge) whose recorded head equals the branch head ===
+$ fm-teardown.sh t-sq
+landed proof: merged PR
+exit=0
+task meta removed: yes
+
+=== S9 ADVERSARIAL PR task: PR 7 reported merged with a different head, content differs -> refuses ===
+$ fm-teardown.sh t-sq2
+REFUSED: worktree /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.2AsV7t/wt-t-sq2 has work not on any remote and not landed.
+unpushed commits:
+faffb36 task: a.txt
+exit=1
+task meta removed: no
+
+=== S10 PR task fully pushed, PR unmerged: tears down with no false 'landed proof' line ===
+$ fm-teardown.sh t-push
+exit=0
+task meta removed: yes
+
+=== S11 PR task: its single commit reached origin/main through another task under a new SHA ===
+git cherry origin/main HEAD: - d0258285538cb0a55de61ace50726575fb309748
+$ fm-teardown.sh t-other
+landed proof: patch-equivalent
+exit=0
+task meta removed: yes
+
+lab removed: yes
