@@ -315,6 +315,25 @@ test_pi_extension_provider_and_old_pi_fall_back_to_the_model_listing() {
   pass "extension providers and a Pi without auth check fall back to an exact model-listing match"
 }
 
+test_unpinned_pi_refuses_a_provider_with_no_credential() {
+  local out rc id=acct-pi-cred
+  new_case pi-credential pi
+  mkdir -p "$CASE/pi-home"
+  out=$(PI_CODING_AGENT_DIR="$CASE/pi-home" spawn_ship "$id-none" --model openai-codex/gpt-5.5); rc=$?
+  expect_code 1 "$rc" "a Pi model whose provider has no credential must refuse"
+  assert_refused_before_launch "$id-none" "$out" "Pi has no usable credential for provider 'openai-codex' (credentials_not_configured)"
+  printf 'openai-codex\n' > "$CASE/pi-home/signed-in"
+  out=$(PI_CODING_AGENT_DIR="$CASE/pi-home" spawn_ship "$id-ok" --model openai-codex/gpt-5.5); rc=$?
+  expect_code 0 "$rc" "a Pi model whose provider is signed in should launch: $out"
+  printf 'codex-native\n' > "$CASE/pi-home/extension-providers"
+  out=$(PI_CODING_AGENT_DIR="$CASE/pi-home" spawn_ship "$id-ext" --model codex-native/gpt-6); rc=$?
+  expect_code 0 "$rc" "an extension provider Pi cannot judge should not be blocked: $out"
+  : > "$CASE/pi-home/old-pi"
+  out=$(PI_CODING_AGENT_DIR="$CASE/pi-home" spawn_ship "$id-old" --model anthropic/claude-sonnet); rc=$?
+  expect_code 0 "$rc" "a Pi without auth check should not be blocked: $out"
+  pass "an unpinned Pi launch refuses a provider with no credential and never blocks one it cannot judge"
+}
+
 test_a_pin_governs_only_its_own_runner() {
   local out rc id=acct-scope
   new_case scope codex
@@ -1154,6 +1173,7 @@ test_malformed_pins_refuse_before_launch
 test_pi_pin_selects_the_root_and_the_declared_provider
 test_pi_pin_refusals
 test_pi_extension_provider_and_old_pi_fall_back_to_the_model_listing
+test_unpinned_pi_refuses_a_provider_with_no_credential
 test_a_pin_governs_only_its_own_runner
 test_raw_claude_command_receives_the_pin
 test_raw_claude_account_override_refuses_under_a_pin

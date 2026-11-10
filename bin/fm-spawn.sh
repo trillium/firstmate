@@ -3668,6 +3668,18 @@ WORKER_ACCOUNT_DECLARED=${WORKER_ACCOUNT%%$'\t'*}
 WORKER_ACCOUNT_ROOT=${WORKER_ACCOUNT#*$'\t'}
 WORKER_ACCOUNT_PROVIDER=${WORKER_ACCOUNT_ROOT#*$'\t'}
 WORKER_ACCOUNT_ROOT=${WORKER_ACCOUNT_ROOT%%$'\t'*}
+# A Pi worker whose model names a provider Pi has no credential for would sit
+# idle on "No API key found"; refuse here, where the dispatch can still move.
+# A pinned launch was already checked against its pinned root above.
+if [ "${RAW_LAUNCH:-0}" != 1 ] && [ -z "$WORKER_ACCOUNT" ]; then
+  case "$HARNESS" in
+  pi | pi-signed)
+    if PI_CRED_PROVIDER=$(fm_worker_account_pi_provider "$MODEL"); then
+      fm_worker_account_pi_ready "${PI_BIN:-$HARNESS}" "$PI_CRED_PROVIDER" || exit 1
+    fi
+    ;;
+  esac
+fi
 # T3 starts the agent itself, at full access, with its provider instance's own
 # account and environment, so a launch setting only a Firstmate-built command
 # line can apply refuses here instead of being silently widened or dropped.

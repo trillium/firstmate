@@ -646,6 +646,27 @@ fm_worker_account_check() {
   return 0
 }
 
+# fm_worker_account_pi_ready <executable> <provider> [<root>]
+# Returns 1, printing one error, only when Pi's own `auth check` says the
+# provider a launch names has no usable credential, because that pane would
+# otherwise sit idle on "No API key found" until supervision flags it as a
+# wedge. Anything inconclusive (an older Pi without `auth check`, an unknown
+# provider, a timeout) returns 0 so the check never blocks a launch it cannot
+# judge. An empty root checks the ordinary Pi config the pane will inherit.
+fm_worker_account_pi_ready() {
+  local executable=$1 provider=$2 root=${3:-} out verdict
+  local -a root_env=()
+  [ -z "$root" ] || root_env=(env "PI_CODING_AGENT_DIR=$root")
+  out=$(fm_run_timed "$FM_WORKER_ACCOUNT_CHECK_SECONDS" ${root_env[@]+"${root_env[@]}"} \
+    "$executable" auth check --provider "$provider" --json --no-refresh 2>/dev/null </dev/null) || true
+  verdict=$(printf '%s\n' "$out" | jq -r '
+    if type == "object" and .status == "not_ready" and .reason != "provider_not_found"
+    then "\(.reason // "not_ready")" else "" end' 2>/dev/null)
+  [ -n "$verdict" ] || return 0
+  echo "error: Pi has no usable credential for provider '$provider' ($verdict), so a worker launched on it would idle on 'No API key found'; sign in with ${root:+PI_CODING_AGENT_DIR=$root }$executable, then /login $provider, or dispatch on a different provider" >&2
+  return 1
+}
+
 # fm_worker_account_request_valid <account>
 # Refuses an --account value holding a control character. Declared entries
 # never hold one, and a newline would otherwise split the value before the
