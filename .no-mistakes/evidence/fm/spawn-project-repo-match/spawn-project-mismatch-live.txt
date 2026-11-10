@@ -1,0 +1,6 @@
+Scenario: recorded repo alpha, requested project beta
+Exit status: 1
+warning: /Users/trilliumsmith/.no-mistakes/worktrees/6762fb16e3f7/01M71C79R6AW3GTEDSRPPQBS6P/.fm-live.WKRY1Y/case/home/data/live-mismatch/launch-brief.md records no ship branch; defaulting to legacy branch fm/live-mismatch
+warning: /Users/trilliumsmith/.no-mistakes/worktrees/6762fb16e3f7/01M71C79R6AW3GTEDSRPPQBS6P/.fm-live.WKRY1Y/case/home/data/live-mismatch/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: project mismatch for live-mismatch: its backlog item records repo alpha but the spawn targets project beta (/Users/trilliumsmith/.no-mistakes/worktrees/6762fb16e3f7/01M71C79R6AW3GTEDSRPPQBS6P/.fm-live.WKRY1Y/case/beta); pass the alpha project directory, or correct the item's repo if the item is wrong
+Task record: absent (no worker state published)

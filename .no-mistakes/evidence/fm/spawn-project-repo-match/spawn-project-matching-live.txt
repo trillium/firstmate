@@ -1,0 +1,6 @@
+Scenario: recorded repo alpha, requested project alpha
+Exit status: 0
+warning: /Users/trilliumsmith/.no-mistakes/worktrees/6762fb16e3f7/01M71C79R6AW3GTEDSRPPQBS6P/.fm-live.6ko17e/case/home/data/live-matching/launch-brief.md records no ship branch; defaulting to legacy branch fm/live-matching
+warning: /Users/trilliumsmith/.no-mistakes/worktrees/6762fb16e3f7/01M71C79R6AW3GTEDSRPPQBS6P/.fm-live.6ko17e/case/home/data/live-matching/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned live-matching harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-live-matching worktree=/Users/trilliumsmith/.no-mistakes/worktrees/6762fb16e3f7/01M71C79R6AW3GTEDSRPPQBS6P/.fm-live.6ko17e/case/wt
+Task record: present (matching repo admitted)

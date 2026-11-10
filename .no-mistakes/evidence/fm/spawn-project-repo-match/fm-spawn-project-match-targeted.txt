@@ -1,0 +1,5 @@
+ok - a project matching the item's recorded repo spawns
+ok - the missing-item hint files the item with the target project's repo
+ok - a project disagreeing with the recorded repo is refused naming both
+ok - an item with no recorded repo spawns
+# all fm-spawn-project-match tests passed
