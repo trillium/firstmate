@@ -238,7 +238,7 @@ spawn_ship() {  # <case-dir> <id> [pane-path]
     FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$pane" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
-    "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off 2>&1
+    "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off --repo-unrecorded-ok 2>&1
 }
 
 assert_admitted() {  # <case-dir> <id> <rc> <out> <label>
@@ -507,7 +507,7 @@ live_spawn() {  # <case-dir> <id> [pane]
     FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$pane" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
-    "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off 2>&1
+    "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off --repo-unrecorded-ok 2>&1
 }
 
 # Real CPU load closes admission through the real probes, a real spawn is
