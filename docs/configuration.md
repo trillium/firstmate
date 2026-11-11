@@ -1829,11 +1829,23 @@ An empty, malformed, or unreadable file refuses with its path before any worker 
 A raw omp launch command cannot carry the flag, so a pinned secondmate refuses one; launch it with `--harness omp`.
 Firstmate does not create, sign in, or copy an omp profile; sign in to it yourself with `omp --profile <name>`.
 
-The spawn prints the pin as `omp_profile=` and records the same field in the task record.
-Every spawn, control-plane relaunch, and automatic recovery reads the file again, and a relaunch checks it before stopping the current agent.
-After changing a live mate's pin, use `bin/fm-control.sh <id> relaunch` to apply it.
 The file stays in the primary home and is not inherited or copied into the secondmate's home, because a secondmate does not launch secondmates.
 [`bin/fm-omp-profile-lib.sh`](../bin/fm-omp-profile-lib.sh) owns parsing and the refusals.
+
+### Credential fingerprinting (bin/fm-account-fingerprint.sh)
+
+`bin/fm-account-fingerprint.sh` is a read-only inspection helper that reports a worker's harness, authentication method (`setup token`, `subscription login`, `API key`, `other`, or `unknown`), account or usage-bucket label from local non-secret records, and a short 12-hex-character credential fingerprint.
+The fingerprint is computed from a fixed public domain-separation label (`fm-credential-fingerprint-v1:`) and the credential secret, enabling deterministic credential comparison across workers and machines without exposing or storing secrets.
+
+```sh
+bin/fm-account-fingerprint.sh <task-id>     # inspect a recorded worker task
+bin/fm-account-fingerprint.sh --current      # inspect the current process environment and active pins
+bin/fm-account-fingerprint.sh --group        # list all live workers grouped by credential fingerprint
+bin/fm-account-fingerprint.sh --group --json # emit structured worker and group inventory as JSON
+```
+
+When authenticating via a Claude setup token, the account label is resolved from the token file's declared companion metadata (`account: <label>`) or basename, and two agents sharing a token produce identical fingerprints.
+If a worker's credential cannot be read or verified, the tool reports `unknown` rather than guessing.
 
 ## Lavish server address (config/lavish-axi-host)
 
