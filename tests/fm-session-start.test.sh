@@ -2278,6 +2278,38 @@ SH
   chmod +x "$fakebin/timeout"
 }
 
+# The digest's bound is the explicit FM_SESSION_START_TIMEOUT when set, otherwise
+# 120s plus one endpoint bound per recorded task, so a large fleet is not cut off.
+test_runtime_bound_adapts_to_fleet_size() {
+  local rec root home fakebin out n
+  rec=$(new_world bound-adaptive)
+  IFS='|' read -r root home fakebin <<WORLD
+$rec
+WORLD
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  cat > "$fakebin/timeout" <<'SH'
+#!/usr/bin/env bash
+# Record the outermost bound, then run the command without enforcing one.
+[ -n "${FM_FAKE_BOUND_LOG:-}" ] && [ ! -s "$FM_FAKE_BOUND_LOG" ] && printf '%s\n' "$3" >> "$FM_FAKE_BOUND_LOG"
+shift 3
+exec "$@"
+SH
+  chmod +x "$fakebin/timeout"
+  for n in 1 2 3; do : > "$home/state/bound-$n.meta"; done
+  rm -f "$home/bound.log"
+  FM_FAKE_BOUND_LOG="$home/bound.log" FM_SESSION_START_ENDPOINT_TIMEOUT=7 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH" >/dev/null 2>&1 || true
+  out=$(head -1 "$home/bound.log" 2>/dev/null)
+  [ "$out" = 141 ] || fail "default bound should be 120 + 7s x 3 tasks = 141, got '${out:-none}'"
+  rm -f "$home/bound.log"
+  FM_FAKE_BOUND_LOG="$home/bound.log" FM_SESSION_START_TIMEOUT=45 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH" >/dev/null 2>&1 || true
+  out=$(head -1 "$home/bound.log" 2>/dev/null)
+  [ "$out" = 45 ] || fail "explicit FM_SESSION_START_TIMEOUT should win, got '${out:-none}'"
+  pass "the session-start bound adapts to fleet size and honours the explicit override"
+}
+
 test_runtime_bound_truncates_loudly_and_exits_zero() {
   local rec root home fakebin out status=0 stray mechanism
   rec=$(new_world runtime-bound)
@@ -3192,6 +3224,7 @@ test_omp_diagnostic_checkout_home_keeps_restart_wording_and_names_cause
 test_omp_diagnostic_accepts_prelock_loaded_marker
 test_pi_diagnostic_rejects_missing_turnend_guard_marker
 test_pi_diagnostic_rejects_previous_session_loaded_marker
+test_runtime_bound_adapts_to_fleet_size
 test_runtime_bound_truncates_loudly_and_exits_zero
 test_portable_timeout_escalates_term_resistant_process
 test_runtime_bound_leaves_a_healthy_digest_untouched

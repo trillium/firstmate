@@ -220,8 +220,12 @@
 #      classified by step 4. Backends with no classifier keep reading a failed
 #      capture as gone. The fallback's own comment owns the per-verdict rules.
 #
+# With no id, prints one `<id>: <state line>` per recorded task (every
+# state/*.meta, in name order), each exactly the line the single-id form prints,
+# or `no recorded tasks` when there are none.
+#
 # Read-only and side-effect free. Always exits 0 on a successful read regardless
-# of state; exit 2 only on a usage error (no id).
+# of state; exit 2 only on a usage error (more than one argument).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -246,8 +250,21 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
 
+[ "$#" -le 1 ] || { echo "usage: fm-crew-state.sh [<id>]" >&2; exit 2; }
 ID=${1:-}
-[ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
+if [ -z "$ID" ]; then
+  # Each task is read by a fresh invocation, because the single-id form exits
+  # from inside emit and one task's read must never end the others'.
+  LISTED=0
+  for LIST_META in "$STATE"/*.meta; do
+    [ -f "$LIST_META" ] || continue
+    LIST_ID=$(basename "$LIST_META" .meta)
+    LISTED=$((LISTED + 1))
+    printf '%s: %s\n' "$LIST_ID" "$("${BASH_SOURCE[0]}" "$LIST_ID" < /dev/null 2>&1 | tail -1)"
+  done
+  [ "$LISTED" -gt 0 ] || echo "no recorded tasks"
+  exit 0
+fi
 
 # Fleet snapshot composition supplies its captured metadata path here so every
 # state read resolves the same task generation selected by that snapshot.
