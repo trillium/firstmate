@@ -2020,5 +2020,78 @@ test_typed_text_on_prompt_row_still_pending() {
   pass "real typed text on the prompt row still reads pending"
 }
 
+test_non_rule_unicode_on_prompt_row_still_pending_in_every_locale() {
+  local screen out locale
+  screen=$(stray_glyph_screen '—')
+  for locale in C "${LC_ALL:-${LANG:-C}}"; do
+    out=$(LC_ALL="$locale" fm_composer_classify_screen "$(printf 'styled=1\n')" "$screen")
+    [ "$out" = pending ] || fail "typed em dash must remain pending under LC_ALL=$locale, got '$out'"
+    out=$(LC_ALL="$locale" fm_composer_extract_selected_content "$(printf 'styled=1\n')" "$screen")
+    case "$out" in '—'*) ;; *) fail "typed em dash must be extracted intact under LC_ALL=$locale, got '$out'" ;; esac
+  done
+  pass "non-rule Unicode on the prompt row remains pending under C and the active locale"
+}
+
 test_stray_glyph_over_rule_is_not_pending_input
 test_typed_text_on_prompt_row_still_pending
+test_non_rule_unicode_on_prompt_row_still_pending_in_every_locale
+
+# A real draft can open with rule cells behind the glyph and wrap ordinary text
+# onto the next row; that continuation keeps the ruled row input, where a ruled
+# row with nothing ordinary below it is only border furniture.
+ruled_wrapped_draft_screen() {  # <footer-0-or-1>
+  local gray=$'\033[0m\033[38;2;136;136;136m' white=$'\033[0m\033[38;2;255;255;255m' rule
+  rule=$(printf '─%.0s' $(seq 1 60))
+  printf '%s\n' \
+    "❯"$'\xc2\xa0'"${gray}${rule}"$'\033[0m' \
+    "${white}hello"$'\033[0m'
+  [ "$1" = 0 ] || printf '%s\n' $'  \033[38;2;255;107;128m⏵⏵ bypass permissions on\033[0m (shift+tab to cycle)'
+}
+
+test_wrapped_draft_after_ruled_row_reads_pending() {
+  local caps screen out footer rule
+  caps=$(printf 'styled=1\ncursor=1\nidentity=1\nrows=0\n')
+  rule=$(printf '─%.0s' $(seq 1 60))
+  for footer in 0 1; do
+    screen=$(ruled_wrapped_draft_screen "$footer")
+    out=$(fm_composer_classify_screen "$caps" "$screen" 1 '')
+    [ "$out" = pending ] || fail "wrapped draft with the cursor on the continuation (footer $footer) must read pending, got '$out'"
+    out=$(fm_composer_classify_screen "$caps" "$screen" 0 '')
+    [ "$out" = pending ] || fail "wrapped draft with the cursor on the ruled prompt row (footer $footer) must read pending, got '$out'"
+    out=$(fm_composer_classify_screen "$(printf 'styled=1\n')" "$screen")
+    [ "$out" = pending ] || fail "cursorless wrapped draft after a ruled row (footer $footer) must read pending, got '$out'"
+    out=$(fm_composer_extract_selected_content "$(printf 'styled=1\n')" "$screen")
+    # Without a cursor the selection also takes a footer row directly below the
+    # draft, so the footer variant pins only the draft prefix.
+    case "$footer:$out" in
+      0:"$rule hello"|1:"$rule hello"*) ;;
+      *) fail "cursorless wrapped draft must retain its rule cells and continuation (footer $footer), got '$out'" ;;
+    esac
+  done
+  pass "ordinary text wrapped below a ruled prompt row keeps the draft pending with and without a cursor"
+}
+
+test_ruled_row_over_footer_is_still_empty() {
+  local screen out
+  screen=$(ruled_wrapped_draft_screen 1 | sed '2d')
+  out=$(fm_composer_classify_screen "$(printf 'styled=1\n')" "$screen")
+  [ "$out" = empty ] || fail "a ruled prompt row above only a mode hint must read empty, got '$out'"
+  pass "a ruled prompt row with only a mode hint below it is still border furniture"
+}
+
+test_wrapped_draft_after_ruled_row_reads_pending
+
+# A typed continuation row may itself open with a mode-hint glyph; it stays part
+# of the draft rather than ending the selection.
+test_wrapped_draft_with_mode_glyph_continuation_is_preserved() {
+  local screen out
+  screen=$(printf '%s\n' '❯ Explain these controls:' '⏸ pause playback')
+  out=$(fm_composer_classify_screen "$(printf 'styled=1\n')" "$screen")
+  [ "$out" = pending ] || fail "wrapped draft with a mode-glyph continuation must read pending, got '$out'"
+  out=$(fm_composer_extract_selected_content "$(printf 'styled=1\n')" "$screen")
+  [ "$out" = 'Explain these controls: ⏸ pause playback' ] \
+    || fail "mode-glyph continuation must be extracted in full, got '$out'"
+  pass "a wrapped draft whose continuation opens with a mode-hint glyph is preserved in full"
+}
+test_wrapped_draft_with_mode_glyph_continuation_is_preserved
+test_ruled_row_over_footer_is_still_empty
