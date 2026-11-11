@@ -358,6 +358,7 @@ cpu_count() {
 # lands in `unclassified` and stays serial until someone proves it.
 family_for_basename() {
   case "$1" in
+    fm-account-fingerprint.test.sh|\
     fm-arm-pretool-check.test.sh|fm-ask-user-authority.test.sh|\
     fm-bearings-board.test.sh|\
     fm-brief.test.sh|fm-dod-lib.test.sh|fm-merge-local.test.sh|fm-vendor-auth-probe.test.sh|\
@@ -800,6 +801,7 @@ list_portable_serial() {
 # balance rather than coverage. That doc owns the refresh procedure.
 portable_serial_weight_hints() {
   cat <<'EOF'
+tests/fm-account-fingerprint.test.sh 2500
 tests/fm-afk-contract.test.sh 13637
 tests/fm-afk-inject-e2e.test.sh 42599
 tests/fm-afk-pi-herdr-return-e2e.test.sh 52
@@ -1817,6 +1819,9 @@ families_for_changed_path() {
       ;;
     bin/fm-primary-failover.sh)
       printf '%s\n' "__script__:fm-primary-failover.test.sh"
+      ;;
+    bin/fm-account-fingerprint.sh)
+      printf '%s\n' "__script__:fm-account-fingerprint.test.sh"
       ;;
     bin/fm-claude-account-quota.sh)
       printf '%s\n' "__script__:fm-claude-account-quota.test.sh"
