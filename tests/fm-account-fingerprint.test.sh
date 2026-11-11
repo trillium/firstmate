@@ -293,7 +293,223 @@ test_error_handling() {
   out=$(FM_HOME="$HOME_DIR" "$TOOL" --help); rc=$?
   expect_code 0 "$rc" "--help must exit 0"
   assert_contains "$out" "Usage:"
+  assert_contains "$out" "--fleet" "help documents --fleet"
   pass "error handling and help flags behave correctly"
+}
+
+test_claude_identity_derived() {
+  new_case claude-identity
+  local claude_dir="$CASE/claude-config"
+  mkdir -p "$claude_dir"
+  cat > "$claude_dir/.claude.json" <<'EOF'
+{
+  "oauthAccount": {
+    "emailAddress": "pilot-user@example.com",
+    "organizationUuid": "org-uuid-12345"
+  }
+}
+EOF
+
+  write_meta "task-claude-id" "harness=claude" "account=ordinary"
+
+  local out json_out rc
+  out=$(FM_HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$claude_dir" "$TOOL" task-claude-id); rc=$?
+  expect_code 0 "$rc" "identity-derived lookup should succeed"
+  assert_contains "$out" "target: task-claude-id" "reports target"
+  assert_contains "$out" "harness: claude" "reports harness"
+  assert_contains "$out" "auth_method: subscription login" "reports subscription login"
+  assert_contains "$out" "account: pilot-user@example.com" "extracts email from .claude.json"
+  assert_contains "$out" "(identity-derived)" "clearly marks fingerprint as identity-derived"
+
+  json_out=$(FM_HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$claude_dir" "$TOOL" task-claude-id --json)
+  [ "$(printf '%s\n' "$json_out" | jq -r .account)" = "pilot-user@example.com" ] || fail "JSON account must match email"
+  [ "$(printf '%s\n' "$json_out" | jq -r .derivation)" = "identity-derived" ] || fail "JSON derivation must be identity-derived"
+  local fp
+  fp=$(printf '%s\n' "$json_out" | jq -r .fingerprint)
+  [ "${#fp}" -eq 12 ] || fail "JSON fingerprint must be 12 chars: $fp"
+  pass "Claude subscription login derives identity from non-secret config and marks identity-derived"
+}
+
+test_grok_and_agy_identity_derived() {
+  new_case grok-agy-identity
+  local user_home="$CASE/user-home"
+  mkdir -p "$user_home/.grok" "$user_home/.gemini"
+
+  cat > "$user_home/.grok/auth.json" <<'EOF'
+{
+  "https://auth.x.ai::mock": {
+    "email": "space-cadet@example.com",
+    "user_id": "usr_998877"
+  }
+}
+EOF
+
+  cat > "$user_home/.gemini/google_accounts.json" <<'EOF'
+{
+  "active": "cosmonaut@example.com"
+}
+EOF
+
+  write_meta "task-grok-id" "harness=grok"
+  write_meta "task-agy-id"  "harness=agy"
+
+  local out_grok out_agy
+  out_grok=$(FM_HOME="$HOME_DIR" HOME="$user_home" "$TOOL" task-grok-id)
+  out_agy=$(FM_HOME="$HOME_DIR" HOME="$user_home" "$TOOL" task-agy-id)
+
+  assert_contains "$out_grok" "account: space-cadet@example.com" "Grok uses email from auth.json"
+  assert_contains "$out_grok" "(identity-derived)" "Grok marks identity-derived"
+
+  assert_contains "$out_agy" "account: cosmonaut@example.com" "Agy uses email from google_accounts.json"
+  assert_contains "$out_agy" "(identity-derived)" "Agy marks identity-derived"
+  pass "Grok and Agy derive identity from known non-secret sources when tokens are absent"
+}
+
+test_fleet_inspection() {
+  new_case fleet
+  local prim_home="$HOME_DIR"
+  local local_sm_home="$CASE/secondmate-local"
+  local remote_sm_home="$CASE/secondmate-remote"
+  local fake_ssh="$CASE/fake-ssh"
+
+  mkdir -p "$prim_home/data" "$prim_home/state" "$prim_home/config"
+  mkdir -p "$local_sm_home/state" "$local_sm_home/config"
+  mkdir -p "$remote_sm_home/state" "$remote_sm_home/config"
+
+  # Tokens
+  local tok_alpha="$CASE/tokens/alpha.token"
+  local tok_beta="$CASE/tokens/beta.token"
+  make_token_file "$tok_alpha" "$TOKEN_SECRET_1"
+  make_token_file "$tok_beta" "$TOKEN_SECRET_2"
+  printf 'account: shared-team@example.com\n' > "$CASE/tokens/alpha.meta"
+  printf 'account: solo-remote@example.com\n' > "$CASE/tokens/beta.meta"
+
+  # 1. Primary home tasks
+  # task-prim-1 uses shared token alpha
+  cat > "$prim_home/state/task-prim-1.meta" <<EOF
+harness=claude
+account_request=token:$tok_alpha
+EOF
+
+  # 2. Local secondmate tasks
+  # task-local-1 ALSO uses shared token alpha (shares fingerprint with primary!)
+  cat > "$local_sm_home/state/task-local-1.meta" <<EOF
+harness=claude
+account_request=token:$tok_alpha
+EOF
+
+  # 3. Remote secondmate tasks
+  # task-rem-1 uses token beta
+  # task-rem-2 is a Claude worker with non-secret config
+  cat > "$remote_sm_home/state/task-rem-1.meta" <<EOF
+harness=claude
+account_request=token:$tok_beta
+EOF
+
+  local rem_claude_cfg="$CASE/remote-claude-cfg"
+  mkdir -p "$rem_claude_cfg"
+  cat > "$rem_claude_cfg/.claude.json" <<'EOF'
+{
+  "oauthAccount": {
+    "emailAddress": "remote-dev@example.com"
+  }
+}
+EOF
+  cat > "$remote_sm_home/state/task-rem-2.meta" <<EOF
+harness=claude
+account=ordinary
+EOF
+
+  # Build fake-ssh
+  cat > "$fake_ssh" <<EOF
+#!/usr/bin/env bash
+host=""
+remote_cmd=""
+while [ "\$#" -gt 0 ]; do
+  case "\$1" in
+    --) shift; host="\$1"; shift; remote_cmd="\$*"; break ;;
+    -o) shift 2 ;;
+    -*) shift ;;
+    *) host="\$1"; shift; remote_cmd="\$*"; break ;;
+  esac
+done
+
+if [ "\$host" = "wedged-host" ]; then
+  echo "ssh: connect to host wedged-host port 22: Connection timed out" >&2
+  exit 255
+fi
+
+# For remote home simulation:
+if [ "\$host" = "remote-node" ]; then
+  # Execute the shipped script from stdin under simulated remote home
+  CLAUDE_CONFIG_DIR="$rem_claude_cfg" eval "\$remote_cmd"
+  exit \$?
+fi
+
+echo "unknown host: \$host" >&2
+exit 1
+EOF
+  chmod 700 "$fake_ssh"
+
+  # Build data/secondmates.md
+  cat > "$prim_home/data/secondmates.md" <<EOF
+- sm-local - Local secondmate (home: $local_sm_home; scope: local work; projects: ; added 2026-11-10)
+- sm-remote - Remote secondmate (host: remote-node; root: /opt/firstmate; home: $remote_sm_home; scope: remote work; projects: ; added 2026-11-10)
+- sm-wedged - Unreachable remote secondmate (host: wedged-host; root: /opt/firstmate; home: /opt/firstmate-dead; scope: wedged work; projects: ; added 2026-11-10)
+EOF
+
+  local out_fleet json_fleet
+  out_fleet=$(
+    FM_SSH_BIN="$fake_ssh" FM_SNAPSHOT_HOST="testhost" FM_HOME="$prim_home" \
+    "$TOOL" --fleet
+  )
+
+  # Secrets must NEVER leak in fleet output
+  assert_not_contains "$out_fleet" "$TOKEN_SECRET_1" "never leaks token secret 1 in fleet text output"
+  assert_not_contains "$out_fleet" "$TOKEN_SECRET_2" "never leaks token secret 2 in fleet text output"
+
+  # Verify agent lines contain host, home, task, harness, auth
+  assert_contains "$out_fleet" "host: testhost, home: primary, task: task-prim-1, harness: claude, auth: setup token" \
+    "primary agent line reports host, home, task, harness, auth"
+  assert_contains "$out_fleet" "host: testhost, home: sm-local, task: task-local-1, harness: claude, auth: setup token" \
+    "local secondmate agent line reports host, home, task, harness, auth"
+  assert_contains "$out_fleet" "host: remote-node, home: sm-remote, task: task-rem-1, harness: claude, auth: setup token" \
+    "remote secondmate agent line reports host, home, task, harness, auth"
+  assert_contains "$out_fleet" "host: remote-node, home: sm-remote, task: task-rem-2, harness: claude, auth: subscription login" \
+    "remote subscription agent line reports host, home, task, harness, auth"
+
+  # Verify unreachable host reporting
+  assert_contains "$out_fleet" "unreachable homes:" "reports unreachable section"
+  assert_contains "$out_fleet" "host: wedged-host, home: sm-wedged" "lists wedged host"
+  assert_contains "$out_fleet" "Connection timed out" "unreachable home includes timeout diagnostic"
+
+  # JSON mode verification
+  json_fleet=$(
+    FM_SSH_BIN="$fake_ssh" FM_SNAPSHOT_HOST="testhost" FM_HOME="$prim_home" \
+    "$TOOL" --fleet --json
+  )
+
+  assert_not_contains "$json_fleet" "$TOKEN_SECRET_1" "never leaks token secret 1 in fleet JSON output"
+  assert_not_contains "$json_fleet" "$TOKEN_SECRET_2" "never leaks token secret 2 in fleet JSON output"
+
+  local worker_count
+  worker_count=$(printf '%s\n' "$json_fleet" | jq '.workers | length')
+  [ "$worker_count" -eq 4 ] || fail "JSON must report 4 workers across all homes, got: $worker_count"
+
+  # Verify unreachable list in JSON
+  local unreach_count
+  unreach_count=$(printf '%s\n' "$json_fleet" | jq '.unreachable | length')
+  [ "$unreach_count" -eq 1 ] || fail "JSON must report 1 unreachable home, got: $unreach_count"
+  local unreach_host
+  unreach_host=$(printf '%s\n' "$json_fleet" | jq -r '.unreachable[0].host')
+  [ "$unreach_host" = "wedged-host" ] || fail "unreachable host must be wedged-host, got: $unreach_host"
+
+  # Verify shared group: task-prim-1 and task-local-1 must be in the same group!
+  local shared_group_workers
+  shared_group_workers=$(printf '%s\n' "$json_fleet" | jq -r '[.groups[] | select(.account == "shared-team@example.com") | .workers[] | .target] | sort | join(",")')
+  [ "$shared_group_workers" = "task-local-1,task-prim-1" ] || fail "primary and local tasks sharing token must group together, got: $shared_group_workers"
+
+  pass "fleet inspection enumerates homes, groups cross-home workers, reports unreachable hosts, and contains secrets"
 }
 
 fm_test_run \
@@ -305,4 +521,7 @@ fm_test_run \
   test_codex_and_grok \
   test_current_environment \
   test_group_live_workers \
-  test_error_handling
+  test_error_handling \
+  test_claude_identity_derived \
+  test_grok_and_agy_identity_derived \
+  test_fleet_inspection

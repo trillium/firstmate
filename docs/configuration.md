@@ -1842,9 +1842,14 @@ bin/fm-account-fingerprint.sh <task-id>     # inspect a recorded worker task
 bin/fm-account-fingerprint.sh --current      # inspect the current process environment and active pins
 bin/fm-account-fingerprint.sh --group        # list all live workers grouped by credential fingerprint
 bin/fm-account-fingerprint.sh --group --json # emit structured worker and group inventory as JSON
+bin/fm-account-fingerprint.sh --fleet        # list and group live workers across the fleet (primary + secondmates)
+bin/fm-account-fingerprint.sh --fleet --json # emit structured fleet worker and group inventory as JSON
 ```
 
 When authenticating via a Claude setup token, the account label is resolved from the token file's declared companion metadata (`account: <label>`) or basename, and two agents sharing a token produce identical fingerprints.
+For subscription logins where tokens are kept in vendor keychains rather than on disk, the account identity recorded in local non-secret configuration (such as `.claude.json` or `.gemini/google_accounts.json`) provides the bucket label, with an identity-derived fingerprint computed under the domain label and clearly marked as `identity-derived`.
+Fleet mode (`--fleet`) enumerates persistent homes from `data/secondmates.md` and the primary home, querying local secondmate homes directly and remote secondmate homes over SSH without requiring tool pre-installation there.
+Remote inspections ship the script over stdin to keep credentials on their home hosts, and unreachable or wedged hosts report diagnostics under `unreachable homes` without blocking the rest of the fleet.
 If a worker's credential cannot be read or verified, the tool reports `unknown` rather than guessing.
 
 ## Lavish server address (config/lavish-axi-host)
