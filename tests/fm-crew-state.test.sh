@@ -3725,13 +3725,34 @@ EOF
   pass "crew_is_provably_working still surfaces a genuinely stopped crew (safety property preserved)"
 }
 
-# Usage error (no id) is the one non-zero exit.
+# Extra arguments are the one usage error.
 test_usage_error() {
   reset_fakes
   local rc
-  "$CREW_STATE" >/dev/null 2>&1; rc=$?
-  expect_code 2 "$rc" "no-arg usage error exits 2"
+  "$CREW_STATE" a b >/dev/null 2>&1; rc=$?
+  expect_code 2 "$rc" "two-arg usage error exits 2"
   pass "usage error exits 2"
+}
+
+# No id lists every recorded task with the same line the single-id form prints.
+test_no_id_lists_every_recorded_task() {
+  reset_fakes
+  local d out rc
+  d=$(new_case list-all)
+  make_fakebin "$d" >/dev/null
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE"); rc=$?
+  expect_code 0 "$rc" "no id with no tasks exits 0"
+  assert_contains "$out" "no recorded tasks" "empty state says so"
+  make_repo_on_branch "$d/wt" fm/feat-a
+  fm_write_meta "$d/state/feat-a.meta" "window=fm:fm-feat-a" "worktree=$d/wt" "kind=ship"
+  fm_write_meta "$d/state/feat-gone.meta" "window=fm:fm-feat-gone" "worktree=$d/missing" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-a)"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE"); rc=$?
+  expect_code 0 "$rc" "no id with tasks exits 0"
+  assert_contains "$out" "feat-a: $(run_crew_state "$d" feat-a)" "task line equals the single-id output"
+  assert_contains "$out" "feat-gone: $(run_crew_state "$d" feat-gone)" "every recorded task is listed"
+  assert_contains "$out" "feat-gone: state: unknown" "a gone task does not end the listing"
+  pass "no id lists every recorded task"
 }
 
 # Head-binding: same branch name with a rewritten/diverged worktree tip must not
@@ -6928,6 +6949,7 @@ test_matched_state_override_is_honoured
 test_provably_working_via_runs_list_fallback
 test_not_provably_working_when_stopped
 test_usage_error
+test_no_id_lists_every_recorded_task
 test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates

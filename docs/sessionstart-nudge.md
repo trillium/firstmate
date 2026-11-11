@@ -143,7 +143,7 @@ Some digest work remains local but unbounded:
 - Tool version probes.
 - The backlog listing.
 
-So the whole digest still runs as one bounded child, default 120s via `FM_SESSION_START_TIMEOUT`.
+So the whole digest still runs as one bounded child, set by `FM_SESSION_START_TIMEOUT`, defaulting to 120s plus one endpoint bound per recorded task.
 
 Each per-task endpoint liveness read runs serially in its own crash-isolated child, bounded by `FM_SESSION_START_ENDPOINT_TIMEOUT` (default 10s; a non-numeric or zero value falls back to the default).
 So a read that hangs or dies becomes that task's own `endpoint: error` line and the digest continues.

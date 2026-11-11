@@ -198,7 +198,9 @@
 # listing are unbounded subprocesses, while each per-task endpoint read runs
 # in its own crash-isolated child under FM_SESSION_START_ENDPOINT_TIMEOUT
 # (default 10s). So the whole digest still runs as ONE bounded child of this
-# script (FM_SESSION_START_TIMEOUT, default 120s). The deferred network stage
+# script (FM_SESSION_START_TIMEOUT; default 120s plus one endpoint bound per
+# recorded task, so a large fleet on a slow store host is not truncated by the
+# serial per-task reads). The deferred network stage
 # deliberately sits OUTSIDE that bound,
 # in its own process group under its own aggregate deadline, so a truncated
 # digest neither waits for it nor orphans it unbounded. The
@@ -305,7 +307,19 @@ stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
-  SESSION_START_BUDGET=${FM_SESSION_START_TIMEOUT:-120}
+  if [ -n "${FM_SESSION_START_TIMEOUT:-}" ]; then
+    SESSION_START_BUDGET=$FM_SESSION_START_TIMEOUT
+  else
+    # Adaptive default: the per-task endpoint reads run serially, so the stage's
+    # ceiling grows with the fleet and the fixed 120s base cannot cover it.
+    SESSION_START_ENDPOINT_BOUND=${FM_SESSION_START_ENDPOINT_TIMEOUT:-10}
+    case "$SESSION_START_ENDPOINT_BOUND" in ''|*[!0-9]*) SESSION_START_ENDPOINT_BOUND=10 ;; esac
+    SESSION_START_TASKS=0
+    for SESSION_START_META in "$STATE"/*.meta; do
+      [ -f "$SESSION_START_META" ] && SESSION_START_TASKS=$((SESSION_START_TASKS + 1))
+    done
+    SESSION_START_BUDGET=$((120 + SESSION_START_ENDPOINT_BOUND * SESSION_START_TASKS))
+  fi
   # A non-positive or non-numeric budget is not a budget (`timeout 0` disables
   # the deadline outright), so an unusable value falls back to the default
   # rather than silently removing the bound.
