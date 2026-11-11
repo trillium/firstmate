@@ -3193,6 +3193,29 @@ test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it() {
   pass "relaunch re-reads the backlog item instead of blindly re-running the transition"
 }
 
+test_relaunch_accepts_a_recorded_legacy_id_with_no_backlog_row() {
+  local dir out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "skipped: tasks-axi is not installed, so the backlog transition is inert"
+    return 0
+  }
+  fm_tasks_axi_compatible || {
+    pass "skipped: installed tasks-axi predates ${FM_TASKS_AXI_MIN}, so dispatch refuses automatic backlog transitions"
+    return 0
+  }
+  dir=$(new_case legacyid upstream-8123-ifs)
+  add_ship_task "$dir" upstream-8123-ifs claude
+  seed_backlog "$dir" task-other queued
+
+  out=$(run_control "$dir" upstream-8123-ifs relaunch --note "picking the work back up") || rc=$?
+  expect_code 0 "$rc" "a recorded legacy-id task must relaunch with no backlog row"$'\n'"$out"
+  [ -z "$(backlog_state "$dir" upstream-8123-ifs)" ] \
+    || fail "a relaunch must not invent a backlog row for the legacy id"
+  [ "$(backlog_state "$dir" task-other)" = queued ] \
+    || fail "a relaunch touched an unrelated backlog row"
+  pass "relaunch accepts a recorded task whose id predates the task-<slug> rule"
+}
+
 test_relaunch_moves_a_drifted_item_back_in_flight() {
   local dir out rc=0
   command -v tasks-axi >/dev/null 2>&1 || {
@@ -3391,6 +3414,7 @@ test_herdr_reclaim_keeps_the_task_whole
 test_herdr_reclaim_of_a_secondmate_names_its_own_owner
 test_herdr_rebind_failure_from_a_plain_shell_names_the_real_cause
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
+test_relaunch_accepts_a_recorded_legacy_id_with_no_backlog_row
 test_relaunch_moves_a_drifted_item_back_in_flight
 
 # Herdr 0.9.5 publishes no interactive-readiness field: `agent get` carries
