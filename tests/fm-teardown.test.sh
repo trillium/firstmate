@@ -699,6 +699,120 @@ make_path_without_lsof() {  # <case-dir>
   printf '%s\n' "$path_dir"
 }
 
+# Re-apply the worktree branch's HEAD commit onto the project's local main as a
+# new commit (a different task replaying the work). Args: case_dir
+replay_head_on_local_main() {
+  local case_dir=$1
+  git -C "$case_dir/project" -c user.email=t@t -c user.name=t \
+    cherry-pick -x "$(git -C "$case_dir/wt" rev-parse HEAD)" >/dev/null
+}
+
+test_local_only_patch_equivalent_replay_allows() {
+  local case_dir rc
+  case_dir=$(make_case equiv-local-allow)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" a.txt alpha
+  replay_head_on_local_main "$case_dir"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "equiv-local-allow: replayed work should tear down without --force"
+  grep -q '^landed proof: patch-equivalent$' "$case_dir/stdout" \
+    || fail "equiv-local-allow: teardown did not name the patch-equivalent proof"
+  pass "local-only work replayed onto main as new commits tears down and names the patch-equivalent proof"
+}
+
+test_local_only_replay_with_unmatched_commit_refuses() {
+  local case_dir rc
+  case_dir=$(make_case equiv-local-unmatched)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" a.txt alpha
+  replay_head_on_local_main "$case_dir"
+  wt_commit_file "$case_dir" b.txt beta "second, never replayed"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "equiv-local-unmatched: a commit with no equivalent must still refuse"
+  grep -q REFUSED "$case_dir/stderr" || fail "equiv-local-unmatched: no REFUSED line"
+  pass "local-only branch with one unmatched commit still refuses"
+}
+
+test_local_only_replay_with_dirty_tree_refuses() {
+  local case_dir rc
+  case_dir=$(make_case equiv-local-dirty)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" a.txt alpha
+  replay_head_on_local_main "$case_dir"
+  printf 'uncommitted\n' > "$case_dir/wt/a.txt"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "equiv-local-dirty: uncommitted changes must still refuse"
+  pass "patch-equivalent work with uncommitted changes still refuses"
+}
+
+test_local_only_whitespace_changed_replay_refuses() {
+  local case_dir rc
+  case_dir=$(make_case equiv-local-whitespace)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" a.py '    alpha'
+  # Same tokens, different indentation: plain git cherry would call it equivalent.
+  printf 'alpha\n' > "$case_dir/project/a.py"
+  git -C "$case_dir/project" add a.py
+  git -C "$case_dir/project" -c user.email=t@t -c user.name=t commit -q -m 'add a.py'
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "equiv-local-whitespace: a replay that changed indentation must refuse"
+  grep -q REFUSED "$case_dir/stderr" || fail "equiv-local-whitespace: no REFUSED line"
+  pass "local-only replay that changed only whitespace still refuses"
+}
+
+test_ordinary_patch_equivalent_commit_on_origin_main_allows() {
+  local case_dir rc tmp
+  case_dir=$(make_case equiv-ordinary-allow)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" a.txt alpha
+  # The same change reached origin/main under a new SHA, then main moved on in
+  # the same file, so the whole-tree content check cannot prove it.
+  tmp="$case_dir/_land"
+  git clone -q "$case_dir/origin.git" "$tmp"
+  printf 'alpha\n' > "$tmp/a.txt"
+  git -C "$tmp" add a.txt
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -m 'replayed a'
+  printf 'alpha\nmore\n' > "$tmp/a.txt"
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -q -am 'later edit'
+  git -C "$tmp" push -q origin main
+  rm -rf "$tmp"
+  git -C "$case_dir/wt" fetch -q origin
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "equiv-ordinary-allow: equivalent commit on main should tear down"
+  grep -q '^landed proof: patch-equivalent$' "$case_dir/stdout" \
+    || fail "equiv-ordinary-allow: teardown did not name the patch-equivalent proof"
+  pass "ordinary task whose commit is patch-equivalent on origin main tears down and names the proof"
+}
+
+test_stale_landed_record_for_another_head_refuses() {
+  local case_dir rc
+  case_dir=$(make_case equiv-stale-record)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" a.txt alpha
+  printf 'landed_equivalent=%s\n' "$(git -C "$case_dir/project" rev-parse main)" >> "$case_dir/state/task-x1.meta"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "equiv-stale-record: a landing record for a different head must not count"
+  pass "landing record naming a different head still refuses"
+}
+
 test_local_only_fork_remote_allows() {
   local case_dir rc
   case_dir=$(make_case fork-allow)
@@ -716,6 +830,7 @@ test_local_only_fork_remote_allows() {
 
   expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
+  ! grep -q '^landed proof:' "$case_dir/stdout" || fail "fork-allow: work only on a fork was reported as landed"
   [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
     || fail "fork-allow: teardown left the task's branch outcome index behind"
   # The supervision branch reports the teardown it just performed AFTER the
@@ -1849,7 +1964,11 @@ test_content_fallback_git_capability_boundary() {
     case "$mode" in
       conflict) land_on_origin_main "$case_dir" feature.txt different ;;
       unlanded) ;;
-      *) land_on_origin_main "$case_dir" feature.txt hello ;;
+      # Two landing commits keep the end content identical while no commit is
+      # patch-equivalent to the branch's, so only the containment proof applies.
+      *)
+        land_on_origin_main "$case_dir" feature.txt first
+        land_on_origin_main "$case_dir" feature.txt hello ;;
     esac
     head=$(git -C "$case_dir/wt" rev-parse HEAD)
     cat > "$case_dir/fakebin/git" <<'SH'
@@ -6942,6 +7061,12 @@ test_forced_child_missing_adapter_sibling_refuses_before_cleanup
 test_forced_secondmate_own_missing_adapter_sibling_refuses_before_child_cleanup
 test_retained_sources_still_reach_the_ordinary_refusal
 test_local_only_fork_remote_allows
+test_local_only_patch_equivalent_replay_allows
+test_local_only_replay_with_unmatched_commit_refuses
+test_local_only_replay_with_dirty_tree_refuses
+test_local_only_whitespace_changed_replay_refuses
+test_ordinary_patch_equivalent_commit_on_origin_main_allows
+test_stale_landed_record_for_another_head_refuses
 test_teardown_closes_the_backlog_item_itself
 test_teardown_closes_a_gerrit_task_with_its_change_url_as_a_note
 test_teardown_closes_a_gitlab_task_with_its_merge_request_url_as_a_note
