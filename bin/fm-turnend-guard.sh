@@ -113,6 +113,7 @@ for arg in "$@"; do
     --claude) CLAUDE_MODE=1 ;;
     --cursor) CURSOR_MODE=1 ;;
     --agy) AGY_MODE=1 ;;
+    --pi) ;;
     *) echo "usage: $(basename "$0") [--claude|--cursor|--agy]" >&2; exit 2 ;;
   esac
 done
