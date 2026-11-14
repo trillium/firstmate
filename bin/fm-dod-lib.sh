@@ -11,8 +11,11 @@
 # mode; an unknown mode is refused rather than silently rendered as the pipeline
 # contract.
 # For local-only tasks, the first accepted done head is latched as exactly one
-# local_done_head= full commit id in the live task metadata. Observing done again
-# never changes that identity. Revised work needs a new task/approval record.
+# local_done_head= full commit id in the live task metadata, with the done
+# line's [at=] epoch as local_done_at=. Observing the same done again never
+# changes that identity. A strictly newer done line naming a different head
+# re-latches both through the same accept path, only when that head descends
+# from the base branch tip. A head the worker did not report is never accepted.
 # The optional third argument is the task's full ship-branch name (a project's
 # registered prefix may replace the legacy `fm/` one); it defaults to `fm/<task-id>`
 # and is the immutable task branch rendered in every delivery contract.
@@ -1003,8 +1006,12 @@ fm_dod_verbatim_patch_ids() {  # <repo> <tip> <exclude>
 # callers may supply captured meta; compare it with the live record under the
 # existing control/meta locks before publishing to the live owner only. A caller
 # already holding the live meta lock passes meta-locked and retains its locks.
-fm_dod_pin_local_done_head() (  # <state> <id> <meta> <sha> <captured-meta> [meta-locked]
-  local state=$1 id=$2 meta=$3 sha=$4 captured=$5 script_dir live control='' lock='' tmp='' pinned
+# <line-epoch> is the done line's [at=] epoch (empty when unknown). A different
+# head replaces an existing pin only when the line is strictly newer than the
+# recorded local_done_at (the record's last write for an older pin without one)
+# and it descends from the base tip.
+fm_dod_pin_local_done_head() (  # <state> <id> <meta> <sha> <captured-meta> [meta-locked] [line-epoch]
+  local state=$1 id=$2 meta=$3 sha=$4 captured=$5 script_dir live control='' lock='' tmp='' pinned pinned_at line_epoch=${7:-} project
   script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   # These lazy imports are canonical lint roots. Keep their subshell-local
   # initializers out of ShellCheck's analysis of the sourcing caller's globals.
@@ -1024,15 +1031,44 @@ fm_dod_pin_local_done_head() (  # <state> <id> <meta> <sha> <captured-meta> [met
   fm_backlog_record_present "$live" 'local readiness metadata' "$state" || return 1
   cmp -s "$meta" "$live" || return 1
   [ "$(cat "$live")" = "$captured" ] || return 1
+  case "$line_epoch" in *[!0-9]*) line_epoch= ;; esac
   if grep -q '^local_done_head=' "$live"; then
     pinned=$(fm_dod_local_done_head "$live") || return 1
-    [ "$pinned" = "$sha" ]
-    return
+    [ "$pinned" != "$sha" ] || return 0
+    project=$(fm_dod_meta_value "$live" project)
+    # The new head must be fast-forwardable onto the base tip.
+    fm_dod_head_beyond_base "$project" "$live" "$sha" || return 1
+    pinned_at=$(fm_dod_meta_value "$live" local_done_at)
+    # A pin recorded before local_done_at existed is dated by the last write to
+    # the record, which can only make the newer-line requirement stricter.
+    case "$pinned_at" in ''|*[!0-9]*) pinned_at=$(stat -c %Y "$live" 2>/dev/null || stat -f %m "$live" 2>/dev/null) || return 1 ;; esac
+    [ -n "$line_epoch" ] && [ "$line_epoch" -gt "$pinned_at" ] || return 1
   fi
   tmp=$(mktemp "$state/.local-done-$id.XXXXXX") || return 1
-  { cat "$live" && printf '\nlocal_done_head=%s\n' "$sha"; } > "$tmp" || return 1
+  { grep -v -e '^local_done_head=' -e '^local_done_at=' "$live"; printf 'local_done_head=%s\n' "$sha"; \
+    [ -z "$line_epoch" ] || printf 'local_done_at=%s\n' "$line_epoch"; } > "$tmp" || return 1
   fm_backlog_record_publish "$tmp" "$live" 'local readiness metadata' "$state"
 )
+
+# 0 when <sha> descends from the project's base branch tip (the base resolved as
+# fm_dod_head_within_base does), so landing it is a fast-forward. 1 otherwise,
+# including when the base cannot be resolved.
+fm_dod_head_beyond_base() {  # <project> <meta> <sha>
+  local project=$1 meta=$2 sha=$3 base='' ref branch
+  [ -z "$meta" ] || [ ! -f "$meta" ] || base=$(fm_dod_meta_value "$meta" base_branch)
+  if [ -z "$base" ]; then
+    ref=$(git -C "$project" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    base=${ref#origin/}
+  fi
+  if [ -z "$base" ]; then
+    for branch in main master; do
+      if git -C "$project" show-ref --verify --quiet "refs/heads/$branch"; then base=$branch; break; fi
+    done
+  fi
+  [ -n "$base" ] || return 1
+  git -C "$project" rev-parse --verify --quiet "refs/heads/$base^{commit}" >/dev/null 2>&1 || return 1
+  git -C "$project" merge-base --is-ancestor "refs/heads/$base" "$sha" 2>/dev/null
+}
 
 # 0 when the forge's head for a PR is the head the done names. In no-mistakes
 # mode the pipeline pushes it, possibly with commits the worker clone never
@@ -1234,8 +1270,8 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     fi
     if [ "$mode" = local-only ] && [ -n "$meta" ]; then
       if [ -z "$state" ] || [ -z "$id" ] \
-        || ! fm_dod_pin_local_done_head "$state" "$id" "$meta" "$sha" "$captured" "${9:-}"; then
-        printf '%s\n' "local-only done head could not be recorded or differs from the recorded head; revised work requires a new task/approval record"
+        || ! fm_dod_pin_local_done_head "$state" "$id" "$meta" "$sha" "$captured" "${9:-}" "$(status_line_at_epoch "$line" 2>/dev/null || true)"; then
+        printf '%s\n' "local-only done head could not be recorded or differs from the recorded head; a revised head needs a newer done report whose head descends from the base branch"
         return 1
       fi
     fi
