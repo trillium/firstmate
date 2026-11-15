@@ -1,0 +1,9 @@
+initial poll (08:31)
+contribution-wake: check: contributions delivery 84bca6d0f2fa35eeae93c5345a4986975c9cef989dc8adbee23808cc7467ca56
+contribution-wake: check: contributions delivery e515ac8b6b2c8f6c4434d65d94438fcdbc7c6031731a68076f9cea73be2b1f43
+thread reminder poll (09:31)
+contribution-wake: check: contributions delivery 7d46b9b2e5c0e30a364a55e6f645c6ae2fbfc483f03562044a7c6d03d5aab7e5 unanswered https://github.com/o/r/pull/8#pullrequestreview-12 1h
+PR reminder poll (10:30:30)
+contribution-wake: check: contributions delivery 7080a07a835cfa41ff311c36f3c5caf71a235f63ccb2fcec077682336ee58e8a unanswered https://github.com/o/r/pull/8 maintainer 2h
+pending token types after independent reminders
+[{"token":"comment:201:2026-09-16T08:30:00Z:","type":"comment","thread":null,"author":"maintainer","age":null},{"token":"review:12:2026-09-16T08:00:00Z:CHANGES_REQUESTED","type":"review","thread":null,"author":"maintainer","age":null},{"token":"unanswered:pr:201:2026-09-16T10:30:30Z","type":"unanswered","thread":null,"author":"maintainer","age":"2h"},{"token":"unanswered:review:12:2026-09-16T09:31:00Z","type":"unanswered","thread":"review:12","author":"maintainer","age":"1h"}]

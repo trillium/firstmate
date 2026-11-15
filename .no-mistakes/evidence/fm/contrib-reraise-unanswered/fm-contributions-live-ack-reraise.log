@@ -1,0 +1,7 @@
+initial signal (08:01)
+contribution-wake: check: contributions delivery 9d0705b473fe525359193fd138b66c7f9f29e3ad8aaa251875135c7c6dafed4f
+poll before acknowledgement snooze expires (09:01)
+silent: acknowledgement snooze still active
+poll after acknowledgement snooze expires (09:03)
+contribution-wake: check: contributions delivery 76b2d12fa38c7e3ccf7b4a41513d612be9831b73818dbd7a465246db13363b0b unanswered https://github.com/o/r/pull/8 maintainer 1h
+[{"type":"unanswered","token":"unanswered:pr:101:2026-09-16T09:03:00Z","author":"maintainer","age":"1h"}]
