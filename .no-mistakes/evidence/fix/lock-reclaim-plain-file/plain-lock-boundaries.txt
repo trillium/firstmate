@@ -1,0 +1,2 @@
+fresh_plain_lock=NOT_preserved_or_watcher_exited
+stale_plain_lock=raced_by_8_real_watchers; symlink_holder_pid=97741; live_watchers=1
