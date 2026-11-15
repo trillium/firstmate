@@ -1,0 +1,3 @@
+Unsafe hard-link registration:
+error: custom check state/unsafe.check.sh must be a single-link file on the state device; not registered, the watcher will refuse it
+exit=1 mode=600 trust_exists=no

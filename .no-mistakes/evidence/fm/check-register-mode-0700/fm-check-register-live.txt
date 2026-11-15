@@ -1,0 +1,7 @@
+Registration command:
+registered: state/live.check.sh
+Normalized mode:
+700
+Watcher result:
+check: /var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-check-register-live.D1q9tG/state/live.check.sh: live-check-fired
+watcher_exit=0
