@@ -1,0 +1,6 @@
+/var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-lab.27H0iW
+base-tip done: REFUSED (the worker copy's HEAD 472a063ae558a7859f16dc487377bfc3db505f0d has no commits beyond the base branch, so the done line is premature)
+base-tip metadata: no local_done_head latched
+task-commit done: ACCEPTED (latched 896cdc6c668608d660e55e05924e0a552a4e38fa)
+local landing: merged fm/guard into local main (472a063ae558a7859f16dc487377bfc3db505f0d -> 896cdc6) in /var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-lab.27H0iW/project
+unresolvable-base done: ACCEPTED (latched 28c9b2d28c904ca7aba2e93a9aae258614874e58; missing base did not block reachable task commit)
