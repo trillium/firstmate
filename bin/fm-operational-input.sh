@@ -26,7 +26,10 @@
 # pasted back by anyone while its record exists, is treated as Firstmate's.
 #   Record:   <state>/operational-inbox/<name>.msg, <name> matching [0-9a-z-]+,
 #             exactly the encoded envelope bytes, published by atomic rename.
-#             Records are never re-rung or acknowledged; every write prunes
+#             The directory always has a handled/ subdirectory, so a reader can
+#             acknowledge a record by moving it there.
+#             Delivery never automatically acknowledges a record, and records
+#             are never re-rung; every write prunes
 #             records at about FM_OPERATIONAL_RECORD_RETENTION_DAYS (7) elapsed days.
 #   Doorbell: FM_OPERATIONAL_DOORBELL_PREFIX <absolute physical record path>
 #             FM_OPERATIONAL_DOORBELL_SUFFIX, one printable-ASCII line whose
@@ -254,7 +257,7 @@ fm_operational_record_write() {  # <state-dir> <kind> <body> <doorbell-var>
   [ -n "$state" ] && [ -n "$result_var" ] || return 2
   fm_operational_input_encode "$kind" "$body" encoded || return 2
   dir="$state/$FM_OPERATIONAL_RECORD_DIRNAME"
-  mkdir -p "$dir" 2>/dev/null || return 1
+  mkdir -p "$dir/handled" 2>/dev/null || return 1
   abs=$(cd -P "$dir" 2>/dev/null && pwd -P) || return 1
   case "$abs" in
     *"'"*|*[![:print:]]*) return 1 ;;
