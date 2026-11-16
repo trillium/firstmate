@@ -1401,6 +1401,31 @@ test_quota_summary_is_opt_in_and_never_guessed() {
   pass "quota summary is opt-in, reduces known headroom, and reports unknown with a reason"
 }
 
+# The host readiness records bin/fm-host-tools-doctor.sh writes are the
+# snapshot's host_readiness field and the view's Host readiness table, with the
+# exact fix command shown for a failing check.
+test_host_readiness_surfaces_in_snapshot_and_view() {
+  local home fakebin out view
+  home=$(make_home host-readiness)
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '.host_readiness == []' >/dev/null || fail "no records must give an empty host_readiness"
+  view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
+  case "$view" in *"No host has recorded a readiness check"*) ;; *) fail "view must say no host was checked: $view" ;; esac
+  printf '%s\n' 'check host-gh=human: gh is not logged in' 'action: host-gh: gh auth login' 'check host-bun=ok: bun answers' |
+    FM_HOME="$home" "$ROOT/bin/fm-host-tools-doctor.sh" --ingest m1studio1 >/dev/null || fail "ingest failed"
+  printf '%s\n' '{not json' > "$home/state/host-readiness/broken.json"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.host_readiness | length) == 1
+    and .host_readiness[0].host == "m1studio1" and .host_readiness[0].ready == false
+    and (.host_readiness[0].checks[] | select(.name == "host-gh") | .status == "human" and .action == "gh auth login")
+  ' >/dev/null || fail "host_readiness wrong: $(printf '%s' "$out" | jq -c '.host_readiness')"
+  view=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
+  case "$view" in *"| m1studio1 | NO | host-gh | gh auth login |"*) ;; *) fail "view must show the failing host and its fix: $view" ;; esac
+  pass "host readiness records surface in the snapshot and the view with the exact fix"
+}
+
 fm_test_run \
   test_empty_fleet_json \
   test_fixture_snapshot_json \
@@ -1425,4 +1450,5 @@ fm_test_run \
   test_view_reports_unreachable_remote_secondmate \
   test_task_rows_carry_agent_fields \
   test_fleet_agents_across_hosts \
-  test_quota_summary_is_opt_in_and_never_guessed
+  test_quota_summary_is_opt_in_and_never_guessed \
+  test_host_readiness_surfaces_in_snapshot_and_view

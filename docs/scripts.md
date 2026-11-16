@@ -18,7 +18,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
 | `fm-cloud.sh`            | Launch Claude Code cloud runs as dispatched tasks, check, land, and retire them ([guide](cloud-runs.md)) |
 | `fm-fleet-ledger.sh`     | Append the opt-in fleet activity ledger's records ([contract](fleet-ledger.md))      |
-| `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view, including per-agent host, harness, model, inference source, and quota headroom |
+| `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view, including per-agent host, harness, model, inference source, each host's tool and authentication readiness, and quota headroom |
 | `fm-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment |
 | `fm-bearings-board.sh`   | Build and arm the stable interactive `/bearings lavish` fleet board                  |
 | `fm-lavish-url.sh`       | Capture a website into an armed Lavish review and route its feedback to a project backlog |
@@ -31,6 +31,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-remote-job-worker.sh` | Long-lived remote queue worker for tracked `fm-*.sh` commands in the account runtime |
 | `fm-remote-job-reap-orphans.sh` | Stop remote job workers left running by a pruned code root, never one whose checkout still exists |
 | `fm-remote-doctor.sh`    | Check, and with `--fix` repair, one remote account's [second-mate readiness](remote-secondmates.md#readiness-repair-and-the-human-steps) |
+| [`fm-host-tools-doctor.sh`](../bin/fm-host-tools-doctor.sh) | Report whether this host has every required tool present and authenticated (gh, fleet git access, claude, pi, bd/dolt store, no-mistakes, treehouse, bun, ssh peers), printing the exact fix command for each failing check; `--record` publishes the result to the fleet view, `--ingest` records a remote host's |
 | [`fm-stack-doctor.sh`](../bin/fm-stack-doctor.sh) | Report every layer of a configured local service stack in one run: process and health, MCP tool groups and their tailnet routes, tailscale serve and funnel exposure, recent traffic with the real caller read from the session proxy log, and which log answers which layer |
 | [`fm-backlog-handoff.sh`](../bin/fm-backlog-handoff.sh) | Move queued backlog items into a secondmate home; its header owns route-specific wake outcomes and retries |
 | `fm-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
@@ -75,6 +76,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-supervision-instructions.sh` | Render the session-start primary-harness supervision block or the one-line repair instruction |
 | `fm-home-seed.sh`        | Transactionally provision a local secondmate home and maintain `data/secondmates.md` |
 | `fm-remote-home-seed.sh` | Register and provision a whole secondmate home on an SSH-reachable host              |
+| `fm-host-tools-lib.sh` | The host tool and authentication checks shared by `fm-host-tools-doctor.sh` and `fm-remote-doctor.sh --host-tools` |
 | `fm-remote-readiness-lib.sh` | Shared remote second-mate readiness gate: check and, when needed, repair then re-check through `fm-remote-doctor.sh` |
 | [`fm-project-origin-lib.sh`](../bin/fm-project-origin-lib.sh) | Accepted origin-form owner shared by both remote provisioning boundaries |
 | `fm-project-dir-lib.sh`  | Single owner of how a project argument (bare name, `projects/<name>`, or explicit path) names a clone directory, shared by fm-brief.sh, fm-fleet-sync.sh, and fm-spawn.sh |

@@ -16,6 +16,8 @@ usage() {
 usage: fm-fleet-view.sh [--json]
 
 Render a human fleet view from fm-fleet-snapshot.sh.
+It also shows each host's tool and authentication readiness from
+bin/fm-host-tools-doctor.sh records, with the exact fix for a failing check.
 Besides tasks and secondmates it lists every agent with its host, harness,
 model, and inference source, and a quota headroom summary; anything not
 recorded or not measurable prints as unknown.
@@ -147,6 +149,17 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
   "| Host | Home | Agents | Freshness |",
   "| --- | --- | --- | --- |",
   (.fleet_agents.hosts[] | "| \(.host) | \(dash(.home // "main")) | \(.status) (\(.count)) | \(dash(.freshness)) |"),
+  "",
+  "## Host readiness",
+  (if (.host_readiness // []) == [] then
+    "No host has recorded a readiness check (run bin/fm-host-tools-doctor.sh --record)."
+   else
+    "| Host | Ready | Failing checks | Fix | Checked |",
+    "| --- | --- | --- | --- | --- |",
+    (.host_readiness[] as $h
+     | ([$h.checks[] | select(.status == "human")]) as $bad
+     | "| \($h.host) | \(if $h.ready then "yes" else "NO" end) | \(if ($bad | length) == 0 then "-" else ($bad | map(.name) | join(", ")) end) | \(if ($bad | length) == 0 then "-" else ($bad | map(.action // "-") | join("; ")) end) | \($h.checked_at | todate) |")
+   end),
   "",
   "## Quota",
   (if .quota == null then
