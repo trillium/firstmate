@@ -1,0 +1,7 @@
+scenario=real watcher reclaims an aged plain singleton path in a disposable marked lab
+seed=.watch.lock (plain file; mtime 2000-01-01)
+check: rearm-resurface
+watcher_exit=0
+post_recovery_lock=cleared
+post_recovery_marker=present
+announced:downtime:4176.1794791168.KzMIqh
