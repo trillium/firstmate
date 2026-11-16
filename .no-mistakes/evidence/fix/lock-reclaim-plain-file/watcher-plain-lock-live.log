@@ -1,0 +1,11 @@
+scenario=fresh_plain_watch_lock
+exit=0 output=watcher: already running  still_regular=yes
+scenario=stale_plain_watch_lock
+acquirer_alive=yes lock_is_symlink=yes owner_pid=59299
+scenario=concurrent_stale_plain_watch_lock
+lock_is_symlink=yes owner_pid=59767 owner_is_contender=yes contender_pids=,59764,59765,59766,59767,59769
+scenario=nonregular_watch_locks
+fifo_exit=0 fifo_retained=yes output=watcher: already running 
+socket_exit=0 socket_retained=yes output=watcher: already running 
+scenario=live_symlink_watch_lock
+challenger_exit=0 output=watcher: already running pid 87726  link_unchanged=yes owner_pid_unchanged=yes
