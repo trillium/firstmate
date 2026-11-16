@@ -1223,6 +1223,8 @@ secondmate_liveness_tick() {
     case "$id" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
     fm_secondmate_liveness_lock "$id" || continue
     fm_secondmate_liveness_probe "$meta" "$id" poll
+    # A bounded-but-slow remote probe must not let the beacon age mid-sweep.
+    ! declare -F watcher_beat_due >/dev/null 2>&1 || watcher_beat_due
     bound_marker="$STATE/.secondmate-relaunch-bound-$id"
     reason='' notify_key='' err=''
     case "$FM_SM_LIVE_STATUS" in
