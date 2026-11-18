@@ -38,7 +38,12 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `fm-check-record.sh`     | Run a verification command and record its head, exit, and source in `.pr-evidence/<task>/check.json`, which `fm-done-gate-warn.sh` reads against the done line |
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |
-| `fm-brief.sh`            | Scaffold ship (explicit `--mode`, plus the project's registered `--forge` and `--pr`), scout, secondmate-charter, and Herdr-lab briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
+| `fm-brief.sh`            | Scaffold ship (explicit `--mode`, plus the project's registered `--forge` and `--pr`), scout, secondmate-charter (`--workhorse` adds the queue section), and Herdr-lab briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
+| `fm-workhorse-file.sh`   | File a `workhorse` bead whose body is a full brief into the pinned task store, refusing empty, vague, or placeholder sections, then ring the workhorse mate |
+| `fm-workhorse-ring.sh`   | Send the workhorse mate one routed doorbell for a filed bead through `fm-send.sh` with an explicit home, and exit non-zero when delivery is unconfirmed |
+| `fm-workhorse-claim.sh`  | List unclaimed `workhorse` beads, claim one atomically, and scaffold the worker brief from the bead; the workhorse mate's session-start, relaunch, and heartbeat label check |
+| `fm-workhorse-close.sh`  | Close a `workhorse` bead only when the evidence the bead names (PR link, report path, command output) is supplied, recording it as a comment |
+| `fm-workhorse-lib.sh`    | Shared task-store pinning and bead-body layout for the `fm-workhorse-*` scripts |
 | [`fm-dod-lib.sh`](../bin/fm-dod-lib.sh) | Own ship/scout worker role scope, ship definitions of done, the named-head reachability gate on ship `done:` acceptance, and the no-mistakes `--intent` contract |
 | `fm-brief-heading-lib.sh` | Single owner of reading a brief's sections, shared by the `--intent` contract, spawn and promotion validation, and `fm-dispatch-resolve.sh` |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |

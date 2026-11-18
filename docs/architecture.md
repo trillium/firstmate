@@ -391,6 +391,10 @@ A local route points directly at its home, while a remote route adds an SSH alia
 `fm-home-seed.sh` provisions a local isolated home, clones the listed PR-based projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report.
 For a domain whose subject is the firstmate repo itself, a deliberate `--no-projects` seed creates a project-less home whose crews take pooled worktrees of that repo instead of separate clones.
 The signal cannot be mixed with project names or omitted accidentally, and a populated home cannot be converted in place; the full seed contract is in [configuration.md](configuration.md#secondmate-routes-datasecondmatesmd).
+A secondmate whose charter was scaffolded with `--workhorse` also serves the `workhorse` bead label in the task store, so filed work does not depend on a doorbell alone.
+Filers use `bin/fm-workhorse-file.sh`, which writes a full-brief bead into the pinned task store and rings the mate through `fm-send.sh`.
+The mate runs `bin/fm-workhorse-claim.sh list` at session start, after every relaunch, and on every heartbeat, so a missed doorbell is still found, claims with the same script, which seeds the worker brief from the bead, and closes with `bin/fm-workhorse-close.sh`, which requires the evidence the bead names.
+Each script's header owns its contract, and `bin/fm-workhorse-lib.sh` owns the task-store pinning.
 Herdr secondmate and child placement follows the launcher-binding contract in [Watching and task containers](herdr-backend.md#watching-and-task-containers).
 When seeded with `-`, the home is a durable treehouse lease under the secondmate id, so it survives with no live process and is not recycled by later `treehouse get` or pruning.
 Retirement or seed rollback returns the leased home; normal restart/recovery keeps it leased.
