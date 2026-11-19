@@ -872,6 +872,35 @@ test_secondmate_no_projects_charter() {
   pass "fm-brief.sh: --no-projects scaffolds a project-less charter and guards misuse"
 }
 
+test_secondmate_workhorse_charter() {
+  local home brief status
+  home="$TMP_ROOT/workhorse-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='serve the workhorse queue' \
+    "$ROOT/bin/fm-brief.sh" wh-mate --secondmate --no-projects --workhorse >/dev/null 2>&1; status=$?
+  expect_code 0 "$status" "--workhorse secondmate brief should exit 0"
+  brief="$home/data/wh-mate/brief.md"
+  assert_grep "# Workhorse queue" "$brief" "workhorse charter lost its queue section"
+  assert_grep 'bin/fm-workhorse-claim.sh list` at every session start and relaunch' "$brief" \
+    "workhorse charter did not wire the label check into session start and relaunch"
+  assert_grep "and on every heartbeat" "$brief" "workhorse charter did not wire the label check into the heartbeat"
+  assert_grep 'bin/fm-workhorse-close.sh <bead-id>' "$brief" "workhorse charter did not name the evidence-gated close"
+
+  # A plain charter carries no workhorse section.
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='plain domain' \
+    "$ROOT/bin/fm-brief.sh" plain-mate --secondmate --no-projects >/dev/null 2>&1; status=$?
+  expect_code 0 "$status" "plain secondmate brief should exit 0"
+  assert_no_grep "Workhorse queue" "$home/data/plain-mate/brief.md" "a plain charter must not carry the workhorse section"
+
+  # --workhorse is a charter-only option.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" wh-ship some-proj --mode local-only --workhorse >/dev/null 2>&1; status=$?
+  expect_code 1 "$status" "--workhorse on a ship brief must fail"
+  assert_absent "$home/data/wh-ship/brief.md" "a refused --workhorse ship brief still wrote a file"
+
+  pass "fm-brief.sh: --workhorse adds the queue section to a charter only"
+}
+
 test_secondmate_marked_request_reporting_contract() {
   local home brief
   home="$TMP_ROOT/marked-request-reporting-home"
@@ -1833,6 +1862,7 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_documented_global_replace_leaves_the_herdr_gate_intact
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
 test_secondmate_no_projects_charter
+test_secondmate_workhorse_charter
 test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds

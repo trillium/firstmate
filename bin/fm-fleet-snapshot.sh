@@ -131,6 +131,12 @@
 #     summary from a producer that predates `agents`) | "unreachable" (remote,
 #     no summary or cache) | "unavailable" (local, no summary), plus freshness.
 #     An unreachable home stays listed with zero agents rather than dropped.
+#   host_readiness: [{host,checked_at,ready,checks[{name,status,detail,action}]}]
+#     one row per record bin/fm-host-tools-doctor.sh wrote under
+#     state/host-readiness/ (--record, or --ingest for a remote host): whether
+#     each host has every required tool present and authenticated, with the
+#     exact fix command on each failing check. Empty when no host has been
+#     checked; an unreadable record is skipped, never guessed.
 #   quota: present only with --quota; see QUOTA below.
 #   secondmate_guidance: return-channel action note for renderers and bearings.
 #
@@ -2230,6 +2236,15 @@ else
     || { echo "fm-fleet-snapshot: temporary quota file write failed" >&2; exit 1; }
 fi
 
+HOST_READINESS_JSON_FILE="$JSON_TRANSPORT_DIR/host-readiness.json"
+{
+  for host_readiness_record in "$STATE"/host-readiness/*.json; do
+    [ -f "$host_readiness_record" ] || continue
+    jq -c 'select(.schema == "fm-host-readiness.v1")' "$host_readiness_record" 2>/dev/null || true
+  done
+} | jq -s 'sort_by(.host)' > "$HOST_READINESS_JSON_FILE" \
+  || { echo "fm-fleet-snapshot: host readiness summary failed" >&2; exit 1; }
+
 jq -n \
   --arg generated "$SNAPSHOT_NOW" \
   --arg fm_home "$FM_HOME" \
@@ -2246,6 +2261,7 @@ jq -n \
   --slurpfile secondmate_current "$SECONDMATE_CURRENT_JSON_FILE" \
   --slurpfile secondmate_landed "$SECONDMATE_LANDED_JSON_FILE" \
   --slurpfile quota "$QUOTA_JSON_FILE" \
+  --slurpfile host_readiness "$HOST_READINESS_JSON_FILE" \
   --arg snapshot_host "$SNAPSHOT_HOST" \
   '($backlog[0]) as $backlog
    | ($tasks[0]) as $tasks
@@ -2280,6 +2296,7 @@ jq -n \
              | {host:($m.host // $snapshot_host),home:$m.id,status:$m.agents_status,count:($m.agents | length),
                 freshness:$m.freshness.status,observed_at:$m.freshness.observed_at} ])
      },
+     host_readiness:$host_readiness[0],
      secondmate_guidance:{
        note:"For kind=secondmate, bearings selects validated structured state from that registered home; parent events and bounded terminal evidence are fallback-only supplements and never current-state authority."
      }

@@ -1132,6 +1132,10 @@ tests/fm-watch-wedge-cap.test.sh 470868
 tests/fm-watcher-lock.test.sh 142627
 tests/fm-worker-account-live-e2e.test.sh 3230
 tests/fm-worker-account.test.sh 185373
+tests/fm-workhorse-claim.test.sh 2706
+tests/fm-workhorse-close.test.sh 3677
+tests/fm-workhorse-file.test.sh 4164
+tests/fm-workhorse-ring.test.sh 685
 tests/test-lib-expect-code.test.sh 65
 EOF
 }

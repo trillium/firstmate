@@ -1454,3 +1454,18 @@ assert_contains "$DOCTOR_OUT" 'check remote-job-worker=ok:' \
 assert_not_contains "$DOCTOR_OUT" 'check herdr-server=' "the herdr server was checked for rex on linux"
 [ ! -s "$CASE_LAUNCHCTL_LOG" ] || fail "the linux rex path invoked launchctl"
 pass "a Linux host verifies rex without any Aqua-specific requirement"
+
+# --host-tools appends the host tool and authentication checks in the same
+# check/action shape, and stays off by default so the existing readiness gate
+# is unchanged. The fixture host has none of gh, claude, pi, bun, so each is a
+# failing check with its exact fix; bin/fm-host-tools-lib.sh owns the checks.
+new_case Linux no-herdr
+install_case_rex
+doctor --backend rex
+assert_not_contains "$DOCTOR_OUT" 'check host-' "host tool checks ran without --host-tools"
+doctor --backend rex --host-tools
+expect_code 1 "$DOCTOR_RC" "a host with no gh, claude, pi, or bun was reported ready under --host-tools"
+assert_contains "$DOCTOR_OUT" 'check host-gh=human:' "a missing gh was not a failing host check"
+assert_contains "$DOCTOR_OUT" 'action: host-bun: ' "a missing bun printed no fix command"
+assert_contains "$DOCTOR_OUT" 'check rex-server=ok: persistent rex server' "--host-tools disturbed the existing checks"
+pass "--host-tools adds host tool and authentication checks with exact fixes, off by default"

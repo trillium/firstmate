@@ -16,7 +16,11 @@
 # PR instead of shipping a new one).
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo|external> [--shape squash]] [--pr <auto|manual>] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
-#        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
+#        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects} [--workhorse]
+#   --workhorse (secondmate charters only) adds the "Workhorse queue" section:
+#   the mate serves the `workhorse` bead label through bin/fm-workhorse-claim.sh,
+#   checking it at session start, after every relaunch, and on every heartbeat.
+#   The scripts' own headers own the claim, build, and close contracts.
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
 #   It offers the Lavish review loop only when `fm-bootstrap.sh lavish-compatible`
@@ -225,6 +229,7 @@ case "$CONFIG" in /*) ;; *) CONFIG="$PWD/$CONFIG" ;; esac
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
+WORKHORSE=0
 MODE=
 MODE_SET=0
 BRANCH_PREFIX=fm/
@@ -267,6 +272,7 @@ for a in "$@"; do
     --secondmate) KIND=secondmate ;;
     --herdr-lab) HERDR_LAB=1 ;;
     --no-projects) NO_PROJECTS=1 ;;
+    --workhorse) WORKHORSE=1 ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --branch-prefix) want_value="branch-prefix" ;;
@@ -427,6 +433,10 @@ if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   echo "error: --no-projects applies only to --secondmate charters" >&2
   exit 1
 fi
+if [ "$WORKHORSE" -eq 1 ] && [ "$KIND" != secondmate ]; then
+  echo "error: --workhorse applies only to --secondmate charters" >&2
+  exit 1
+fi
 
 # The optional home-local include is read before anything is written, so an
 # unusable file never leaves a partial scaffold behind.
@@ -542,6 +552,19 @@ else
   PROJECT_CLONES_BODY=$(printf '%s\n' "$SECONDMATE_PROJECTS" | tr ' ' '\n' | sed 's/^/- /')
   PROJECT_CLONES_NOTE="The projects above are local clones for work you supervise; they are not an exclusive ownership claim."
 fi
+WORKHORSE_BLOCK=
+if [ "$WORKHORSE" -eq 1 ]; then
+  IFS= read -r -d '' WORKHORSE_BLOCK <<'EOF' || true
+# Workhorse queue
+Beads labeled `workhorse` in the task store are work routed to you, so claiming one is never a self-directed sweep.
+Run `bin/fm-workhorse-claim.sh list` at every session start and relaunch, right after reconciling your own work, and on every heartbeat: a doorbell that was missed or never rung is still found by that check.
+Claim one with `bin/fm-workhorse-claim.sh claim [<bead-id>]`, which claims it atomically and writes the worker brief from the bead; spawn that brief through the normal lifecycle with the mode and yolo it prints.
+Close the bead with `bin/fm-workhorse-close.sh <bead-id>`, supplying the evidence the bead names, and answer the filing mate it names through the parent channel.
+A bead that is not a full brief is refused at claim; ask the filer to re-file it through `bin/fm-workhorse-file.sh`.
+Each script's header owns its contract.
+
+EOF
+fi
 cat > "$BRIEF" <<EOF
 You are a persistent second mate managed by the main firstmate. Work on your own; do not wait for a human.
 
@@ -583,7 +606,7 @@ Before treating an investigation or visual review as complete, load \`captain-ho
 A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
 A request arriving through the instruction inbox below follows the same marker and reply rules.
 
-$INBOX_SECTION
+${WORKHORSE_BLOCK}$INBOX_SECTION
 
 # Escalation to main firstmate
 Handle routine work yourself.
