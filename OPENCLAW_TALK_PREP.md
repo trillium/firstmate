@@ -19,19 +19,22 @@ Posture: direct-PR, yolo on, no no-mistakes/CodeRabbit, merge+test on green. Rep
 .6 skip Grok hour · .7 Hermes one-line mention · .8 OpenClaw = framing slide + live voice-to-task demo · .11 studio presenter-only · .9 phrases "next slide"/"previous slide", capture cmd "capture note" · ~~.12 cut .11.1~~ REVERSED by captain: .11.1 (isolated Beads Bridge MCP inside the Coder workspace) is IN scope, build it
 
 ## CURRENT STATUS (overwrite this block every wake; history goes in the wake log below)
-Last updated: wake #32. If this block disagrees with the log, the newest log entry wins.
+Last updated: wake #68 (2026-11-16, Claude primary back). If this block disagrees with the log, the newest log entry wins.
+Talk authorization ended 2026-10-14. Standing green-merge for personal software still applies. Do not kill live services for a drill.
 
 | # | Item | State | Evidence / PR | Next |
 |---|------|-------|---------------|------|
-| 1 | voicefirst-landing | MERGED (#2-#5), live | apex HTTPS 200, cert valid (curl verify 0) | none |
-| 2 | brain-playground | MERGED (#2), live | play.voicefirst.dev HTTPS 200 valid cert | presenter reset outside check |
-| 3 | coder-brain-studio | MERGED (#2-#6) | studio.voicefirst.dev 401 gated; real Beads MCP + attendee access merged; lnx boundaries approved | outside attendee test |
-| 4 | parlay | MERGED + LIVE (#325, #326) | phone trigger on tailnet :8450 | captain phone tap |
-| 5 | beads-bridge | MERGED + DEPLOYED (#33) | /live/variants 200 | auth check |
-| 6 | demo prep + day-of | in flight (mini0-ops talk-dayof) | DAY-OF.md unconfirmed | confirm file |
-| 7 | guard fixes | MERGED (#211) | primary synced | watch xldf |
-| 8 | failover (task-673ui) | drill PASSED in disposable home; fixes in https://github.com/trillium/firstmate/pull/212 (CI pending) | evidence on task-673ui | merge on green, tick box |
-| 9 | slides + rehearsal | plan MERGED (#4) | | schedule rehearsal with captain |
+| 1 | voicefirst-landing | LIVE | https://voicefirst.dev/ https://voicefirst.dev/slides/ https://voicefirst.dev/fallbacks/ all 200, verify 0, 15:41 PST | none on the live site |
+| 2 | brain-playground | GATED, UP | https://play.voicefirst.dev/ 403 closed page unauthenticated, /api/health 200 (vps01 SQLite demo, gate on vps01, PR https://github.com/trillium/brain-playground/pull/9 merged) | fresh links on mini0 only; captain verify task-r4ah2 can run |
+| 3 | coder-brain-studio | GATED | https://studio.voicefirst.dev/ 401 | none this wake |
+| 4 | parlay | not rechecked | last live check wake #35 | captain phone tap still open |
+| 5 | beads-bridge | not rechecked | last auth check wake #35 | none this wake |
+| 6 | demo prep + day-of | talk date passed | DAY-OF.md confirmed wake #33 | no failure drills |
+| 7 | guard fixes | MERGED (#211) | unchanged since wake #30 | none |
+| 8 | failover | PASSED, PR #212 merged | wake #37 | none |
+| 9 | slides | LIVE | /slides/ 200 | none |
+| 10 | CI runner PR | OPEN, mergeable, checks green 2026-10-19 | https://github.com/trillium/voicefirst-landing/pull/87 | merge under standing green-merge once a task owns it |
+| 11 | home-summary PR | MERGED | https://github.com/trillium/firstmate/pull/393 | none |
 
 ## DEADLINES (all local time, 2026-10-13/14)
 - 04:00: primary failover tested (drill + switch-back). Claude 5h window ends about 04:26; codex is unavailable, so route to grok / opencode-go / agy.
@@ -462,3 +465,20 @@ robots-h36m (Monitor guard, fixed, needs PR), robots-xldf (wake flood, mitigated
 - In flight: none.
 - Next: studio load test, failure drills, mini1 clean build; wire pane-triage into wake digest.
 - Blocked (captain-only): slot length, agent-path pick for slide 11, read slide 14 vs reality, phone/cellular checks (review-rbnd).
+
+## Wake #67 — 2026-11-16 15:41 PST (grok continuity; Claude limit exhausted, reset unknown)
+**Done**: session start holds the lock. Pad reread; last on-disk entry was wake #66. Live probes: voicefirst.dev, /slides/, and /fallbacks/ are 200 with a valid cert. studio.voicefirst.dev is 401 (still gated). https://github.com/trillium/firstmate/pull/393 is merged. https://github.com/trillium/voicefirst-landing/pull/87 is still open, mergeable, and its checks were green on 2026-10-19; no human review, only a rate-limited review bot note.
+**In flight**: https://play.voicefirst.dev/ is down: Caddy 502, empty body, valid cert. task-r4ah2 (captain verify of create/list/reset) cannot pass until that answers. mini0-ops is alive and parked on an unrelated local-landing approval.
+**Next**: task-play502 filed, handed to mini0-ops (outbox received, moved=1), and the restore instruction was recorded for that operator. Do not run failure drills that kill live services. Merge PR 87 only through the normal green-merge path once a task owns it. Other open voicefirst-landing PRs (73, 79, 80, 81, 83, 84, 92) were not taken this wake.
+**Blocked**: phone and cellular checks still need the captain. The 2026-10-14 talk authorization is over, so a failing check is not waived under that header.
+
+## Wake #68 — 2026-11-16 (primary back on Claude from grok)
+**Done**: session start ran; lock acquired (harness pid 37156); pad reread, last entry was wake #67. Probes: https://voicefirst.dev/ 200; https://play.voicefirst.dev/ still 502.
+**In flight**: task-play502 (play.voicefirst.dev 502) with mini0-ops; https://github.com/trillium/voicefirst-landing/pull/87 (CI runner) open and mergeable.
+**Next**: drain wake queue and handle notes; check task-play502 result; take one robots item per standing inbox order.
+**Blocked**: phone and cellular checks need the captain.
+
+## Wake #69 — 2026-11-16
+**Done**: play.voicefirst.dev restored (task-play502): gate moved to vps01, / 403 unauth, /api/health 200, valid link 302, create 201, revoked cookie 403; PR https://github.com/trillium/brain-playground/pull/9 merged. Old shared links no longer work (my call). Upstream PR steward pass routed to macbook-ops (task-tfbo9b).
+**Next**: captain verify task-r4ah2 (create/list/reset) with a fresh link; steward pass report.
+**Blocked**: phone/cellular checks and held decisions need the captain.
