@@ -1,0 +1,27 @@
+=== stray x
+rc=0
+NOTE=the composer's pending text was cleared for the ring and typed back; leading or trailing spaces may not be preserved
+--submitted:
+SUBMIT:: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 't1.inbox' steering inbox, read and act on each in numeric order, then mv each into its handled/.
+--pane:
+❯ x
+=== hello world
+rc=0
+NOTE=the composer's pending text was cleared for the ring and typed back; leading or trailing spaces may not be preserved
+--submitted:
+SUBMIT:: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 't1.inbox' steering inbox, read and act on each in numeric order, then mv each into its handled/.
+--pane:
+❯ hello world
+=== -x
+rc=1
+NOTE=the composer holds other pending text that cannot be restored exactly, so it was left in place
+--submitted:
+--pane:
+❯ -x
+=== foo;
+rc=0
+NOTE=the composer's pending text was cleared for the ring and typed back; leading or trailing spaces may not be preserved
+--submitted:
+SUBMIT:: Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 't1.inbox' steering inbox, read and act on each in numeric order, then mv each into its handled/.
+--pane:
+❯ foo
