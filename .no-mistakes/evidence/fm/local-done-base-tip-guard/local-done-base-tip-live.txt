@@ -1,12 +1,12 @@
-Scenario: a local-only done at the base tip is refused
-Exit: 1
-Reason: the worker copy's HEAD 51b39e2f9a40e23cc92cf1ddc97cc2da0c1dbfc5 has no commits beyond the base branch, so the done line is premature
-Persisted local_done_head: absent
-
-Scenario: a later task commit is accepted, pinned, and lands
-Persisted local_done_head: 9f2fffadf36f5daa6c2638f5e5effef24a995620
-merged fm/local-task into local main (51b39e2f9a40e23cc92cf1ddc97cc2da0c1dbfc5 -> 9f2fffa) in /tmp/fm-local-done-live.ozwpZl/project
-Landed project HEAD: 9f2fffadf36f5daa6c2638f5e5effef24a995620
-
-Scenario: an unresolvable recorded base does not block a reachable task commit
-Persisted local_done_head with missing base: 69eb0caa29f077ed12e727c873093840d687c188
+1..10
+ok - two approved tasks with the same tree cannot roll back a successful landing
+ok - branch advance refuses, and restoring the reported X lands exactly X
+ok - missing, malformed and ambiguous done heads refuse without moving main
+ok - a branch move inside the final Git invocation refuses without changing main or its checkout
+ok - a diverged default branch refuses without changing main or its checkout
+ok - approval and branch changes during the hold read refuse without moving main
+ok - captured metadata cannot pin a replacement task generation
+ok - ledger and teardown record the first done head without reacquiring or releasing caller locks
+ok - a done at the base tip refuses without latching, and a later real head latches and lands
+ok - an unresolvable base does not block a reachable done head from latching
+FM_TEST_COMPLETE
