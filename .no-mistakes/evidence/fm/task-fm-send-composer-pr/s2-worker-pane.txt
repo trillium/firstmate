@@ -1,0 +1,22 @@
+  ⎿  Allowed by auto mode classifier
+⏺ The inbox had one message, 001.msg. It asked me to create a file named steer1.txt containing the word ok, then stop. I created steer1.txt in the working directory, and it contains ok. I moved
+  001.msg into handled/, so the inbox is now empty, and I've stopped as the message asked.
+✻ Crunched for 10s · done 8:27 AM
+❯ : Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 't1.inbox' steering inbox, read and act on each in numeric order, then mv each into its handled/.
+  Ran 2 shell commands
+⏺ Bash(echo two > steer2.txt && cat steer2.txt && mv /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TIfbij/state/t1.inbox/002.msg /var/folders/d9/2d5w27z5775c…)
+  ⎿  two
+     /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.TIfbij/state/t1.inbox:
+     handled
+     … +4 lines
+  ⎿  Created steer2.txt (+1 -0)
+      1 +two
+  ⎿  Allowed by auto mode classifier
+⏺ The inbox had one new message, 002.msg, which asked me to create steer2.txt containing the word two and then stop. I created the file in the working directory and checked that it contains two. I
+  moved 002.msg into handled/, so the inbox is empty again, and I've stopped as the message asked.
+✻ Worked for 8s · done 8:27 AM
+                                                                                                                                                       Update available! Run: brew upgrade claude-code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ foo;
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
