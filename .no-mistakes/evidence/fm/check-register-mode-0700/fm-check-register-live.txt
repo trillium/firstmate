@@ -1,7 +1,11 @@
-Registration command:
+SCENARIO: restrictive 0600 custom check is made watchable and registered
 registered: state/live.check.sh
-Normalized mode:
-700
-Watcher result:
-check: /var/folders/8k/0ll7yqm179v19qqg3qmgcq3m0000gn/T//fm-check-register-live.D1q9tG/state/live.check.sh: live-check-fired
-watcher_exit=0
+check_mode=700
+trust_mode=600
+trust_record=fm-custom-check-v1|4afd739a81b41fa683a3ad60641fc45894802143ea5bbf46322ee9dd7c36dc5a|
+check_output=live-check-ok
+SCENARIO: hard-linked custom check is refused before registration
+exit=1
+stderr=error: custom check state/unsafe.check.sh must be a single-link file on the state device; not registered, the watcher will refuse it|
+trust_record=absent
+source_mode=600
