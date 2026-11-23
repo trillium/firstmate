@@ -1,0 +1,2 @@
+concurrent-stale-regular: contenders=8 live_watchers=1 final_lock_type=symlink
+live-symlink: challenger_exit=0 owner_unchanged=yes output=watcher: already running pid 89731 

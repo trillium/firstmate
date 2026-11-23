@@ -1,0 +1,3 @@
+stale-regular: watcher_pid=30701 lock_type=symlink recorded_pid=30701
+fresh-regular: exit=0 path_remains_regular=yes output=watcher: already running 
+stale-fifo: exit=0 fifo_remains=yes output=watcher: already running 
