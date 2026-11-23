@@ -1,0 +1,17 @@
+Live watcher run: lab FM_HOME with an unregistered state/rogue.check.sh (would touch rogue-ran if executed), FM_CHECK_INTERVAL=0
+
+== BASE 427056c4 stdout
+check: rejected unauthenticated state checks: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pBCx2e/state/rogue.check.sh
+== BASE .wake-queue
+1795409344	2	check	unauthenticated-state-checks	check: rejected unauthenticated state checks: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pBCx2e/state/rogue.check.sh
+
+== TARGET 68f3e1dd stdout
+check: rejected untrusted state checks: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.pBCx2e/state/rogue.check.sh
+== TARGET .wake-queue
+1795409314	1	check	untrusted-state-checks	check: rejected untrusted state checks: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T//fm-lab.pBCx2e/state/rogue.check.sh
+
+rogue-ran marker after both runs: absent (check never executed)
+
+== retirement-receipts wake wording untouched in target:
+164:#   check: rejected unauthenticated PR poll retirement receipts: <paths>
+3994:  reason="check: rejected unauthenticated PR poll retirement receipts:$FM_PR_POLL_RETIREMENT_REJECTED"

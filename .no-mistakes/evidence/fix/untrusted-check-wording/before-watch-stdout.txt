@@ -1,0 +1,1 @@
+check: rejected unauthenticated state checks: /var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-lab.pBCx2e/state/rogue.check.sh
