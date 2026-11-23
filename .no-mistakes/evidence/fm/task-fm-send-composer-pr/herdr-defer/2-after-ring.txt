@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.311
+▝▜██████▀  Opus 5.5 · Claude API
+ ▝▝   ▝▝   /private/var/folders/d9/2d5w27z5775c_r1qcw57vzzr0000gn/T/fm-base.pd83Bc/hw
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                      Update available! Run: brew upgrade claude-code
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ a half typed draft
+──────────────────────────────────────���──────────────────────────────────────────────────────────────────────────────
+──⏵⏵ bypass permissions on (shift+tab to cycle)

@@ -1,0 +1,8 @@
+ready verdict: empty after 2s
+composer state before send: pending
+composer text before send: [fix the bug in the parser]
+fm-send rc=0
+record written: yes
+worker acted=yes acked=yes after 8s
+composer state final: pending
+composer text final: [fix the bug in the parser]

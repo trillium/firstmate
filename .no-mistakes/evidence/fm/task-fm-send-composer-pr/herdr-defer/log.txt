@@ -1,0 +1,13 @@
+composer state before: pending
+fm_task_inbox_ring herdr rc=1 note=[]
+--- herdr calls made by the ring:
+herdr pane get w1:p1
+herdr agent get w1:p1
+herdr pane process-info --pane w1:p1
+herdr status --json
+herdr pane read w1:p1 --source visible --format ansi
+herdr status --json
+herdr pane read w1:p1 --source recent --lines 200
+--- input-sending calls (send-text/send-keys/submit):
+(none)
+composer state after: pending
