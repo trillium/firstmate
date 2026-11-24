@@ -70,6 +70,16 @@
 # remote-tracking branch of the same name, which covers a remote rebase that left
 # the local branch diverged; merge commits, empty diffs, and any commit without an
 # exact match still refuse. Anything else refuses.
+# Work also counts as landed when every commit not on the default branch is
+# patch-equivalent to a commit on it (matching whitespace-exact patch ids and no
+# merge commit among them; fm_dod_patch_equivalent in bin/fm-dod-lib.sh), which covers
+# work a different task re-applied as new commits, or when bin/fm-merge-local.sh
+# --record-landed recorded landed_equivalent= for exactly the current HEAD. A
+# replay that changed the patch (conflict resolution) is not matched and refuses.
+# The first successful check prints "landed proof: <ancestry|patch-equivalent|
+# merged PR|...>" naming which proof was used; work already on a remote needs
+# none. Uncommitted changes still refuse under every proof.
+# tests/fm-teardown.test.sh covers each proof and the refusals.
 # The PR itself is resolved from the task's recorded pr= when present, or - when
 # no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
 # where the usual "checks green" fm-pr-check.sh trigger never fires) - by looking
@@ -486,6 +496,8 @@ fm_session_lock_refuse_mutator "$STATE" fm-teardown || exit 1
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-public-followup-lib.sh
 . "$SCRIPT_DIR/fm-public-followup-lib.sh"
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
@@ -2259,9 +2271,40 @@ work_is_landed() {
   local branch=$1
   DEFAULT_BRANCH_REF_CACHE=
   CONTENT_LANDED_PROOF_ERROR=
-  unpushed_patches_are_on_pushed_branch "$branch" && return 0
-  pr_is_merged "$branch" && return 0
-  content_in_default
+  if unpushed_patches_are_on_pushed_branch "$branch"; then
+    LANDED_PROOF="patches on pushed branch"
+    return 0
+  fi
+  if pr_is_merged "$branch"; then
+    LANDED_PROOF="merged PR"
+    return 0
+  fi
+  if content_in_default; then
+    LANDED_PROOF="content in default branch"
+    return 0
+  fi
+  return 1
+}
+
+# Proof used for the landed-work verdict, named in the teardown output; empty
+# when no proof was needed (no commit is off every remote).
+LANDED_PROOF=
+
+# Do the commits not on <ref> already exist there as patch-equivalent commits,
+# or did bin/fm-merge-local.sh --record-landed record exactly this head as
+# landed that way? Only a clean copy reaches here, so uncommitted work still
+# refuses. Sets LANDED_PROOF for the teardown output.
+landed_by_equivalence() {
+  local ref=$1 head recorded
+  [ -n "$ref" ] || return 1
+  head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  recorded=$(fm_dod_meta_value "$META" landed_equivalent)
+  if [ -n "$recorded" ] && [ "$recorded" = "$head" ]; then
+    LANDED_PROOF="recorded patch-equivalent landing"
+    return 0
+  fi
+  fm_dod_patch_equivalent "$WT" "$ref" "$head" || return 1
+  LANDED_PROOF=patch-equivalent
 }
 
 # The completion links this teardown already holds locally. A retained scout
@@ -2633,6 +2676,7 @@ read_worktree_dirt() {
 
 validate_worktree_teardown_safety() {
   local dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
+  LANDED_PROOF=
   [ -d "$WT" ] || return 0
   [ "$FORCE" != "--force" ] || return 0
   case "$KIND" in
@@ -2677,6 +2721,11 @@ validate_worktree_teardown_safety() {
       return 1
     fi
     unmerged=$(printf '%s\n' "$unmerged_raw" | head -5)
+    if [ -z "$unmerged" ]; then
+      LANDED_PROOF=ancestry
+    elif [ -z "$dirty" ] && landed_by_equivalence "$DEFAULT"; then
+      unmerged=
+    fi
     if [ -n "$dirty" ] || [ -n "$unmerged" ]; then
       echo "REFUSED: local-only worktree $WT has work not yet merged into $DEFAULT and not on any remote." >&2
       [ -n "$dirty" ] && report_worktree_dirt "$dirty"
@@ -2696,7 +2745,7 @@ validate_worktree_teardown_safety() {
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
       TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
     fi
-    if ! work_is_landed "$branch"; then
+    if ! work_is_landed "$branch" && ! landed_by_equivalence "$(default_branch_ref 2>/dev/null)"; then
       if [ -n "${CONTENT_LANDED_PROOF_ERROR:-}" ]; then
         echo "REFUSED: content-landed proof unavailable for worktree $WT: $CONTENT_LANDED_PROOF_ERROR." >&2
         echo "Restore or upgrade Git and retry the content check." >&2
@@ -4441,6 +4490,7 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       exit 1
     fi
   fi
+  [ -z "$LANDED_PROOF" ] || echo "landed proof: $LANDED_PROOF"
 fi
 
 # A Herdr close may reposition shared workspace order, so the whole

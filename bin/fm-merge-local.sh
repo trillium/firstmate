@@ -21,7 +21,15 @@
 # A per-checkout lock in the project's Git directory serializes different
 # tasks across the checks, checkout update, ref transaction, and rollback.
 # tests/fm-merge-local.test.sh covers pinned-head landing and race refusals.
+# Work that reached the default branch some other way (re-applied by another
+# task as new commits) is recorded with --record-landed: when every commit of the
+# recorded ship branch is patch-equivalent to a commit on the default branch
+# (fm_dod_patch_equivalent in bin/fm-dod-lib.sh, the same proof teardown uses),
+# landed_equivalent=<branch head> is written to the task meta so teardown accepts
+# that exact head without --force. Nothing is merged and the branch head is never
+# moved; a branch that gains commits afterwards no longer matches the record.
 # Usage: fm-merge-local.sh <task-id>
+#        fm-merge-local.sh --record-landed <task-id>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,6 +45,11 @@ fm_session_lock_refuse_mutator "$STATE" fm-merge-local || exit 1
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+RECORD_LANDED=0
+if [ "$#" -eq 2 ] && [ "$1" = --record-landed ]; then
+  RECORD_LANDED=1
+  shift
+fi
 if [ "$#" -ne 1 ] || ! fm_pr_task_id_valid "$1"; then
   echo "error: invalid local merge request" >&2
   exit 2
@@ -68,6 +81,51 @@ if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   exit 1
 fi
 MERGE_EXPECTED_SPAWN_GEN=$FM_BACKLOG_META_SPAWN_GEN
+MERGE_CONTROL_LOCK=
+MERGE_META_LOCK=
+MERGE_PROJECT_LOCK=
+merge_control_cleanup() {
+  [ -z "$MERGE_PROJECT_LOCK" ] || fm_lock_release "$MERGE_PROJECT_LOCK" || true
+  [ -z "$MERGE_META_LOCK" ] || fm_lock_release "$MERGE_META_LOCK" || true
+  [ -z "$MERGE_CONTROL_LOCK" ] || fm_lock_release "$MERGE_CONTROL_LOCK" || true
+}
+trap merge_control_cleanup EXIT
+if [ "$RECORD_LANDED" = 1 ]; then
+  [ "$(fm_dod_meta_value "$META" mode)" = local-only ] || { echo "error: task $ID is not local-only; nothing to record" >&2; exit 1; }
+  rl_proj=$(fm_dod_meta_value "$META" project)
+  rl_branch=$(fm_dod_meta_value "$META" branch)
+  [ -n "$rl_branch" ] || rl_branch="fm/$ID"
+  rl_default=$(git -C "$rl_proj" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  rl_default=${rl_default#origin/}
+  if [ -z "$rl_default" ]; then
+    for rl_b in main master; do
+      if git -C "$rl_proj" show-ref --verify --quiet "refs/heads/$rl_b"; then rl_default=$rl_b; break; fi
+    done
+  fi
+  [ -n "$rl_default" ] || { echo "error: cannot determine default branch for $rl_proj" >&2; exit 1; }
+  rl_head=$(git -C "$rl_proj" rev-parse --verify --quiet "refs/heads/$rl_branch^{commit}") || {
+    echo "error: ship branch $rl_branch not found in $rl_proj" >&2
+    exit 1
+  }
+  if ! fm_dod_patch_equivalent "$rl_proj" "refs/heads/$rl_default" "$rl_head"; then
+    echo "REFUSED: $rl_branch has commits with no patch-equivalent on $rl_default; nothing recorded." >&2
+    exit 1
+  fi
+  # shellcheck source=bin/fm-backend.sh
+  . "$SCRIPT_DIR/fm-backend.sh"
+  MERGE_CONTROL_LOCK="$STATE/.control-$ID.lock"
+  fm_lock_acquire_wait "$MERGE_CONTROL_LOCK"
+  MERGE_META_LOCK=$(fm_meta_lock_path "$META")
+  fm_lock_acquire_wait "$MERGE_META_LOCK"
+  if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE" \
+    || [ "$FM_BACKLOG_META_SPAWN_GEN" != "$MERGE_EXPECTED_SPAWN_GEN" ]; then
+    echo "error: task $ID changed while waiting to record; nothing recorded" >&2
+    exit 1
+  fi
+  fm_meta_set "$META" landed_equivalent "$rl_head" || { echo "error: could not record landed_equivalent for task $ID" >&2; exit 1; }
+  echo "recorded $rl_branch (${rl_head:0:8}) as landed on $rl_default by patch-equivalence"
+  exit 0
+fi
 # A worker's `done:` line only latches local_done_head= once something observes
 # it; observe it now through the same pin path fm-crew-state.sh uses, so landing
 # needs no prior manual crew-state call. No valid done line leaves the head
@@ -84,15 +142,6 @@ if ! MERGE_EXPECTED_HEAD=$(fm_dod_local_done_head "$META"); then
   }
 fi
 
-MERGE_CONTROL_LOCK=
-MERGE_META_LOCK=
-MERGE_PROJECT_LOCK=
-merge_control_cleanup() {
-  [ -z "$MERGE_PROJECT_LOCK" ] || fm_lock_release "$MERGE_PROJECT_LOCK" || true
-  [ -z "$MERGE_META_LOCK" ] || fm_lock_release "$MERGE_META_LOCK" || true
-  [ -z "$MERGE_CONTROL_LOCK" ] || fm_lock_release "$MERGE_CONTROL_LOCK" || true
-}
-trap merge_control_cleanup EXIT
 MERGE_CONTROL_LOCK="$STATE/.control-$ID.lock"
 fm_lock_acquire_wait "$MERGE_CONTROL_LOCK"
 MERGE_META_LOCK=$(fm_meta_lock_path "$META")
