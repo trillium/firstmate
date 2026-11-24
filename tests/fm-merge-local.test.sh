@@ -317,6 +317,46 @@ test_done_line_without_prior_observation_lands() {
   pass 'a reported done line lands without a prior crew-state observation'
 }
 
+test_rebased_rereport_relatches_and_lands() {
+  local reason rc=0 Y
+  make_case rebased
+  record_done || fail 'first done was refused'
+  [ "$(fm_dod_local_done_head "$META")" = "$X" ] || fail 'first head was not latched'
+  # Main advances and the worker rebases, so the old pin is no longer an ancestor.
+  printf 'main moved\n' > "$PROJ/moved.txt"
+  git -C "$PROJ" add moved.txt
+  git -C "$PROJ" commit -q -m moved
+  git -C "$WT" rebase -q "$(git -C "$PROJ" rev-parse HEAD)" || fail 'fixture rebase failed'
+  Y=$(git -C "$WT" rev-parse HEAD)
+  [ "$Y" != "$X" ] || fail 'rebase did not rewrite the head'
+  # Same done line (not newer): the rewritten head was never re-reported.
+  reason=$(record_done) || rc=$?
+  [ "$rc" -eq 1 ] || fail 'an unreported head replaced the pin'
+  [ "$(fm_dod_local_done_head "$META")" = "$X" ] || fail 'pin moved without a newer done line'
+  # A strictly newer done line re-latches through the same accept path.
+  FM_HOME="$HOME_DIR" fm_dod_accept_ship_done ship local-only "$WT" "$PROJ" \
+    'done [at=1790000500]: ready in branch fm/local-task' \
+    "$HOME_DIR/state" local-task "$META" || fail 'a newer done line did not re-latch'
+  [ "$(fm_dod_local_done_head "$META")" = "$Y" ] || fail 'the rebased head was not latched'
+  grep -qx 'local_done_at=1790000500' "$META" || fail 'the done epoch was not recorded'
+  land >/dev/null 2>&1 || fail "re-latched head did not land: $(land 2>&1)"
+  [ "$(git -C "$PROJ" rev-parse HEAD)" = "$Y" ] || fail 'landing did not use the rebased head'
+  pass 'a newer re-reported done re-latches the pin and lands, while an unreported head never does'
+}
+
+test_landing_observes_newer_done_after_rebase() {
+  make_case rebased-land
+  record_done || fail 'first done was refused'
+  printf 'main moved\n' > "$PROJ/moved.txt"
+  git -C "$PROJ" add moved.txt
+  git -C "$PROJ" commit -q -m moved
+  git -C "$WT" rebase -q "$(git -C "$PROJ" rev-parse HEAD)" || fail 'fixture rebase failed'
+  printf 'done [at=1790000500]: ready in branch fm/local-task\n' > "$HOME_DIR/state/local-task.status"
+  land >/dev/null 2>&1 || fail "landing did not re-latch from the newer done line: $(land 2>&1)"
+  [ "$(git -C "$PROJ" rev-parse HEAD)" = "$(git -C "$WT" rev-parse HEAD)" ] || fail 'landing did not use the rebased head'
+  pass 'landing re-observes a newer done line when the ship branch moved past the pin'
+}
+
 test_stale_worker_copy_at_base_tip_does_not_latch() {
   local reason rc=0
   make_case stale-copy
@@ -375,4 +415,5 @@ fm_test_run test_record_landed_for_replayed_work test_record_landed_refuses_whit
   test_missing_and_malformed_head_refuse test_change_after_hold_check_refuses \
   test_diverged_default_refuses test_change_during_approval_check_refuses \
   test_snapshot_cannot_pin_a_replacement_task test_done_recording_preserves_caller_locks \
-  test_done_line_without_prior_observation_lands test_stale_worker_copy_at_base_tip_does_not_latch
+  test_done_line_without_prior_observation_lands test_stale_worker_copy_at_base_tip_does_not_latch \
+  test_rebased_rereport_relatches_and_lands test_landing_observes_newer_done_after_rebase

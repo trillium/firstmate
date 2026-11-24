@@ -2,7 +2,11 @@
 # Check, and optionally repair, one remote account's second-mate readiness.
 #
 # Usage:
-#   bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh [--fix [--automatic]] [--backend herdr|rex|any]
+#   bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh [--fix [--automatic]] [--backend herdr|rex|any] [--host-tools]
+#
+# --host-tools appends the host tool and authentication checks
+# (gh, fleet git access, claude, pi, bd/dolt, no-mistakes, treehouse, bun, ssh
+# peers) as further `check host-*` lines; bin/fm-host-tools-lib.sh owns them.
 #
 # Run it through fm-on.sh so the fixed entrypoint invokes this readiness owner
 # over its plain SSH bootstrap. The command reports the same filesystem-composed
@@ -110,6 +114,8 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(CDPATH='' cd "$SCRIPT_DIR/.." && pwd -P)}"
 . "$SCRIPT_DIR/fm-remote-herdr-owner-lib.sh"
 # shellcheck source=bin/fm-remote-herdr-identity-lib.sh
 . "$SCRIPT_DIR/fm-remote-herdr-identity-lib.sh"
+# shellcheck source=bin/fm-host-tools-lib.sh
+. "$SCRIPT_DIR/fm-host-tools-lib.sh"
 # The shared remote toolchain plus the selected backend's CLI; the backend slot
 # is filled once the backend is resolved below, keeping the probe's six-fact
 # shape (five tools plus the at-least-one harness) for explicit and resolved
@@ -160,11 +166,13 @@ usage() { sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 MODE=check
 AUTOMATIC=0
+HOST_TOOLS=0
 DOCTOR_BACKEND=any
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --fix) MODE=fix ;;
     --automatic) AUTOMATIC=1 ;;
+    --host-tools) HOST_TOOLS=1 ;;
     --backend)
       shift
       case "${1:-}" in herdr | rex | any) DOCTOR_BACKEND=$1 ;; *) usage ;; esac
@@ -1135,6 +1143,7 @@ run_checks() { # <resolved-login-shell>
     rex) check_rex_server ;;
   esac
   check_entrypoint_link
+  [ "$HOST_TOOLS" -eq 0 ] || fm_host_tools_collect record
 }
 
 # --- repairs ----------------------------------------------------------------

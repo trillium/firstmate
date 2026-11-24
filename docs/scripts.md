@@ -18,7 +18,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-home-summary-refresh.sh` | Atomically publish this home's structured summary ledger                         |
 | `fm-cloud.sh`            | Launch Claude Code cloud runs as dispatched tasks, check, land, and retire them ([guide](cloud-runs.md)) |
 | `fm-fleet-ledger.sh`     | Append the opt-in fleet activity ledger's records ([contract](fleet-ledger.md))      |
-| `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view, including per-agent host, harness, model, inference source, and quota headroom |
+| `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view, including per-agent host, harness, model, inference source, each host's tool and authentication readiness, and quota headroom |
 | `fm-bearings-snapshot.sh` | Project the bounded remote-ledger fleet snapshot to compact TOON; `--include-prs` adds live GitHub enrichment |
 | `fm-bearings-board.sh`   | Build and arm the stable interactive `/bearings lavish` fleet board                  |
 | `fm-lavish-url.sh`       | Capture a website into an armed Lavish review and route its feedback to a project backlog |
@@ -31,13 +31,19 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-remote-job-worker.sh` | Long-lived remote queue worker for tracked `fm-*.sh` commands in the account runtime |
 | `fm-remote-job-reap-orphans.sh` | Stop remote job workers left running by a pruned code root, never one whose checkout still exists |
 | `fm-remote-doctor.sh`    | Check, and with `--fix` repair, one remote account's [second-mate readiness](remote-secondmates.md#readiness-repair-and-the-human-steps) |
+| [`fm-host-tools-doctor.sh`](../bin/fm-host-tools-doctor.sh) | Report whether this host has every required tool present and authenticated (gh, fleet git access, claude, pi, bd/dolt store, no-mistakes, treehouse, bun, ssh peers), printing the exact fix command for each failing check; `--record` publishes the result to the fleet view, `--ingest` records a remote host's |
 | [`fm-stack-doctor.sh`](../bin/fm-stack-doctor.sh) | Report every layer of a configured local service stack in one run: process and health, MCP tool groups and their tailnet routes, tailscale serve and funnel exposure, recent traffic with the real caller read from the session proxy log, and which log answers which layer |
 | [`fm-backlog-handoff.sh`](../bin/fm-backlog-handoff.sh) | Move queued backlog items into a secondmate home; its header owns route-specific wake outcomes and retries |
 | `fm-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
 | `fm-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `fm-check-record.sh`     | Run a verification command and record its head, exit, and source in `.pr-evidence/<task>/check.json`, which `fm-done-gate-warn.sh` reads against the done line |
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |
-| `fm-brief.sh`            | Scaffold ship (explicit `--mode`, plus the project's registered `--forge` and `--pr`), scout, secondmate-charter, and Herdr-lab briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
+| `fm-brief.sh`            | Scaffold ship (explicit `--mode`, plus the project's registered `--forge` and `--pr`), scout, secondmate-charter (`--workhorse` adds the queue section), and Herdr-lab briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
+| `fm-workhorse-file.sh`   | File a `workhorse` bead whose body is a full brief into the pinned task store, refusing empty, vague, or placeholder sections, then ring the workhorse mate |
+| `fm-workhorse-ring.sh`   | Send the workhorse mate one routed doorbell for a filed bead through `fm-send.sh` with an explicit home, and exit non-zero when delivery is unconfirmed |
+| `fm-workhorse-claim.sh`  | List unclaimed `workhorse` beads, claim one atomically, and scaffold the worker brief from the bead; the workhorse mate's session-start, relaunch, and heartbeat label check |
+| `fm-workhorse-close.sh`  | Close a `workhorse` bead only when the evidence the bead names (PR link, report path, command output) is supplied, recording it as a comment |
+| `fm-workhorse-lib.sh`    | Shared task-store pinning and bead-body layout for the `fm-workhorse-*` scripts |
 | [`fm-dod-lib.sh`](../bin/fm-dod-lib.sh) | Own ship/scout worker role scope, ship definitions of done, the named-head reachability gate on ship `done:` acceptance, and the no-mistakes `--intent` contract |
 | `fm-brief-heading-lib.sh` | Single owner of reading a brief's sections, shared by the `--intent` contract, spawn and promotion validation, and `fm-dispatch-resolve.sh` |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
@@ -75,6 +81,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-supervision-instructions.sh` | Render the session-start primary-harness supervision block or the one-line repair instruction |
 | `fm-home-seed.sh`        | Transactionally provision a local secondmate home and maintain `data/secondmates.md` |
 | `fm-remote-home-seed.sh` | Register and provision a whole secondmate home on an SSH-reachable host              |
+| `fm-host-tools-lib.sh` | The host tool and authentication checks shared by `fm-host-tools-doctor.sh` and `fm-remote-doctor.sh --host-tools` |
 | `fm-remote-readiness-lib.sh` | Shared remote second-mate readiness gate: check and, when needed, repair then re-check through `fm-remote-doctor.sh` |
 | [`fm-project-origin-lib.sh`](../bin/fm-project-origin-lib.sh) | Accepted origin-form owner shared by both remote provisioning boundaries |
 | `fm-project-dir-lib.sh`  | Single owner of how a project argument (bare name, `projects/<name>`, or explicit path) names a clone directory, shared by fm-brief.sh, fm-fleet-sync.sh, and fm-spawn.sh |

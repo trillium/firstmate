@@ -130,7 +130,13 @@ fi
 # it; observe it now through the same pin path fm-crew-state.sh uses, so landing
 # needs no prior manual crew-state call. No valid done line leaves the head
 # unset and the refusal below stands.
-if ! MERGE_EXPECTED_HEAD=$(fm_dod_local_done_head "$META"); then
+# A pin that no longer matches the ship branch (the worker rebased and
+# re-reported done) is observed again through the same accept path, which
+# re-latches only for a strictly newer done line.
+MERGE_BRANCH_REF=$(fm_dod_meta_value "$META" branch)
+[ -n "$MERGE_BRANCH_REF" ] || MERGE_BRANCH_REF="fm/$ID"
+if ! MERGE_EXPECTED_HEAD=$(fm_dod_local_done_head "$META") \
+  || [ "$(git -C "$(fm_dod_meta_value "$META" project)" rev-parse --verify --quiet "refs/heads/$MERGE_BRANCH_REF^{commit}" 2>/dev/null)" != "$MERGE_EXPECTED_HEAD" ]; then
   # shellcheck source=bin/fm-classify-lib.sh
   . "$SCRIPT_DIR/fm-classify-lib.sh"
   fm_dod_accept_ship_done ship local-only "$(fm_dod_meta_value "$META" worktree)" \

@@ -76,6 +76,18 @@
 #   fm_timed_out <status>
 #       0 iff <status> is how fm_run_timed or fm_exec_timed reports the bound.
 #
+#   fm_remote_probe_timed <command> [args...]
+#       Runs one remote ssh probe (in practice bin/fm-on.sh) under a hard overall
+#       bound of FM_REMOTE_PROBE_TIMEOUT seconds (default 15; an unset, empty,
+#       non-integer, or zero value uses the default). ssh's ConnectTimeout and
+#       ServerAlive options do not cover a stalled connect, auth, or session, so
+#       a hung probe would otherwise wedge the caller's whole cycle. The command's
+#       own status is returned, except that a hit bound reports 255 - the exit
+#       status the callers already read as "remote host unavailable or state
+#       unknown, route preserved" - so a hung probe is simply unreachable for
+#       that cycle. Only watcher-reached read probes use it; a deliberately
+#       long remote command (spawn, doctor --fix) must not.
+#
 # Callers must supply a positive integer bound; `timeout 0` disables the deadline.
 #
 # All four fm_run_timed mechanisms terminate the whole process GROUP, not just
@@ -408,4 +420,14 @@ fm_exec_timed() {  # <seconds> <grace-seconds> <command...>
   fi
   printf 'fm_exec_timed: cannot bound %s within %ss: none of perl, timeout, or gtimeout is available\n' "${1##*/}" "$seconds" >&2
   exit 127
+}
+
+fm_remote_probe_timed() {  # <command...>
+  local bound=${FM_REMOTE_PROBE_TIMEOUT:-15} rc=0
+  case "$bound" in ''|*[!0-9]*|0) bound=15 ;; esac
+  fm_run_timed "$bound" "$@" || rc=$?
+  if fm_timed_out "$rc"; then
+    return 255
+  fi
+  return "$rc"
 }

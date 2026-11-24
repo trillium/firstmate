@@ -240,6 +240,14 @@ chmod +x ~/.local/bin/tasks-axi
 
 ## Readiness, repair, and the human steps
 
+A host can be second-mate ready and still unable to do real work because a tool is present but not signed in.
+`bin/fm-host-tools-doctor.sh` checks that separately: `gh` signed in, clone and push access to each fleet repo clone, `claude` and `pi` signed in, the bd/dolt store answering, the `no-mistakes` daemon, `treehouse`, `bun`, and BatchMode ssh to each peer.
+Peers are the hosts of remote secondmates in `data/secondmates.md`, one alias per line in `config/host-peers`, and `FM_HOST_TOOLS_PEERS`.
+A missing or unauthenticated tool is a `check host-<name>=human:` line followed by `action: host-<name>: <exact fix command>`, and any such line exits non-zero.
+`bin/fm-host-tools-lib.sh` owns the check list.
+`bin/fm-on.sh <secondmate-id> fm-remote-doctor.sh --host-tools` appends the same checks to a remote readiness report, off by default so the launch gate is unchanged.
+`--record` writes `state/host-readiness/<host>.json`, and piping a remote report into `bin/fm-host-tools-doctor.sh --ingest <host>` records that host's result; `bin/fm-fleet-snapshot.sh` carries the records as `host_readiness` and `bin/fm-fleet-view.sh` renders them as the Host readiness table.
+
 `bin/fm-remote-doctor.sh` is the single owner of what "ready for a remote second mate" means.
 
 ### Check a host
