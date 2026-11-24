@@ -20,6 +20,19 @@ JQ_BIN=$(command -v jq)
 BASH_BIN=$(command -v bash)
 fm_git_identity
 
+# The doctor finds a tool by looking on PATH, so a host's base PATH must not
+# carry the real machine's copy of a tool under test: CI images ship gh in
+# /usr/bin, which would turn the missing-gh host into an unauthenticated one.
+# SYS_BIN is /usr/bin and /bin with every checked tool left out.
+HOST_TOOLS="gh claude pi bd dolt task no-mistakes treehouse bun"
+SYS_BIN="$TMP_ROOT/sysbin"
+mkdir -p "$SYS_BIN"
+ln -s /usr/bin/* "$SYS_BIN/" 2>/dev/null || true
+ln -s /bin/* "$SYS_BIN/" 2>/dev/null || true
+for tool in $HOST_TOOLS; do
+  rm -f "$SYS_BIN/$tool"
+done
+
 # One healthy host: <name> is a private directory holding stub tools, a home
 # with one fleet clone whose origin is a local bare repository, and a fake ssh.
 # OMIT lists tools to leave off the PATH; NO_CLONE=1 leaves out the fleet clone.
@@ -28,7 +41,7 @@ make_host() { # <name>
   mkdir -p "$h/bin" "$h/home/projects" "$h/home/config" "$h/home/data" "$h/home/state"
   ln -sf "$GIT_BIN" "$h/bin/git"
   ln -sf "$JQ_BIN" "$h/bin/jq"
-  for tool in gh claude pi bd dolt task no-mistakes treehouse bun; do
+  for tool in $HOST_TOOLS; do
     case " ${OMIT:-} " in *" $tool "*) continue ;; esac
     printf '#!%s\nexit 0\n' "$BASH_BIN" > "$h/bin/$tool"
     chmod +x "$h/bin/$tool"
@@ -53,7 +66,7 @@ make_host() { # <name>
 run_doctor() { # <host-dir> [args...]
   local h=$1
   shift
-  env -i HOME="$h" PATH="$h/bin:/usr/bin:/bin" FM_HOME="$h/home" FM_HOST_TOOLS_SSH_BIN="$h/ssh" \
+  env -i HOME="$h" PATH="$h/bin:$SYS_BIN" FM_HOME="$h/home" FM_HOST_TOOLS_SSH_BIN="$h/ssh" \
     FM_HOST_TOOLS_PEERS="${PEERS:-}" FM_HOST_TOOLS_TIMEOUT=10 "$BASH_BIN" "$DOCTOR" "$@" 2>&1
 }
 
@@ -86,6 +99,7 @@ test_healthy_host_passes_every_check() {
 test_unauthenticated_gh_prints_login_fix() {
   local h
   h=$(make_host gh-unauth)
+  # shellcheck disable=SC2016 # the single-quoted body expands in the stub's own shell
   stub "$h" gh '[ "$1 $2" = "auth status" ] && exit 1
 exit 0'
   assert_gap "$h" host-gh "gh auth login"
@@ -105,6 +119,7 @@ test_missing_tool_prints_install_fix() {
 test_claude_and_pi_auth_failures() {
   local h
   h=$(make_host claude-unauth)
+  # shellcheck disable=SC2016 # the single-quoted body expands in the stub's own shell
   stub "$h" claude '[ "$1 $2" = "auth status" ] && exit 1
 exit 0'
   assert_gap "$h" host-claude "claude auth login"
@@ -113,6 +128,7 @@ exit 0'
   assert_gap "$h" host-pi "pi auth login"
   h=$(make_host pi-pinned)
   printf '%s\n%s\n' "/root" "openai" > "$h/home/config/pi-account"
+  # shellcheck disable=SC2016 # the single-quoted body expands in the stub's own shell
   stub "$h" pi '[ "$1" = auth ] && exit 1
 exit 0'
   assert_gap "$h" host-pi "pi auth login openai"
@@ -160,6 +176,7 @@ test_ssh_peer_failure_and_peer_sources() {
 test_record_and_ingest_write_the_fleet_record() {
   local h rec
   h=$(make_host record)
+  # shellcheck disable=SC2016 # the single-quoted body expands in the stub's own shell
   stub "$h" gh '[ "$1 $2" = "auth status" ] && exit 1
 exit 0'
   run_doctor "$h" --record --host studio >/dev/null
