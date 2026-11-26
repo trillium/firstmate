@@ -18,6 +18,12 @@
 # already uses when it first records a remote route - and republishes this
 # home's own metadata to match. A failed or refused relaunch leaves this
 # parent's record untouched.
+#
+# The host's route report also names the account pin its launch resolved
+# (account=, plus account_provider= for a Pi pin; empty for an unpinned mate),
+# so this wrapper records that too and a repin is verifiable from the output
+# and the record alone, without inspecting the host's processes. A host too old
+# to report account= records account=unconfirmed instead.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,6 +75,15 @@ NEW_HARNESS=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^harness=//p' | tail -1)
 NEW_MODEL=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^model=//p' | tail -1)
 NEW_EFFORT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^effort=//p' | tail -1)
 [ -n "$NEW_HARNESS" ] || die "the host's route confirmation carried no harness to record"
+NEW_ACCOUNT=
+NEW_ACCOUNT_PROVIDER=
+if printf '%s\n' "$RELAUNCH_OUT" | grep -q '^account='; then
+  NEW_ACCOUNT=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^account=//p' | tail -1)
+  NEW_ACCOUNT_PROVIDER=$(printf '%s\n' "$RELAUNCH_OUT" | sed -n 's/^account_provider=//p' | tail -1)
+else
+  NEW_ACCOUNT=unconfirmed
+  printf 'warning: the host did not report an account pin for %s; recording account=unconfirmed\n' "$ID" >&2
+fi
 
 META_LOCK=$(fm_meta_lock_path "$META") || die "metadata lock path is invalid for $ID"
 fm_lock_acquire_wait "$META_LOCK"
@@ -80,17 +95,22 @@ META_TMP=$(mktemp "$STATE/.fm-remote-relaunch-meta.XXXXXX") || {
   printf 'harness=%s\n' "$NEW_HARNESS"
   printf 'model=%s\n' "$NEW_MODEL"
   printf 'effort=%s\n' "$NEW_EFFORT"
+  [ -z "$NEW_ACCOUNT" ] || printf 'account=%s\n' "$NEW_ACCOUNT"
+  if [ -n "$NEW_ACCOUNT" ]; then
+    [ -z "$NEW_ACCOUNT_PROVIDER" ] || printf 'account_provider=%s\n' "$NEW_ACCOUNT_PROVIDER"
+  fi
 } >> "$META_TMP"
 # Every other line is preserved in its original relative order after the
-# refreshed harness/model/effort. A pr= line's own identity region (pr_head=
+# refreshed harness/model/effort/account. A pr= line's own identity region (pr_head=
 # and the control_relaunch_tx/x_* lifecycle and relay fields
 # fm_pr_metadata_identity_parse allows after it) must stay LAST in the record:
 # that parser rejects any other key following pr=, so writing
-# harness/model/effort after it would break PR movement monitoring on a task
+# harness/model/effort/account after it would break PR movement monitoring on a task
 # that already had one armed.
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     harness=*|model=*|effort=*) ;;
+    account=*|account_provider=*) ;;
     *) printf '%s\n' "$line" >> "$META_TMP" ;;
   esac
 done < "$META"
